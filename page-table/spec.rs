@@ -30,7 +30,7 @@ pub fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
 }
 
 impl PageTableContents {
-    #[spec] #[verifier(pub_abstract)]
+    #[spec]
     pub fn inv(&self) -> bool {
         true
         && forall(|b1: nat, b2: nat| 
@@ -99,36 +99,43 @@ impl PageTableContents {
     ensures([
         addrspace.map_frame(base, frame).inv()
     ]);
-    let after = addrspace.map_frame(base, frame);
-    forall(|b1: nat, b2: nat| {
-        requires(after.map.dom().contains(b1) && after.map.dom().contains(b2));
-        ensures((b1 == b2) || !overlap(
-            MemRegion { base: b1, size: after.map.index(b1).size },
-            MemRegion { base: b2, size: after.map.index(b2).size }
-        ));
-    });
 }
 
 #[proof] fn unmap_frame_preserves_inv(addrspace: PageTableContents, base: nat) {
     requires([
         addrspace.inv(),
+        addrspace.map.dom().contains(base),
     ]);
     ensures([
         addrspace.unmap(base).inv()
     ]);
-    let after = addrspace.unmap(base);
-    forall(|b1: nat, b2: nat| {
-        requires(after.map.dom().contains(b1) && after.map.dom().contains(b2));
-        ensures(!overlap(
-            MemRegion { base: b1, size: after.map.index(b1).size },
-            MemRegion { base: b2, size: after.map.index(b2).size }
-        ));
-        assume(!overlap(
-            MemRegion { base: b1, size: after.map.index(b1).size },
-            MemRegion { base: b2, size: after.map.index(b2).size }
-        ));
-    });
+    // let after = addrspace.unmap(base);
+
+    // assert_forall_by(|b1: nat, b2: nat| {
+    //     requires(after.map.dom().contains(b1) && after.map.dom().contains(b2));
+    //     ensures(!overlap(
+    //         MemRegion { base: b1, size: after.map.index(b1).size },
+    //         MemRegion { base: b2, size: after.map.index(b2).size }
+    //     ));
+    //     // assume(!overlap(
+    //     //     MemRegion { base: b1, size: after.map.index(b1).size },
+    //     //     MemRegion { base: b2, size: after.map.index(b2).size }
+    //     // ));
+    //     assume(false);
+    // });
+
+    // assert(forall(|b1: nat, b2:nat| after.map.dom().contains(b1) && after.map.dom().contains(b2)
+    //     >>=
+    //     !overlap(
+    //         MemRegion { base: b1, size: after.map.index(b1).size },
+    //         MemRegion { base: b2, size: after.map.index(b2).size }
+    //     )));
+
+    // assert(addrspace.unmap(base).inv());
 }
+
+
+// Second refinement layer
 
 #[spec] #[is_variant]
 pub enum NodeEntry {
@@ -143,8 +150,10 @@ pub fn strictly_decreasing(s: Seq<nat>) -> bool {
 
 // Root [8, 16, 24]
 
+#[spec]
 pub struct Arch {
-    pub layer_sizes: Seq<nat>,
+    /// Size of each entry at this layer
+    pub layer_sizes: Seq<nat>, // 1 GiB, 2 MiB, 4 KiB
 }
 
 impl Arch {
@@ -156,8 +165,8 @@ impl Arch {
 
 #[spec]
 pub struct PrefixTreeNode {
-    pub map: Map<nat /* addr */, Box<NodeEntry>>,
-    pub layer: nat,       // 1 GiB, 2 MiB, 4 KiB
+    pub map: Map<nat /* addr */, Box<NodeEntry>>, // consider using the entry index
+    pub layer: nat,       // index into layer_sizes
     pub base_vaddr: nat,
 }
 
@@ -220,6 +229,8 @@ impl PrefixTreeNode {
         decreases(arch.layer_sizes.len() - self.layer);
 
         true
+        && self.interp(arch).inv()
+
         && self.map.dom().finite()
         && self.layer < arch.layer_sizes.len()
         && self.entries_are_entry_size_aligned(arch)
@@ -231,6 +242,7 @@ impl PrefixTreeNode {
 
     #[spec]
     pub fn interp(self, arch: &Arch) -> PageTableContents {
+        // TODO!
         arbitrary()
     }
 
@@ -239,32 +251,33 @@ impl PrefixTreeNode {
         decreases(arch.layer_sizes.len() - self.layer);
 
         let offset = vaddr - self.base_vaddr;
-        if self.inv(arch) && arch.inv() && self.interp(arch).accepted_mapping(vaddr, frame) && frame.size <= self.entry_size(arch) {
-            if frame.size == self.entry_size(arch) {
-                PrefixTreeNode {
-                    map: self.map.insert(offset, box NodeEntry::Page(frame)),
-                    ..self
-                }
-            } else {
-                let binding_offset = offset - (offset % self.entry_size(arch)); // 0xf374 -- entry_size 0x100 --> 0xf300
-                let directory: PrefixTreeNode = if self.map.dom().contains(offset) {
-                    self.map.index(binding_offset).get_Directory_0()
-                } else {
-                    PrefixTreeNode {
-                        map: map![],
-                        layer: self.layer + 1,
-                        base_vaddr: self.base_vaddr 
-                    }
-                };
-                let updated_directory = directory.map_frame(arch, vaddr, frame);
-                PrefixTreeNode {
-                    map: self.map.insert(binding_offset, box NodeEntry::Directory(updated_directory)),
-                    ..self
-                }
+        if frame.size == self.entry_size(arch) {
+            PrefixTreeNode {
+                map: self.map.insert(offset, box NodeEntry::Page(frame)),
+                ..self
             }
         } else {
-            arbitrary()
+            let binding_offset = offset - (offset % self.entry_size(arch)); // 0xf374 -- entry_size 0x100 --> 0xf300
+            let directory: PrefixTreeNode = if self.map.dom().contains(offset) {
+                self.map.index(binding_offset).get_Directory_0()
+            } else {
+                PrefixTreeNode {
+                    map: map![],
+                    layer: self.layer + 1,
+                    base_vaddr: self.base_vaddr 
+                }
+            };
+            let updated_directory = directory.map_frame(arch, vaddr, frame);
+            PrefixTreeNode {
+                map: self.map.insert(binding_offset, box NodeEntry::Directory(updated_directory)),
+                ..self
+            }
         }
+    }
+
+    #[proof] fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
+        ensures(self.map_frame(arch, vaddr, frame).interp(arch) ==
+                self.interp(arch).map_frame(...)
     }
 
     // NOTE: maybe return whether the frame was unmapped
