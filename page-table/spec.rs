@@ -31,6 +31,11 @@ pub fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
 
 impl PageTableContents {
     #[spec]
+    pub fn ext_equal(self, pt2: PageTableContents) -> bool {
+        self.map.ext_equal(pt2.map)
+    }
+
+    #[spec]
     pub fn inv(&self) -> bool {
         true
         && forall(|b1: nat, b2: nat| 
@@ -73,8 +78,19 @@ impl PageTableContents {
 
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
-    #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
-        self.map.index(vaddr)
+    // #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
+    #[spec] fn resolve(self, vaddr: nat) -> nat {
+        if exists(|n:nat|
+                  self.map.dom().contains(n) &&
+                  n <= vaddr && vaddr < n + self.map.index(n).size) {
+            let n = choose(|n:nat|
+                           self.map.dom().contains(n) &&
+                           n <= vaddr && vaddr < n + self.map.index(n).size);
+            let offset = vaddr - n;
+            self.map.index(n).base + offset
+        } else {
+            arbitrary()
+        }
     }
 
     /// Removes the frame from the address space that contains `base`.
@@ -218,7 +234,7 @@ impl PrefixTreeNode {
 
     #[spec]
     pub fn directories_obey_invariant(&self, arch: &Arch) -> bool {
-        decreases(arch.layer_sizes.len() - self.layer);
+        decreases((arch.layer_sizes.len() - self.layer, 0));
 
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
                >>= self.map.index(offset).get_Directory_0().inv(arch))
@@ -226,7 +242,7 @@ impl PrefixTreeNode {
 
     #[spec]
     pub fn inv(&self, arch: &Arch) -> bool {
-        decreases(arch.layer_sizes.len() - self.layer);
+        decreases((arch.layer_sizes.len() - self.layer, 1));
 
         true
         && self.interp(arch).inv()
@@ -275,9 +291,10 @@ impl PrefixTreeNode {
         }
     }
 
-    #[proof] fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
-        ensures(self.map_frame(arch, vaddr, frame).interp(arch) ==
-                self.interp(arch).map_frame(...)
+    #[proof]
+    fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
+        ensures(self.map_frame(arch, vaddr, frame).interp(arch).ext_equal(
+                self.interp(arch).map_frame(vaddr, frame)));
     }
 
     // NOTE: maybe return whether the frame was unmapped
