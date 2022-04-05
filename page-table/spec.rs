@@ -6,6 +6,8 @@ use crate::pervasive::*;
 use seq::*;
 use map::*;
 #[allow(unused_imports)]
+use set::*;
+#[allow(unused_imports)]
 use crate::{seq, seq_insert_rec, map, map_insert_rec};
 
 pub struct MemRegion { pub base: nat, pub size: nat }
@@ -60,13 +62,9 @@ impl PageTableContents {
 
     /// Maps the given `frame` at `base` in the address space
     #[spec] pub fn map_frame(self, base: nat, frame: MemRegion) -> PageTableContents {
-        if self.accepted_mapping(base, frame) {
-            PageTableContents {
-                map: self.map.insert(base, frame),
-                ..self
-            }
-        } else {
-            arbitrary()
+        PageTableContents {
+            map: self.map.insert(base, frame),
+            ..self
         }
     }
 
@@ -241,8 +239,29 @@ impl PrefixTreeNode {
 
     #[spec]
     pub fn interp(self, arch: &Arch) -> PageTableContents {
-        // TODO! This is probably the next thing to do
-        arbitrary()
+        decreases(self);
+
+        // TODO: Recursion not allowed in closures?
+        // let f = |x:PrefixTreeNode| x.interp(arch);
+
+        PageTableContents {
+            map: self.map.dom().fold(
+                     map![],
+                     |e: Map<nat,MemRegion>, x: nat| {
+                         if self.map.index(x).is_Page() {
+                             e.union_prefer_right(map![self.base_vaddr + x => self.map.index(x).get_Page_0()])
+                         } else {
+                             e.union_prefer_right(self.map.index(x).get_Directory_0().interp(arch).map)
+                         }
+                     })
+        }
+
+        // arbitrary()
+    }
+
+    #[spec] pub fn accepted_mapping(self, arch: &Arch, base: nat, frame: MemRegion) -> bool {
+        true
+        && self.interp(arch).accepted_mapping(base, frame)
     }
 
     #[spec]
@@ -263,7 +282,7 @@ impl PrefixTreeNode {
                 PrefixTreeNode {
                     map: map![],
                     layer: self.layer + 1,
-                    base_vaddr: self.base_vaddr 
+                    base_vaddr: self.base_vaddr + binding_offset
                 }
             };
             let updated_directory = directory.map_frame(arch, vaddr, frame);
@@ -277,8 +296,7 @@ impl PrefixTreeNode {
     #[proof]
     fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
         requires(self.inv(arch) && arch.inv());
-        ensures(self.map_frame(arch, vaddr, frame).interp(arch).ext_equal(
-                self.interp(arch).map_frame(vaddr, frame)));
+        ensures(equal(self.map_frame(arch, vaddr, frame).interp(arch), self.interp(arch).map_frame(vaddr, frame)));
     }
 
     // NOTE: maybe return whether the frame was unmapped
