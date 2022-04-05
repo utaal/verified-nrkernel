@@ -1,9 +1,11 @@
+#[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
 #[macro_use]
 use crate::pervasive::*;
 use seq::*;
 use map::*;
+#[allow(unused_imports)]
 use crate::{seq, seq_insert_rec, map, map_insert_rec};
 
 pub struct MemRegion { pub base: nat, pub size: nat }
@@ -236,8 +238,12 @@ impl PrefixTreeNode {
     pub fn directories_obey_invariant(&self, arch: &Arch) -> bool {
         decreases((arch.layer_sizes.len() - self.layer, 0));
 
-        forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
-               >>= self.map.index(offset).get_Directory_0().inv(arch))
+        if self.layer < arch.layer_sizes.len() && self.directories_are_in_next_layer(arch) { 
+            forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
+                   >>= self.map.index(offset).get_Directory_0().inv(arch))
+        } else {
+            arbitrary()
+        }
     }
 
     #[spec]

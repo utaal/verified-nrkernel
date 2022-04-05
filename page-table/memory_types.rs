@@ -1,3 +1,4 @@
+#[allow(unused_imports)]
 use builtin::*;
 
 // TODO use the tuple wrapper types once they are supported
