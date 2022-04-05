@@ -12,7 +12,7 @@ pub struct MemRegion { pub base: nat, pub size: nat }
 
 // TODO use VAddr, PAddr
 
-#[spec]
+#[proof]
 pub struct PageTableContents {
     pub map: Map<nat /* VAddr */, MemRegion>,
 }
@@ -70,6 +70,16 @@ impl PageTableContents {
         }
     }
 
+    #[proof] fn map_frame_preserves_inv(#[spec] self, base: nat, frame: MemRegion) {
+        requires([
+            self.inv(),
+            self.accepted_mapping(base, frame),
+        ]);
+        ensures([
+            self.map_frame(base, frame).inv()
+        ]);
+    }
+
     // predicate (function -> bool)
     // #[spec] pub fn step_map_frame(&self /* s */, post: &PageTableContents /* s' */, base:nat, frame: MemRegion) -> bool {
     //     post == self.map_frame(base, frame)
@@ -106,56 +116,23 @@ impl PageTableContents {
             arbitrary()
         }
     }
+
+    #[proof] fn unmap_preserves_inv(self, base: nat) {
+        requires([
+            self.inv(),
+            self.map.dom().contains(base),
+        ]);
+        ensures([
+            self.unmap(base).inv()
+        ]);
+    }
 }
 
-// lemma MapFramePreserveInv(addrspace: PageTableContents, base: nat, frame: MemRegion)
-#[proof] fn map_frame_preserves_inv(addrspace: PageTableContents, base: nat, frame: MemRegion) {
-    requires([
-        addrspace.inv(),
-        addrspace.accepted_mapping(base, frame),
-    ]);
-    ensures([
-        addrspace.map_frame(base, frame).inv()
-    ]);
-}
-
-#[proof] fn unmap_frame_preserves_inv(addrspace: PageTableContents, base: nat) {
-    requires([
-        addrspace.inv(),
-        addrspace.map.dom().contains(base),
-    ]);
-    ensures([
-        addrspace.unmap(base).inv()
-    ]);
-    // let after = addrspace.unmap(base);
-
-    // assert_forall_by(|b1: nat, b2: nat| {
-    //     requires(after.map.dom().contains(b1) && after.map.dom().contains(b2));
-    //     ensures(!overlap(
-    //         MemRegion { base: b1, size: after.map.index(b1).size },
-    //         MemRegion { base: b2, size: after.map.index(b2).size }
-    //     ));
-    //     // assume(!overlap(
-    //     //     MemRegion { base: b1, size: after.map.index(b1).size },
-    //     //     MemRegion { base: b2, size: after.map.index(b2).size }
-    //     // ));
-    //     assume(false);
-    // });
-
-    // assert(forall(|b1: nat, b2:nat| after.map.dom().contains(b1) && after.map.dom().contains(b2)
-    //     >>=
-    //     !overlap(
-    //         MemRegion { base: b1, size: after.map.index(b1).size },
-    //         MemRegion { base: b2, size: after.map.index(b2).size }
-    //     )));
-
-    // assert(addrspace.unmap(base).inv());
-}
 
 
 // Second refinement layer
 
-#[spec] #[is_variant]
+#[proof] #[is_variant]
 pub enum NodeEntry {
     Directory(PrefixTreeNode),
     Page(MemRegion),
@@ -181,7 +158,7 @@ impl Arch {
     }
 }
 
-#[spec]
+#[proof]
 pub struct PrefixTreeNode {
     pub map: Map<nat /* addr */, Box<NodeEntry>>, // consider using the entry index
     pub layer: nat,       // index into layer_sizes
@@ -264,7 +241,7 @@ impl PrefixTreeNode {
 
     #[spec]
     pub fn interp(self, arch: &Arch) -> PageTableContents {
-        // TODO!
+        // TODO! This is probably the next thing to do
         arbitrary()
     }
 
@@ -299,6 +276,7 @@ impl PrefixTreeNode {
 
     #[proof]
     fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
+        requires(self.inv(arch) && arch.inv());
         ensures(self.map_frame(arch, vaddr, frame).interp(arch).ext_equal(
                 self.interp(arch).map_frame(vaddr, frame)));
     }
