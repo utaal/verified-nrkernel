@@ -237,43 +237,54 @@ impl PrefixTreeNode {
         && self.directories_obey_invariant(arch)
     }
 
-    #[spec]
-    pub fn termination_test(self) {
-        decreases(self);
+    // #[spec]
+    // pub fn termination_test(self, arch: &Arch) {
+    //     decreases(self);
 
-        if self.map.dom().len() == 0 {
-            ()
-        } else {
-            let k = self.map.dom().choose();
-            if self.map.index(k).is_Directory() {
-                self.map.index(k).get_Directory_0().termination_test()
+    //     if self.inv(arch) && arch.inv() {
+    //         if self.map.dom().len() == 0 {
+    //             ()
+    //         } else {
+    //             let k = self.map.dom().choose();
+    //             if self.map.index(k).is_Directory() {
+    //                 self.map.index(k).get_Directory_0().termination_test(arch)
+    //             } else {
+    //                 ()
+    //             }
+    //         }
+    //     } else {
+    //         ()
+    //     }
+    // }
+
+    #[spec]
+    pub fn interp_fold(self, arch: &Arch, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
+        decreases((acc.dom().len(), 0));
+
+        if acc.dom().finite() && rest.dom().finite() {
+            if rest.dom().len() > 0 {
+                let x = rest.dom().choose();
+                match *self.map.index(x) {
+                     NodeEntry::Page(p) =>
+                         self.interp_fold(arch, acc.union_prefer_right(map![self.base_vaddr + x => p]), self.map.remove(x)),
+                     NodeEntry::Directory(d) =>
+                         self.interp_fold(arch, acc.union_prefer_right(d.interp(arch).map), self.map.remove(x)),
+                }
             } else {
-                ()
+                acc
             }
+        } else {
+            arbitrary()
         }
     }
 
     #[spec]
     pub fn interp(self, arch: &Arch) -> PageTableContents {
-        decreases(self);
+        decreases((self, 1));
 
-        // TODO: Recursion not allowed in closures?
-        // let f = |x:PrefixTreeNode| x.interp(arch);
-
-        // PageTableContents {
-        //     map: self.map.dom().fold(
-        //              map![],
-        //              |e: Map<nat,MemRegion>, x: nat| {
-        //                  match *self.map.index(x) {
-        //                      NodeEntry::Page(p) =>
-        //                          e.union_prefer_right(map![self.base_vaddr + x => p]),
-        //                      NodeEntry::Directory(d) =>
-        //                         e.union_prefer_right(d.interp(arch).map)
-        //                  }
-        //              })
-        // }
-
-        arbitrary()
+        PageTableContents {
+            map: self.interp_fold(arch, map![], self.map)
+        }
     }
 
     #[spec] pub fn accepted_mapping(self, arch: &Arch, base: nat, frame: MemRegion) -> bool {
