@@ -264,10 +264,11 @@ impl PrefixTreeNode {
         //     map: self.map.dom().fold(
         //              map![],
         //              |e: Map<nat,MemRegion>, x: nat| {
-        //                  if self.map.index(x).is_Page() {
-        //                      e.union_prefer_right(map![self.base_vaddr + x => self.map.index(x).get_Page_0()])
-        //                  } else {
-        //                      e.union_prefer_right(self.map.index(x).get_Directory_0().interp(arch).map)
+        //                  match *self.map.index(x) {
+        //                      NodeEntry::Page(p) =>
+        //                          e.union_prefer_right(map![self.base_vaddr + x => p]),
+        //                      NodeEntry::Directory(d) =>
+        //                         e.union_prefer_right(d.interp(arch).map)
         //                  }
         //              })
         // }
