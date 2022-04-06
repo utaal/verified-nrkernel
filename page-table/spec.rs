@@ -238,25 +238,41 @@ impl PrefixTreeNode {
     }
 
     #[spec]
+    pub fn termination_test(self) {
+        decreases(self);
+
+        if self.map.dom().len() == 0 {
+            ()
+        } else {
+            let k = self.map.dom().choose();
+            if self.map.index(k).is_Directory() {
+                self.map.index(k).get_Directory_0().termination_test()
+            } else {
+                ()
+            }
+        }
+    }
+
+    #[spec]
     pub fn interp(self, arch: &Arch) -> PageTableContents {
         decreases(self);
 
         // TODO: Recursion not allowed in closures?
         // let f = |x:PrefixTreeNode| x.interp(arch);
 
-        PageTableContents {
-            map: self.map.dom().fold(
-                     map![],
-                     |e: Map<nat,MemRegion>, x: nat| {
-                         if self.map.index(x).is_Page() {
-                             e.union_prefer_right(map![self.base_vaddr + x => self.map.index(x).get_Page_0()])
-                         } else {
-                             e.union_prefer_right(self.map.index(x).get_Directory_0().interp(arch).map)
-                         }
-                     })
-        }
+        // PageTableContents {
+        //     map: self.map.dom().fold(
+        //              map![],
+        //              |e: Map<nat,MemRegion>, x: nat| {
+        //                  if self.map.index(x).is_Page() {
+        //                      e.union_prefer_right(map![self.base_vaddr + x => self.map.index(x).get_Page_0()])
+        //                  } else {
+        //                      e.union_prefer_right(self.map.index(x).get_Directory_0().interp(arch).map)
+        //                  }
+        //              })
+        // }
 
-        // arbitrary()
+        arbitrary()
     }
 
     #[spec] pub fn accepted_mapping(self, arch: &Arch, base: nat, frame: MemRegion) -> bool {
