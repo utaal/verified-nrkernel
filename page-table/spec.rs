@@ -161,6 +161,7 @@ pub struct PrefixTreeNode {
     pub map: Map<nat /* addr */, Box<NodeEntry>>, // consider using the entry index
     pub layer: nat,       // index into layer_sizes
     pub base_vaddr: nat,
+    pub arch: Arch,
 }
 
 // page_size, next_sizes
@@ -173,33 +174,33 @@ fndecl!(pub fn pow2(v: nat) -> nat);
 
 impl PrefixTreeNode {
     #[spec]
-    pub fn entry_size(&self, arch: &Arch) -> nat {
-        arch.layer_sizes.index(self.layer as int + 1)
+    pub fn entry_size(&self) -> nat {
+        self.arch.layer_sizes.index(self.layer as int + 1)
     }
 
     #[spec]
-    pub fn layer_size(&self, arch: &Arch) -> nat {
-        arch.layer_sizes.index(self.layer as int)
+    pub fn layer_size(&self) -> nat {
+        self.arch.layer_sizes.index(self.layer as int)
     }
 
     #[spec]
-    pub fn entries_are_entry_size_aligned(&self, arch: &Arch) -> bool {
-        forall(|offset: nat| self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size(arch)))
+    pub fn entries_are_entry_size_aligned(&self) -> bool {
+        forall(|offset: nat| self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size()))
     }
 
     #[spec]
-    pub fn entries_fit_in_layer_size(&self, arch: &Arch) -> bool {
-        forall(|offset: nat| self.map.dom().contains(offset) >>= offset < self.layer_size(arch))
+    pub fn entries_fit_in_layer_size(&self) -> bool {
+        forall(|offset: nat| self.map.dom().contains(offset) >>= offset < self.layer_size())
     }
 
     #[spec]
-    pub fn pages_match_entry_size(&self, arch: &Arch) -> bool {
+    pub fn pages_match_entry_size(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Page())
-               >>= self.map.index(offset).get_Page_0().size == self.entry_size(arch))
+               >>= self.map.index(offset).get_Page_0().size == self.entry_size())
     }
 
     #[spec]
-    pub fn directories_are_in_next_layer(&self, arch: &Arch) -> bool {
+    pub fn directories_are_in_next_layer(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
                >>= {
                     let directory = self.map.index(offset).get_Directory_0();
@@ -210,44 +211,51 @@ impl PrefixTreeNode {
     }
 
     #[spec]
-    pub fn directories_obey_invariant(&self, arch: &Arch) -> bool {
-        decreases((arch.layer_sizes.len() - self.layer, 0));
+    pub fn directories_obey_invariant(&self) -> bool {
+        decreases((self.arch.layer_sizes.len() - self.layer, 0));
 
-        if self.layer < arch.layer_sizes.len() && self.directories_are_in_next_layer(arch) { 
+        if self.layer < self.arch.layer_sizes.len() && self.directories_are_in_next_layer() && self.directories_match_arch() { 
             forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
-                   >>= self.map.index(offset).get_Directory_0().inv(arch))
+                   >>= self.map.index(offset).get_Directory_0().inv())
         } else {
             arbitrary()
         }
     }
 
     #[spec]
-    pub fn inv(&self, arch: &Arch) -> bool {
-        decreases((arch.layer_sizes.len() - self.layer, 1));
+    pub fn directories_match_arch(&self) -> bool {
+        forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
+               >>= equal(self.map.index(offset).get_Directory_0().arch, self.arch))
+    }
+
+    #[spec]
+    pub fn inv(&self) -> bool {
+        decreases((self.arch.layer_sizes.len() - self.layer, 1));
 
         true
-        && self.interp(arch).inv()
+        && self.interp().inv()
 
         && self.map.dom().finite()
-        && self.layer < arch.layer_sizes.len()
-        && self.entries_are_entry_size_aligned(arch)
-        && self.entries_fit_in_layer_size(arch)
-        && self.pages_match_entry_size(arch)
-        && self.directories_are_in_next_layer(arch)
-        && self.directories_obey_invariant(arch)
+        && self.layer < self.arch.layer_sizes.len()
+        && self.entries_are_entry_size_aligned()
+        && self.entries_fit_in_layer_size()
+        && self.pages_match_entry_size()
+        && self.directories_are_in_next_layer()
+        && self.directories_obey_invariant()
+        && self.directories_match_arch()
     }
 
     // #[spec]
-    // pub fn termination_test(self, arch: &Arch) {
+    // pub fn termination_test(self) {
     //     decreases(self);
 
-    //     if self.inv(arch) && arch.inv() {
+    //     if self.inv() && self.arch.inv() {
     //         if self.map.dom().len() == 0 {
     //             ()
     //         } else {
     //             let k = self.map.dom().choose();
     //             if self.map.index(k).is_Directory() {
-    //                 self.map.index(k).get_Directory_0().termination_test(arch)
+    //                 self.map.index(k).get_Directory_0().termination_test()
     //             } else {
     //                 ()
     //             }
@@ -258,7 +266,7 @@ impl PrefixTreeNode {
     // }
 
     #[spec]
-    pub fn interp_fold(self, arch: &Arch, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
+    pub fn interp_fold(self, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
         decreases((acc.dom().len(), 0));
 
         if acc.dom().finite() && rest.dom().finite() {
@@ -266,9 +274,9 @@ impl PrefixTreeNode {
                 let x = rest.dom().choose();
                 match *self.map.index(x) {
                      NodeEntry::Page(p) =>
-                         self.interp_fold(arch, acc.union_prefer_right(map![self.base_vaddr + x => p]), self.map.remove(x)),
+                         self.interp_fold(acc.union_prefer_right(map![self.base_vaddr + x => p]), self.map.remove(x)),
                      NodeEntry::Directory(d) =>
-                         self.interp_fold(arch, acc.union_prefer_right(d.interp(arch).map), self.map.remove(x)),
+                         self.interp_fold(acc.union_prefer_right(d.interp().map), self.map.remove(x)),
                 }
             } else {
                 acc
@@ -279,41 +287,42 @@ impl PrefixTreeNode {
     }
 
     #[spec]
-    pub fn interp(self, arch: &Arch) -> PageTableContents {
+    pub fn interp(self) -> PageTableContents {
         decreases((self, 1));
 
         PageTableContents {
-            map: self.interp_fold(arch, map![], self.map)
+            map: self.interp_fold(map![], self.map)
         }
     }
 
-    #[spec] pub fn accepted_mapping(self, arch: &Arch, base: nat, frame: MemRegion) -> bool {
+    #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         true
-        && self.interp(arch).accepted_mapping(base, frame)
+        && self.interp().accepted_mapping(base, frame)
     }
 
     #[spec]
-    pub fn map_frame(self, arch: &Arch, vaddr: nat, frame: MemRegion) -> PrefixTreeNode {
-        decreases(arch.layer_sizes.len() - self.layer);
+    pub fn map_frame(self, vaddr: nat, frame: MemRegion) -> PrefixTreeNode {
+        decreases(self.arch.layer_sizes.len() - self.layer);
 
         let offset = vaddr - self.base_vaddr;
-        if frame.size == self.entry_size(arch) {
+        if frame.size == self.entry_size() {
             PrefixTreeNode {
                 map: self.map.insert(offset, box NodeEntry::Page(frame)),
                 ..self
             }
         } else {
-            let binding_offset = offset - (offset % self.entry_size(arch)); // 0xf374 -- entry_size 0x100 --> 0xf300
+            let binding_offset = offset - (offset % self.entry_size()); // 0xf374 -- entry_size 0x100 --> 0xf300
             let directory: PrefixTreeNode = if self.map.dom().contains(offset) {
                 self.map.index(binding_offset).get_Directory_0()
             } else {
                 PrefixTreeNode {
                     map: map![],
                     layer: self.layer + 1,
-                    base_vaddr: self.base_vaddr + binding_offset
+                    base_vaddr: self.base_vaddr + binding_offset,
+                    arch: self.arch,
                 }
             };
-            let updated_directory = directory.map_frame(arch, vaddr, frame);
+            let updated_directory = directory.map_frame(vaddr, frame);
             PrefixTreeNode {
                 map: self.map.insert(binding_offset, box NodeEntry::Directory(updated_directory)),
                 ..self
@@ -322,9 +331,9 @@ impl PrefixTreeNode {
     }
 
     #[proof]
-    fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
-        requires(self.inv(arch) && arch.inv());
-        ensures(equal(self.map_frame(arch, vaddr, frame).interp(arch), self.interp(arch).map_frame(vaddr, frame)));
+    fn map_frame_refines(self, vaddr: nat, frame: MemRegion) {
+        requires(self.inv() && self.arch.inv());
+        ensures(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
     }
 
     // NOTE: maybe return whether the frame was unmapped
