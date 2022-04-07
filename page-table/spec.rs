@@ -42,7 +42,7 @@ impl PageTableContents {
     #[spec]
     pub fn inv(&self) -> bool {
         true
-        && forall(|b1: nat, b2: nat| 
+        && forall(|b1: nat, b2: nat|
         // TODO: let vregion1, vregion2
             (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
                 MemRegion { base: b1, size: self.map.index(b1).size },
@@ -214,7 +214,7 @@ impl PrefixTreeNode {
     pub fn directories_obey_invariant(&self) -> bool {
         decreases((self.arch.layer_sizes.len() - self.layer, 0));
 
-        if self.layer < self.arch.layer_sizes.len() && self.directories_are_in_next_layer() && self.directories_match_arch() { 
+        if self.layer < self.arch.layer_sizes.len() && self.directories_are_in_next_layer() && self.directories_match_arch() {
             forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
                    >>= self.map.index(offset).get_Directory_0().inv())
         } else {
@@ -266,75 +266,177 @@ impl PrefixTreeNode {
     // }
 
     #[spec]
-    pub fn interp_fold(self, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
-        decreases((acc.dom().len(), 0));
+    pub fn interp(self) -> PageTableContents {
+        decreases((self, self.map.dom().len()));
 
-        if acc.dom().finite() && rest.dom().finite() {
-            if rest.dom().len() > 0 {
-                let x = rest.dom().choose();
-                match *self.map.index(x) {
-                     NodeEntry::Page(p) =>
-                         self.interp_fold(acc.union_prefer_right(map![self.base_vaddr + x => p]), self.map.remove(x)),
-                     NodeEntry::Directory(d) =>
-                         self.interp_fold(acc.union_prefer_right(d.interp().map), self.map.remove(x)),
+        if self.map.dom().finite() {
+            if self.map.dom().len() == 0 {
+                PageTableContents {
+                    map: map![],
                 }
             } else {
-                acc
+                let x = self.map.dom().choose();
+                let x_map =
+                    match *self.map.index(x) {
+                        NodeEntry::Page(p) => map![self.base_vaddr + x => p],
+                        NodeEntry::Directory(d) => d.interp().map,
+                    };
+                let rem = PrefixTreeNode {
+                    map: self.map.remove(x),
+                    ..self
+                };
+                let rem_map = rem.interp().map;
+
+                PageTableContents {
+                    map: rem_map.union_prefer_right(x_map),
+                }
             }
         } else {
             arbitrary()
         }
     }
 
-    #[spec]
-    pub fn interp(self) -> PageTableContents {
-        decreases((self, 1));
+    #[proof]
+    pub fn lemma_interp_dom_contains(self, a: nat) {
+        requires([
+                 self.map.dom().finite(),
+                 self.map.dom().contains(a),
+                 self.map.index(a).is_Page(),
+        ]);
+        ensures(self.interp().map.dom().contains(self.base_vaddr + a));
 
-        PageTableContents {
-            map: self.interp_fold(map![], self.map)
+        let s = self.map.dom();
+
+        lemma_set_contains_IMP_len_greater_zero::<nat>(s, a);
+        assert(s.len() != 0);
+
+        let x = self.map.dom().choose();
+        match *self.map.index(x) {
+            NodeEntry::Page(p) => {
+                if x == a {
+                    assert(map![self.base_vaddr + x => p].dom().contains(self.base_vaddr + x));
+                }
+            },
+            NodeEntry::Directory(d) => { }
+        }
+        let rem = PrefixTreeNode {
+            map: self.map.remove(x),
+            ..self
+        };
+        if x == a {
+        } else {
+            // TODO: the arg needs to be something like a % rem.entry_size()
+            // rem.lemma_interp_dom_contains(a);
         }
     }
+
+    // #[spec]
+    // pub fn interp_fold(self, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
+    //     decreases((acc.dom().len(), 0));
+
+    //     if acc.dom().finite() && rest.dom().finite() {
+    //         if rest.dom().len() > 0 {
+    //             let x = rest.dom().choose();
+    //             match *self.map.index(x) {
+    //                  NodeEntry::Page(p) =>
+    //                      self.interp_fold(acc.union_prefer_right(map![self.base_vaddr + x => p]), self.map.remove(x)),
+    //                  NodeEntry::Directory(d) =>
+    //                      self.interp_fold(acc.union_prefer_right(d.interp().map), self.map.remove(x)),
+    //             }
+    //         } else {
+    //             acc
+    //         }
+    //     } else {
+    //         arbitrary()
+    //     }
+    // }
+
+    // #[spec]
+    // pub fn interp(self) -> PageTableContents {
+    //     decreases((self, 1));
+
+    //     PageTableContents {
+    //         map: self.interp_fold(map![], self.map)
+    //     }
+    // }
 
     #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         true
         && self.interp().accepted_mapping(base, frame)
+        && self.arch.layer_sizes.contains(frame.size)
     }
 
     #[spec]
     pub fn map_frame(self, vaddr: nat, frame: MemRegion) -> PrefixTreeNode {
         decreases(self.arch.layer_sizes.len() - self.layer);
 
-        let offset = vaddr - self.base_vaddr;
-        if frame.size == self.entry_size() {
-            PrefixTreeNode {
-                map: self.map.insert(offset, box NodeEntry::Page(frame)),
-                ..self
+        if self.inv() { // TODO: may need this for termination?
+            let offset = vaddr - self.base_vaddr;
+            if frame.size == self.entry_size() {
+                if self.map.dom().contains(offset) {
+                    arbitrary()
+                } else {
+                    PrefixTreeNode {
+                        map: self.map.insert(offset, box NodeEntry::Page(frame)),
+                        ..self
+                    }
+                }
+            } else {
+                let binding_offset = offset - (offset % self.entry_size()); // 0xf374 -- entry_size 0x100 --> 0xf300
+                if self.map.dom().contains(offset) {
+                    match *self.map.index(binding_offset) {
+                        NodeEntry::Page(_)      => arbitrary(),
+                        NodeEntry::Directory(d) =>
+                            PrefixTreeNode {
+                                map: self.map.insert(binding_offset, box NodeEntry::Directory(d.map_frame(vaddr, frame))),
+                                ..self
+                            },
+                    }
+                } else {
+                    if self.layer + 1 == self.arch.layer_sizes.len() {
+                        arbitrary()
+                    } else {
+                        let d =
+                            PrefixTreeNode {
+                                map: map![],
+                                layer: self.layer + 1,
+                                base_vaddr: self.base_vaddr + binding_offset,
+                                arch: self.arch,
+                            };
+
+                        let updated_directory = d.map_frame(vaddr, frame);
+                        PrefixTreeNode {
+                            map: self.map.insert(binding_offset, box NodeEntry::Directory(updated_directory)),
+                            ..self
+                        }
+                    }
+                }
             }
         } else {
-            let binding_offset = offset - (offset % self.entry_size()); // 0xf374 -- entry_size 0x100 --> 0xf300
-            let directory: PrefixTreeNode = if self.map.dom().contains(offset) {
-                self.map.index(binding_offset).get_Directory_0()
-            } else {
-                PrefixTreeNode {
-                    map: map![],
-                    layer: self.layer + 1,
-                    base_vaddr: self.base_vaddr + binding_offset,
-                    arch: self.arch,
-                }
-            };
-            let updated_directory = directory.map_frame(vaddr, frame);
-            PrefixTreeNode {
-                map: self.map.insert(binding_offset, box NodeEntry::Directory(updated_directory)),
-                ..self
-            }
+            arbitrary()
         }
     }
 
-    #[proof]
-    fn map_frame_refines(self, vaddr: nat, frame: MemRegion) {
-        requires(self.inv() && self.arch.inv());
-        ensures(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
-    }
+    // #[proof]
+    // fn map_frame_refines(self, vaddr: nat, frame: MemRegion) {
+    //     requires([
+    //              self.inv(),
+    //              self.arch.inv(),
+    //              equal(self.layer, 0)
+    //     ]);
+    //     ensures(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
+
+    //     let offset = vaddr - self.base_vaddr;
+    //     if frame.size == self.entry_size() {
+    //         if self.map.dom().contains(offset) {
+    //             assert(equal(self.map_frame(vaddr, frame), arbitrary()));
+    //             assert(self.interp().map.dom().contains(offset));
+    //         } else {
+    //             assert(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
+    //         }
+    //     } else {
+    //     }
+    // }
 
     // NOTE: maybe return whether the frame was unmapped
     // #[spec] pub fn unmap_frame(self, base: nat) -> (nat /* size */, PrefixTreeNode) {
@@ -381,20 +483,20 @@ impl PrefixTreeNode {
 // fn next_sizes_len_decreases(node: PrefixTreeNode) {
 //     requires(node.inv());
 //     ensures(forall(|i: nat| i < node.next_sizes.len() >>= node.page_size > node.next_sizes.index(i)));
-// 
+//
 //     if node.next_sizes.len() == 0 {
 //     } else {
 //         forall(|i: nat| {
 //             requires(i < node.next_sizes.len());
 //             ensures(node.page_size > node.next_sizes.index(i));
-// 
+//
 //             if i == 0 {
 //             } else {
 //             }
 //         });
 //     }
 // }
-// 
+//
 // #[proof]
 // fn map_frame_preserves_inv_2(node: PrefixTreeNode, base: nat, frame: MemRegion) {
 //     requires(node.inv() && node.view().accepted_mapping(base, frame) && frame.size <= node.page_size);
@@ -437,3 +539,17 @@ impl PrefixTreeNode {
 // NOTE: the memory alloc may fail
 // NOTE: use linearity to prevent a frame being mapped in the kernel and user-space at the same
 // time
+
+#[proof]
+pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
+    requires([
+             s.finite(),
+             s.contains(a)
+    ]);
+    ensures(s.len() > 0);
+
+    if s.len() == 0 {
+        // contradiction
+        assert(s.remove(a).len() + 1 == 0);
+    }
+}
