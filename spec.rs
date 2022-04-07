@@ -19,12 +19,19 @@ enum LoadResult {
 }
 
 enum TransitionLabel {
+    // SYSCALL
     Map(vaddr, paddr, page_size, flags: FLAGS, is_ok)
     // have a transaction that maps n pages as once
 
+    // SYSCALL
     // one page
-    Unmap(vaddr, result, is_ok)
+    Unmap(vaddr, is_ok)
 
+    // SYSCALL
+    // lookup a mapping
+    Resolve(vaddr, Result<(paddr, size, FLAGS)>)
+
+    // INSTRUCTION
     // write anywhere, on any length, maybe span two pages?
     // TODO: what happens if we straddle two pages and only one is mapped?
     // everything is persistent memory!
@@ -42,8 +49,16 @@ struct MemoryTranslator {
 
 }
 
+struct Memory {
+
+}
+
 impl MemoryTranslator { // and TLB?
     fn translate(self, post, vaddr, paddr)   // this is the walker
+}
+
+impl Memory {
+    fn ...
 }
 
 struct Env {
