@@ -102,6 +102,7 @@ impl PageTableContents {
         }
     }
 
+    // don't think this is actually necessary for anything?
     #[proof] fn map_frame_maps_valid(#[spec] self, base: nat, frame: MemRegion) {
         requires([
             self.inv(),
@@ -292,10 +293,15 @@ impl PrefixTreeNode {
     // }
 
     #[spec]
+    pub fn interp_pre(self) -> bool {
+        self.map.dom().finite()
+    }
+
+    #[spec]
     pub fn interp(self) -> PageTableContents {
         decreases((self, self.map.dom().len()));
 
-        if self.map.dom().finite() {
+        if self.interp_pre() {
             if self.map.dom().len() == 0 {
                 PageTableContents {
                     map: map![],
@@ -388,16 +394,28 @@ impl PrefixTreeNode {
     //     }
     // }
 
+    // TODO: should probably remove arch from abstract layer again and add it to this one
     #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         true
         && self.interp().accepted_mapping(base, frame)
     }
 
+    // // sanity check lemma
+    // #[proof]
+    // pub fn lemma_valid_map_frame_is_ok(self, vaddr: nat, frame: MemRegion) {
+    //     requires([
+    //              self.inv(),
+    //              self.accepted_mapping(vaddr, frame),
+    //              self.valid_mapping(vaddr, frame),
+    //     ]);
+    //     ensures(self.map_frame(vaddr, frame).is_Ok());
+    // }
+
     #[spec]
     pub fn map_frame(self, vaddr: nat, frame: MemRegion) -> Result<PrefixTreeNode,()> {
         decreases(self.arch.layer_sizes.len() - self.layer);
 
-        if self.inv() && self.accepted_mapping(vaddr, frame) { // TODO: may need this for termination?
+        if self.inv() && self.accepted_mapping(vaddr, frame) {
             let offset = vaddr - self.base_vaddr;
             if frame.size == self.entry_size() {
                 if self.map.dom().contains(offset) {
@@ -412,7 +430,7 @@ impl PrefixTreeNode {
                 let binding_offset = offset - (offset % self.entry_size()); // 0xf374 -- entry_size 0x100 --> 0xf300
                 if self.map.dom().contains(offset) {
                     match *self.map.index(binding_offset) {
-                        NodeEntry::Page(_)      => arbitrary(),
+                        NodeEntry::Page(_)      => Err(()),
                         NodeEntry::Directory(d) =>
                             match d.map_frame(vaddr, frame) {
                                 Ok(upd_d) =>
@@ -424,26 +442,26 @@ impl PrefixTreeNode {
                             }
                     }
                 } else {
-                    if self.layer + 1 == self.arch.layer_sizes.len() {
-                        Err(()) // TODO: when does this happen? can this ever happen when self.accepted_mapping(..) is true? Err/arbitrary?
-                    } else {
-                        let d =
-                            PrefixTreeNode {
-                                map: map![],
-                                layer: self.layer + 1,
-                                base_vaddr: self.base_vaddr + binding_offset,
-                                arch: self.arch,
-                            };
+                    // TODO: no asserts allowed for now
+                    // assert(self.layer + 1 != self.arch.layer_sizes.len())
+                    // Err(()) // TODO: when does this happen? can this ever happen when self.accepted_mapping(..) is true? Err/arbitrary?
+                    let d =
+                        PrefixTreeNode {
+                            map: map![],
+                            layer: self.layer + 1,
+                            base_vaddr: self.base_vaddr + binding_offset,
+                            arch: self.arch,
+                        };
 
-                        // TODO: can we get ? syntax for results?
-                        match d.map_frame(vaddr, frame) {
-                            Ok(upd_d) =>
-                                Ok(PrefixTreeNode {
-                                    map: self.map.insert(binding_offset, box NodeEntry::Directory(upd_d)),
-                                    ..self
-                                }),
-                            Err(e) => Err(e),
-                        }
+                    // TODO: can we get ? syntax for results?
+                    // use map_ok
+                    match d.map_frame(vaddr, frame) {
+                        Ok(upd_d) =>
+                            Ok(PrefixTreeNode {
+                                map: self.map.insert(binding_offset, box NodeEntry::Directory(upd_d)),
+                                ..self
+                            }),
+                        Err(e) => Err(e),
                     }
                 }
             }
@@ -452,31 +470,31 @@ impl PrefixTreeNode {
         }
     }
 
-    // #[proof]
-    // fn map_frame_refines(self, vaddr: nat, frame: MemRegion) {
-    //     requires([
-    //              self.inv(),
-    //              self.arch.inv(),
-    //              self.accepted_mapping(vaddr, frame),
-    //              self.map_frame(vaddr, frame).is_Ok(),
-    //              equal(self.layer, 0)
-    //     ]);
-    //     ensures([
-    //             self.interp().map_frame(vaddr, frame).is_Ok(),
-    //             equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0())
-    //     ]);
+    #[proof]
+    fn map_frame_refines(self, vaddr: nat, frame: MemRegion) {
+        requires([
+                 self.inv(),
+                 self.arch.inv(),
+                 self.accepted_mapping(vaddr, frame),
+                 self.map_frame(vaddr, frame).is_Ok(),
+                 equal(self.layer, 0)
+        ]);
+        ensures([
+                self.interp().map_frame(vaddr, frame).is_Ok(),
+                equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0())
+        ]);
 
-    //     let offset = vaddr - self.base_vaddr;
-    //     if frame.size == self.entry_size() {
-    //         if self.map.dom().contains(offset) {
-    //             assert(equal(self.map_frame(vaddr, frame), arbitrary()));
-    //             assert(self.interp().map.dom().contains(offset));
-    //         } else {
-    //             // assert(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
-    //         }
-    //     } else {
-    //     }
-    // }
+        let offset = vaddr - self.base_vaddr;
+        if frame.size == self.entry_size() {
+            if self.map.dom().contains(offset) {
+                assert(equal(self.map_frame(vaddr, frame), arbitrary()));
+                assert(self.interp().map.dom().contains(offset));
+            } else {
+                // assert(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
+            }
+        } else {
+        }
+    }
 
     // NOTE: maybe return whether the frame was unmapped
     // #[spec] pub fn unmap_frame(self, base: nat) -> (nat /* size */, PrefixTreeNode) {
