@@ -64,6 +64,7 @@ impl PageTableContents {
     #[spec]
     pub fn inv(&self) -> bool {
         true
+        && self.arch.inv()
         && forall(|b1: nat, b2: nat|
         // TODO: let vregion1, vregion2
             (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
@@ -330,39 +331,39 @@ impl PrefixTreeNode {
         }
     }
 
-    #[proof]
-    pub fn lemma_interp_dom_contains(self, a: nat) {
-        requires([
-                 self.map.dom().finite(),
-                 self.map.dom().contains(a),
-                 self.map.index(a).is_Page(),
-        ]);
-        ensures(self.interp().map.dom().contains(self.base_vaddr + a));
+    // #[proof]
+    // pub fn lemma_interp_dom_contains(self, a: nat) {
+    //     requires([
+    //              self.map.dom().finite(),
+    //              self.map.dom().contains(a),
+    //              self.map.index(a).is_Page(),
+    //     ]);
+    //     ensures(self.interp().map.dom().contains(self.base_vaddr + a));
 
-        let s = self.map.dom();
+    //     let s = self.map.dom();
 
-        lemma_set_contains_IMP_len_greater_zero::<nat>(s, a);
-        assert(s.len() != 0);
+    //     lemma_set_contains_IMP_len_greater_zero::<nat>(s, a);
+    //     assert(s.len() != 0);
 
-        let x = self.map.dom().choose();
-        match *self.map.index(x) {
-            NodeEntry::Page(p) => {
-                if x == a {
-                    assert(map![self.base_vaddr + x => p].dom().contains(self.base_vaddr + x));
-                }
-            },
-            NodeEntry::Directory(d) => { }
-        }
-        let rem = PrefixTreeNode {
-            map: self.map.remove(x),
-            ..self
-        };
-        if x == a {
-        } else {
-            // TODO: the arg needs to be something like a % rem.entry_size()
-            // rem.lemma_interp_dom_contains(a);
-        }
-    }
+    //     let x = self.map.dom().choose();
+    //     match *self.map.index(x) {
+    //         NodeEntry::Page(p) => {
+    //             if x == a {
+    //                 assert(map![self.base_vaddr + x => p].dom().contains(self.base_vaddr + x));
+    //             }
+    //         },
+    //         NodeEntry::Directory(d) => { }
+    //     }
+    //     let rem = PrefixTreeNode {
+    //         map: self.map.remove(x),
+    //         ..self
+    //     };
+    //     if x == a {
+    //     } else {
+    //         // TODO: the arg needs to be something like a % rem.entry_size()
+    //         // rem.lemma_interp_dom_contains(a);
+    //     }
+    // }
 
     // #[spec]
     // pub fn interp_fold(self, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
@@ -471,28 +472,63 @@ impl PrefixTreeNode {
     }
 
     #[proof]
-    fn map_frame_refines(self, vaddr: nat, frame: MemRegion) {
+    fn map_frame_ok_refines(self, vaddr: nat, frame: MemRegion) {
         requires([
                  self.inv(),
-                 self.arch.inv(),
                  self.accepted_mapping(vaddr, frame),
-                 self.map_frame(vaddr, frame).is_Ok(),
-                 equal(self.layer, 0)
+                 // equal(self.layer, 0)
         ]);
         ensures([
-                self.interp().map_frame(vaddr, frame).is_Ok(),
+                self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok(),
                 equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0())
         ]);
 
         let offset = vaddr - self.base_vaddr;
         if frame.size == self.entry_size() {
             if self.map.dom().contains(offset) {
-                assert(equal(self.map_frame(vaddr, frame), arbitrary()));
-                assert(self.interp().map.dom().contains(offset));
+                // assert(!self.map_frame(vaddr, frame).is_Ok());
+                // assert(self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok());
+                // assert(equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0()));
+                assume(false);
             } else {
-                // assert(equal(self.map_frame(vaddr, frame).interp(), self.interp().map_frame(vaddr, frame)));
+                assert(self.map_frame(vaddr, frame).is_Ok());
+                // assert(forall(|o:nat,n:PrefixTreeNode|
+                //               o < vaddr &&
+                //               self.map.contains(o,n) && n.is_Page()
+                //                   >>= o + self.entry_size() <= vaddr));
+
+                if !self.interp().valid_mapping(vaddr, frame) {
+                    assert(exists(|b: nat| self.interp().map.dom().contains(b) && overlap(
+                            MemRegion { base: vaddr, size: frame.size },
+                            MemRegion { base: b, size: self.interp().map.index(b).size }
+                            )));
+                    let b = choose(|b: nat| self.interp().map.dom().contains(b) && overlap(
+                            MemRegion { base: vaddr, size: frame.size },
+                            MemRegion { base: b, size: self.interp().map.index(b).size }
+                            ));
+                    // 
+                    assume(forall(|d: nat, b: nat|
+                                  self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
+                        self.map.index(d).get_Directory_0().interp().map.dom().contains(b) >>= {
+                            let dir = self.map.index(d).get_Directory_0();
+                            let MemRegion { base, size } = #[trigger] dir.interp().map.index(b);
+                            dir.base_vaddr <= base && base + size <= dir.base_vaddr + self.entry_size()
+                        }));
+                    // assert(self.map.dom().contains(b) && overlap(
+                    //         MemRegion { base: vaddr, size: frame.size },
+                    //         MemRegion { base: b, size: self.map.index(b).size }
+                    //         ));
+                    assert(false);
+                }
+                // suppose overlapping mapping exists
+                //
+                assert(self.interp().valid_mapping(vaddr, frame));
+                assert(self.interp().map_frame(vaddr, frame).is_Ok());
+                assert(self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok());
+                assert(equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0()));
             }
         } else {
+            assume(false);
         }
     }
 
