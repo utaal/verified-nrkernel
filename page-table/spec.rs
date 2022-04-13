@@ -153,14 +153,11 @@ impl PageTableContents {
     }
 
     #[proof]
-    pub fn lemma_overlap_IMP_equal(self, va1: nat, base: nat, size: nat) {
+    pub fn lemma_overlap_IMP_equal_base(self, va1: nat, base: nat, size: nat) {
         requires([
                  self.inv(),
                  self.map.dom().contains(va1),
                  base_page_aligned(base, size),
-                 // base_page_aligned(frame.base, frame.size)
-                 // self.arch.layer_sizes.contains(size),
-                 // self.accepted_mapping(base, MemRegion { size }),
                  size == self.map.index(va1).size,
                  size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
                  overlap(
@@ -169,30 +166,31 @@ impl PageTableContents {
         ]);
         ensures(va1 == base);
 
-        // assume(va1_size > 0);
-
         if va1 <= base {
             // assert(va1 + va1_size <= base);
-            assume(false);
+            if va1 < base {
+                assert(va1 < base);
+                assert(base < va1 + size);
+                assert(base % size == 0);
+                assert(va1 % size == 0);
+                // TODO: same as below
+                assume(false);
+                assert(va1 == base);
+            } else { }
         } else {
-            // base < va1
-            // va1 < base + size
             assert(base < va1);
             assert(va1 < base + size);
             assert(va1 % size == 0);
             assert(base % size == 0);
-            // let x = choose(|x:nat| x < size && base + x == va1);
-            // let x = choose(|x:nat| x > 0);
-            // assert(exists(|x:nat| true));
-            // assert(forall(|x:nat| base < x && x < base + size >>= x % size != 0));
-            assert(va1 - base > 0);
-            assert(va1 % size == va1 - base);
+            // assert(va1 % size == va1 - base);
+
             // base    size
             // |-------|
             //     |-------|
             //     va1     size
-            // assert(false);
+            // TODO: need nonlinear reasoning? (isabelle sledgehammer can prove this)
             assume(false);
+            assert(va1 == base);
         }
     }
 
@@ -611,7 +609,7 @@ impl PrefixTreeNode {
                     let MemRegion { base, size } = self.interp().map.index(b);
                     self.lemma_pages_obey_boundaries();
                     assume(self.interp().map.dom().contains(vaddr));
-                    self.interp().lemma_overlap_IMP_equal(b, vaddr, frame.size);
+                    self.interp().lemma_overlap_IMP_equal_base(b, vaddr, frame.size);
                     assert(b == vaddr);
                     assume(self.map.dom().contains(b));
 
