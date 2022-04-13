@@ -46,13 +46,36 @@ pub fn base_page_aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }
 
+// TODO: overlap probably shouldn't be defined in terms of MemRegion, since it's never actually
+// used that way. We always check overlap of the virtual address space.
 #[spec]
 pub fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
-        region1.base + region1.size <= region2.base
+        region2.base < region1.base + region1.size
     } else {
-        region2.base + region2.size <= region1.base
+        region1.base < region2.base + region2.size
     }
+}
+
+fn overlap_sanity_check() {
+    assert(overlap(
+            MemRegion { base: 0, size: 4096 },
+            MemRegion { base: 0, size: 4096 }));
+    assert(overlap(
+            MemRegion { base: 0, size: 8192 },
+            MemRegion { base: 0, size: 4096 }));
+    assert(overlap(
+            MemRegion { base: 0, size: 4096 },
+            MemRegion { base: 0, size: 8192 }));
+    assert(overlap(
+            MemRegion { base: 0, size: 8192 },
+            MemRegion { base: 4096, size: 4096 }));
+    assert(!overlap(
+            MemRegion { base: 4096, size: 8192 },
+            MemRegion { base: 0, size: 4096 }));
+    assert(!overlap(
+            MemRegion { base: 0, size: 4096 },
+            MemRegion { base: 8192, size: 16384 }));
 }
 
 impl PageTableContents {
@@ -65,6 +88,9 @@ impl PageTableContents {
     pub fn inv(&self) -> bool {
         true
         && self.arch.inv()
+        && forall(|va: nat| self.map.dom().contains(va) >>=
+                  (base_page_aligned(va, self.map.index(va).size)
+                   && base_page_aligned(self.map.index(va).base, self.map.index(va).size)))
         && forall(|b1: nat, b2: nat|
         // TODO: let vregion1, vregion2
             (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
@@ -124,6 +150,50 @@ impl PageTableContents {
         ensures([
             self.map_frame(base, frame).get_Ok_0().inv(),
         ]);
+    }
+
+    #[proof]
+    pub fn lemma_overlap_IMP_equal(self, va1: nat, base: nat, size: nat) {
+        requires([
+                 self.inv(),
+                 self.map.dom().contains(va1),
+                 base_page_aligned(base, size),
+                 // base_page_aligned(frame.base, frame.size)
+                 // self.arch.layer_sizes.contains(size),
+                 // self.accepted_mapping(base, MemRegion { size }),
+                 size == self.map.index(va1).size,
+                 size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
+                 overlap(
+                     MemRegion { base: va1, size: self.map.index(va1).size },
+                     MemRegion { base: base, size: size }),
+        ]);
+        ensures(va1 == base);
+
+        // assume(va1_size > 0);
+
+        if va1 <= base {
+            // assert(va1 + va1_size <= base);
+            assume(false);
+        } else {
+            // base < va1
+            // va1 < base + size
+            assert(base < va1);
+            assert(va1 < base + size);
+            assert(va1 % size == 0);
+            assert(base % size == 0);
+            // let x = choose(|x:nat| x < size && base + x == va1);
+            // let x = choose(|x:nat| x > 0);
+            // assert(exists(|x:nat| true));
+            // assert(forall(|x:nat| base < x && x < base + size >>= x % size != 0));
+            assert(va1 - base > 0);
+            assert(va1 % size == va1 - base);
+            // base    size
+            // |-------|
+            //     |-------|
+            //     va1     size
+            // assert(false);
+            assume(false);
+        }
     }
 
     // predicate (function -> bool)
@@ -471,6 +541,38 @@ impl PrefixTreeNode {
         }
     }
 
+    // TODO: maybe we should wait with this proof until we know for sure what interp looks like?
+    // Given a PrefixTreeNode:
+    //
+    // +------+ ----> +------+
+    // |      |/      |      |
+    // +------+       +------+
+    // | dir  |       | page |
+    // +------+       +------+
+    // |      |\      |      |
+    // +------+ ----> +------+
+    // |      |
+    // +------+
+    //
+    // Then in any of its directories we have the two bounds shown by the arrows:
+    // - Upper arrow: dir.base_vaddr <= page.base
+    // - Lower arrow: page.base + page.size <= dir.base_vaddr + self.entry_size()
+    // (including for pages in nested directories)
+    #[proof]
+    pub fn lemma_pages_obey_boundaries(self) {
+        requires([
+                 self.inv(),
+        ]);
+        ensures(forall(|d: nat, b: nat|
+                       self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
+                       self.map.index(d).get_Directory_0().interp().map.dom().contains(b) >>= {
+                           let dir = self.map.index(d).get_Directory_0();
+                           let MemRegion { base, size } = dir.interp().map.index(b);
+                           dir.base_vaddr <= base && base + size <= dir.base_vaddr + self.entry_size()
+                       }));
+        assume(false);
+    }
+
     #[proof]
     fn map_frame_ok_refines(self, vaddr: nat, frame: MemRegion) {
         requires([
@@ -500,20 +602,26 @@ impl PrefixTreeNode {
                 if !self.interp().valid_mapping(vaddr, frame) {
                     assert(exists(|b: nat| self.interp().map.dom().contains(b) && overlap(
                             MemRegion { base: vaddr, size: frame.size },
-                            MemRegion { base: b, size: self.interp().map.index(b).size }
+                            MemRegion { base: b,     size: self.interp().map.index(b).size }
                             )));
                     let b = choose(|b: nat| self.interp().map.dom().contains(b) && overlap(
                             MemRegion { base: vaddr, size: frame.size },
-                            MemRegion { base: b, size: self.interp().map.index(b).size }
+                            MemRegion { base: b,     size: self.interp().map.index(b).size }
                             ));
-                    // 
-                    assume(forall(|d: nat, b: nat|
-                                  self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
-                        self.map.index(d).get_Directory_0().interp().map.dom().contains(b) >>= {
-                            let dir = self.map.index(d).get_Directory_0();
-                            let MemRegion { base, size } = #[trigger] dir.interp().map.index(b);
-                            dir.base_vaddr <= base && base + size <= dir.base_vaddr + self.entry_size()
-                        }));
+                    let MemRegion { base, size } = self.interp().map.index(b);
+                    self.lemma_pages_obey_boundaries();
+                    assume(self.interp().map.dom().contains(vaddr));
+                    self.interp().lemma_overlap_IMP_equal(b, vaddr, frame.size);
+                    assert(b == vaddr);
+                    assume(self.map.dom().contains(b));
+
+                    // assume(forall(|d: nat, b: nat|
+                    //               self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
+                    //     self.map.index(d).get_Directory_0().interp().map.dom().contains(b) >>= {
+                    //         let dir = self.map.index(d).get_Directory_0();
+                    //         let MemRegion { base, size } = #[trigger] dir.interp().map.index(b);
+                    //         dir.base_vaddr <= base && base + size <= dir.base_vaddr + self.entry_size()
+                    //     }));
                     // assert(self.map.dom().contains(b) && overlap(
                     //         MemRegion { base: vaddr, size: frame.size },
                     //         MemRegion { base: b, size: self.map.index(b).size }
