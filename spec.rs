@@ -2,6 +2,7 @@ mod pervasive;
 #[allow(unused_imports)] use pervasive::*;
 #[allow(unused_imports)] use builtin::*;
 #[allow(unused_imports)] use builtin_macros::*;
+#[allow(unused_imports)] use state_machines_macros::*;
 use map::*;
 
 fn main() {}
@@ -85,10 +86,26 @@ struct PageTableEntry {
     flags: Flags,
 }
 
-struct MemoryTranslator {
-    tlb: Map</* VAddr */ nat, PageTableEntry>,
-    page_table: Map</* VAddr */ nat, PageTableEntry>,
-}
+state_machine! { MemoryTranslator {
+    fields {
+        pub tlb: Map</* VAddr */ nat, PageTableEntry>,
+        pub page_table: Map</* VAddr */ nat, PageTableEntry>,
+    }
+
+    readonly! {
+        resolve(vaddr: nat, entry: PageTableEntry) {
+            require(pre.tlb.dom().contains(vaddr));
+            require(entry == pre.tlb.index(vaddr));
+        }
+    }
+
+    transition! {
+        fill_tlb(vaddr: nat) {
+            require(pre.page_table.dom().contains(vaddr));
+            update tlb = pre.tlb.insert(vaddr, pre.page_table.index(vaddr));
+        }
+    }
+} }
  
 // impl MemoryTranslator {
 // 
