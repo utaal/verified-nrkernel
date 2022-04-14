@@ -9,14 +9,36 @@ use map::*;
 use set::*;
 #[allow(unused_imports)]
 use crate::{seq, seq_insert_rec, map, map_insert_rec};
+use result::{*, Result::*};
 
 pub struct MemRegion { pub base: nat, pub size: nat }
 
 // TODO use VAddr, PAddr
 
+#[spec]
+pub fn strictly_decreasing(s: Seq<nat>) -> bool {
+    forall(|i: nat, j: nat| i < j && j < s.len() >>= s.index(i) > s.index(j))
+}
+
+// Root [8, 16, 24]
+
+#[spec]
+pub struct Arch {
+    /// Size of each entry at this layer
+    pub layer_sizes: Seq<nat>, // 1 GiB, 2 MiB, 4 KiB
+}
+
+impl Arch {
+    #[spec]
+    pub fn inv(&self) -> bool {
+        strictly_decreasing(self.layer_sizes)
+    }
+}
+
 #[proof]
 pub struct PageTableContents {
     pub map: Map<nat /* VAddr */, MemRegion>,
+    pub arch: Arch,
 }
 
 #[spec]
@@ -24,13 +46,36 @@ pub fn base_page_aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }
 
+// TODO: overlap probably shouldn't be defined in terms of MemRegion, since it's never actually
+// used that way. We always check overlap of the virtual address space.
 #[spec]
 pub fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
-        region1.base + region1.size <= region2.base
+        region2.base < region1.base + region1.size
     } else {
-        region2.base + region2.size <= region1.base
+        region1.base < region2.base + region2.size
     }
+}
+
+fn overlap_sanity_check() {
+    assert(overlap(
+            MemRegion { base: 0, size: 4096 },
+            MemRegion { base: 0, size: 4096 }));
+    assert(overlap(
+            MemRegion { base: 0, size: 8192 },
+            MemRegion { base: 0, size: 4096 }));
+    assert(overlap(
+            MemRegion { base: 0, size: 4096 },
+            MemRegion { base: 0, size: 8192 }));
+    assert(overlap(
+            MemRegion { base: 0, size: 8192 },
+            MemRegion { base: 4096, size: 4096 }));
+    assert(!overlap(
+            MemRegion { base: 4096, size: 8192 },
+            MemRegion { base: 0, size: 4096 }));
+    assert(!overlap(
+            MemRegion { base: 0, size: 4096 },
+            MemRegion { base: 8192, size: 16384 }));
 }
 
 impl PageTableContents {
@@ -42,7 +87,11 @@ impl PageTableContents {
     #[spec]
     pub fn inv(&self) -> bool {
         true
-        && forall(|b1: nat, b2: nat| 
+        && self.arch.inv()
+        && forall(|va: nat| self.map.dom().contains(va) >>=
+                  (base_page_aligned(va, self.map.index(va).size)
+                   && base_page_aligned(self.map.index(va).base, self.map.index(va).size)))
+        && forall(|b1: nat, b2: nat|
         // TODO: let vregion1, vregion2
             (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
                 MemRegion { base: b1, size: self.map.index(b1).size },
@@ -54,28 +103,95 @@ impl PageTableContents {
         true
         && base_page_aligned(base, frame.size)
         && base_page_aligned(frame.base, frame.size)
-        && forall(|b: nat| self.map.dom().contains(b) >>= !overlap(
+        && self.arch.layer_sizes.contains(frame.size)
+    }
+
+    #[spec] pub fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {
+        forall(|b: nat| self.map.dom().contains(b) >>= !overlap(
                 MemRegion { base: base, size: frame.size },
                 MemRegion { base: b, size: self.map.index(b).size }
-           ))
+                ))
     }
 
     /// Maps the given `frame` at `base` in the address space
-    #[spec] pub fn map_frame(self, base: nat, frame: MemRegion) -> PageTableContents {
-        PageTableContents {
-            map: self.map.insert(base, frame),
-            ..self
+    #[spec] pub fn map_frame(self, base: nat, frame: MemRegion) -> Result<PageTableContents,()> {
+        if self.accepted_mapping(base, frame) {
+            if self.valid_mapping(base, frame) {
+                Ok(PageTableContents {
+                    map: self.map.insert(base, frame),
+                    ..self
+                })
+            } else {
+                Err(())
+            }
+        } else {
+            arbitrary()
         }
+    }
+
+    // don't think this is actually necessary for anything?
+    #[proof] fn map_frame_maps_valid(#[spec] self, base: nat, frame: MemRegion) {
+        requires([
+            self.inv(),
+            self.accepted_mapping(base, frame),
+            self.valid_mapping(base, frame),
+        ]);
+        ensures([
+            self.map_frame(base, frame).is_Ok(),
+        ]);
     }
 
     #[proof] fn map_frame_preserves_inv(#[spec] self, base: nat, frame: MemRegion) {
         requires([
             self.inv(),
             self.accepted_mapping(base, frame),
+            self.map_frame(base, frame).is_Ok(),
         ]);
         ensures([
-            self.map_frame(base, frame).inv()
+            self.map_frame(base, frame).get_Ok_0().inv(),
         ]);
+    }
+
+    #[proof]
+    pub fn lemma_overlap_IMP_equal_base(self, va1: nat, base: nat, size: nat) {
+        requires([
+                 self.inv(),
+                 self.map.dom().contains(va1),
+                 base_page_aligned(base, size),
+                 size == self.map.index(va1).size,
+                 size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
+                 overlap(
+                     MemRegion { base: va1, size: self.map.index(va1).size },
+                     MemRegion { base: base, size: size }),
+        ]);
+        ensures(va1 == base);
+
+        if va1 <= base {
+            // assert(va1 + va1_size <= base);
+            if va1 < base {
+                assert(va1 < base);
+                assert(base < va1 + size);
+                assert(base % size == 0);
+                assert(va1 % size == 0);
+                // TODO: same as below
+                assume(false);
+                assert(va1 == base);
+            } else { }
+        } else {
+            assert(base < va1);
+            assert(va1 < base + size);
+            assert(va1 % size == 0);
+            assert(base % size == 0);
+            // assert(va1 % size == va1 - base);
+
+            // base    size
+            // |-------|
+            //     |-------|
+            //     va1     size
+            // TODO: need nonlinear reasoning? (isabelle sledgehammer can prove this)
+            assume(false);
+            assert(va1 == base);
+        }
     }
 
     // predicate (function -> bool)
@@ -136,31 +252,12 @@ pub enum NodeEntry {
     Page(MemRegion),
 }
 
-#[spec]
-pub fn strictly_decreasing(s: Seq<nat>) -> bool {
-    forall(|i: nat, j: nat| i < j && j < s.len() >>= s.index(i) > s.index(j))
-}
-
-// Root [8, 16, 24]
-
-#[spec]
-pub struct Arch {
-    /// Size of each entry at this layer
-    pub layer_sizes: Seq<nat>, // 1 GiB, 2 MiB, 4 KiB
-}
-
-impl Arch {
-    #[spec]
-    pub fn inv(&self) -> bool {
-        strictly_decreasing(self.layer_sizes)
-    }
-}
-
 #[proof]
 pub struct PrefixTreeNode {
     pub map: Map<nat /* addr */, Box<NodeEntry>>, // consider using the entry index
     pub layer: nat,       // index into layer_sizes
     pub base_vaddr: nat,
+    pub arch: Arch,
 }
 
 // page_size, next_sizes
@@ -173,33 +270,33 @@ fndecl!(pub fn pow2(v: nat) -> nat);
 
 impl PrefixTreeNode {
     #[spec]
-    pub fn entry_size(&self, arch: &Arch) -> nat {
-        arch.layer_sizes.index(self.layer as int + 1)
+    pub fn entry_size(&self) -> nat {
+        self.arch.layer_sizes.index(self.layer as int + 1)
     }
 
     #[spec]
-    pub fn layer_size(&self, arch: &Arch) -> nat {
-        arch.layer_sizes.index(self.layer as int)
+    pub fn layer_size(&self) -> nat {
+        self.arch.layer_sizes.index(self.layer as int)
     }
 
     #[spec]
-    pub fn entries_are_entry_size_aligned(&self, arch: &Arch) -> bool {
-        forall(|offset: nat| self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size(arch)))
+    pub fn entries_are_entry_size_aligned(&self) -> bool {
+        forall(|offset: nat| self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size()))
     }
 
     #[spec]
-    pub fn entries_fit_in_layer_size(&self, arch: &Arch) -> bool {
-        forall(|offset: nat| self.map.dom().contains(offset) >>= offset < self.layer_size(arch))
+    pub fn entries_fit_in_layer_size(&self) -> bool {
+        forall(|offset: nat| self.map.dom().contains(offset) >>= offset < self.layer_size())
     }
 
     #[spec]
-    pub fn pages_match_entry_size(&self, arch: &Arch) -> bool {
+    pub fn pages_match_entry_size(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Page())
-               >>= self.map.index(offset).get_Page_0().size == self.entry_size(arch))
+               >>= self.map.index(offset).get_Page_0().size == self.entry_size())
     }
 
     #[spec]
-    pub fn directories_are_in_next_layer(&self, arch: &Arch) -> bool {
+    pub fn directories_are_in_next_layer(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
                >>= {
                     let directory = self.map.index(offset).get_Directory_0();
@@ -210,110 +307,348 @@ impl PrefixTreeNode {
     }
 
     #[spec]
-    pub fn directories_obey_invariant(&self, arch: &Arch) -> bool {
-        decreases((arch.layer_sizes.len() - self.layer, 0));
+    pub fn directories_obey_invariant(&self) -> bool {
+        decreases((self.arch.layer_sizes.len() - self.layer, 0));
 
-        if self.layer < arch.layer_sizes.len() && self.directories_are_in_next_layer(arch) { 
+        if self.layer < self.arch.layer_sizes.len() && self.directories_are_in_next_layer() && self.directories_match_arch() {
             forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
-                   >>= self.map.index(offset).get_Directory_0().inv(arch))
+                   >>= self.map.index(offset).get_Directory_0().inv())
         } else {
             arbitrary()
         }
     }
 
     #[spec]
-    pub fn inv(&self, arch: &Arch) -> bool {
-        decreases((arch.layer_sizes.len() - self.layer, 1));
+    pub fn directories_match_arch(&self) -> bool {
+        forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
+               >>= equal(self.map.index(offset).get_Directory_0().arch, self.arch))
+    }
+
+    #[spec]
+    pub fn inv(&self) -> bool {
+        decreases((self.arch.layer_sizes.len() - self.layer, 1));
 
         true
-        && self.interp(arch).inv()
+        && self.interp().inv()
 
         && self.map.dom().finite()
-        && self.layer < arch.layer_sizes.len()
-        && self.entries_are_entry_size_aligned(arch)
-        && self.entries_fit_in_layer_size(arch)
-        && self.pages_match_entry_size(arch)
-        && self.directories_are_in_next_layer(arch)
-        && self.directories_obey_invariant(arch)
+        && self.layer < self.arch.layer_sizes.len()
+        && self.entries_are_entry_size_aligned()
+        && self.entries_fit_in_layer_size()
+        && self.pages_match_entry_size()
+        && self.directories_are_in_next_layer()
+        && self.directories_obey_invariant()
+        && self.directories_match_arch()
+    }
+
+    // #[spec]
+    // pub fn termination_test(self) {
+    //     decreases(self);
+
+    //     if self.inv() && self.arch.inv() {
+    //         if self.map.dom().len() == 0 {
+    //             ()
+    //         } else {
+    //             let k = self.map.dom().choose();
+    //             if self.map.index(k).is_Directory() {
+    //                 self.map.index(k).get_Directory_0().termination_test()
+    //             } else {
+    //                 ()
+    //             }
+    //         }
+    //     } else {
+    //         ()
+    //     }
+    // }
+
+    #[spec]
+    pub fn interp_pre(self) -> bool {
+        self.map.dom().finite()
     }
 
     #[spec]
-    pub fn termination_test(self) {
-        decreases(self);
+    pub fn interp(self) -> PageTableContents {
+        decreases((self, self.map.dom().len()));
+        decreases_by(Self::check_interp);
 
-        if self.map.dom().len() == 0 {
-            ()
-        } else {
-            let k = self.map.dom().choose();
-            if self.map.index(k).is_Directory() {
-                self.map.index(k).get_Directory_0().termination_test()
-            } else {
-                ()
-            }
-        }
-    }
-
-    #[spec]
-    pub fn interp(self, arch: &Arch) -> PageTableContents {
-        decreases(self);
-
-        // TODO: Recursion not allowed in closures?
-        // let f = |x:PrefixTreeNode| x.interp(arch);
-
-        // PageTableContents {
-        //     map: self.map.dom().fold(
-        //              map![],
-        //              |e: Map<nat,MemRegion>, x: nat| {
-        //                  match *self.map.index(x) {
-        //                      NodeEntry::Page(p) =>
-        //                          e.union_prefer_right(map![self.base_vaddr + x => p]),
-        //                      NodeEntry::Directory(d) =>
-        //                         e.union_prefer_right(d.interp(arch).map)
-        //                  }
-        //              })
-        // }
-
-        arbitrary()
-    }
-
-    #[spec] pub fn accepted_mapping(self, arch: &Arch, base: nat, frame: MemRegion) -> bool {
-        true
-        && self.interp(arch).accepted_mapping(base, frame)
-    }
-
-    #[spec]
-    pub fn map_frame(self, arch: &Arch, vaddr: nat, frame: MemRegion) -> PrefixTreeNode {
-        decreases(arch.layer_sizes.len() - self.layer);
-
-        let offset = vaddr - self.base_vaddr;
-        if frame.size == self.entry_size(arch) {
-            PrefixTreeNode {
-                map: self.map.insert(offset, box NodeEntry::Page(frame)),
-                ..self
-            }
-        } else {
-            let binding_offset = offset - (offset % self.entry_size(arch)); // 0xf374 -- entry_size 0x100 --> 0xf300
-            let directory: PrefixTreeNode = if self.map.dom().contains(offset) {
-                self.map.index(binding_offset).get_Directory_0()
-            } else {
-                PrefixTreeNode {
+        if self.interp_pre() {
+            if self.map.dom().len() == 0 {
+                PageTableContents {
                     map: map![],
-                    layer: self.layer + 1,
-                    base_vaddr: self.base_vaddr + binding_offset
+                    arch: self.arch,
                 }
-            };
-            let updated_directory = directory.map_frame(arch, vaddr, frame);
-            PrefixTreeNode {
-                map: self.map.insert(binding_offset, box NodeEntry::Directory(updated_directory)),
-                ..self
+            } else {
+                let x = self.map.dom().choose();
+                let x_map =
+                    match *self.map.index(x) {
+                        NodeEntry::Page(p) => map![self.base_vaddr + x => p],
+                        NodeEntry::Directory(d) => d.interp().map,
+                    };
+                let rem = PrefixTreeNode {
+                    map: self.map.remove(x),
+                    ..self
+                };
+                let rem_map = rem.interp().map;
+
+                PageTableContents {
+                    map: rem_map.union_prefer_right(x_map),
+                    arch: self.arch,
+                }
             }
+        } else {
+            arbitrary()
         }
+    }
+
+    #[proof] #[verifier(decreases_by)]
+    fn check_interp(self) {
+        requires(self.interp_pre());
+        if self.map.dom().len() == 0 {
+        } else {
+            let x = self.map.dom().choose();
+            if let NodeEntry::Directory(d) = *self.map.index(x) {
+            }
+            // TODO
+        }
+    }
+
+    // #[proof]
+    // pub fn lemma_interp_dom_contains(self, a: nat) {
+    //     requires([
+    //              self.map.dom().finite(),
+    //              self.map.dom().contains(a),
+    //              self.map.index(a).is_Page(),
+    //     ]);
+    //     ensures(self.interp().map.dom().contains(self.base_vaddr + a));
+
+    //     let s = self.map.dom();
+
+    //     lemma_set_contains_IMP_len_greater_zero::<nat>(s, a);
+    //     assert(s.len() != 0);
+
+    //     let x = self.map.dom().choose();
+    //     match *self.map.index(x) {
+    //         NodeEntry::Page(p) => {
+    //             if x == a {
+    //                 assert(map![self.base_vaddr + x => p].dom().contains(self.base_vaddr + x));
+    //             }
+    //         },
+    //         NodeEntry::Directory(d) => { }
+    //     }
+    //     let rem = PrefixTreeNode {
+    //         map: self.map.remove(x),
+    //         ..self
+    //     };
+    //     if x == a {
+    //     } else {
+    //         // TODO: the arg needs to be something like a % rem.entry_size()
+    //         // rem.lemma_interp_dom_contains(a);
+    //     }
+    // }
+
+    // #[spec]
+    // pub fn interp_fold(self, acc: Map<nat, MemRegion>, rest: Map<nat, Box<NodeEntry>>) -> Map<nat, MemRegion> {
+    //     decreases((acc.dom().len(), 0));
+
+    //     if acc.dom().finite() && rest.dom().finite() {
+    //         if rest.dom().len() > 0 {
+    //             let x = rest.dom().choose();
+    //             match *self.map.index(x) {
+    //                  NodeEntry::Page(p) =>
+    //                      self.interp_fold(acc.union_prefer_right(map![self.base_vaddr + x => p]), self.map.remove(x)),
+    //                  NodeEntry::Directory(d) =>
+    //                      self.interp_fold(acc.union_prefer_right(d.interp().map), self.map.remove(x)),
+    //             }
+    //         } else {
+    //             acc
+    //         }
+    //     } else {
+    //         arbitrary()
+    //     }
+    // }
+
+    // #[spec]
+    // pub fn interp(self) -> PageTableContents {
+    //     decreases((self, 1));
+
+    //     PageTableContents {
+    //         map: self.interp_fold(map![], self.map)
+    //     }
+    // }
+
+    // TODO: should probably remove arch from abstract layer again and add it to this one
+    #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
+        true
+        && self.interp().accepted_mapping(base, frame)
+    }
+
+    // // sanity check lemma
+    // #[proof]
+    // pub fn lemma_valid_map_frame_is_ok(self, vaddr: nat, frame: MemRegion) {
+    //     requires([
+    //              self.inv(),
+    //              self.accepted_mapping(vaddr, frame),
+    //              self.valid_mapping(vaddr, frame),
+    //     ]);
+    //     ensures(self.map_frame(vaddr, frame).is_Ok());
+    // }
+
+    #[spec]
+    pub fn map_frame(self, vaddr: nat, frame: MemRegion) -> Result<PrefixTreeNode,()> {
+        decreases(self.arch.layer_sizes.len() - self.layer);
+
+        if self.inv() && self.accepted_mapping(vaddr, frame) {
+            let offset = vaddr - self.base_vaddr;
+            if frame.size == self.entry_size() {
+                if self.map.dom().contains(offset) {
+                    Err(())
+                } else {
+                    Ok(PrefixTreeNode {
+                        map: self.map.insert(offset, box NodeEntry::Page(frame)),
+                        ..self
+                    })
+                }
+            } else {
+                let binding_offset = offset - (offset % self.entry_size()); // 0xf374 -- entry_size 0x100 --> 0xf300
+                if self.map.dom().contains(offset) {
+                    match *self.map.index(binding_offset) {
+                        NodeEntry::Page(_)      => Err(()),
+                        NodeEntry::Directory(d) =>
+                            match d.map_frame(vaddr, frame) {
+                                Ok(upd_d) =>
+                                    Ok(PrefixTreeNode {
+                                        map: self.map.insert(binding_offset, box NodeEntry::Directory(upd_d)),
+                                        ..self
+                                    }),
+                                Err(e) => Err(e),
+                            }
+                    }
+                } else {
+                    // TODO: no asserts allowed for now
+                    // assert(self.layer + 1 != self.arch.layer_sizes.len())
+                    // Err(()) // TODO: when does this happen? can this ever happen when self.accepted_mapping(..) is true? Err/arbitrary?
+                    let d =
+                        PrefixTreeNode {
+                            map: map![],
+                            layer: self.layer + 1,
+                            base_vaddr: self.base_vaddr + binding_offset,
+                            arch: self.arch,
+                        };
+
+                    // TODO: can we get ? syntax for results?
+                    // use map_ok
+                    match d.map_frame(vaddr, frame) {
+                        Ok(upd_d) =>
+                            Ok(PrefixTreeNode {
+                                map: self.map.insert(binding_offset, box NodeEntry::Directory(upd_d)),
+                                ..self
+                            }),
+                        Err(e) => Err(e),
+                    }
+                }
+            }
+        } else {
+            arbitrary()
+        }
+    }
+
+    // TODO: maybe we should wait with this proof until we know for sure what interp looks like?
+    // Given a PrefixTreeNode:
+    //
+    // +------+ ----> +------+
+    // |      |/      |      |
+    // +------+       +------+
+    // | dir  |       | page |
+    // +------+       +------+
+    // |      |\      |      |
+    // +------+ ----> +------+
+    // |      |
+    // +------+
+    //
+    // Then in any of its directories we have the two bounds shown by the arrows:
+    // - Upper arrow: dir.base_vaddr <= page.base
+    // - Lower arrow: page.base + page.size <= dir.base_vaddr + self.entry_size()
+    // (including for pages in nested directories)
+    #[proof]
+    pub fn lemma_pages_obey_boundaries(self) {
+        requires([
+                 self.inv(),
+        ]);
+        ensures(forall(|d: nat, b: nat|
+                       self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
+                       self.map.index(d).get_Directory_0().interp().map.dom().contains(b) >>= {
+                           let dir = self.map.index(d).get_Directory_0();
+                           let MemRegion { base, size } = dir.interp().map.index(b);
+                           dir.base_vaddr <= base && base + size <= dir.base_vaddr + self.entry_size()
+                       }));
+        assume(false);
     }
 
     #[proof]
-    fn map_frame_refines(self, arch: &Arch, vaddr: nat, frame: MemRegion) {
-        requires(self.inv(arch) && arch.inv());
-        ensures(equal(self.map_frame(arch, vaddr, frame).interp(arch), self.interp(arch).map_frame(vaddr, frame)));
+    fn map_frame_ok_refines(self, vaddr: nat, frame: MemRegion) {
+        requires([
+                 self.inv(),
+                 self.accepted_mapping(vaddr, frame),
+                 // equal(self.layer, 0)
+        ]);
+        ensures([
+                self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok(),
+                equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0())
+        ]);
+
+        let offset = vaddr - self.base_vaddr;
+        if frame.size == self.entry_size() {
+            if self.map.dom().contains(offset) {
+                // assert(!self.map_frame(vaddr, frame).is_Ok());
+                // assert(self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok());
+                // assert(equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0()));
+                assume(false);
+            } else {
+                assert(self.map_frame(vaddr, frame).is_Ok());
+                // assert(forall(|o:nat,n:PrefixTreeNode|
+                //               o < vaddr &&
+                //               self.map.contains(o,n) && n.is_Page()
+                //                   >>= o + self.entry_size() <= vaddr));
+
+                if !self.interp().valid_mapping(vaddr, frame) {
+                    assert(exists(|b: nat| self.interp().map.dom().contains(b) && overlap(
+                            MemRegion { base: vaddr, size: frame.size },
+                            MemRegion { base: b,     size: self.interp().map.index(b).size }
+                            )));
+                    let b = choose(|b: nat| self.interp().map.dom().contains(b) && overlap(
+                            MemRegion { base: vaddr, size: frame.size },
+                            MemRegion { base: b,     size: self.interp().map.index(b).size }
+                            ));
+                    let MemRegion { base, size } = self.interp().map.index(b);
+                    self.lemma_pages_obey_boundaries();
+                    assume(self.interp().map.dom().contains(vaddr));
+                    self.interp().lemma_overlap_IMP_equal_base(b, vaddr, frame.size);
+                    assert(b == vaddr);
+                    assume(self.map.dom().contains(b));
+
+                    // assume(forall(|d: nat, b: nat|
+                    //               self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
+                    //     self.map.index(d).get_Directory_0().interp().map.dom().contains(b) >>= {
+                    //         let dir = self.map.index(d).get_Directory_0();
+                    //         let MemRegion { base, size } = #[trigger] dir.interp().map.index(b);
+                    //         dir.base_vaddr <= base && base + size <= dir.base_vaddr + self.entry_size()
+                    //     }));
+                    // assert(self.map.dom().contains(b) && overlap(
+                    //         MemRegion { base: vaddr, size: frame.size },
+                    //         MemRegion { base: b, size: self.map.index(b).size }
+                    //         ));
+                    assert(false);
+                }
+                // suppose overlapping mapping exists
+                //
+                assert(self.interp().valid_mapping(vaddr, frame));
+                assert(self.interp().map_frame(vaddr, frame).is_Ok());
+                assert(self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok());
+                assert(equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0()));
+            }
+        } else {
+            assume(false);
+        }
     }
 
     // NOTE: maybe return whether the frame was unmapped
@@ -361,20 +696,20 @@ impl PrefixTreeNode {
 // fn next_sizes_len_decreases(node: PrefixTreeNode) {
 //     requires(node.inv());
 //     ensures(forall(|i: nat| i < node.next_sizes.len() >>= node.page_size > node.next_sizes.index(i)));
-// 
+//
 //     if node.next_sizes.len() == 0 {
 //     } else {
 //         forall(|i: nat| {
 //             requires(i < node.next_sizes.len());
 //             ensures(node.page_size > node.next_sizes.index(i));
-// 
+//
 //             if i == 0 {
 //             } else {
 //             }
 //         });
 //     }
 // }
-// 
+//
 // #[proof]
 // fn map_frame_preserves_inv_2(node: PrefixTreeNode, base: nat, frame: MemRegion) {
 //     requires(node.inv() && node.view().accepted_mapping(base, frame) && frame.size <= node.page_size);
@@ -417,3 +752,17 @@ impl PrefixTreeNode {
 // NOTE: the memory alloc may fail
 // NOTE: use linearity to prevent a frame being mapped in the kernel and user-space at the same
 // time
+
+#[proof]
+pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
+    requires([
+             s.finite(),
+             s.contains(a)
+    ]);
+    ensures(s.len() > 0);
+
+    if s.len() == 0 {
+        // contradiction
+        assert(s.remove(a).len() + 1 == 0);
+    }
+}
