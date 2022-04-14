@@ -88,9 +88,9 @@ impl PageTableContents {
     pub fn inv(&self) -> bool {
         true
         && self.arch.inv()
-        && forall(|va: nat| self.map.dom().contains(va) >>=
+        && forall(|va: nat| with_triggers!([self.map.index(va)] => self.map.dom().contains(va) >>=
                   (base_page_aligned(va, self.map.index(va).size)
-                   && base_page_aligned(self.map.index(va).base, self.map.index(va).size)))
+                   && base_page_aligned(self.map.index(va).base, self.map.index(va).size))))
         && forall(|b1: nat, b2: nat|
         // TODO: let vregion1, vregion2
             (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
@@ -107,7 +107,7 @@ impl PageTableContents {
     }
 
     #[spec] pub fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {
-        forall(|b: nat| self.map.dom().contains(b) >>= !overlap(
+        forall(|b: nat| #[auto_trigger] self.map.dom().contains(b) >>= !overlap(
                 MemRegion { base: base, size: frame.size },
                 MemRegion { base: b, size: self.map.index(b).size }
                 ))
@@ -208,10 +208,10 @@ impl PageTableContents {
     #[spec] fn resolve(self, vaddr: nat) -> nat {
         if exists(|n:nat|
                   self.map.dom().contains(n) &&
-                  n <= vaddr && vaddr < n + self.map.index(n).size) {
+                  n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size) {
             let n = choose(|n:nat|
                            self.map.dom().contains(n) &&
-                           n <= vaddr && vaddr < n + self.map.index(n).size);
+                           n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size);
             let offset = vaddr - n;
             self.map.index(n).base + offset
         } else {
@@ -281,7 +281,7 @@ impl PrefixTreeNode {
 
     #[spec]
     pub fn entries_are_entry_size_aligned(&self) -> bool {
-        forall(|offset: nat| self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size()))
+        forall(|offset: nat| #[auto_trigger] self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size()))
     }
 
     #[spec]
@@ -292,14 +292,14 @@ impl PrefixTreeNode {
     #[spec]
     pub fn pages_match_entry_size(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Page())
-               >>= self.map.index(offset).get_Page_0().size == self.entry_size())
+               >>= (#[trigger] self.map.index(offset)).get_Page_0().size == self.entry_size())
     }
 
     #[spec]
     pub fn directories_are_in_next_layer(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
                >>= {
-                    let directory = self.map.index(offset).get_Directory_0();
+                    let directory = (#[trigger] self.map.index(offset)).get_Directory_0();
                     true
                     && directory.layer == self.layer + 1
                     && directory.base_vaddr == self.base_vaddr + offset
@@ -312,7 +312,7 @@ impl PrefixTreeNode {
 
         if self.layer < self.arch.layer_sizes.len() && self.directories_are_in_next_layer() && self.directories_match_arch() {
             forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
-                   >>= self.map.index(offset).get_Directory_0().inv())
+                   >>= (#[trigger] self.map.index(offset)).get_Directory_0().inv())
         } else {
             arbitrary()
         }
@@ -321,7 +321,7 @@ impl PrefixTreeNode {
     #[spec]
     pub fn directories_match_arch(&self) -> bool {
         forall(|offset: nat| (self.map.dom().contains(offset) && self.map.index(offset).is_Directory())
-               >>= equal(self.map.index(offset).get_Directory_0().arch, self.arch))
+               >>= equal((#[trigger] self.map.index(offset)).get_Directory_0().arch, self.arch))
     }
 
     #[spec]
@@ -611,11 +611,11 @@ impl PrefixTreeNode {
                 //                   >>= o + self.entry_size() <= vaddr));
 
                 if !self.interp().valid_mapping(vaddr, frame) {
-                    assert(exists(|b: nat| self.interp().map.dom().contains(b) && overlap(
+                    assert(exists(|b: nat| #[auto_trigger] self.interp().map.dom().contains(b) && overlap(
                             MemRegion { base: vaddr, size: frame.size },
                             MemRegion { base: b,     size: self.interp().map.index(b).size }
                             )));
-                    let b = choose(|b: nat| self.interp().map.dom().contains(b) && overlap(
+                    let b = choose(|b: nat| #[auto_trigger] self.interp().map.dom().contains(b) && overlap(
                             MemRegion { base: vaddr, size: frame.size },
                             MemRegion { base: b,     size: self.interp().map.index(b).size }
                             ));
