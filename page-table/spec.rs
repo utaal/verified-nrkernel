@@ -88,7 +88,7 @@ impl PageTableContents {
     pub fn inv(&self) -> bool {
         true
         && self.arch.inv()
-        && forall(|va: nat| with_triggers!([self.map.index(va)] => self.map.dom().contains(va) >>=
+        && forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] => self.map.dom().contains(va) >>=
                   (base_page_aligned(va, self.map.index(va).size)
                    && base_page_aligned(self.map.index(va).base, self.map.index(va).size))))
         && forall(|b1: nat, b2: nat|
@@ -258,6 +258,7 @@ pub struct PrefixTreeNode {
     pub layer: nat,       // index into layer_sizes
     pub base_vaddr: nat,
     pub arch: Arch,
+    pub interp_map: Map<nat, MemRegion>,
 }
 
 // page_size, next_sizes
@@ -339,6 +340,8 @@ impl PrefixTreeNode {
         && self.directories_are_in_next_layer()
         && self.directories_obey_invariant()
         && self.directories_match_arch()
+
+        && equal(self.interp_map, self.interp().map)
     }
 
     // #[spec]
@@ -362,36 +365,32 @@ impl PrefixTreeNode {
     // }
 
     #[spec]
-    pub fn interp_pre(self) -> bool {
+    pub fn interp_pre(self, start: nat) -> bool {
         self.map.dom().finite()
     }
 
     #[spec]
     pub fn interp(self) -> PageTableContents {
-        decreases((self, self.map.dom().len()));
-        decreases_by(Self::check_interp);
+        self.interp_aux(0)
+    }
+    #[spec]
+    pub fn interp_aux(self, start: nat) -> PageTableContents {
+        decreases((self, self.layer_size() - start));
+        decreases_by(Self::check_interp_aux);
 
-        if self.interp_pre() {
-            if self.map.dom().len() == 0 {
+        if self.interp_pre(start) {
+            if start >= self.layer_size() {
                 PageTableContents {
                     map: map![],
                     arch: self.arch,
                 }
-            } else {
-                let x = self.map.dom().choose();
-                let x_map =
-                    match *self.map.index(x) {
-                        NodeEntry::Page(p) => map![self.base_vaddr + x => p],
-                        NodeEntry::Directory(d) => d.interp().map,
-                    };
-                let rem = PrefixTreeNode {
-                    map: self.map.remove(x),
-                    ..self
-                };
-                let rem_map = rem.interp().map;
-
+            } else { // start < self.layer_size()
+                let rem = self.interp_aux(start+1).map;
                 PageTableContents {
-                    map: rem_map.union_prefer_right(x_map),
+                    map: match *self.map.index(start) {
+                        NodeEntry::Page(p)      => rem.union_prefer_right(map![self.base_vaddr + start => p]),
+                        NodeEntry::Directory(d) => rem.union_prefer_right(d.interp_aux(0).map),
+                    },
                     arch: self.arch,
                 }
             }
@@ -401,16 +400,57 @@ impl PrefixTreeNode {
     }
 
     #[proof] #[verifier(decreases_by)]
-    fn check_interp(self) {
-        requires(self.interp_pre());
-        if self.map.dom().len() == 0 {
+    fn check_interp_aux(self, start: nat) {
+        requires(self.interp_pre(start));
+        if start >= self.layer_size() {
         } else {
             let x = self.map.dom().choose();
             if let NodeEntry::Directory(d) = *self.map.index(x) {
             }
             // TODO
+            assume(false);
         }
     }
+
+    // pub fn valid_index_lemmas() {
+    //     ensures([forall(|ptn: PrefixTreeNode, i: Seq<nat>|
+    //             ...
+    //     ]);
+    // }
+
+    // #[spec]
+    // pub fn valid_index(self, i: Seq<nat>) -> bool {
+    //     decreases(i.len());
+
+    //     if i.len() == 0 {
+    //         false
+    //     } else {
+    //         if i.len() == 1 {
+    //             self.map.dom().contains(i.index(0)) && self.map.index(i.index(0)).is_Page()
+    //         } else {
+    //             if self.map.dom().contains(i.index(0)) {
+    //                 match *self.map.index(i.index(0)) {
+    //                     NodeEntry::Directory(d) => d.valid_index(i.subrange(1,i.len())),
+    //                     NodeEntry::Page(_)      => false,
+    //                 }
+    //             } else {
+    //                 false
+    //             }
+    //         }
+    //     }
+    // }
+
+    // #[proof]
+    // pub fn lemma_valid_index_is_nonempty(self, i: Seq<nat>) {
+    //     requires(self.valid_index(i));
+    //     ensures(i.len() > 0);
+    // }
+
+    // #[proof]
+    // pub fn lemma(self, i: Seq<nat>) {
+    //     requires(self.valid_index(i));
+    //     ensures(self.interp().map.dom().contains(self.base_vaddr + i.index(0))); // TODO: it's actually the sum of the indices. maybe too complicated.
+    // }
 
     // #[proof]
     // pub fn lemma_interp_dom_contains(self, a: nat) {
@@ -476,7 +516,6 @@ impl PrefixTreeNode {
     //     }
     // }
 
-    // TODO: should probably remove arch from abstract layer again and add it to this one
     #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         true
         && self.interp().accepted_mapping(base, frame)
@@ -505,6 +544,7 @@ impl PrefixTreeNode {
                 } else {
                     Ok(PrefixTreeNode {
                         map: self.map.insert(offset, box NodeEntry::Page(frame)),
+                        interp_map: self.interp_map.insert(self.base_vaddr + offset, frame),
                         ..self
                     })
                 }
@@ -518,21 +558,20 @@ impl PrefixTreeNode {
                                 Ok(upd_d) =>
                                     Ok(PrefixTreeNode {
                                         map: self.map.insert(binding_offset, box NodeEntry::Directory(upd_d)),
+                                        interp_map: self.interp_map.insert(self.base_vaddr + offset, frame),
                                         ..self
                                     }),
                                 Err(e) => Err(e),
                             }
                     }
                 } else {
-                    // TODO: no asserts allowed for now
-                    // assert(self.layer + 1 != self.arch.layer_sizes.len())
-                    // Err(()) // TODO: when does this happen? can this ever happen when self.accepted_mapping(..) is true? Err/arbitrary?
                     let d =
                         PrefixTreeNode {
                             map: map![],
                             layer: self.layer + 1,
                             base_vaddr: self.base_vaddr + binding_offset,
                             arch: self.arch,
+                            interp_map: map![],
                         };
 
                     // TODO: can we get ? syntax for results?
@@ -541,6 +580,7 @@ impl PrefixTreeNode {
                         Ok(upd_d) =>
                             Ok(PrefixTreeNode {
                                 map: self.map.insert(binding_offset, box NodeEntry::Directory(upd_d)),
+                                interp_map: self.interp_map.insert(self.base_vaddr + offset, frame),
                                 ..self
                             }),
                         Err(e) => Err(e),
@@ -549,6 +589,42 @@ impl PrefixTreeNode {
             }
         } else {
             arbitrary()
+        }
+    }
+
+    #[proof] fn map_frame_maintains_interp_map_correspondence(#[spec] self, vaddr: nat, frame: MemRegion) {
+        requires([
+            self.inv(),
+            self.accepted_mapping(vaddr, frame),
+            self.map_frame(vaddr, frame).is_Ok(),
+        ]);
+        ensures([
+            equal(self.map_frame(vaddr, frame).get_Ok_0().interp_map, self.map_frame(vaddr, frame).get_Ok_0().interp().map)
+        ]);
+
+        let res = self.map_frame(vaddr, frame).get_Ok_0();
+
+        let offset = vaddr - self.base_vaddr;
+        if frame.size == self.entry_size() {
+            if self.map.dom().contains(offset) {
+            } else {
+                assert(equal(res.map, self.map.insert(offset, box NodeEntry::Page(frame))));
+                assert(equal(res.interp_map, res.interp().map));
+                assume(false);
+                // Ok(PrefixTreeNode {
+                //     map: self.map.insert(offset, box NodeEntry::Page(frame)),
+                //     interp_map: self.interp_map.insert(offset, frame),
+                //     ..self
+                // })
+            }
+        } else {
+            assume(false);
+            let binding_offset = offset - (offset % self.entry_size()); // 0xf374 -- entry_size 0x100 --> 0xf300
+            if self.map.dom().contains(offset) {
+                assume(false);
+            } else {
+                assume(false);
+            }
         }
     }
 
@@ -622,9 +698,10 @@ impl PrefixTreeNode {
                     let MemRegion { base, size } = self.interp().map.index(b);
                     self.lemma_pages_obey_boundaries();
                     assume(self.interp().map.dom().contains(vaddr));
-                    self.interp().lemma_overlap_IMP_equal_base(b, vaddr, frame.size);
-                    assert(b == vaddr);
-                    assume(self.map.dom().contains(b));
+                    // self.interp().lemma_overlap_IMP_equal_base(b, vaddr, frame.size);
+                    // assert(b == vaddr);
+                    // assume(self.map.dom().contains(b));
+                    assume(false);
 
                     // assume(forall(|d: nat, b: nat|
                     //               self.map.dom().contains(d) && self.map.index(d).is_Directory() &&
@@ -644,6 +721,7 @@ impl PrefixTreeNode {
                 assert(self.interp().valid_mapping(vaddr, frame));
                 assert(self.interp().map_frame(vaddr, frame).is_Ok());
                 assert(self.interp().map_frame(vaddr, frame).is_Ok() == self.map_frame(vaddr, frame).is_Ok());
+                assume(false);
                 assert(equal(self.map_frame(vaddr, frame).get_Ok_0().interp(), self.interp().map_frame(vaddr, frame).get_Ok_0()));
             }
         } else {
