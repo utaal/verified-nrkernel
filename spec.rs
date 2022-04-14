@@ -2,6 +2,7 @@ mod pervasive;
 #[allow(unused_imports)] use pervasive::*;
 #[allow(unused_imports)] use builtin::*;
 #[allow(unused_imports)] use builtin_macros::*;
+#[allow(unused_imports)] use state_machines_macros::*;
 use map::*;
 
 fn main() {}
@@ -85,11 +86,41 @@ struct PageTableEntry {
     flags: Flags,
 }
 
-struct MemoryTranslator {
-    tlb: Map</* VAddr */ nat, PageTableEntry>,
-    page_table: Map</* VAddr */ nat, PageTableEntry>,
+state_machine! { MemoryTranslator {
+    fields {
+        pub tlb: Map</* VAddr */ nat, PageTableEntry>,
+        pub page_table: Map</* VAddr */ nat, PageTableEntry>,
+    }
+
+    readonly! {
+        resolve(vaddr: nat, entry: PageTableEntry) {
+            require(pre.tlb.dom().contains(vaddr));
+            require(entry == pre.tlb.index(vaddr)); // TODO: consider the size
+        }
+    }
+
+    transition! {
+        fill_tlb(vaddr: nat) {
+            require(pre.page_table.dom().contains(vaddr));
+            update tlb = pre.tlb.insert(vaddr, pre.page_table.index(vaddr));
+        }
+    }
+} }
+
+#[proof]
+fn memory_translator_test_1() {
+    let entry = PageTableEntry { p_addr: 16, size: 8, flags: Flags { is_present: true, is_writable: true, is_user_mode_allowed: true, instruction_fetching_disabled: true } };
+    let mt = MemoryTranslator {
+        tlb: map![],
+        page_table: map![128 => entry],
+    };
+    let mt_p = MemoryTranslator {
+        tlb: map![128 => entry],
+        ..mt
+    };
+    assert(MemoryTranslator::fill_tlb(mt, mt_p, 128));
 }
- 
+
 // impl MemoryTranslator {
 // 
 //     fn invalidate(self, self', ) {
