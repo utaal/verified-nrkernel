@@ -95,7 +95,7 @@ state_machine! { MemoryTranslator {
     readonly! {
         resolve(vaddr: nat, entry: PageTableEntry) {
             require(pre.tlb.dom().contains(vaddr));
-            require(entry == pre.tlb.index(vaddr));
+            require(entry == pre.tlb.index(vaddr)); // TODO: consider the size
         }
     }
 
@@ -106,7 +106,21 @@ state_machine! { MemoryTranslator {
         }
     }
 } }
- 
+
+#[proof]
+fn memory_translator_test_1() {
+    let entry = PageTableEntry { p_addr: 16, size: 8, flags: Flags { is_present: true, is_writable: true, is_user_mode_allowed: true, instruction_fetching_disabled: true } };
+    let mt = MemoryTranslator {
+        tlb: map![],
+        page_table: map![128 => entry],
+    };
+    let mt_p = MemoryTranslator {
+        tlb: map![128 => entry],
+        ..mt
+    };
+    assert(MemoryTranslator::fill_tlb(mt, mt_p, 128));
+}
+
 // impl MemoryTranslator {
 // 
 //     fn invalidate(self, self', ) {
