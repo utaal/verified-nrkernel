@@ -369,6 +369,7 @@ impl PrefixTreeNode {
     #[spec]
     pub fn interp(self) -> PageTableContents {
         decreases((self, self.map.dom().len()));
+        decreases_by(Self::check_interp);
 
         if self.interp_pre() {
             if self.map.dom().len() == 0 {
@@ -396,6 +397,18 @@ impl PrefixTreeNode {
             }
         } else {
             arbitrary()
+        }
+    }
+
+    #[proof] #[verifier(decreases_by)]
+    fn check_interp(self) {
+        requires(self.interp_pre());
+        if self.map.dom().len() == 0 {
+        } else {
+            let x = self.map.dom().choose();
+            if let NodeEntry::Directory(d) = *self.map.index(x) {
+            }
+            // TODO
         }
     }
 
