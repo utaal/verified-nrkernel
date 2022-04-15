@@ -18,6 +18,7 @@ TODO: we could put the actual appers here as well.
  * [Formal Reasoning Under Cached Address Translation](https://doi.org/10.1007/s10817-019-09539-7)
  * [Program Verification in the PResence of Cached Address Translation](https://hirataqdees.github.io/assets/img/itp18.pdf)
  * [Reasoning about Translation Lookaside Buffers](https://hirataqdees.github.io/assets/img/lpar17.pdf)
+ * [Thread Modularity at Many Levels](https://dl.acm.org/doi/pdf/10.1145/3009837.3009893) Verifies TLB shootdowns in Mach
 
 **Arm Memory Models**
  * This are the memory models from Peter Sewell's group in Cambridge
