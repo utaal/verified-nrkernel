@@ -203,7 +203,18 @@ impl PageTableContents {
         ]);
     }
 
-
+    // #[proof] #[verifier(non_linear)]
+    // pub fn lemma_overlap_aligned_equal_size_implies_equal_base(va1: nat, va2: nat, size: nat) {
+    //     requires([
+    //         base_page_aligned(va1, size),
+    //         base_page_aligned(va2, size),
+    //         size > 0,
+    //         overlap(
+    //             MemRegion { base: va1, size: size },
+    //             MemRegion { base: va2, size: size }),
+    //     ]);
+    //     ensures(va1 == va2);
+    // }
 
     #[proof]
     pub fn lemma_overlap_IMP_equal_base(self, va1: nat, base: nat, size: nat) {
