@@ -352,7 +352,7 @@ impl PrefixTreeNode {
     #[spec]
     pub fn interp_aux(self, i: nat) -> PageTableContents {
         decreases((self, self.layer_size() - i, 0));
-        // decreases_by(Self::check_interp_aux);
+        decreases_by(Self::check_interp_aux);
 
         // if self.inv() {
         if i >= self.entries.len() {
@@ -378,16 +378,16 @@ impl PrefixTreeNode {
         // }
     }
 
-    // #[proof] #[verifier(decreases_by)]
-    // fn check_interp_aux(self, i: nat) {
-    //     requires(self.inv());
-    //     if i >= self.entries.len() {
-    //         assume(false);
-    //     } else {
-    //         // TODO
-    //         assume(false);
-    //     }
-    // }
+    #[proof] #[verifier(decreases_by)]
+    fn check_interp_aux(self, i: nat) {
+        assume(false);
+        // if i >= self.entries.len() {
+        //     assume(false);
+        // } else {
+        //     // TODO
+        //     assume(false);
+        // }
+    }
 
     // #[proof]
     // fn x0(i: nat, m1: Map<nat,nat>, m2: Map<nat,nat>) {
@@ -402,6 +402,7 @@ impl PrefixTreeNode {
     fn x1(self, j: nat, i: nat) {
         decreases(self.entries.len() - i);
         requires([
+                 // self.entry_size() > 0,
                  // self.inv(),
                  // self.entries.index(i).is_Page()
                  j >= i,
@@ -425,23 +426,24 @@ impl PrefixTreeNode {
                 assert(j < self.entries.len());
                 assert(self.entries.index(j).is_Page());
                 self.x1(j, i+1);
-                // assert(self.interp_aux(i+1).map.dom().contains(self.base_vaddr + j * self.entry_size()));
-                assume(self.interp_aux(i+1).map.dom().contains(self.base_vaddr + j * self.entry_size()));
+                assert(self.interp_aux(i+1).map.dom().contains(self.base_vaddr + j * self.entry_size()));
+                // assume(self.interp_aux(i+1).map.dom().contains(self.base_vaddr + j * self.entry_size()));
                 let rem = self.interp_aux(i+1).map;
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
+                        assume(false);
+                        assume(self.entry_size() > 0);
                         assert(self.base_vaddr + i * self.entry_size() < self.base_vaddr + j * self.entry_size());
                         assert(rem.union_prefer_right(map![self.base_vaddr + i * self.entry_size() => p]).dom().contains(self.base_vaddr + j * self.entry_size()));
                     },
                     NodeEntry::Directory(d) => {
-                        // TODO: going to need the stuff below to show we don't overwrite other
-                        // mappings
-                        // let dmap = d.interp_aux(0).map;
-                        // assume(forall(|k:nat|
-                        //               dmap.dom().contains(k)
-                        //               >>= self.base_vaddr + i * self.entry_size() <= k
-                        //               && k + dmap.index(k).size <= self.base_vaddr + (i+1) * self.entry_size()));
-                        // assert(!dmap.dom().contains(self.base_vaddr + j * self.entry_size()));
+                        assume(false);
+                        let dmap = d.interp_aux(0).map;
+                        assume(forall(|k:nat|
+                                      dmap.dom().contains(k)
+                                      >>= self.base_vaddr + i * self.entry_size() <= k
+                                      && k + dmap.index(k).size <= self.base_vaddr + (i+1) * self.entry_size()));
+                        assert(!dmap.dom().contains(self.base_vaddr + j * self.entry_size()));
                     },
                 };
             }
