@@ -3,6 +3,7 @@ use builtin::*;
 #[allow(unused_imports)]
 use builtin_macros::*;
 #[macro_use]
+#[allow(unused_imports)]
 use crate::pervasive::*;
 
 #[proof] #[verifier(external_body)]

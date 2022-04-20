@@ -9,6 +9,7 @@ use map::*;
 use set::*;
 #[allow(unused_imports)]
 use crate::{seq, seq_insert_rec, map, map_insert_rec};
+#[allow(unused_imports)]
 use result::{*, Result::*};
 
 pub struct MemRegion { pub base: nat, pub size: nat }
@@ -93,7 +94,7 @@ pub struct PageTableContents {
 }
 
 #[spec]
-pub fn base_page_aligned(addr: nat, size: nat) -> bool {
+pub fn aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }
 
@@ -140,8 +141,8 @@ impl PageTableContents {
         true
         && self.arch.inv()
         && forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] => self.map.dom().contains(va) >>=
-                  (base_page_aligned(va, self.map.index(va).size)
-                   && base_page_aligned(self.map.index(va).base, self.map.index(va).size))))
+                  (aligned(va, self.map.index(va).size)
+                   && aligned(self.map.index(va).base, self.map.index(va).size))))
         && forall(|b1: nat, b2: nat|
         // TODO: let vregion1, vregion2
             (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
@@ -152,8 +153,8 @@ impl PageTableContents {
 
     #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         true
-        && base_page_aligned(base, frame.size)
-        && base_page_aligned(frame.base, frame.size)
+        && aligned(base, frame.size)
+        && aligned(frame.base, frame.size)
         && self.arch.contains_entry_size(frame.size)
     }
 
@@ -206,8 +207,8 @@ impl PageTableContents {
     // #[proof] #[verifier(non_linear)]
     // pub fn lemma_overlap_aligned_equal_size_implies_equal_base(va1: nat, va2: nat, size: nat) {
     //     requires([
-    //         base_page_aligned(va1, size),
-    //         base_page_aligned(va2, size),
+    //         aligned(va1, size),
+    //         aligned(va2, size),
     //         size > 0,
     //         overlap(
     //             MemRegion { base: va1, size: size },
@@ -221,7 +222,7 @@ impl PageTableContents {
         requires([
                  self.inv(),
                  self.map.dom().contains(va1),
-                 base_page_aligned(base, size),
+                 aligned(base, size),
                  size == self.map.index(va1).size,
                  size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
                  overlap(
@@ -342,7 +343,7 @@ impl Directory {
     pub fn well_formed(&self) -> bool {
         true
         && self.arch.inv()
-        && base_page_aligned(self.base_vaddr, self.entry_size() * self.num_entries())
+        && aligned(self.base_vaddr, self.entry_size() * self.num_entries())
         && self.layer < self.arch.layers.len()
         && self.entries.len() == self.num_entries()
     }
@@ -403,6 +404,12 @@ impl Directory {
                >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch))
     }
 
+    #[spec(checked)]
+    pub fn frames_aligned(&self) -> bool {
+        recommends(self.well_formed());
+        forall(|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() >>=
+                  aligned((#[trigger] self.entries.index(i)).get_Page_0().base, self.entry_size()))
+    }
 
     #[spec(checked)]
     pub fn inv(&self) -> bool {
@@ -414,6 +421,7 @@ impl Directory {
         && self.directories_are_in_next_layer()
         && self.directories_match_arch()
         && self.directories_obey_invariant()
+        && self.frames_aligned()
     }
 
     // forall self :: self.directories_obey_invariant()
@@ -493,8 +501,8 @@ impl Directory {
         assert_forall_by(|va: nat| {
             requires(interp.map.dom().contains(va));
             ensures(true
-                && base_page_aligned(va, (#[trigger] interp.map.index(va)).size)
-                && base_page_aligned(interp.map.index(va).base, interp.map.index(va).size)
+                && aligned(va, (#[trigger] interp.map.index(va)).size)
+                && aligned(interp.map.index(va).base, interp.map.index(va).size)
             );
 
             if i >= self.entries.len() {
@@ -505,31 +513,31 @@ impl Directory {
                 if self.entries.index(i).is_Page() {
                     assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(self.base_vaddr + i * self.entry_size())));
                     if va < self.base_vaddr + i * self.entry_size() {
-                        crate::lib::mul_distributive(i, self.entry_size());
+                        assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
                         // TODO: verus bug?
-                        assume((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size());
+                        let es: nat = self.entry_size();
+                        crate::lib::mul_distributive(i, es);
+                        assume((i + 1) * es == i * es + es); // TODO verus ???
+                        assume((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size()); // TODO verus ???
+                        assert(va >= self.base_vaddr + i * self.entry_size() + self.entry_size());
                         assert(false);
                     } else if va == self.base_vaddr + i * self.entry_size() {
-                        assume(base_page_aligned(va, interp.map.index(va).size));
+                        assert(interp.map.index(va).size == self.entry_size());
+                        assert(self.well_formed());
+                        assume(aligned(self.base_vaddr, self.entry_size() * self.num_entries())); // TODO verus bug
+                        assume(aligned(self.base_vaddr, self.entry_size())); // TODO verus nonlinear
+                        assume((i * self.entry_size()) % self.entry_size() == 0); // TODO verus nonlinear
+                        assert(aligned(i * self.entry_size(), self.entry_size()));
+                        assume(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size())); // TODO verus nonlinear
+                        assert(aligned(va, interp.map.index(va).size));
                     } else {
-                        assert(base_page_aligned(va, interp.map.index(va).size));
+                        assert(aligned(va, interp.map.index(va).size));
                     }
-                    assume(base_page_aligned(interp.map.index(va).base, interp.map.index(va).size));
+                    assert(aligned(interp.map.index(va).base, interp.map.index(va).size));
                 }
             }
-
-            // if exists(|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() && va == self.base_vaddr + i * self.entry_size()) {
-            //     assert(base_page_aligned(va, interp.map.index(va).size));
-            // } else {
-            //     // it must be from a directory
-            //     assume(exists(|i: nat| i < self.entries.len() && self.entries.index(i).is_Directory() && self.entries.index(i).get_Directory_0().interp().map.dom().contains(va)));
-            //     let i: nat = choose(|i: nat| i < self.entries.len() && self.entries.index(i).is_Directory() && self.entries.index(i).get_Directory_0().interp().map.dom().contains(va));
-            //     assert(base_page_aligned(va, interp.map.index(va).size));
-            // }
-            // assume(base_page_aligned(interp.map.index(va).base, interp.map.index(va).size));
         });
-        assume(forall(|b1: nat, b2: nat|
-        // TODO: let vregion1, vregion2
+        assert(forall(|b1: nat, b2: nat|
             (interp.map.dom().contains(b1) && interp.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
                 MemRegion { base: b1, size: interp.map.index(b1).size },
                 MemRegion { base: b2, size: interp.map.index(b2).size }
