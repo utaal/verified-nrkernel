@@ -5,7 +5,7 @@ use builtin_macros::*;
 #[macro_use]
 use crate::pervasive::*;
 
-#[proof] #[verifier(non_linear)]
+#[proof] #[verifier(external_body)]
 pub fn mul_distributive(a: nat, b: nat) {
     ensures((a + 1) * b == a * b + b);
 }

@@ -503,16 +503,12 @@ impl Directory {
                 // TODO: verus bug?
                 assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
                 if self.entries.index(i).is_Page() {
-                    // assert(base_page_aligned(self.base_vaddr + i * self.entry_size(), interp.map.index(self.base_vaddr + i * self.entry_size()).size));
-                    // assert(!self.interp_aux(i + 1).map.dom().contains(self.base_vaddr + i * self.entry_size()));
                     assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(self.base_vaddr + i * self.entry_size())));
-
                     if va < self.base_vaddr + i * self.entry_size() {
                         crate::lib::mul_distributive(i, self.entry_size());
                         // TODO: verus bug?
                         assume((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size());
                         assert(false);
-                        // assert(base_page_aligned(va, interp.map.index(va).size));
                     } else if va == self.base_vaddr + i * self.entry_size() {
                         assume(base_page_aligned(va, interp.map.index(va).size));
                     } else {
