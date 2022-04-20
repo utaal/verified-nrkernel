@@ -88,14 +88,14 @@ struct PageTableEntry {
 
 state_machine! { MemoryTranslator {
     fields {
-        pub tlb: Map</* VAddr */ nat, PageTableEntry>,
+        pub tlb: Map</* VAddr */ nat, PageTableEntry>, // all the VAddr of a page move in sync
         pub page_table: Map</* VAddr */ nat, PageTableEntry>,
     }
 
     readonly! {
         resolve(vaddr: nat, entry: PageTableEntry) {
             require(pre.tlb.dom().contains(vaddr));
-            require(entry == pre.tlb.index(vaddr)); // TODO: consider the size
+            require(entry == pre.tlb.index(vaddr));
         }
     }
 
@@ -105,6 +105,8 @@ state_machine! { MemoryTranslator {
             update tlb = pre.tlb.insert(vaddr, pre.page_table.index(vaddr));
         }
     }
+
+    // TODO: do we want a next transition?
 } }
 
 #[proof]
@@ -119,6 +121,7 @@ fn memory_translator_test_1() {
         ..mt
     };
     assert(MemoryTranslator::fill_tlb(mt, mt_p, 128));
+    assert(MemoryTranslator::resolve(mt, 128, entry));
 }
 
 // impl MemoryTranslator {

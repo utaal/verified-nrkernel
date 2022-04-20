@@ -342,7 +342,9 @@ impl Directory {
     pub fn well_formed(&self) -> bool {
         true
         && self.arch.inv()
+        && base_page_aligned(self.base_vaddr, self.entry_size() * self.num_entries())
         && self.layer < self.arch.layers.len()
+        && self.entries.len() == self.num_entries()
     }
 
     #[spec]
@@ -353,112 +355,204 @@ impl Directory {
 
     #[spec]
     pub fn entry_size(&self) -> nat {
-        recommends(self.well_formed());
+        recommends(self.layer < self.arch.layers.len());
         self.arch.layers.index(self.layer).entry_size
     }
 
     #[spec]
     pub fn num_entries(&self) -> nat { // number of entries
-        recommends(self.well_formed());
+        recommends(self.layer < self.arch.layers.len());
         self.arch.layers.index(self.layer).num_entries
     }
 
+    #[spec(checked)]
+    pub fn pages_match_entry_size(&self) -> bool {
+        recommends(self.well_formed());
+        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
+               >>= (#[trigger] self.entries.index(i)).get_Page_0().size == self.entry_size())
+    }
+
+    #[spec(checked)]
+    pub fn directories_are_in_next_layer(&self) -> bool {
+        recommends(self.well_formed());
+        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+               >>= {
+                    let directory = (#[trigger] self.entries.index(i)).get_Directory_0();
+                    true
+                    && directory.layer == self.layer + 1
+                    && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
+                })
+    }
+
+    #[spec(checked)]
+    pub fn directories_obey_invariant(&self) -> bool {
+        decreases((self.arch.layers.len() - self.layer, 0));
+        recommends(self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch());
+
+        if self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch() {
+            forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+                   >>= (#[trigger] self.entries.index(i)).get_Directory_0().inv())
+        } else {
+            arbitrary()
+        }
+    }
+
+    #[spec(checked)]
+    pub fn directories_match_arch(&self) -> bool {
+        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+               >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch))
+    }
+
+
+    #[spec(checked)]
+    pub fn inv(&self) -> bool {
+        decreases(self.arch.layers.len() - self.layer);
+
+        self.well_formed()
+        && true
+        && self.pages_match_entry_size()
+        && self.directories_are_in_next_layer()
+        && self.directories_match_arch()
+        && self.directories_obey_invariant()
+    }
+
+    // forall self :: self.directories_obey_invariant()
+
+    #[spec(checked)]
+    pub fn interp(self) -> PageTableContents {
+        self.interp_aux(0)
+    }
+
+    #[spec(checked)]
+    pub fn interp_aux(self, i: nat) -> PageTableContents {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+        // decreases_by(Self::check_interp_aux);
+
+        if self.inv() {
+            if i >= self.entries.len() {
+                PageTableContents {
+                    map: map![],
+                    arch: self.arch,
+                }
+            } else { // i < self.entries.len()
+                     // TODO: using map also impossible (like fold)?
+                     // let maps = self.entries.map(|i:nat| );
+                let rem = self.interp_aux(i + 1).map;
+                PageTableContents {
+                    map: match self.entries.index(i) {
+                        NodeEntry::Page(p)      => rem.insert(self.base_vaddr + i * self.entry_size(), p),
+                        NodeEntry::Directory(d) => rem.union_prefer_right(d.interp_aux(0).map),
+                        NodeEntry::Empty()      => rem,
+                    },
+                    arch: self.arch,
+                }
+            }
+        } else {
+            arbitrary()
+        }
+    }
+
+//     #[proof]
+//     fn x2(self) {
+//         requires(self.inv());
+//         // ensures(forall(|offset:nat|
+//         //                self.interp().map.contains(offset)
+//         //                >>= self.base_vaddr <= self.interp().map.index(offset).base
+//         //                     && self.interp().map.index(offset).base + self.interp().map.index(offset).size <= self.base_vaddr + self.layer_size() * self.entry_size()));
+//     }
+//
+    #[proof]
+    fn inv_implies_interp_aux_inv(self, i: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+        requires(self.inv());
+        ensures([
+            self.interp_aux(i).inv(),
+            forall(|va: nat| #[trigger] self.interp_aux(i).map.dom().contains(va) >>= va >= self.base_vaddr + i * self.entry_size()),
+        ]);
+
+        let interp = self.interp_aux(i);
+
+        assert(self.directories_obey_invariant());
+        assert_forall_by(|i: nat| {
+            requires(i < self.entries.len() && self.entries.index(i).is_Directory());
+            ensures((#[trigger] self.entries.index(i)).get_Directory_0().interp_aux(0).inv());
+            assert(self.entries.index(i).get_Directory_0().inv());
+            self.entries.index(i).get_Directory_0().inv_implies_interp_aux_inv(0);
+        });
+        assert(interp.arch.inv());
+        if i >= self.entries.len() {
+        } else {
+            self.inv_implies_interp_aux_inv(i + 1);
+            if self.entries.index(i).is_Page() {
+                let rem = self.interp_aux(i + 1).map;
+                // TODO: verus bug?
+                assume(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), self.entries.index(i).get_Page_0())));
+                assert(equal(self.interp_aux(i).map.dom(), rem.dom().insert(self.base_vaddr + i * self.entry_size())));
+            }
+        }
+        assert_forall_by(|va: nat| {
+            requires(interp.map.dom().contains(va));
+            ensures(true
+                && base_page_aligned(va, (#[trigger] interp.map.index(va)).size)
+                && base_page_aligned(interp.map.index(va).base, interp.map.index(va).size)
+            );
+
+            if i >= self.entries.len() {
+            } else {
+                self.inv_implies_interp_aux_inv(i + 1);
+                // TODO: verus bug?
+                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
+                if self.entries.index(i).is_Page() {
+                    // assert(base_page_aligned(self.base_vaddr + i * self.entry_size(), interp.map.index(self.base_vaddr + i * self.entry_size()).size));
+                    // assert(!self.interp_aux(i + 1).map.dom().contains(self.base_vaddr + i * self.entry_size()));
+                    assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(self.base_vaddr + i * self.entry_size())));
+
+                    if va < self.base_vaddr + i * self.entry_size() {
+                        crate::lib::mul_distributive(i, self.entry_size());
+                        // TODO: verus bug?
+                        assume((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size());
+                        assert(false);
+                        // assert(base_page_aligned(va, interp.map.index(va).size));
+                    } else if va == self.base_vaddr + i * self.entry_size() {
+                        assume(base_page_aligned(va, interp.map.index(va).size));
+                    } else {
+                        assert(base_page_aligned(va, interp.map.index(va).size));
+                    }
+                    assume(base_page_aligned(interp.map.index(va).base, interp.map.index(va).size));
+                }
+            }
+
+            // if exists(|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() && va == self.base_vaddr + i * self.entry_size()) {
+            //     assert(base_page_aligned(va, interp.map.index(va).size));
+            // } else {
+            //     // it must be from a directory
+            //     assume(exists(|i: nat| i < self.entries.len() && self.entries.index(i).is_Directory() && self.entries.index(i).get_Directory_0().interp().map.dom().contains(va)));
+            //     let i: nat = choose(|i: nat| i < self.entries.len() && self.entries.index(i).is_Directory() && self.entries.index(i).get_Directory_0().interp().map.dom().contains(va));
+            //     assert(base_page_aligned(va, interp.map.index(va).size));
+            // }
+            // assume(base_page_aligned(interp.map.index(va).base, interp.map.index(va).size));
+        });
+        assume(forall(|b1: nat, b2: nat|
+        // TODO: let vregion1, vregion2
+            (interp.map.dom().contains(b1) && interp.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
+                MemRegion { base: b1, size: interp.map.index(b1).size },
+                MemRegion { base: b2, size: interp.map.index(b2).size }
+            ))));
+        assume(forall(|va: nat| self.interp_aux(i).map.dom().contains(va) >>= va >= self.base_vaddr + i * self.entry_size()));
+    }
+
+
+    // #[proof]
+    // fn inv_implies_interp_inv(self) {
+    //     decreases(self.arch.layers.len() - self.layer);
+    //     requires(self.inv());
+    //     ensures(self.interp().inv());
+
+    //     let interp = self.interp();
+
+
+    // }
 }
-// 
-//     // #[spec]
-//     // pub fn entries_are_entry_size_aligned(&self) -> bool {
-//     //     forall(|offset: nat| #[auto_trigger] self.map.dom().contains(offset) >>= base_page_aligned(offset, self.entry_size()))
-//     // }
-// 
-//     // #[spec]
-//     // pub fn entries_fit_in_layer_size(&self) -> bool {
-//     //     forall(|offset: nat| self.map.dom().contains(offset) >>= offset < self.layer_size())
-//     // }
-// 
-//     #[spec]
-//     pub fn pages_match_entry_size(&self) -> bool {
-//         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
-//                >>= (#[trigger] self.entries.index(i)).get_Page_0().size == self.entry_size())
-//     }
-// 
-//     #[spec]
-//     pub fn directories_are_in_next_layer(&self) -> bool {
-//         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-//                >>= {
-//                     let directory = (#[trigger] self.entries.index(i)).get_Directory_0();
-//                     true
-//                     && directory.layer == self.layer + 1
-//                     && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-//                 })
-//     }
-// 
-//     #[spec]
-//     pub fn directories_obey_invariant(&self) -> bool {
-//         decreases((self.arch.layer_sizes.len() - self.layer, 0));
-// 
-//         if self.layer < self.arch.layer_sizes.len() && self.directories_are_in_next_layer() && self.directories_match_arch() {
-//             forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-//                    >>= (#[trigger] self.entries.index(i)).get_Directory_0().inv())
-//         } else {
-//             arbitrary()
-//         }
-//     }
-// 
-//     #[spec]
-//     pub fn directories_match_arch(&self) -> bool {
-//         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-//                >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch))
-//     }
-// 
-//     #[spec]
-//     pub fn inv(&self) -> bool {
-//         decreases((self.arch.layer_sizes.len() - self.layer, 1));
-// 
-//         true
-// 
-//         && self.entries.len() == self.layer_size()
-//         && self.layer < self.arch.layer_sizes.len()
-//         // && self.entries_are_entry_size_aligned()
-//         // && self.entries_fit_in_layer_size()
-//         && self.pages_match_entry_size()
-//         && self.directories_are_in_next_layer()
-//         && self.directories_obey_invariant()
-//         && self.directories_match_arch()
-//     }
-// 
-//     #[spec]
-//     pub fn interp(self) -> PageTableContents {
-//         self.interp_aux(0)
-//     }
-// 
-//     #[spec]
-//     pub fn interp_aux(self, i: nat) -> PageTableContents {
-//         decreases((self, self.layer_size() - i, 0));
-//         decreases_by(Self::check_interp_aux);
-// 
-//         // if self.inv() {
-//         if i >= self.entries.len() {
-//             PageTableContents {
-//                 map: map![],
-//                 arch: self.arch,
-//             }
-//         } else { // i < self.entries.len()
-//                  // TODO: using map also impossible (like fold)?
-//                  // let maps = self.entries.map(|i:nat| );
-//             let rem = self.interp_aux(i+1).map;
-//             PageTableContents {
-//                 map: match self.entries.index(i) {
-//                     NodeEntry::Page(p)      => rem.union_prefer_right(map![self.base_vaddr + i * self.entry_size() => p]),
-//                     NodeEntry::Directory(d) => rem.union_prefer_right(d.interp_aux(0).map),
-//                     NodeEntry::Empty()      => rem,
-//                 },
-//                 arch: self.arch,
-//             }
-//         }
-//         // } else {
-//         //     arbitrary()
-//         // }
-//     }
 // 
 //     #[proof] #[verifier(decreases_by)]
 //     fn check_interp_aux(self, i: nat) {
@@ -533,14 +627,6 @@ impl Directory {
 //         }
 //     }
 // 
-//     #[proof]
-//     fn x2(self) {
-//         requires(self.inv());
-//         // ensures(forall(|offset:nat|
-//         //                self.interp().map.contains(offset)
-//         //                >>= self.base_vaddr <= self.interp().map.index(offset).base
-//         //                     && self.interp().map.index(offset).base + self.interp().map.index(offset).size <= self.base_vaddr + self.layer_size() * self.entry_size()));
-//     }
 // 
 // }
 // 
