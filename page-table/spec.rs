@@ -143,12 +143,18 @@ impl PageTableContents {
         && forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] => self.map.dom().contains(va) >>=
                   (aligned(va, self.map.index(va).size)
                    && aligned(self.map.index(va).base, self.map.index(va).size))))
-        && forall(|b1: nat, b2: nat|
-        // TODO: let vregion1, vregion2
-            (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
+        // && forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
+        //     (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
+        //         MemRegion { base: b1, size: (#[trigger] self.map.index(b1)).size },
+        //         MemRegion { base: b2, size: (#[trigger] self.map.index(b2)).size }
+        //     )))
+        && forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
+            with_triggers!([self.map.index(b1), self.map.index(b2)],
+                           [self.map.dom().contains(b1), self.map.dom().contains(b2)] =>
+                           (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
                 MemRegion { base: b1, size: self.map.index(b1).size },
                 MemRegion { base: b2, size: self.map.index(b2).size }
-            )))
+            ))))
     }
 
     #[spec] pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
@@ -476,6 +482,7 @@ impl Directory {
         ensures([
             self.interp_aux(i).inv(),
             forall(|va: nat| #[trigger] self.interp_aux(i).map.dom().contains(va) >>= va >= self.base_vaddr + i * self.entry_size()),
+            forall(|va: nat| #[trigger] self.interp_aux(i).map.dom().contains(va) >>= va <= self.base_vaddr + self.num_entries() * self.entry_size()),
         ]);
 
         let interp = self.interp_aux(i);
@@ -507,8 +514,10 @@ impl Directory {
 
             if i >= self.entries.len() {
             } else {
-                self.inv_implies_interp_aux_inv(i + 1);
-                // TODO: verus bug?
+                let j = i + 1;
+                // self.inv_implies_interp_aux_inv(i + 1);
+                self.inv_implies_interp_aux_inv(j);
+                assume(forall(|va: nat| #[trigger] self.interp_aux(j).map.dom().contains(va) >>= va >= self.base_vaddr + j * self.entry_size())); // TODO: verus bug?
                 assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
                 if self.entries.index(i).is_Page() {
                     assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(self.base_vaddr + i * self.entry_size())));
@@ -537,25 +546,108 @@ impl Directory {
                 }
             }
         });
-        assert(forall(|b1: nat, b2: nat|
-            (interp.map.dom().contains(b1) && interp.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
+        assert_forall_by(|b1: nat, b2: nat| {
+            requires(interp.map.dom().contains(b1) && interp.map.dom().contains(b2) && b1 != b2);
+            ensures(!overlap(
                 MemRegion { base: b1, size: interp.map.index(b1).size },
                 MemRegion { base: b2, size: interp.map.index(b2).size }
-            ))));
+            ));
+
+            if i >= self.entries.len() {
+            } else {
+                self.inv_implies_interp_aux_inv(i + 1);
+                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
+                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <= self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
+                let (c1, c2) = if b1 < b2 {
+                    (b1, b2)
+                } else {
+                    (b2, b1)
+                };
+                assert(c1 < c2);
+                match self.entries.index(i) {
+                    NodeEntry::Page(p) => {
+                        let new_va = self.base_vaddr + i * self.entry_size();
+                        assert_by(!overlap(
+                            MemRegion { base: c1, size: interp.map.index(c1).size },
+                            MemRegion { base: c2, size: interp.map.index(c2).size }
+                        ), {
+                            if c1 != new_va && c2 != new_va {
+                                assert(!overlap( // TODO is this really necessary?
+                                    MemRegion { base: c1, size: interp.map.index(c1).size },
+                                    MemRegion { base: c2, size: interp.map.index(c2).size }
+                                ));
+                            } else if c1 == new_va {
+                                assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(new_va)));
+                                assert(self.interp_aux(i + 1).map.dom().contains(c2));
+                                assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
+                                crate::lib::mul_distributive(i, self.entry_size());
+                                assume(i * self.entry_size() + self.entry_size() == (i + 1) * self.entry_size()); // TODO verus bug
+                                assert(self.base_vaddr + i * self.entry_size() + self.entry_size() ==
+                                       self.base_vaddr + (i + 1) * self.entry_size());
+                                assert(c1 + self.entry_size() == self.base_vaddr + (i + 1) * self.entry_size());
+                                assert(!overlap( // TODO is this really necessary?
+                                    MemRegion { base: c1, size: interp.map.index(c1).size },
+                                    MemRegion { base: c2, size: interp.map.index(c2).size }
+                                ));
+                            } else {
+                                assert(c2 == new_va);
+                                assert(self.interp_aux(i + 1).map.dom().contains(c1));
+                                assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
+                                assert(c2 == self.base_vaddr + i * self.entry_size());
+                                assume(c1 >= c2); // TODO verus nonlinear
+                                assert(false);
+                            }
+                        });
+                    },
+                    NodeEntry::Directory(d) => {
+                        assert_by(!overlap(
+                            MemRegion { base: c1, size: interp.map.index(c1).size },
+                            MemRegion { base: c2, size: interp.map.index(c2).size }
+                        ), {
+                            d.inv_implies_interp_aux_inv(0);
+                            assume(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va <= d.base_vaddr + d.num_entries() * d.entry_size())); // TODO verus bug
+                            assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr)); // TODO verus bug
+                            assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
+                            assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <= self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
+                            let i1_interp = self.interp_aux(i + 1).map.dom();
+                            let d_interp = d.interp_aux(0).map.dom();
+                            if i1_interp.contains(c1) && i1_interp.contains(c2) {
+                                assert(self.interp_aux(i + 1).inv());
+                                assert(self.interp_aux(i + 1).map.dom().contains(c1));
+                                assert(self.interp_aux(i + 1).map.dom().contains(c2));
+                                assert(c1 != c2);
+                                assume(!overlap( // TODO verus
+                                    MemRegion { base: c1, size: interp.map.index(c1).size },
+                                    MemRegion { base: c2, size: interp.map.index(c2).size }
+                                ));
+                            } else if d_interp.contains(c1) && d_interp.contains(c2) {
+                                assert(!overlap(
+                                    MemRegion { base: c1, size: interp.map.index(c1).size },
+                                    MemRegion { base: c2, size: interp.map.index(c2).size }
+                                ));
+                            } else if i1_interp.contains(c2) && d_interp.contains(c1) {
+                                assert(c1 < c2);
+                                assert(c2 <= self.base_vaddr + self.num_entries() * self.entry_size());
+                                // assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
+                                assume(c2 <= c1);
+                                assert(false);
+                            } else {
+                                assume(false);
+                            }
+                        });
+                    },
+                    NodeEntry::Empty() => (),
+                }
+                assert(!overlap( // TODO is this really necessary?
+                    MemRegion { base: c1, size: interp.map.index(c1).size },
+                    MemRegion { base: c2, size: interp.map.index(c2).size }
+                ));
+            }
+        });
         assume(forall(|va: nat| self.interp_aux(i).map.dom().contains(va) >>= va >= self.base_vaddr + i * self.entry_size()));
+        assume(forall(|va: nat| #[trigger] self.interp_aux(i).map.dom().contains(va) >>= va <= self.base_vaddr + self.num_entries() * self.entry_size()));
     }
 
-
-    // #[proof]
-    // fn inv_implies_interp_inv(self) {
-    //     decreases(self.arch.layers.len() - self.layer);
-    //     requires(self.inv());
-    //     ensures(self.interp().inv());
-
-    //     let interp = self.interp();
-
-
-    // }
 }
 // 
 //     #[proof] #[verifier(decreases_by)]
