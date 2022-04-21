@@ -492,8 +492,7 @@ impl Directory {
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
                         let new_va = self.base_vaddr + i * self.entry_size();
-                        // FIXME: wtf?
-                        assume(equal(self.interp_aux(i).map, self.interp_aux(i+1).map.insert(new_va, p)));
+                        assert(equal(self.interp_aux(i).map, self.interp_aux(i+1).map.insert(new_va, p)));
                         if new_va == va {
                             assert(equal(self.entries.index(i).get_Page_0(), p));
                             assert(equal(self.interp_aux(i).map.index(va), p));
@@ -549,7 +548,7 @@ impl Directory {
             if self.entries.index(i).is_Page() {
                 let rem = self.interp_aux(i + 1).map;
                 // TODO: verus bug?
-                assume(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), self.entries.index(i).get_Page_0())));
+                // assert(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), self.entries.index(i).get_Page_0())));
                 assert(equal(self.interp_aux(i).map.dom(), rem.dom().insert(self.base_vaddr + i * self.entry_size())));
             }
         }
@@ -565,8 +564,8 @@ impl Directory {
                 let j = i + 1;
                 // self.inv_implies_interp_aux_inv(i + 1);
                 self.inv_implies_interp_aux_inv(j);
-                assume(forall(|va: nat| #[trigger] self.interp_aux(j).map.dom().contains(va) >>= va >= self.base_vaddr + j * self.entry_size())); // TODO: verus bug?
-                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(j).map.dom().contains(va) >>= va >= self.base_vaddr + j * self.entry_size())); // TODO: verus bug?
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
                 if self.entries.index(i).is_Page() {
                     assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(self.base_vaddr + i * self.entry_size())));
                     if va < self.base_vaddr + i * self.entry_size() {
@@ -574,14 +573,14 @@ impl Directory {
                         // TODO: verus bug?
                         let es: nat = self.entry_size();
                         crate::lib::mul_distributive(i, es);
-                        assume((i + 1) * es == i * es + es); // TODO verus ???
-                        assume((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size()); // TODO verus ???
+                        assert((i + 1) * es == i * es + es); // TODO verus ???
+                        assert((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size()); // TODO verus ???
                         assert(va >= self.base_vaddr + i * self.entry_size() + self.entry_size());
                         assert(false);
                     } else if va == self.base_vaddr + i * self.entry_size() {
                         assert(interp.map.index(va).size == self.entry_size());
                         assert(self.well_formed());
-                        assume(aligned(self.base_vaddr, self.entry_size() * self.num_entries())); // TODO verus bug
+                        assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries())); // TODO verus bug
                         assume(aligned(self.base_vaddr, self.entry_size())); // TODO verus nonlinear
                         assume((i * self.entry_size()) % self.entry_size() == 0); // TODO verus nonlinear
                         assert(aligned(i * self.entry_size(), self.entry_size()));
@@ -604,8 +603,8 @@ impl Directory {
             if i >= self.entries.len() {
             } else {
                 self.inv_implies_interp_aux_inv(i + 1);
-                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
-                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <  self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <  self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
                 let (c1, c2) = if b1 < b2 {
                     (b1, b2)
                 } else {
@@ -629,7 +628,7 @@ impl Directory {
                                 assert(self.interp_aux(i + 1).map.dom().contains(c2));
                                 assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
                                 crate::lib::mul_distributive(i, self.entry_size());
-                                assume(i * self.entry_size() + self.entry_size() == (i + 1) * self.entry_size()); // TODO verus bug
+                                assert(i * self.entry_size() + self.entry_size() == (i + 1) * self.entry_size()); // TODO verus bug
                                 assert(self.base_vaddr + i * self.entry_size() + self.entry_size() ==
                                        self.base_vaddr + (i + 1) * self.entry_size());
                                 assert(c1 + self.entry_size() == self.base_vaddr + (i + 1) * self.entry_size());
@@ -653,25 +652,25 @@ impl Directory {
                                 MemRegion { base: c2, size: interp.map.index(c2).size }
                                 ), {
                             d.inv_implies_interp_aux_inv(0);
-                            assume(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va <  d.base_vaddr + d.num_entries() * d.entry_size())); // TODO verus bug
-                            assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr)); // TODO verus bug
+                            // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va <  d.base_vaddr + d.num_entries() * d.entry_size())); // TODO verus bug
+                            // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr)); // TODO verus bug
                             assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
                             assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <  self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
                             assert(self.directories_are_in_next_layer());
                             // TODO: this should be trivial consequence of directories_are_in_next_layer
-                            assume(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory()) >>= {
-                                let directory = (self.entries.index(i)).get_Directory_0();
-                                true
-                                    && directory.layer == self.layer + 1
-                                    && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-                            }));
+                            // assert(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory()) >>= {
+                            //     let directory = (self.entries.index(i)).get_Directory_0();
+                            //     true
+                            //         && directory.layer == self.layer + 1
+                            //         && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
+                            // }));
                             assert(i < self.entries.len() && self.entries.index(i).is_Directory());
                             // TODO: trivial consequence of the two previous assertions
-                            assume(self.entries.index(i).get_Directory_0().base_vaddr == self.base_vaddr + i * self.entry_size());
+                            // assert(self.entries.index(i).get_Directory_0().base_vaddr == self.base_vaddr + i * self.entry_size());
                             assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
                             assert(self.arch.inv());
                             // TODO: star bug?
-                            assume(self.arch.layers.index(self.layer).entry_size == self.arch.layers.index(self.layer as int + 1).entry_size * self.arch.layers.index(self.layer as int + 1).num_entries);
+                            // assert(self.arch.layers.index(self.layer).entry_size == self.arch.layers.index(self.layer as int + 1).entry_size * self.arch.layers.index(self.layer as int + 1).num_entries);
                             assert(self.entry_size() == self.arch.layers.index(self.layer).entry_size);
                             assert(d.entry_size() == self.arch.layers.index(self.layer as int + 1).entry_size);
                             assert(d.num_entries() == self.arch.layers.index(self.layer as int + 1).num_entries);
@@ -693,7 +692,8 @@ impl Directory {
                                                   assert(c1 < d.base_vaddr + d.num_entries() * d.entry_size());
                                                   assert(c1 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
                                                   // TODO: consequence of invariant:
-                                                  assume(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
+                                                  assert(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
+                                                  // TODO:
                                                   assume(c1 < self.base_vaddr + (i + 1) * self.entry_size());
                                                   assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
                                                   assert(false);
@@ -701,7 +701,7 @@ impl Directory {
                                                   if d_interp.dom().contains(c2) {
                                                       assert(c2 < d.base_vaddr + d.num_entries() * d.entry_size());
                                                       assert(c2 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
-                                                      assume(c2 < self.base_vaddr + i * self.entry_size() + self.entry_size());
+                                                      // assert(c2 < self.base_vaddr + i * self.entry_size() + self.entry_size());
                                                       assume(c2 < self.base_vaddr + (i + 1) * self.entry_size());
                                                       assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
                                                       assert(c2 < c1);
@@ -721,8 +721,8 @@ impl Directory {
                                         ));
                             } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
                                 assert(equal(interp.map.index(c1).size, d_interp.index(c1).size));
-                                assume(forall(|va: nat| d_interp.dom().contains(va)
-                                              >>= va + #[trigger] d_interp.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size()));
+                                // assert(forall(|va: nat| d_interp.dom().contains(va)
+                                //               >>= va + #[trigger] d_interp.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size()));
                                 assert(c1 + interp.map.index(c1).size <= d.base_vaddr + d.num_entries() * d.entry_size());
                                 assert(self.base_vaddr + (i + 1) * self.entry_size() <= c2);
                                 // TODO: nonlinear
@@ -765,10 +765,10 @@ impl Directory {
             if i >= self.entries.len() {
             } else {
                 self.inv_implies_interp_aux_inv(i + 1);
-                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
-                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va)
-                              >>= va + self.interp_aux(i + 1).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()));
-                assume(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va < self.base_vaddr + self.num_entries() * self.entry_size()));
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va)
+                //               >>= va + self.interp_aux(i + 1).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()));
+                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va < self.base_vaddr + self.num_entries() * self.entry_size()));
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
                         let new_va = self.base_vaddr + i * self.entry_size();
@@ -799,16 +799,16 @@ impl Directory {
                     NodeEntry::Directory(d) => {
                         d.inv_implies_interp_aux_inv(0);
                         assert(forall(|va: nat| d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr));
-                        assume(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va)
-                                      >>= va + d.interp_aux(0).map.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size()));
-                        assume(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va < d.base_vaddr + d.num_entries() * d.entry_size()));
+                        // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va)
+                        //               >>= va + d.interp_aux(0).map.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size()));
+                        // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va < d.base_vaddr + d.num_entries() * d.entry_size()));
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
                             // Post1
                             assert(va >= d.base_vaddr);
                             // TODO: star bug
-                            assume(d.base_vaddr == self.base_vaddr + i * self.entry_size());
+                            // assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
                             assert(va >= self.base_vaddr + i * self.entry_size());
 
                             // Post2
@@ -817,11 +817,11 @@ impl Directory {
                             assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
                             assert(self.arch.inv());
                             // TODO: star bug?
-                            assume(self.arch.layers.index(self.layer).entry_size == self.arch.layers.index(self.layer as int + 1).entry_size * self.arch.layers.index(self.layer as int + 1).num_entries);
+                            // assert(self.arch.layers.index(self.layer).entry_size == self.arch.layers.index(self.layer as int + 1).entry_size * self.arch.layers.index(self.layer as int + 1).num_entries);
                             assert(self.entry_size() == self.arch.layers.index(self.layer).entry_size);
                             assert(d.entry_size() == self.arch.layers.index(self.layer as int + 1).entry_size);
                             assert(d.num_entries() == self.arch.layers.index(self.layer as int + 1).num_entries);
-                            // TODO: star bug?
+                            // TODO:
                             assume(d.num_entries() * d.entry_size() == self.entry_size());
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
                             // TODO: nonlinear
