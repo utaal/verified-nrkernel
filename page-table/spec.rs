@@ -223,47 +223,47 @@ impl PageTableContents {
     //     ensures(va1 == va2);
     // }
 
-    #[proof]
-    pub fn lemma_overlap_IMP_equal_base(self, va1: nat, base: nat, size: nat) {
-        requires([
-                 self.inv(),
-                 self.map.dom().contains(va1),
-                 aligned(base, size),
-                 size == self.map.index(va1).size,
-                 size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
-                 overlap(
-                     MemRegion { base: va1, size: self.map.index(va1).size },
-                     MemRegion { base: base, size: size }),
-        ]);
-        ensures(va1 == base);
+    // #[proof]
+    // pub fn lemma_overlap_IMP_equal_base(self, va1: nat, base: nat, size: nat) {
+    //     requires([
+    //              self.inv(),
+    //              self.map.dom().contains(va1),
+    //              aligned(base, size),
+    //              size == self.map.index(va1).size,
+    //              size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
+    //              overlap(
+    //                  MemRegion { base: va1, size: self.map.index(va1).size },
+    //                  MemRegion { base: base, size: size }),
+    //     ]);
+    //     ensures(va1 == base);
 
-        if va1 <= base {
-            // assert(va1 + va1_size <= base);
-            if va1 < base {
-                assert(va1 < base);
-                assert(base < va1 + size);
-                assert(base % size == 0);
-                assert(va1 % size == 0);
-                // TODO: same as below
-                assume(false);
-                assert(va1 == base);
-            } else { }
-        } else {
-            assert(base < va1);
-            assert(va1 < base + size);
-            assert(va1 % size == 0);
-            assert(base % size == 0);
-            // assert(va1 % size == va1 - base);
+    //     if va1 <= base {
+    //         // assert(va1 + va1_size <= base);
+    //         if va1 < base {
+    //             assert(va1 < base);
+    //             assert(base < va1 + size);
+    //             assert(base % size == 0);
+    //             assert(va1 % size == 0);
+    //             // TODO: same as below
+    //             assume(false);
+    //             assert(va1 == base);
+    //         } else { }
+    //     } else {
+    //         assert(base < va1);
+    //         assert(va1 < base + size);
+    //         assert(va1 % size == 0);
+    //         assert(base % size == 0);
+    //         // assert(va1 % size == va1 - base);
 
-            // base    size
-            // |-------|
-            //     |-------|
-            //     va1     size
-            // TODO: need nonlinear reasoning? (isabelle sledgehammer can prove this)
-            assume(false);
-            assert(va1 == base);
-        }
-    }
+    //         // base    size
+    //         // |-------|
+    //         //     |-------|
+    //         //     va1     size
+    //         // TODO: need nonlinear reasoning? (isabelle sledgehammer can prove this)
+    //         assume(false);
+    //         assert(va1 == base);
+    //     }
+    // }
 
     // predicate (function -> bool)
     // #[spec] pub fn step_map_frame(&self /* s */, post: &PageTableContents /* s' */, base:nat, frame: MemRegion) -> bool {
@@ -484,7 +484,7 @@ impl Directory {
         ]);
         assert_forall_by(|va: nat| {
             requires(self.interp_aux(i).map.dom().contains(va));
-            ensures(self.interp_aux(i).map.index(va).size > 0);
+            ensures(#[trigger] self.interp_aux(i).map.index(va).size > 0);
 
             if i >= self.entries.len() {
             } else {
@@ -757,7 +757,7 @@ impl Directory {
         // Prove the other postconditions
         assert_forall_by(|va: nat| {
             requires(self.interp_aux(i).map.dom().contains(va));
-            ensures(true
+            ensures(#[auto_trigger] true
                 && va >= self.base_vaddr + i * self.entry_size()
                 && va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()
                 && va < self.base_vaddr + self.num_entries() * self.entry_size());
