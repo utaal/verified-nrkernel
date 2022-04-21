@@ -609,6 +609,21 @@ impl Directory {
                             assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr)); // TODO verus bug
                             assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
                             assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <  self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
+                            assert(self.directories_are_in_next_layer());
+                            // TODO: this should be trivial consequence of directories_are_in_next_layer
+                            assume(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory()) >>= {
+                                let directory = (self.entries.index(i)).get_Directory_0();
+                                true
+                                    && directory.layer == self.layer + 1
+                                    && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
+                            }));
+                            assert(i < self.entries.len() && self.entries.index(i).is_Directory());
+                            // TODO: trivial consequence of the two previous assertions
+                            assume(self.entries.index(i).get_Directory_0().base_vaddr == self.base_vaddr + i * self.entry_size());
+                            assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
+                            // FIXME: I thought we already added this to the invariant somewhere
+                            // but I can't find it?
+                            assume(d.num_entries() * d.entry_size() == self.entry_size());
                             let i1_interp = self.interp_aux(i + 1).map;
                             let d_interp = d.interp_aux(0).map;
                             if i1_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
@@ -620,18 +635,6 @@ impl Directory {
                                 assert_by(true
                                           && !d_interp.dom().contains(c1)
                                           && !d_interp.dom().contains(c2), {
-                                              assert(self.directories_are_in_next_layer());
-                                              // TODO: this should be trivial consequence of directories_are_in_next_layer
-                                              assume(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory()) >>= {
-                                                  let directory = (self.entries.index(i)).get_Directory_0();
-                                                  true
-                                                      && directory.layer == self.layer + 1
-                                                      && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-                                              }));
-                                              assert(i < self.entries.len() && self.entries.index(i).is_Directory());
-                                              // TODO: trivial consequence of the two previous assertions
-                                              assume(self.entries.index(i).get_Directory_0().base_vaddr == self.base_vaddr + i * self.entry_size());
-                                              assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
                                               if d_interp.dom().contains(c1) {
                                                   assert(c1 < d.base_vaddr + d.num_entries() * d.entry_size());
                                                   assert(c1 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
@@ -662,14 +665,28 @@ impl Directory {
                                         MemRegion { base: c1, size: interp.map.index(c1).size },
                                         MemRegion { base: c2, size: interp.map.index(c2).size }
                                         ));
-                            } else if i1_interp.dom().contains(c2) && d_interp.dom().contains(c1) {
-                                assert(c1 < c2);
-                                assert(c2 <= self.base_vaddr + self.num_entries() * self.entry_size());
+                            } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
+                                // assert(c1 < c2);
+                                assert(c2 < self.base_vaddr + self.num_entries() * self.entry_size());
                                 // assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
-                                assume(c2 <= c1);
-                                assert(false);
-                            } else {
+                                assert(c1 >= d.base_vaddr);
+                                assert(c1 >= self.base_vaddr + i * self.entry_size());
+                                // need to show !overlap here, no contradiction
+                                assert(!overlap(
+                                        MemRegion { base: c1, size: interp.map.index(c1).size },
+                                        MemRegion { base: c2, size: interp.map.index(c2).size }
+                                        ));
                                 assume(false);
+                            } else {
+                                assert(d_interp.dom().contains(c2) && i1_interp.dom().contains(c1));
+                                assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
+                                assert(c2 <  d.base_vaddr + d.num_entries() * d.entry_size());
+                                assert(c2 <  (self.base_vaddr + i * self.entry_size()) + d.num_entries() * d.entry_size());
+                                assert(c2 <  (self.base_vaddr + i * self.entry_size()) + self.entry_size());
+                                // TODO: nonlinear
+                                assume(c2 <  self.base_vaddr + (i + 1) * self.entry_size());
+                                assert(c2 < c1);
+                                assert(false);
                             }
                         });
                     },
