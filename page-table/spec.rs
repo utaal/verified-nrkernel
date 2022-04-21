@@ -786,9 +786,6 @@ impl Directory {
                             // TODO: nonlinear
                             assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
-
-                            // Post3
-                            assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
                         } else {
                             // Post1
                             assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
@@ -797,9 +794,6 @@ impl Directory {
 
                             // Post2
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
-
-                            // Post3
-                            assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
                         }
                     },
                     NodeEntry::Directory(d) => {
@@ -836,11 +830,6 @@ impl Directory {
                             // TODO: nonlinear
                             assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
-
-                            // Post3
-                            self.inv_implies_interp_aux_entries_positive_entry_size(i);
-                            assert(self.interp_aux(i).map.index(va).size > 0);
-                            assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
                         } else {
                             // Post1
                             assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
@@ -849,9 +838,6 @@ impl Directory {
 
                             // Post2
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
-
-                            // Post3
-                            assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
                         }
                     },
                     NodeEntry::Empty() => {
@@ -862,13 +848,12 @@ impl Directory {
 
                         // Post2
                         assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
-
-                        // Post3
-                        self.inv_implies_interp_aux_entries_positive_entry_size(i);
-                        assert(self.interp_aux(i).map.index(va).size > 0);
-                        assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
                     },
                 }
+                // Post3
+                self.inv_implies_interp_aux_entries_positive_entry_size(i);
+                assert(self.interp_aux(i).map.index(va).size > 0);
+                assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
             }
         });
     }
