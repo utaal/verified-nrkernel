@@ -143,11 +143,6 @@ impl PageTableContents {
         && forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] => self.map.dom().contains(va) >>=
                   (aligned(va, self.map.index(va).size)
                    && aligned(self.map.index(va).base, self.map.index(va).size))))
-        // && forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
-        //     (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
-        //         MemRegion { base: b1, size: (#[trigger] self.map.index(b1)).size },
-        //         MemRegion { base: b2, size: (#[trigger] self.map.index(b2)).size }
-        //     )))
         && forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
             with_triggers!([self.map.index(b1), self.map.index(b2)],
                            [self.map.dom().contains(b1), self.map.dom().contains(b2)] =>
@@ -492,20 +487,13 @@ impl Directory {
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
                         let new_va = self.base_vaddr + i * self.entry_size();
-                        assert(equal(self.interp_aux(i).map, self.interp_aux(i+1).map.insert(new_va, p)));
                         if new_va == va {
-                            assert(equal(self.entries.index(i).get_Page_0(), p));
-                            assert(equal(self.interp_aux(i).map.index(va), p));
-                            assert(p.size > 0);
-                            assert(self.interp_aux(i).map.index(va).size > 0);
                         } else {
-                            assert(self.interp_aux(i+1).map.dom().contains(va));
                             assert(self.interp_aux(i+1).map.index(va).size > 0);
                         }
                     },
                     NodeEntry::Directory(d) => {
                         assert(self.directories_obey_invariant());
-                        assert(d.inv());
                         d.inv_implies_interp_aux_entries_positive_entry_size(0);
                         if d.interp_aux(0).map.dom().contains(va) {
                         } else {
@@ -538,20 +526,8 @@ impl Directory {
         assert_forall_by(|i: nat| {
             requires(i < self.entries.len() && self.entries.index(i).is_Directory());
             ensures((#[trigger] self.entries.index(i)).get_Directory_0().interp_aux(0).inv());
-            assert(self.entries.index(i).get_Directory_0().inv());
             self.entries.index(i).get_Directory_0().inv_implies_interp_aux_inv(0);
         });
-        assert(interp.arch.inv());
-        if i >= self.entries.len() {
-        } else {
-            self.inv_implies_interp_aux_inv(i + 1);
-            if self.entries.index(i).is_Page() {
-                let rem = self.interp_aux(i + 1).map;
-                // TODO: verus bug?
-                // assert(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), self.entries.index(i).get_Page_0())));
-                assert(equal(self.interp_aux(i).map.dom(), rem.dom().insert(self.base_vaddr + i * self.entry_size())));
-            }
-        }
         assert_forall_by(|va: nat| {
             requires(interp.map.dom().contains(va));
             ensures(true
@@ -562,34 +538,19 @@ impl Directory {
             if i >= self.entries.len() {
             } else {
                 let j = i + 1;
-                // self.inv_implies_interp_aux_inv(i + 1);
                 self.inv_implies_interp_aux_inv(j);
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(j).map.dom().contains(va) >>= va >= self.base_vaddr + j * self.entry_size())); // TODO: verus bug?
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
                 if self.entries.index(i).is_Page() {
-                    assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(self.base_vaddr + i * self.entry_size())));
                     if va < self.base_vaddr + i * self.entry_size() {
-                        assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                        // TODO: verus bug?
-                        let es: nat = self.entry_size();
-                        crate::lib::mul_distributive(i, es);
-                        assert((i + 1) * es == i * es + es); // TODO verus ???
-                        assert((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size()); // TODO verus ???
-                        assert(va >= self.base_vaddr + i * self.entry_size() + self.entry_size());
+                        crate::lib::mul_distributive(i, self.entry_size());
                         assert(false);
                     } else if va == self.base_vaddr + i * self.entry_size() {
-                        assert(interp.map.index(va).size == self.entry_size());
-                        assert(self.well_formed());
                         assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries())); // TODO verus bug
                         assume(aligned(self.base_vaddr, self.entry_size())); // TODO verus nonlinear
                         assume((i * self.entry_size()) % self.entry_size() == 0); // TODO verus nonlinear
                         assert(aligned(i * self.entry_size(), self.entry_size()));
                         assume(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size())); // TODO verus nonlinear
-                        assert(aligned(va, interp.map.index(va).size));
                     } else {
-                        assert(aligned(va, interp.map.index(va).size));
                     }
-                    assert(aligned(interp.map.index(va).base, interp.map.index(va).size));
                 }
             }
         });
@@ -603,154 +564,63 @@ impl Directory {
             if i >= self.entries.len() {
             } else {
                 self.inv_implies_interp_aux_inv(i + 1);
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <  self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
                 let (c1, c2) = if b1 < b2 {
                     (b1, b2)
                 } else {
                     (b2, b1)
                 };
-                assert(c1 < c2);
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
                         let new_va = self.base_vaddr + i * self.entry_size();
-                        assert_by(!overlap(
-                                MemRegion { base: c1, size: interp.map.index(c1).size },
-                                MemRegion { base: c2, size: interp.map.index(c2).size }
-                                ), {
-                            if c1 != new_va && c2 != new_va {
-                                assert(!overlap( // TODO is this really necessary?
-                                        MemRegion { base: c1, size: interp.map.index(c1).size },
-                                        MemRegion { base: c2, size: interp.map.index(c2).size }
-                                        ));
-                            } else if c1 == new_va {
-                                assert(equal(self.interp_aux(i).map.dom(), self.interp_aux(i + 1).map.dom().insert(new_va)));
-                                assert(self.interp_aux(i + 1).map.dom().contains(c2));
-                                assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
-                                crate::lib::mul_distributive(i, self.entry_size());
-                                assert(i * self.entry_size() + self.entry_size() == (i + 1) * self.entry_size()); // TODO verus bug
-                                assert(self.base_vaddr + i * self.entry_size() + self.entry_size() ==
-                                       self.base_vaddr + (i + 1) * self.entry_size());
-                                assert(c1 + self.entry_size() == self.base_vaddr + (i + 1) * self.entry_size());
-                                assert(!overlap( // TODO is this really necessary?
-                                        MemRegion { base: c1, size: interp.map.index(c1).size },
-                                        MemRegion { base: c2, size: interp.map.index(c2).size }
-                                        ));
-                            } else {
-                                assert(c2 == new_va);
-                                assert(self.interp_aux(i + 1).map.dom().contains(c1));
-                                assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
-                                assert(c2 == self.base_vaddr + i * self.entry_size());
-                                assume(c1 >= c2); // TODO verus nonlinear
-                                assert(false);
-                            }
-                        });
+                        if c1 != new_va && c2 != new_va {
+                        } else if c1 == new_va {
+                            assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
+                            crate::lib::mul_distributive(i, self.entry_size());
+                        } else {
+                            assert(c2 == new_va);
+                            assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
+                            assert(c2 == self.base_vaddr + i * self.entry_size());
+                            assume(c1 >= c2); // TODO verus nonlinear
+                            assert(false);
+                        }
                     },
                     NodeEntry::Directory(d) => {
-                        assert_by(!overlap(
-                                MemRegion { base: c1, size: interp.map.index(c1).size },
-                                MemRegion { base: c2, size: interp.map.index(c2).size }
-                                ), {
-                            d.inv_implies_interp_aux_inv(0);
-                            // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va <  d.base_vaddr + d.num_entries() * d.entry_size())); // TODO verus bug
-                            // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr)); // TODO verus bug
-                            assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
-                            assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va <  self.base_vaddr + self.num_entries() * self.entry_size())); // TODO verus bug
-                            assert(self.directories_are_in_next_layer());
-                            // TODO: this should be trivial consequence of directories_are_in_next_layer
-                            // assert(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory()) >>= {
-                            //     let directory = (self.entries.index(i)).get_Directory_0();
-                            //     true
-                            //         && directory.layer == self.layer + 1
-                            //         && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-                            // }));
-                            assert(i < self.entries.len() && self.entries.index(i).is_Directory());
-                            // TODO: trivial consequence of the two previous assertions
-                            // assert(self.entries.index(i).get_Directory_0().base_vaddr == self.base_vaddr + i * self.entry_size());
-                            assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
-                            assert(self.arch.inv());
-                            // TODO: star bug?
-                            // assert(self.arch.layers.index(self.layer).entry_size == self.arch.layers.index(self.layer as int + 1).entry_size * self.arch.layers.index(self.layer as int + 1).num_entries);
-                            assert(self.entry_size() == self.arch.layers.index(self.layer).entry_size);
-                            assert(d.entry_size() == self.arch.layers.index(self.layer as int + 1).entry_size);
-                            assert(d.num_entries() == self.arch.layers.index(self.layer as int + 1).num_entries);
-                            // TODO: star bug?
-                            assume(d.num_entries() * d.entry_size() == self.entry_size());
+                        d.inv_implies_interp_aux_inv(0);
+                        // TODO: star bug?
+                        assume(d.num_entries() * d.entry_size() == self.entry_size());
 
-                            let i1_interp = self.interp_aux(i + 1).map;
-                            let d_interp = d.interp_aux(0).map;
-                            if i1_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
-                                assert(self.interp_aux(i + 1).inv());
-                                assert(!overlap(
-                                        MemRegion { base: c1, size: i1_interp.index(c1).size },
-                                        MemRegion { base: c2, size: i1_interp.index(c2).size }
-                                        ));
-                                assert_by(true
-                                          && !d_interp.dom().contains(c1)
-                                          && !d_interp.dom().contains(c2), {
-                                              if d_interp.dom().contains(c1) {
-                                                  assert(c1 < d.base_vaddr + d.num_entries() * d.entry_size());
-                                                  assert(c1 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
-                                                  // TODO: consequence of invariant:
-                                                  assert(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
-                                                  // TODO:
-                                                  assume(c1 < self.base_vaddr + (i + 1) * self.entry_size());
-                                                  assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
-                                                  assert(false);
-                                              } else {
-                                                  if d_interp.dom().contains(c2) {
-                                                      assert(c2 < d.base_vaddr + d.num_entries() * d.entry_size());
-                                                      assert(c2 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
-                                                      // assert(c2 < self.base_vaddr + i * self.entry_size() + self.entry_size());
-                                                      assume(c2 < self.base_vaddr + (i + 1) * self.entry_size());
-                                                      assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
-                                                      assert(c2 < c1);
-                                                  }
+                        let i1_interp = self.interp_aux(i + 1).map;
+                        let d_interp = d.interp_aux(0).map;
+                        if i1_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
+                            assert_by(true
+                                      && !d_interp.dom().contains(c1)
+                                      && !d_interp.dom().contains(c2), {
+                                          if d_interp.dom().contains(c1) {
+                                              assert(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
+                                              // TODO:
+                                              assume(c1 < self.base_vaddr + (i + 1) * self.entry_size());
+                                              assert(false);
+                                          } else {
+                                              if d_interp.dom().contains(c2) {
+                                                  assert(c2 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
+                                                  assume(c2 < self.base_vaddr + (i + 1) * self.entry_size());
                                               }
-                                          });
-                                assert(equal(interp.map.index(c1), i1_interp.index(c1)));
-                                assert(equal(interp.map.index(c2), i1_interp.index(c2)));
-                                assert(!overlap(
-                                        MemRegion { base: c1, size: interp.map.index(c1).size },
-                                        MemRegion { base: c2, size: interp.map.index(c2).size }
-                                        ));
-                            } else if d_interp.dom().contains(c1) && d_interp.dom().contains(c2) {
-                                assert(!overlap(
-                                        MemRegion { base: c1, size: interp.map.index(c1).size },
-                                        MemRegion { base: c2, size: interp.map.index(c2).size }
-                                        ));
-                            } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
-                                assert(equal(interp.map.index(c1).size, d_interp.index(c1).size));
-                                // assert(forall(|va: nat| d_interp.dom().contains(va)
-                                //               >>= va + #[trigger] d_interp.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size()));
-                                assert(c1 + interp.map.index(c1).size <= d.base_vaddr + d.num_entries() * d.entry_size());
-                                assert(self.base_vaddr + (i + 1) * self.entry_size() <= c2);
-                                // TODO: nonlinear
-                                assume(self.base_vaddr + i * self.entry_size() + self.entry_size() <= c2);
-                                assert(c1 + interp.map.index(c1).size <= c2);
-                                assert(!overlap(
-                                        MemRegion { base: c1, size: interp.map.index(c1).size },
-                                        MemRegion { base: c2, size: interp.map.index(c2).size }
-                                        ));
-                            } else {
-                                assert(d_interp.dom().contains(c2) && i1_interp.dom().contains(c1));
-                                assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
-                                assert(c2 <  d.base_vaddr + d.num_entries() * d.entry_size());
-                                assert(c2 <  (self.base_vaddr + i * self.entry_size()) + d.num_entries() * d.entry_size());
-                                assert(c2 <  (self.base_vaddr + i * self.entry_size()) + self.entry_size());
-                                // TODO: nonlinear
-                                assume(c2 <  self.base_vaddr + (i + 1) * self.entry_size());
-                                assert(c2 < c1);
-                                assert(false);
-                            }
-                        });
+                                          }
+                                      });
+                        } else if d_interp.dom().contains(c1) && d_interp.dom().contains(c2) {
+                        } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
+                            assert(self.base_vaddr + (i + 1) * self.entry_size() <= c2);
+                            // TODO: nonlinear
+                            assume(self.base_vaddr + i * self.entry_size() + self.entry_size() <= c2);
+                        } else {
+                            assert(c2 <  (self.base_vaddr + i * self.entry_size()) + self.entry_size());
+                            // TODO: nonlinear
+                            assume(c2 <  self.base_vaddr + (i + 1) * self.entry_size());
+                            assert(false);
+                        }
                     },
                     NodeEntry::Empty() => (),
                 }
-                assert(!overlap( // TODO is this really necessary?
-                        MemRegion { base: c1, size: interp.map.index(c1).size },
-                        MemRegion { base: c2, size: interp.map.index(c2).size }
-                        ));
             }
         });
 
@@ -765,17 +635,10 @@ impl Directory {
             if i >= self.entries.len() {
             } else {
                 self.inv_implies_interp_aux_inv(i + 1);
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va >= self.base_vaddr + (i + 1) * self.entry_size()));
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va)
-                //               >>= va + self.interp_aux(i + 1).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()));
-                // assert(forall(|va: nat| #[trigger] self.interp_aux(i + 1).map.dom().contains(va) >>= va < self.base_vaddr + self.num_entries() * self.entry_size()));
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
                         let new_va = self.base_vaddr + i * self.entry_size();
                         if va == new_va {
-                            // Post1
-                            assert(va >= self.base_vaddr + i * self.entry_size());
-
                             // Post2
                             assert(equal(self.interp_aux(i).map.index(va), p));
                             assert(i < self.num_entries());
@@ -791,36 +654,13 @@ impl Directory {
                             assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
                             // TODO: nonlinear
                             assume(va >= self.base_vaddr + i * self.entry_size());
-
-                            // Post2
-                            assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                         }
                     },
                     NodeEntry::Directory(d) => {
                         d.inv_implies_interp_aux_inv(0);
-                        assert(forall(|va: nat| d.interp_aux(0).map.dom().contains(va) >>= va >= d.base_vaddr));
-                        // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va)
-                        //               >>= va + d.interp_aux(0).map.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size()));
-                        // assert(forall(|va: nat| #[trigger] d.interp_aux(0).map.dom().contains(va) >>= va < d.base_vaddr + d.num_entries() * d.entry_size()));
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
-                            // Post1
-                            assert(va >= d.base_vaddr);
-                            // TODO: star bug
-                            // assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
-                            assert(va >= self.base_vaddr + i * self.entry_size());
-
-                            // Post2
-                            assert(va + d.interp_aux(0).map.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size());
-                            assert(equal(self.interp_aux(i).map.index(va), d.interp_aux(0).map.index(va)));
-                            assert(d.base_vaddr == self.base_vaddr + i * self.entry_size());
-                            assert(self.arch.inv());
-                            // TODO: star bug?
-                            // assert(self.arch.layers.index(self.layer).entry_size == self.arch.layers.index(self.layer as int + 1).entry_size * self.arch.layers.index(self.layer as int + 1).num_entries);
-                            assert(self.entry_size() == self.arch.layers.index(self.layer).entry_size);
-                            assert(d.entry_size() == self.arch.layers.index(self.layer as int + 1).entry_size);
-                            assert(d.num_entries() == self.arch.layers.index(self.layer as int + 1).num_entries);
                             // TODO:
                             assume(d.num_entries() * d.entry_size() == self.entry_size());
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
@@ -829,15 +669,11 @@ impl Directory {
                             assert(i + 1 <= self.num_entries());
                             // TODO: nonlinear
                             assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
-                            assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                         } else {
                             // Post1
                             assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
                             // TODO: nonlinear
                             assume(va >= self.base_vaddr + i * self.entry_size());
-
-                            // Post2
-                            assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                         }
                     },
                     NodeEntry::Empty() => {
@@ -845,15 +681,10 @@ impl Directory {
                         assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
                         // TODO: nonlinear
                         assume(va >= self.base_vaddr + i * self.entry_size());
-
-                        // Post2
-                        assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                     },
                 }
                 // Post3
                 self.inv_implies_interp_aux_entries_positive_entry_size(i);
-                assert(self.interp_aux(i).map.index(va).size > 0);
-                assert(va < self.base_vaddr + self.num_entries() * self.entry_size());
             }
         });
     }
