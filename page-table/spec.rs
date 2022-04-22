@@ -271,7 +271,7 @@ impl PageTableContents {
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
     // #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
-    #[spec] fn resolve(self, vaddr: nat) -> nat {
+    #[spec] fn resolve(self, vaddr: nat) -> Result<nat,()> {
         if exists(|n:nat|
                   self.map.dom().contains(n) &&
                   n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size) {
@@ -279,9 +279,9 @@ impl PageTableContents {
                            self.map.dom().contains(n) &&
                            n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size);
             let offset = vaddr - n;
-            self.map.index(n).base + offset
+            Ok(self.map.index(n).base + offset)
         } else {
-            arbitrary()
+            Err(())
         }
     }
 
@@ -684,51 +684,84 @@ impl Directory {
         });
     }
 
-    #[spec] fn resolve(self, vaddr: nat) -> Result<nat,()> {
+    #[spec]
+    fn resolve(self, vaddr: nat) -> Result<nat,()> {
         decreases(self.arch.layers.len() - self.layer);
         decreases_by(Self::check_resolve);
 
         let offset = vaddr - self.base_vaddr;
         let base_offset = offset - (offset % self.entry_size());
         let entry = base_offset / self.entry_size();
-        if self.inv() && entry < self.entries.len() {
-            match self.entries.index(entry) {
-                NodeEntry::Page(p) => {
-                    Ok(p.base + offset % self.entry_size())
-                },
-                NodeEntry::Directory(d) => {
-                    d.resolve(vaddr)
-                },
-                NodeEntry::Empty() => {
-                    Err(())
-                },
+        // assert(vaddr == self.base_vaddr + entry * self.entry_size() + (offset % self.entry_size()));
+        if self.inv() {
+            if entry < self.entries.len() {
+                match self.entries.index(entry) {
+                    NodeEntry::Page(p) => {
+                        Ok(p.base + offset % self.entry_size())
+                    },
+                    NodeEntry::Directory(d) => {
+                        d.resolve(vaddr)
+                    },
+                    NodeEntry::Empty() => {
+                        Err(())
+                    },
+                }
+            } else {
+                Err(())
             }
         } else {
             arbitrary()
         }
     }
 
+    // #[proof]
+    // fn resolve_aux_properties(self, vaddr: nat) {
+    //     requires(self.inv());
+    //     // ensures(self.resolve(vaddr).is_Ok() >>= self.interp().resolve(vaddr).is_Ok());
+    //     ensures(self.resolve(vaddr).is_Ok()
+    //             >>= exists(|n:nat| self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
+    //     let offset = vaddr - self.base_vaddr;
+    //     let base_offset = offset - (offset % self.entry_size());
+    //     let entry: nat = base_offset / self.entry_size();
+    //     if entry < self.entries.len() {
+    //         // assert(0 <= entry);
+    //         assert(entry < self.entries.len());
+    //         match self.entries.index(entry) {
+    //             NodeEntry::Page(p) => {
+    //             },
+    //             NodeEntry::Directory(d) => {
+    //                 // d.resolve(vaddr)
+    //                 assume(false);
+    //             },
+    //             NodeEntry::Empty() => {
+    //             },
+    //         }
+    //     } else {
+    //     }
+    // }
+
     #[proof] #[verifier(decreases_by)]
     fn check_resolve(self, vaddr: nat) {
         let offset = vaddr - self.base_vaddr;
         let base_offset = offset - (offset % self.entry_size());
-        let entry = base_offset / self.entry_size();
+        let entry: nat = base_offset / self.entry_size();
+        assert(entry >= 0);
         if self.inv() && entry < self.entries.len() {
+            assert(self.directories_obey_invariant());
+            assert(self.directories_are_in_next_layer());
+            assert(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+                          >>= (self.entries.index(i).get_Directory_0().layer == self.layer + 1)));
+            assert((entry < self.entries.len() && self.entries.index(entry).is_Directory())
+                   >>= self.entries.index(entry).get_Directory_0().layer == self.layer + 1);
+            assume(false);
             match self.entries.index(entry) {
                 NodeEntry::Page(p) => { },
                 NodeEntry::Directory(d) => {
                     assert(entry < self.entries.len());
                     assert(self.entries.index(entry).is_Directory());
                     assert(equal(d, self.entries.index(entry).get_Directory_0()));
-                    assert(self.directories_obey_invariant());
-                    assert(self.directories_are_in_next_layer());
-                    assert(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-                                  >>= {
-                                      let directory = self.entries.index(i).get_Directory_0();
-                                      true
-                                          && directory.layer == self.layer + 1
-                                          && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-                                  }));
+                    assert(entry < self.entries.len() && self.entries.index(entry).is_Directory());
+                    assert(self.entries.index(entry).get_Directory_0().layer == self.layer + 1);
                     assert(d.layer == self.layer + 1);
                     assert(d.inv());
                 },
@@ -737,6 +770,15 @@ impl Directory {
         } else {
         }
     }
+
+    // #[proof]
+    // fn am_i_crazy(self, i: int, j: nat) {
+    //     requires(i == -3 && j == 3);
+    //     assert(i as nat >= 0);
+    //     let entry: nat = i as nat / j;
+    //     // let entry: nat = (arbitrary::<nat>() as int) as nat;
+    //     assert(entry >= 0);
+    // }
 
 }
 // 
