@@ -541,14 +541,30 @@ impl Directory {
                 self.inv_implies_interp_aux_inv(j);
                 if self.entries.index(i).is_Page() {
                     if va < self.base_vaddr + i * self.entry_size() {
-                        crate::lib::mul_distributive(i, self.entry_size());
+                        // crate::lib::mul_distributive(i, self.entry_size());
+                        assert_by_nonlinear((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size(), {});
                         assert(false);
                     } else if va == self.base_vaddr + i * self.entry_size() {
                         assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries())); // TODO verus bug
-                        assume(aligned(self.base_vaddr, self.entry_size())); // TODO verus nonlinear
-                        assume((i * self.entry_size()) % self.entry_size() == 0); // TODO verus nonlinear
+                        assert_by_nonlinear(aligned(self.base_vaddr, self.entry_size()), {
+                            requires([
+                                self.num_entries() > 0,
+                                aligned(self.base_vaddr, self.entry_size() * self.num_entries()),
+                            ]);
+                            // assert(aligned(self.base_vaddr, self.entry_size())); -- doesn't terminate
+                            assume(false);
+                        });
+                        assert(aligned(self.base_vaddr, self.entry_size())); // TODO verus nonlinear
+                        assert_by_nonlinear((i * self.entry_size()) % self.entry_size() == 0, {
+                            requires(self.entry_size() > 0);
+                            // assert((i * self.entry_size()) % self.entry_size() == 0); -- doesn't terminate
+                            assume(false);
+                        });
                         assert(aligned(i * self.entry_size(), self.entry_size()));
-                        assume(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size())); // TODO verus nonlinear
+                        assert_by_nonlinear(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()), {
+                            // requires(self.base_vaddr % self.entry_size() == 0); -- doesn't terminate
+                            assume(false);
+                        });
                     } else {
                     }
                 }
@@ -575,19 +591,26 @@ impl Directory {
                         if c1 != new_va && c2 != new_va {
                         } else if c1 == new_va {
                             assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
-                            crate::lib::mul_distributive(i, self.entry_size());
+                            // crate::lib::mul_distributive(i, self.entry_size());
+                            assert_by_nonlinear((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size(), {});
                         } else {
                             assert(c2 == new_va);
                             assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
                             assert(c2 == self.base_vaddr + i * self.entry_size());
-                            assume(c1 >= c2); // TODO verus nonlinear
+                            assert_by_nonlinear(c1 >= c2, {
+                                requires([
+                                    c2 == self.base_vaddr + i * self.entry_size(),
+                                    c1 >= self.base_vaddr + (i + 1) * self.entry_size(),
+                                ]);
+                            });
                             assert(false);
                         }
                     },
                     NodeEntry::Directory(d) => {
                         d.inv_implies_interp_aux_inv(0);
-                        // TODO: star bug?
-                        assume(d.num_entries() * d.entry_size() == self.entry_size());
+                        assert_by_nonlinear(self.entry_size() == d.num_entries() * d.entry_size(), {
+                            requires(self.entry_size() == d.entry_size() * d.num_entries());
+                        });
 
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
@@ -596,26 +619,30 @@ impl Directory {
                                       && !d_interp.dom().contains(c1)
                                       && !d_interp.dom().contains(c2), {
                                           if d_interp.dom().contains(c1) {
-                                              assert(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
-                                              // TODO:
-                                              assume(c1 < self.base_vaddr + (i + 1) * self.entry_size());
+                                              assert_by_nonlinear(c1 < self.base_vaddr + (i + 1) * self.entry_size(), {
+                                                  requires(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
+                                              });
                                               assert(false);
                                           } else {
                                               if d_interp.dom().contains(c2) {
-                                                  assert(c2 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
-                                                  assume(c2 < self.base_vaddr + (i + 1) * self.entry_size());
+                                                  assert_by_nonlinear(c2 < self.base_vaddr + (i + 1) * self.entry_size(), {
+                                                      requires([
+                                                          self.entry_size() == d.num_entries() * d.entry_size(),
+                                                          c2 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size()
+                                                      ]);
+                                                  });
                                               }
                                           }
                                       });
                         } else if d_interp.dom().contains(c1) && d_interp.dom().contains(c2) {
                         } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
-                            assert(self.base_vaddr + (i + 1) * self.entry_size() <= c2);
-                            // TODO: nonlinear
-                            assume(self.base_vaddr + i * self.entry_size() + self.entry_size() <= c2);
+                            assert_by_nonlinear(self.base_vaddr + i * self.entry_size() + self.entry_size() <= c2, {
+                                requires(self.base_vaddr + (i + 1) * self.entry_size() <= c2);
+                            });
                         } else {
-                            assert(c2 <  (self.base_vaddr + i * self.entry_size()) + self.entry_size());
-                            // TODO: nonlinear
-                            assume(c2 <  self.base_vaddr + (i + 1) * self.entry_size());
+                            assert_by_nonlinear(c2 <  self.base_vaddr + (i + 1) * self.entry_size(), {
+                                requires(c2 <  (self.base_vaddr + i * self.entry_size()) + self.entry_size());
+                            });
                             assert(false);
                         }
                     },
@@ -642,18 +669,18 @@ impl Directory {
                             // Post2
                             assert(equal(self.interp_aux(i).map.index(va), p));
                             assert(i < self.num_entries());
-                            assert(p.size == self.entry_size());
-                            // TODO: nonlinear
-                            assume(i * self.entry_size() + p.size == (i + 1) * self.entry_size());
-                            assert(i + 1 <= self.num_entries());
-                            // TODO: nonlinear
-                            assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+                            assert_by_nonlinear(i * self.entry_size() + p.size == (i + 1) * self.entry_size(), {
+                                requires(p.size == self.entry_size());
+                            });
+                            assert_by_nonlinear((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size(), {
+                                requires(i + 1 <= self.num_entries());
+                            });
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                         } else {
                             // Post1
-                            assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                            // TODO: nonlinear
-                            assume(va >= self.base_vaddr + i * self.entry_size());
+                            assert_by_nonlinear(va >= self.base_vaddr + i * self.entry_size(), {
+                                requires(va >= self.base_vaddr + (i + 1) * self.entry_size());
+                            });
                         }
                     },
                     NodeEntry::Directory(d) => {
@@ -661,26 +688,27 @@ impl Directory {
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
-                            // TODO:
-                            assume(d.num_entries() * d.entry_size() == self.entry_size());
-                            assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
-                            // TODO: nonlinear
-                            assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size());
-                            assert(i + 1 <= self.num_entries());
-                            // TODO: nonlinear
-                            assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+                            assert_by_nonlinear(d.num_entries() * d.entry_size() == self.entry_size(), {
+                                requires(self.entry_size() == d.entry_size() * d.num_entries());
+                            });
+                            assert_by_nonlinear(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size(), {
+                                requires(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
+                            });
+                            assert_by_nonlinear((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size(), {
+                                requires(i + 1 <= self.num_entries());
+                            });
                         } else {
                             // Post1
-                            assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                            // TODO: nonlinear
-                            assume(va >= self.base_vaddr + i * self.entry_size());
+                            assert_by_nonlinear(va >= self.base_vaddr + i * self.entry_size(), {
+                                requires(va >= self.base_vaddr + (i + 1) * self.entry_size());
+                            });
                         }
                     },
                     NodeEntry::Empty() => {
                         // Post1
-                        assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                        // TODO: nonlinear
-                        assume(va >= self.base_vaddr + i * self.entry_size());
+                        assert_by_nonlinear(va >= self.base_vaddr + i * self.entry_size(), {
+                            requires(va >= self.base_vaddr + (i + 1) * self.entry_size());
+                        });
                     },
                 }
                 // Post3
