@@ -429,11 +429,15 @@ impl Directory {
 
     #[spec(checked)]
     pub fn interp(self) -> PageTableContents {
+        // recommends(self.inv());
         self.interp_aux(0)
     }
 
     #[spec(checked)]
     pub fn interp_aux(self, i: nat) -> PageTableContents {
+        // TODO: Adding the recommendation causes a warning on the recursive call, which we can't
+        // prevent without writing assertions.
+        // recommends(self.inv());
         decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         // decreases_by(Self::check_interp_aux);
 
@@ -458,16 +462,6 @@ impl Directory {
             arbitrary()
         }
     }
-
-    //     #[proof]
-    //     fn x2(self) {
-    //         requires(self.inv());
-    //         // ensures(forall(|offset:nat|
-    //         //                self.interp().map.contains(offset)
-    //         //                >>= self.base_vaddr <= self.interp().map.index(offset).base
-    //         //                     && self.interp().map.index(offset).base + self.interp().map.index(offset).size <= self.base_vaddr + self.layer_size() * self.entry_size()));
-    //     }
-    //
 
     #[proof]
     fn inv_implies_interp_aux_entries_positive_entry_size(self, i: nat) {
@@ -586,8 +580,8 @@ impl Directory {
                     },
                     NodeEntry::Directory(d) => {
                         d.inv_implies_interp_aux_inv(0);
-                        // TODO: star bug?
-                        assume(d.num_entries() * d.entry_size() == self.entry_size());
+                        assert(self.entry_size() == d.entry_size() * d.num_entries());
+                        crate::lib::mul_commute(d.entry_size(), d.num_entries());
 
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
@@ -662,7 +656,8 @@ impl Directory {
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
                             // TODO:
-                            assume(d.num_entries() * d.entry_size() == self.entry_size());
+                            assert(self.entry_size() == d.entry_size() * d.num_entries());
+                            crate::lib::mul_commute(d.entry_size(), d.num_entries());
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
                             // TODO: nonlinear
                             assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size());
@@ -689,27 +684,61 @@ impl Directory {
         });
     }
 
+    #[spec] fn resolve(self, vaddr: nat) -> Result<nat,()> {
+        decreases(self.arch.layers.len() - self.layer);
+        decreases_by(Self::check_resolve);
+
+        let offset = vaddr - self.base_vaddr;
+        let base_offset = offset - (offset % self.entry_size());
+        let entry = base_offset / self.entry_size();
+        if self.inv() && entry < self.entries.len() {
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    Ok(p.base + offset % self.entry_size())
+                },
+                NodeEntry::Directory(d) => {
+                    d.resolve(vaddr)
+                },
+                NodeEntry::Empty() => {
+                    Err(())
+                },
+            }
+        } else {
+            arbitrary()
+        }
+    }
+
+    #[proof] #[verifier(decreases_by)]
+    fn check_resolve(self, vaddr: nat) {
+        let offset = vaddr - self.base_vaddr;
+        let base_offset = offset - (offset % self.entry_size());
+        let entry = base_offset / self.entry_size();
+        if self.inv() && entry < self.entries.len() {
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => { },
+                NodeEntry::Directory(d) => {
+                    assert(entry < self.entries.len());
+                    assert(self.entries.index(entry).is_Directory());
+                    assert(equal(d, self.entries.index(entry).get_Directory_0()));
+                    assert(self.directories_obey_invariant());
+                    assert(self.directories_are_in_next_layer());
+                    assert(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+                                  >>= {
+                                      let directory = self.entries.index(i).get_Directory_0();
+                                      true
+                                          && directory.layer == self.layer + 1
+                                          && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
+                                  }));
+                    assert(d.layer == self.layer + 1);
+                    assert(d.inv());
+                },
+                NodeEntry::Empty() => { },
+            }
+        } else {
+        }
+    }
+
 }
-// 
-//     #[proof] #[verifier(decreases_by)]
-//     fn check_interp_aux(self, i: nat) {
-//         assume(false);
-//         // if i >= self.entries.len() {
-//         //     assume(false);
-//         // } else {
-//         //     // TODO
-//         //     assume(false);
-//         // }
-//     }
-// 
-//     // #[proof]
-//     // fn x0(i: nat, m1: Map<nat,nat>, m2: Map<nat,nat>) {
-//     //     requires(m1.dom().contains(i));
-//     //     ensures([
-//     //             m1.union_prefer_right(m2).dom().contains(i),
-//     //             m2.union_prefer_right(m1).dom().contains(i)
-//     //     ]);
-//     // }
 // 
 //     #[proof]
 //     fn x1(self, j: nat, i: nat) {

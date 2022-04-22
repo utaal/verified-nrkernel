@@ -10,3 +10,8 @@ use crate::pervasive::*;
 pub fn mul_distributive(a: nat, b: nat) {
     ensures((a + 1) * b == a * b + b);
 }
+
+#[proof] #[verifier(external_body)]
+pub fn mul_commute(a: nat, b: nat) {
+    ensures(a * b == b * a);
+}
