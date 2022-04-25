@@ -723,6 +723,7 @@ impl Directory {
     //     let offset = vaddr - self.base_vaddr;
     //     let base_offset = offset - (offset % self.entry_size());
     //     let entry: nat = base_offset / self.entry_size();
+    //     assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
     //     if entry < self.entries.len() {
     //         // assert(0 <= entry);
     //         assert(entry < self.entries.len());
@@ -745,28 +746,10 @@ impl Directory {
         let offset = vaddr - self.base_vaddr;
         let base_offset = offset - (offset % self.entry_size());
         let entry: nat = base_offset / self.entry_size();
-        assert(entry >= 0);
+        // TODO: weird nat/int cast behavior
+        assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
         if self.inv() && entry < self.entries.len() {
             assert(self.directories_obey_invariant());
-            assert(self.directories_are_in_next_layer());
-            assert(forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-                          >>= (self.entries.index(i).get_Directory_0().layer == self.layer + 1)));
-            assert((entry < self.entries.len() && self.entries.index(entry).is_Directory())
-                   >>= self.entries.index(entry).get_Directory_0().layer == self.layer + 1);
-            assume(false);
-            match self.entries.index(entry) {
-                NodeEntry::Page(p) => { },
-                NodeEntry::Directory(d) => {
-                    assert(entry < self.entries.len());
-                    assert(self.entries.index(entry).is_Directory());
-                    assert(equal(d, self.entries.index(entry).get_Directory_0()));
-                    assert(entry < self.entries.len() && self.entries.index(entry).is_Directory());
-                    assert(self.entries.index(entry).get_Directory_0().layer == self.layer + 1);
-                    assert(d.layer == self.layer + 1);
-                    assert(d.inv());
-                },
-                NodeEntry::Empty() => { },
-            }
         } else {
         }
     }
