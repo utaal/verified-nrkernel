@@ -689,12 +689,15 @@ impl Directory {
         decreases(self.arch.layers.len() - self.layer);
         decreases_by(Self::check_resolve);
 
-        let offset = vaddr - self.base_vaddr;
-        let base_offset = offset - (offset % self.entry_size());
-        let entry = base_offset / self.entry_size();
-        // assert(vaddr == self.base_vaddr + entry * self.entry_size() + (offset % self.entry_size()));
         if self.inv() {
-            if entry < self.entries.len() {
+            if self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
+                // this condition implies that "entry < self.entries.len()"
+                let offset = vaddr - self.base_vaddr;
+                let base_offset = offset - (offset % self.entry_size());
+                let entry = base_offset / self.entry_size();
+                // let _ = spec_assert(0 <= entry);
+                // let _ = spec_assert(entry < self.num_entries());
+                // if entry < self.entries.len() {
                 match self.entries.index(entry) {
                     NodeEntry::Page(p) => {
                         Ok(p.base + offset % self.entry_size())
@@ -714,33 +717,6 @@ impl Directory {
         }
     }
 
-    // #[proof]
-    // fn resolve_aux_properties(self, vaddr: nat) {
-    //     requires(self.inv());
-    //     // ensures(self.resolve(vaddr).is_Ok() >>= self.interp().resolve(vaddr).is_Ok());
-    //     ensures(self.resolve(vaddr).is_Ok()
-    //             >>= exists(|n:nat| self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
-    //     let offset = vaddr - self.base_vaddr;
-    //     let base_offset = offset - (offset % self.entry_size());
-    //     let entry: nat = base_offset / self.entry_size();
-    //     assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
-    //     if entry < self.entries.len() {
-    //         // assert(0 <= entry);
-    //         assert(entry < self.entries.len());
-    //         match self.entries.index(entry) {
-    //             NodeEntry::Page(p) => {
-    //             },
-    //             NodeEntry::Directory(d) => {
-    //                 // d.resolve(vaddr)
-    //                 assume(false);
-    //             },
-    //             NodeEntry::Empty() => {
-    //             },
-    //         }
-    //     } else {
-    //     }
-    // }
-
     #[proof] #[verifier(decreases_by)]
     fn check_resolve(self, vaddr: nat) {
         let offset = vaddr - self.base_vaddr;
@@ -748,8 +724,130 @@ impl Directory {
         let entry: nat = base_offset / self.entry_size();
         // TODO: weird nat/int cast behavior
         assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
-        if self.inv() && entry < self.entries.len() {
+        if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
+            assert(offset < self.entry_size() * self.num_entries());
+            crate::lib::mod_less_eq(offset, self.entry_size());
+            assert(base_offset < self.entry_size() * self.num_entries());
+            assume(aligned(base_offset, self.entry_size()));
+            crate::lib::div_mul_cancel(base_offset, self.entry_size());
+            assert(base_offset == base_offset / self.entry_size() * self.entry_size());
+            assert(base_offset / self.entry_size() * self.entry_size() < self.entry_size() * self.num_entries());
+            crate::lib::mul_commute(self.entry_size(), self.num_entries());
+            crate::lib::less_mul_cancel(base_offset / self.entry_size(), self.num_entries(), self.entry_size());
+            assert(base_offset / self.entry_size() < self.num_entries());
+            assert(entry < self.entries.len());
             assert(self.directories_obey_invariant());
+        } else {
+        }
+    }
+
+    #[proof]
+    fn resolve_refines(self, vaddr: nat) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+                 self.inv(),
+                 // self.resolve(vaddr).is_Ok()
+        ]);
+        ensures([
+                equal(self.interp().resolve(vaddr), self.resolve(vaddr))
+        ]);
+
+        let interp = self.interp();
+        self.inv_implies_interp_aux_inv(0);
+
+        // if exists(|n:nat|
+        //           interp.map.dom().contains(n) &&
+        //           n <= vaddr && vaddr < n + interp.map.index(n).size) {
+        if self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
+            let offset = vaddr - self.base_vaddr;
+            let base_offset = offset - (offset % self.entry_size());
+            let entry = base_offset / self.entry_size();
+            assume(entry < self.entries.len());
+            // FIXME: proved this in the check function already; really tedious proof
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    assume(false);
+                    // Ok(p.base + offset % self.entry_size())
+                },
+                NodeEntry::Directory(d) => {
+                    assert(self.directories_obey_invariant());
+                    if d.resolve(vaddr).is_Ok() {
+                        d.resolve_aux_properties(vaddr);
+                        assume(false);
+                    } else {
+                        assume(false);
+                    }
+                },
+                NodeEntry::Empty() => {
+                    assume(false);
+                },
+            }
+        } else {
+            assert(self.resolve(vaddr).is_Err());
+            assert(interp.resolve(vaddr).is_Err());
+        }
+    }
+
+    #[proof]
+    fn resolve_aux_properties(self, vaddr: nat) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+                 self.inv(),
+                 self.resolve(vaddr).is_Ok()
+        ]);
+        // ensures(self.resolve(vaddr).is_Ok() >>= self.interp().resolve(vaddr).is_Ok());
+        ensures(exists(|n:nat| self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
+
+        // assume(false);
+        if self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
+            let offset = vaddr - self.base_vaddr;
+            let base_offset = offset - (offset % self.entry_size());
+            let entry: nat = base_offset / self.entry_size();
+            assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
+            // FIXME: proved this in the check function already; really tedious proof
+            assume(entry < self.entries.len());
+            assert(self.entry_size() > 0);
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    // let n = self.base_vaddr + p.base + offset % self.entry_size();
+                    let n = self.base_vaddr + entry * self.entry_size();
+                    assert(n == self.base_vaddr + base_offset / self.entry_size() * self.entry_size());
+                    assume(aligned(base_offset, self.entry_size()));
+                    crate::lib::div_mul_cancel(base_offset, self.entry_size());
+                    assert(base_offset == base_offset / self.entry_size() * self.entry_size());
+                    assert(n == self.base_vaddr + base_offset);
+                    crate::lib::mod_less_eq(offset, self.entry_size());
+                    assert(offset % self.entry_size() <= offset);
+                    assert(n == self.base_vaddr + offset - (offset % self.entry_size()));
+                    assert(n == self.base_vaddr + (vaddr - self.base_vaddr) - ((vaddr - self.base_vaddr) % self.entry_size()));
+                    assert(n == vaddr - ((vaddr - self.base_vaddr) % self.entry_size()));
+                    assert(self.base_vaddr <= vaddr);
+                    // FIXME: need an interp lemma
+                    assume(self.interp().map.dom().contains(n));
+                    // assert(self.interp().map.index(n).size == self.entry_size());
+                    assert(n <= vaddr);
+                    assert(vaddr < n + self.entry_size());
+                    // FIXME: need an interp lemma
+                    assume(vaddr < n + self.interp().map.index(n).size);
+                },
+                NodeEntry::Directory(d) => {
+                    assert(self.directories_obey_invariant());
+                    d.resolve_aux_properties(vaddr);
+                    let k = choose(|n:nat| d.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + d.interp().map.index(n).size);
+                    assert(d.interp().map.dom().contains(k) && k <= vaddr && vaddr < k + d.interp().map.index(k).size);
+                    // FIXME
+                    assume(forall(|n:nat,k:nat,v:MemRegion|
+                                  (true
+                                  && n < self.num_entries()
+                                  && self.entries.index(n).is_Directory()
+                                  && self.entries.index(n).get_Directory_0().interp().map.contains_pair(k,v))
+                                  >>= self.interp().map.contains_pair(k,v)));
+                    let v = d.interp().map.index(k);
+                    assert(d.interp().map.contains_pair(k,v));
+                    assert(self.interp().map.dom().contains(k) && k <= vaddr && vaddr < k + self.interp().map.index(k).size);
+                },
+                NodeEntry::Empty() => { },
+            }
         } else {
         }
     }
@@ -835,3 +933,8 @@ impl Directory {
 //         assert(s.remove(a).len() + 1 == 0);
 //     }
 // }
+#[spec]
+fn spec_assert(p: bool) {
+    recommends(p);
+    ()
+}
