@@ -10,5 +10,6 @@ pub mod memory_types;
 pub mod pervasive;
 pub mod spec;
 pub mod x86impl;
+pub mod system;
 
 fn main() {}
