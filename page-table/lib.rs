@@ -36,3 +36,21 @@ pub fn less_mul_cancel(a: nat, b: nat, c: nat) {
     requires(a * c < b * c);
     ensures(a < b);
 }
+
+#[proof] #[verifier(external_body)]
+pub fn mult_leq_mono1(a: nat, b: nat, c: nat) {
+    requires(a <= b);
+    ensures(a * c <= b * c);
+}
+
+#[proof] #[verifier(external_body)]
+pub fn mult_leq_mono2(a: nat, b: nat, c: nat) {
+    requires(a <= b);
+    ensures(c * a <= c * a);
+}
+
+#[proof] #[verifier(external_body)]
+pub fn subtract_mod_aligned(a: nat, b: nat) {
+    requires(0 < b);
+    ensures((a - (a % b)) % b == 0);
+}
