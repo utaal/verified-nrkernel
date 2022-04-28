@@ -6,17 +6,17 @@ use builtin_macros::*;
 #[allow(unused_imports)]
 use crate::pervasive::*;
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn mul_distributive(a: nat, b: nat) {
     ensures((a + 1) * b == a * b + b);
 }
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn mul_commute(a: nat, b: nat) {
     ensures(a * b == b * a);
 }
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn div_mul_cancel(a: nat, b: nat) {
     requires([
              a % b == 0,
@@ -25,25 +25,25 @@ pub fn div_mul_cancel(a: nat, b: nat) {
     ensures(a / b * b == a);
 }
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn mod_less_eq(a: nat, b: nat) {
     requires(b != 0);
     ensures(a % b <= a);
 }
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn less_mul_cancel(a: nat, b: nat, c: nat) {
     requires(a * c < b * c);
     ensures(a < b);
 }
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn mult_leq_mono1(a: nat, b: nat, c: nat) {
     requires(a <= b);
     ensures(a * c <= b * c);
 }
 
-#[proof] #[verifier(external_body)]
+#[proof] #[verifier(non_linear)]
 pub fn mult_leq_mono2(a: nat, b: nat, c: nat) {
     requires(a <= b);
     ensures(c * a <= c * a);

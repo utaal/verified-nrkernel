@@ -98,8 +98,6 @@ pub fn aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }
 
-// TODO: overlap probably shouldn't be defined in terms of MemRegion, since it's never actually
-// used that way. We always check overlap of the virtual address space.
 #[spec]
 pub fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
