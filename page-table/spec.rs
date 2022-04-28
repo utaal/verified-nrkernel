@@ -940,15 +940,15 @@ impl Directory {
     #[proof] #[verifier(decreases_by)]
     fn check_resolve(self, vaddr: nat) {
         if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.resolve_prove_entry_from_if_condition(vaddr);
+            self.lemma_entry_bounds_from_if_condition(vaddr);
             assert(self.directories_obey_invariant());
         } else {
         }
     }
 
-    // Proves 'entry < self.entries.len()', given the if condition in resolve
+    // Proves 'entry < self.entries.len()', given the if condition
     #[proof]
-    fn resolve_prove_entry_from_if_condition(self, vaddr: nat) {
+    fn lemma_entry_bounds_from_if_condition(self, vaddr: nat) {
         requires([
                  self.inv(),
                  self.base_vaddr <= vaddr,
@@ -1113,12 +1113,8 @@ impl Directory {
     #[proof]
     fn resolve_refines(self, vaddr: nat) {
         decreases(self.arch.layers.len() - self.layer);
-        requires([
-                 self.inv(),
-        ]);
-        ensures([
-                equal(self.interp().resolve(vaddr), self.resolve(vaddr))
-        ]);
+        requires(self.inv());
+        ensures(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
 
         // self.inv_implies_interp_aux_inv(0);
 
@@ -1126,7 +1122,7 @@ impl Directory {
             let offset = vaddr - self.base_vaddr;
             let base_offset = offset - (offset % self.entry_size());
             let entry = base_offset / self.entry_size();
-            self.resolve_prove_entry_from_if_condition(vaddr);
+            self.lemma_entry_bounds_from_if_condition(vaddr);
             // assume(entry < self.entries.len());
             crate::lib::subtract_mod_aligned(offset, self.entry_size());
             // assert(aligned(base_offset, self.entry_size()));
@@ -1298,9 +1294,6 @@ impl Directory {
                             assert(self.base_vaddr + (entry+1) * self.entry_size() <= n);
                             assert(self.base_vaddr + (entry+1) * self.entry_size() <= vaddr);
                             assert_by(false, {
-                                // let offset = vaddr - self.base_vaddr;
-                                // let base_offset = offset - (offset % self.entry_size());
-                                // let entry = base_offset / self.entry_size();
 
                                 // TODO: nonlinear
                                 assume(offset % self.entry_size() < self.entry_size());
@@ -1341,79 +1334,96 @@ impl Directory {
         }
     }
 
-    // #[proof]
-    // fn resolve_aux_properties(self, vaddr: nat) {
-    //     decreases(self.arch.layers.len() - self.layer);
-    //     requires([
-    //              self.inv(),
-    //              self.resolve(vaddr).is_Ok()
-    //     ]);
-    //     // ensures(self.resolve(vaddr).is_Ok() >>= self.interp().resolve(vaddr).is_Ok());
-    //     ensures(exists(|n:nat| self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
+    #[spec]
+    pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
+        self.interp().accepted_mapping(base, frame)
+    }
 
-    //     // assume(false);
-    //     if self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //         let offset = vaddr - self.base_vaddr;
-    //         let base_offset = offset - (offset % self.entry_size());
-    //         let entry: nat = base_offset / self.entry_size();
-    //         assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
-    //         // FIXME: proved this in the check function already; really tedious proof
-    //         assume(entry < self.entries.len());
-    //         assert(self.entry_size() > 0);
-    //         match self.entries.index(entry) {
-    //             NodeEntry::Page(p) => {
-    //                 // let n = self.base_vaddr + p.base + offset % self.entry_size();
-    //                 let n = self.base_vaddr + entry * self.entry_size();
-    //                 assert(n == self.base_vaddr + base_offset / self.entry_size() * self.entry_size());
-    //                 assume(aligned(base_offset, self.entry_size()));
-    //                 crate::lib::div_mul_cancel(base_offset, self.entry_size());
-    //                 assert(base_offset == base_offset / self.entry_size() * self.entry_size());
-    //                 assert(n == self.base_vaddr + base_offset);
-    //                 crate::lib::mod_less_eq(offset, self.entry_size());
-    //                 assert(offset % self.entry_size() <= offset);
-    //                 assert(n == self.base_vaddr + offset - (offset % self.entry_size()));
-    //                 assert(n == self.base_vaddr + (vaddr - self.base_vaddr) - ((vaddr - self.base_vaddr) % self.entry_size()));
-    //                 assert(n == vaddr - ((vaddr - self.base_vaddr) % self.entry_size()));
-    //                 assert(self.base_vaddr <= vaddr);
-    //                 // FIXME: need an interp lemma
-    //                 assume(self.interp().map.dom().contains(n));
-    //                 // assert(self.interp().map.index(n).size == self.entry_size());
-    //                 assert(n <= vaddr);
-    //                 assert(vaddr < n + self.entry_size());
-    //                 // FIXME: need an interp lemma
-    //                 assume(vaddr < n + self.interp().map.index(n).size);
-    //             },
-    //             NodeEntry::Directory(d) => {
-    //                 assert(self.directories_obey_invariant());
-    //                 d.resolve_aux_properties(vaddr);
-    //                 let k = choose(|n:nat| d.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + d.interp().map.index(n).size);
-    //                 assert(d.interp().map.dom().contains(k) && k <= vaddr && vaddr < k + d.interp().map.index(k).size);
-    //                 // FIXME
-    //                 assume(forall(|n:nat,k:nat,v:MemRegion|
-    //                               (true
-    //                               && n < self.num_entries()
-    //                               && self.entries.index(n).is_Directory()
-    //                               && self.entries.index(n).get_Directory_0().interp().map.contains_pair(k,v))
-    //                               >>= self.interp().map.contains_pair(k,v)));
-    //                 let v = d.interp().map.index(k);
-    //                 assert(d.interp().map.contains_pair(k,v));
-    //                 assert(self.interp().map.dom().contains(k) && k <= vaddr && vaddr < k + self.interp().map.index(k).size);
-    //             },
-    //             NodeEntry::Empty() => { },
-    //         }
-    //     } else {
-    //     }
-    // }
+    #[spec]
+    pub fn map_frame(self, base: nat, frame: MemRegion) -> Result<Self,()> {
+        decreases(self.arch.layers.len() - self.layer);
+        decreases_by(Self::check_map_frame);
 
-    // #[proof]
-    // fn am_i_crazy(self, i: int, j: nat) {
-    //     requires(i == -3 && j == 3);
-    //     assert(i as nat >= 0);
-    //     let entry: nat = i as nat / j;
-    //     // let entry: nat = (arbitrary::<nat>() as int) as nat;
-    //     assert(entry >= 0);
-    // }
+        if self.inv() && self.accepted_mapping(base, frame) {
+            let offset = base - self.base_vaddr;
+            let base_offset = offset - (offset % self.entry_size());
+            let entry = base_offset / self.entry_size();
+            if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
+                // this condition implies that "entry < self.entries.len()"
+                match self.entries.index(entry) {
+                    NodeEntry::Page(p) => {
+                        Err(())
+                    },
+                    NodeEntry::Directory(d) => {
+                        if self.entry_size() == frame.size {
+                            Err(())
+                        } else {
+                            match d.map_frame(base, frame) {
+                                Ok(d) => {
+                                    Ok(Directory {
+                                        entries: self.entries.update(entry, NodeEntry::Directory(d)),
+                                        ..self
+                                    })
+                                },
+                                Err(e) => Err(e),
+                            }
+                        }
+                    },
+                    NodeEntry::Empty() => {
+                        if self.entry_size() == frame.size {
+                            Ok(Directory {
+                                entries: self.entries.update(entry, NodeEntry::Page(frame)),
+                                ..self
+                            })
+                        } else {
+                            let new_dir = Directory {
+                                entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
+                                layer:      self.layer + 1,
+                                base_vaddr: self.base_vaddr + offset,
+                                arch:       self.arch,
+                            }.map_frame(base, frame);
+                            Ok(Directory {
+                                // FIXME: am i certain this mapping will always be ok? might be
+                                // tricky to prove.
+                                entries: self.entries.update(entry, NodeEntry::Directory(new_dir.get_Ok_0())),
+                                ..self
+                            })
+                        }
+                    },
+                }
+            } else {
+                Err(())
+            }
+        } else {
+            arbitrary()
+        }
+    }
 
+    #[proof] #[verifier(decreases_by)]
+    fn check_map_frame(self, base: nat, frame: MemRegion) {
+        if self.inv() && self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
+            self.lemma_entry_bounds_from_if_condition(base);
+            assert(self.directories_obey_invariant());
+        } else {
+        }
+    }
+
+}
+
+// FIXME: how to do this correctly?
+#[spec]
+pub fn new_seq(i: nat) -> Seq<NodeEntry> {
+    new_seq_aux(seq![], i)
+}
+
+#[spec]
+pub fn new_seq_aux(s: Seq<NodeEntry>, i: nat) -> Seq<NodeEntry> {
+    decreases(i);
+    if i == 0 {
+        s
+    } else {
+        new_seq_aux(s.add(seq![NodeEntry::Empty()]), i-1)
+    }
 }
 
 #[proof]
