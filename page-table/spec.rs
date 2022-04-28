@@ -966,6 +966,24 @@ impl Directory {
         assume(false);
     }
 
+
+    #[proof]
+    fn lemma_no_dir_interp_mapping_implies_no_self_interp_mapping(self, i: nat, vaddr: nat) {
+        requires([
+                 i < self.num_entries(),
+                 self.entries.index(i).is_Directory(),
+                 { let d = self.entries.index(i).get_Directory_0();
+                     !exists(|va: nat|
+                             #[trigger] d.interp().map.dom().contains(va)
+                             && va <= vaddr
+                             && vaddr < va + d.interp().map.index(va).size)
+                         && d.base_vaddr <= vaddr
+                         && vaddr < d.base_vaddr + d.num_entries() * d.entry_size()
+                 }]);
+        ensures(!exists(|va: nat| #[trigger] self.interp().map.dom().contains(va) && va <= vaddr && vaddr < va + self.interp().map.index(va).size));
+        assume(false);
+    }
+
     #[proof]
     fn resolve_refines(self, vaddr: nat) {
         decreases(self.arch.layers.len() - self.layer);
@@ -1065,7 +1083,63 @@ impl Directory {
                         //                d.interp().map.dom().contains(n) &&
                         //                n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size));
                         if self.interp().resolve(vaddr).is_Ok() {
-                            assume(false);
+                            assert(exists(|n:nat|
+                                          self.interp().map.dom().contains(n) &&
+                                          n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size));
+                            let n = choose(|n:nat|
+                                           self.interp().map.dom().contains(n) &&
+                                           n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size);
+                            assert(self.interp().map.dom().contains(n));
+                            // self
+                            // |---------------------|
+                            //           |-d-| |-d2|
+                            //           |-n-|
+                            assert(n <= vaddr);
+                            assert(vaddr < n + self.interp().map.index(n).size);
+
+                            // assume(d.base_vaddr <= n);
+                            // assume(n < d.base_vaddr + d.num_entries() * d.entry_size());
+
+                            // !exists(|va: nat| d.interp().map.dom().contains(va) && d.interp().map.index(n) = { _,size } && va <= n && n < va + size && d.base_vaddr <= va && va < d.base_vaddr + d.num_entries() * d.entry_size())
+                            // !exists(|va: nat| self.interp().map.dom().contains(va) && self.interp().map.index(n) = { _,size } && va <= n && n < va + size)
+                            // assert(!exists(|va: nat|
+                            //         d.interp().map.dom().contains(va)
+                            //         && va <= vaddr
+                            //         && vaddr < va + d.interp().map.index(va).size));
+                            // assert(d.base_vaddr <= vaddr);
+
+                            // let offset = vaddr - self.base_vaddr;
+                            // let base_offset = offset - (offset % self.entry_size());
+                            // let entry = base_offset / self.entry_size();
+
+                            assert(self.entry_size() > 0);
+                            assume(offset % self.entry_size() < self.entry_size());
+                            assume(vaddr < vaddr + self.entry_size() - (offset % self.entry_size()));
+                            assume(vaddr < self.base_vaddr - self.base_vaddr + vaddr + self.entry_size() - (offset % self.entry_size()));
+                            assume(vaddr < self.base_vaddr + vaddr - self.base_vaddr + self.entry_size() - (offset % self.entry_size()));
+                            assume(vaddr < self.base_vaddr + (vaddr - self.base_vaddr) + self.entry_size() - (offset % self.entry_size()));
+                            assume(vaddr < self.base_vaddr + ((vaddr - self.base_vaddr) + self.entry_size() - (offset % self.entry_size())));
+                            assume(vaddr < self.base_vaddr + ((offset - (offset % self.entry_size())) + self.entry_size()));
+                            assume(vaddr < self.base_vaddr + (base_offset + self.entry_size()));
+                            assume(vaddr < self.base_vaddr + ((base_offset + self.entry_size()) / self.entry_size()) * self.entry_size());
+                            assume(vaddr < self.base_vaddr + ((base_offset / self.entry_size())+1) * self.entry_size());
+                            assume(vaddr < self.base_vaddr + (entry+1) * self.entry_size());
+                            assume(vaddr < (self.base_vaddr + entry * self.entry_size()) + self.entry_size());
+                            assume(vaddr < (self.base_vaddr + entry * self.entry_size()) + d.num_entries() * d.entry_size());
+                            assume(vaddr < d.base_vaddr + d.num_entries() * d.entry_size());
+                            self.lemma_no_dir_interp_mapping_implies_no_self_interp_mapping(entry, vaddr);
+                            // assert(!exists(|va: nat|
+                            //                d.interp().map.dom().contains(va)
+                            //                && va <= vaddr
+                            //                && vaddr < va + d.interp().map.index(va).size
+                            //                && d.base_vaddr <= va
+                            //                && va < d.base_vaddr + d.num_entries() * d.entry_size()));
+                            // assume(!exists(|va: nat| self.interp().map.dom().contains(va) && va <= vaddr && vaddr < va + self.interp().map.index(va).size));
+                            assert(self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
+
+                            // assert(d.interp().resolve(vaddr).is_Err());
+
+                            // assume(false);
                         }
                         assert(self.interp().resolve(vaddr).is_Err());
                         assert(d.interp().resolve(vaddr).is_Err());
