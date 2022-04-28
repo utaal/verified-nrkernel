@@ -1191,11 +1191,17 @@ impl Directory {
                         assert(self.entries.index(entry).get_Directory_0().interp().map.contains_pair(n2, d.interp().map.index(n2)));
                         self.lemma_interp_facts_dir(entry, n2, d.interp().map.index(n2));
 
-                        assume(forall(|n1: nat, n2: nat| 
-                                        (self.interp().map.dom().contains(n1) &&
-                                         n1 <= vaddr && vaddr < n1 + (#[trigger] self.interp().map.index(n1)).size) &&
-                                        (self.interp().map.dom().contains(n2) &&
-                                         n2 <= vaddr && vaddr < n2 + (#[trigger] self.interp().map.index(n2)).size) >>= n1 == n2));
+                        assert_forall_by(|n1: nat, n2: nat| {
+                            requires(
+                                self.interp().map.dom().contains(n1) &&
+                                n1 <= vaddr && vaddr < n1 + (#[trigger] self.interp().map.index(n1)).size &&
+                                self.interp().map.dom().contains(n2) &&
+                                n2 <= vaddr && vaddr < n2 + (#[trigger] self.interp().map.index(n2)).size);
+                            ensures(n1 == n2);
+                            self.inv_implies_interp_inv();
+                            assert(self.interp().inv());
+                        });
+
                         assert(n1 == n2);
                         let n = n1;
                         assert(self.interp().map.dom().contains(n));
