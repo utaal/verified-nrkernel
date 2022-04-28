@@ -1073,36 +1073,21 @@ impl Directory {
         } else {
             assert(self.resolve(vaddr).is_Err());
 
-            assume(false);
-            // self.inv_implies_interp_inv();
-            // if vaddr >= self.base_vaddr + self.entry_size() * self.num_entries() {
-            //     assert(self.base_vaddr <= vaddr);
-            //     if self.interp().resolve(vaddr).is_Ok() {
-            //         assert(exists(|n: nat| self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
-            //         let n = choose(|n: nat| self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
-            //         assert(n < self.base_vaddr + self.num_entries() * self.entry_size());
-            //         assert(false);
-            //         // assert(self.interp().map.dom().contains(vaddr));
-            //     }
-            //     // assert(self.interp().resolve(vaddr).is_Err());
-            //     assert(self.interp().resolve(vaddr).is_Err());
-            // } else {
-            //     assert(self.interp().resolve(vaddr).is_Err());
-            // }
+            self.inv_implies_interp_inv();
+            if vaddr >= self.base_vaddr + self.entry_size() * self.num_entries() {
+                assert(forall(|va: nat| self.interp().map.dom().contains(va)
+                              >>= va + #[trigger] self.interp().map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()));
+                assert(self.base_vaddr <= vaddr);
+                if self.interp().resolve(vaddr).is_Ok() {
+                    assert(exists(|n: nat| #[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
+                    let va = choose(|n: nat| #[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
+                    crate::lib::mul_commute(self.entry_size(), self.num_entries());
+                    assert(va + self.interp().map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
+                    assert(false);
+                }
+            } else {
+            }
 
-            // assert_forall_by(|n: nat| {
-            //     requires(#[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
-            //     ensures(false);
-
-            //     self.inv_implies_interp_inv();
-            //     assert(n >= self.base_vaddr);
-            //     assert(self.base_vaddr <= vaddr);
-
-            //     if self.base_vaddr >= vaddr {
-            //         assert(vaddr == self.base_vaddr);
-            //     } else {
-            //     }
-            // });
             assert(self.interp().resolve(vaddr).is_Err());
         }
     }
