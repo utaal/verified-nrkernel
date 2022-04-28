@@ -1030,35 +1030,46 @@ impl Directory {
                     d.resolve_refines(vaddr);
                     assert(equal(d.interp().resolve(vaddr), d.resolve(vaddr)));
 
-                    if exists(|n:nat|
-                              self.interp().map.dom().contains(n) &&
-                              n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size) {
-                        // assume(equal(self.interp().map.dom(), d.interp().map.dom()));
-                        assume(forall(|n: nat|
-                                      equal((self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size),
-                                       (d.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size))));
-                        // assert(forall(|n: nat|
-                        //               equal((self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size),
-                        //                (d.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size))));
-                        assume(false);
-                        // let n1 = choose(|n:nat|
-                        //                 self.interp().map.dom().contains(n) &&
-                        //                 n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size);
-                        // let n2 = choose(|n:nat|
-                        //                 d.interp().map.dom().contains(n) &&
-                        //                 n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size);
-                        // assert(exists(|n:nat|
-                        //                 self.interp().map.dom().contains(n) &&
-                        //                 n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size &&
-                        //                 d.interp().map.dom().contains(n) &&
-                        //                 n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size));
-                        // assert(n1 == n2);
+                    if d.resolve(vaddr).is_Ok() {
+                        assert(self.resolve(vaddr).is_Ok());
+                        assert(exists(|n: nat|
+                                        d.interp().map.dom().contains(n) &&
+                                        n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size));
+
+                        let n1 = choose(|n:nat|
+                                        self.interp().map.dom().contains(n) &&
+                                        n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size);
+                        let n2 = choose(|n:nat|
+                                        d.interp().map.dom().contains(n) &&
+                                        n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size);
+
+                        assert(self.entries.index(entry).get_Directory_0().interp().map.contains_pair(n2, d.interp().map.index(n2)));
+                        self.lemma_interp_facts_dir(entry, n2, d.interp().map.index(n2));
+
+                        assume(forall(|n1: nat, n2: nat| 
+                                        (self.interp().map.dom().contains(n1) &&
+                                         n1 <= vaddr && vaddr < n1 + (#[trigger] self.interp().map.index(n1)).size) &&
+                                        (self.interp().map.dom().contains(n2) &&
+                                         n2 <= vaddr && vaddr < n2 + (#[trigger] self.interp().map.index(n2)).size) >>= n1 == n2));
+                        assert(n1 == n2);
+                        let n = n1;
+                        assert(self.interp().map.dom().contains(n));
+                        assert(d.resolve(vaddr).is_Ok());
+                        assert(d.interp().resolve(vaddr).is_Ok());
+                        assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
                     } else {
+                        assert(d.resolve(vaddr).is_Err());
+                        assert(self.resolve(vaddr).is_Err());
+                        // assert(self.interp().resolve(vaddr).is_Err());
+                        // assume(!exists(|n:nat|
+                        //                d.interp().map.dom().contains(n) &&
+                        //                n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size));
+                        if self.interp().resolve(vaddr).is_Ok() {
+                            assume(false);
+                        }
                         assert(self.interp().resolve(vaddr).is_Err());
-                        assume(!exists(|n:nat|
-                                       d.interp().map.dom().contains(n) &&
-                                       n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size));
                         assert(d.interp().resolve(vaddr).is_Err());
+                        assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
                     }
                     assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
 
