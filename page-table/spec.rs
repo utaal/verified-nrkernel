@@ -1176,10 +1176,6 @@ impl Directory {
                     } else {
                         assert(d.resolve(vaddr).is_Err());
                         assert(self.resolve(vaddr).is_Err());
-                        // assert(self.interp().resolve(vaddr).is_Err());
-                        // assume(!exists(|n:nat|
-                        //                d.interp().map.dom().contains(n) &&
-                        //                n <= vaddr && vaddr < n + (#[trigger] d.interp().map.index(n)).size));
                         if self.interp().resolve(vaddr).is_Ok() {
                             assert(exists(|n:nat|
                                           self.interp().map.dom().contains(n) &&
@@ -1194,21 +1190,6 @@ impl Directory {
                             //           |-n-|
                             assert(n <= vaddr);
                             assert(vaddr < n + self.interp().map.index(n).size);
-
-                            // assume(d.base_vaddr <= n);
-                            // assume(n < d.base_vaddr + d.num_entries() * d.entry_size());
-
-                            // !exists(|va: nat| d.interp().map.dom().contains(va) && d.interp().map.index(n) = { _,size } && va <= n && n < va + size && d.base_vaddr <= va && va < d.base_vaddr + d.num_entries() * d.entry_size())
-                            // !exists(|va: nat| self.interp().map.dom().contains(va) && self.interp().map.index(n) = { _,size } && va <= n && n < va + size)
-                            // assert(!exists(|va: nat|
-                            //         d.interp().map.dom().contains(va)
-                            //         && va <= vaddr
-                            //         && vaddr < va + d.interp().map.index(va).size));
-                            // assert(d.base_vaddr <= vaddr);
-
-                            // let offset = vaddr - self.base_vaddr;
-                            // let base_offset = offset - (offset % self.entry_size());
-                            // let entry = base_offset / self.entry_size();
 
                             assert(self.entry_size() > 0);
                             assume(offset % self.entry_size() < self.entry_size());
@@ -1228,18 +1209,7 @@ impl Directory {
 
 
                             self.lemma_no_dir_interp_mapping_implies_no_self_interp_mapping(entry, vaddr, d);
-                            // assert(!exists(|va: nat|
-                            //                d.interp().map.dom().contains(va)
-                            //                && va <= vaddr
-                            //                && vaddr < va + d.interp().map.index(va).size
-                            //                && d.base_vaddr <= va
-                            //                && va < d.base_vaddr + d.num_entries() * d.entry_size()));
-                            // assume(!exists(|va: nat| self.interp().map.dom().contains(va) && va <= vaddr && vaddr < va + self.interp().map.index(va).size));
                             assert(self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
-
-                            // assert(d.interp().resolve(vaddr).is_Err());
-
-                            // assume(false);
                         }
                         assert(self.interp().resolve(vaddr).is_Err());
                         assert(d.interp().resolve(vaddr).is_Err());
@@ -1420,6 +1390,58 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_update_empty_interp_aux_equal_interp_aux_remove(self, i: nat, n: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+        requires([
+                 self.inv(),
+                 i <= n,
+                 n < self.entries.len(),
+                 !equal(self.entries.index(n), NodeEntry::Empty())
+        ]);
+        ensures(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
+
+        assert_by(self.interp_aux(i).map.dom().contains(self.base_vaddr + n * self.entry_size()), {
+            match self.entries.index(n) {
+                NodeEntry::Page(p)      => self.lemma_interp_aux_facts_page(i, n),
+                NodeEntry::Directory(d) => assume(false),
+                NodeEntry::Empty()      => (),
+            };
+        });
+        self.inv_implies_interp_inv();
+
+        if i >= self.entries.len() {
+        } else {
+            if i == n {
+                assume(false);
+            } else {
+                self.lemma_update_empty_interp_aux_equal_interp_aux_remove(i+1, n);
+                assert(equal(
+                        self.update(n, NodeEntry::Empty()).interp_aux(i+1),
+                        self.interp_aux(i+1).remove(self.base_vaddr + n * self.entry_size())));
+                self.lemma_interp_aux_disjoint(i);
+                // let rem = self.interp_aux(i + 1).map;
+                match self.entries.index(i) {
+                    NodeEntry::Page(p)      => {
+                        assert(equal(
+                                self.update(n, NodeEntry::Empty()).interp_aux(i).map,
+                                self.update(n, NodeEntry::Empty()).interp_aux(i+1).map.insert(self.base_vaddr + i * self.entry_size(), p)));
+
+                        //rem.insert(self.base_vaddr + i * self.entry_size(), p),
+                        assert(equal(
+                                self.update(n, NodeEntry::Empty()).interp_aux(i),
+                                self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
+                    },
+                    NodeEntry::Directory(d) => {
+                        assume(false);
+                        //rem.union_prefer_right(d.interp_aux(0).map),
+                    },
+                    NodeEntry::Empty()      => (),
+                }
+            }
+        }
+    }
+
+    #[proof]
     fn lemma_update_empty_interp_equal_interp_remove(self, n: nat) {
         ensures(equal(self.update(n, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + n * self.entry_size())));
         assume(false);
@@ -1558,12 +1580,25 @@ impl Directory {
                         self.lemma_interp_facts_page(entry);
                         assert(self.interp().map.contains_pair(self.base_vaddr + entry * self.entry_size(), p));
                         assert(self.interp().map.dom().contains(self.base_vaddr + entry * self.entry_size()));
-                        assert(base != self.base_vaddr + entry * self.entry_size());
+                        assert(base > self.base_vaddr + entry * self.entry_size());
                         assert_by(!self.interp().map.dom().contains(base), {
                             if self.interp().map.dom().contains(base) {
                                 let p2 = self.interp().map.index(base);
                                 assert(base > self.base_vaddr + entry * self.entry_size());
-                                assume(overlap(
+
+                                assert(base < self.base_vaddr + base_offset + self.entry_size());
+                                crate::lib::subtract_mod_aligned(offset, self.entry_size());
+                                // TODO: nonlinear
+                                assume((base_offset + self.entry_size()) % self.entry_size() == 0);
+                                crate::lib::div_mul_cancel(base_offset+self.entry_size(), self.entry_size());
+                                assert(base < self.base_vaddr + (base_offset+self.entry_size()) / self.entry_size() * self.entry_size());
+                                // TODO: nonlinear
+                                assume(base < self.base_vaddr + (base_offset / self.entry_size()+1) * self.entry_size());
+                                assert(base < self.base_vaddr + (entry+1) * self.entry_size());
+                                crate::lib::mul_distributive(entry, self.entry_size());
+                                assert(base < self.base_vaddr + entry * self.entry_size() + self.entry_size());
+                                assert(base < self.base_vaddr + entry * self.entry_size() + p.size);
+                                assert(overlap(
                                         MemRegion { base: base, size: p2.size },
                                         MemRegion { base: self.base_vaddr + entry * self.entry_size(), size: p.size }
                                         ));
@@ -1574,14 +1609,15 @@ impl Directory {
                 },
                 NodeEntry::Directory(d) => {
                     assume(false);
-                },
                     // d.unmap(base),
+                },
                 NodeEntry::Empty() => {
-                    assume(false);
-                    // self.lemma_interp_facts_empty(entry);
-                    // if self.interp().map.dom().contains(entry) {
-                    // } else {
-                    // }
+                    self.lemma_interp_facts_empty(entry);
+                    if self.interp().map.dom().contains(entry) {
+                        assume(false);
+                    } else {
+                        assume(false);
+                    }
                 },
             }
         } else {
