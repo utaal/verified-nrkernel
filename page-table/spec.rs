@@ -911,7 +911,7 @@ impl Directory {
     #[proof] #[verifier(decreases_by)]
     fn check_resolve(self, vaddr: nat) {
         if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.lemma_entry_bounds_from_if_condition(vaddr);
+            self.lemma_derive_entry_bounds_from_if_condition(vaddr);
             assert(self.directories_obey_invariant());
         } else {
         }
@@ -919,7 +919,7 @@ impl Directory {
 
     // Proves 'entry < self.entries.len()', given the if condition
     #[proof]
-    fn lemma_entry_bounds_from_if_condition(self, vaddr: nat) {
+    fn lemma_derive_entry_bounds_from_if_condition(self, vaddr: nat) {
         requires([
                  self.inv(),
                  self.base_vaddr <= vaddr,
@@ -1093,7 +1093,7 @@ impl Directory {
             let offset = vaddr - self.base_vaddr;
             let base_offset = offset - (offset % self.entry_size());
             let entry = base_offset / self.entry_size();
-            self.lemma_entry_bounds_from_if_condition(vaddr);
+            self.lemma_derive_entry_bounds_from_if_condition(vaddr);
             // assume(entry < self.entries.len());
             crate::lib::subtract_mod_aligned(offset, self.entry_size());
             // assert(aligned(base_offset, self.entry_size()));
@@ -1372,7 +1372,7 @@ impl Directory {
     #[proof] #[verifier(decreases_by)]
     fn check_map_frame(self, base: nat, frame: MemRegion) {
         if self.inv() && self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.lemma_entry_bounds_from_if_condition(base);
+            self.lemma_derive_entry_bounds_from_if_condition(base);
             assert(self.directories_obey_invariant());
         } else {
         }
@@ -1413,7 +1413,7 @@ impl Directory {
     #[proof] #[verifier(decreases_by)]
     fn check_unmap(self, base: nat) {
         if self.inv() && self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.lemma_entry_bounds_from_if_condition(base);
+            self.lemma_derive_entry_bounds_from_if_condition(base);
             assert(self.directories_obey_invariant());
         } else {
         }
@@ -1495,6 +1495,41 @@ impl Directory {
     }
 
     #[proof]
+    fn unmap_preserves_inv(self, base: nat) {
+        requires([
+                 self.inv(),
+                 self.unmap(base).is_Ok()
+        ]);
+        ensures(self.unmap(base).get_Ok_0().inv());
+        decreases(self.arch.layers.len() - self.layer);
+
+        let offset = base - self.base_vaddr;
+        let base_offset = offset - (offset % self.entry_size());
+        let entry = base_offset / self.entry_size();
+        if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
+            self.lemma_derive_entry_bounds_from_if_condition(base);
+            match self.entries.index(entry) {
+                NodeEntry::Page(p)      => {
+                    self.lemma_derive_unmap_page_base_bound(base);
+                    if aligned(base, self.entry_size()) {
+                        let nself = self.update(entry, NodeEntry::Empty());
+                        assert(self.directories_obey_invariant());
+                        assert(nself.directories_obey_invariant());
+                        assert(nself.inv());
+                    } else {
+                    }
+                },
+                NodeEntry::Directory(d) => {
+                    assert(self.directories_obey_invariant());
+                    d.unmap_preserves_inv(base);
+                },
+                NodeEntry::Empty()      => (),
+            }
+        } else {
+        }
+    }
+
+    #[proof]
     fn unmap_refines_unmap(self, base: nat) {
         requires(self.inv());
         ensures(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
@@ -1506,14 +1541,14 @@ impl Directory {
         let base_offset = offset - (offset % self.entry_size());
         let entry = base_offset / self.entry_size();
         if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.lemma_entry_bounds_from_if_condition(base);
+            self.lemma_derive_entry_bounds_from_if_condition(base);
             match self.entries.index(entry) {
                 NodeEntry::Page(p) => {
                     self.lemma_derive_unmap_page_base_bound(base);
                     if aligned(base, self.entry_size()) {
                         assert(base == self.base_vaddr + entry * self.entry_size());
                         self.lemma_interp_facts_page(entry);
-                        assume(self.unmap(base).get_Ok_0().inv());
+                        self.unmap_preserves_inv(base);
                         self.lemma_update_empty_interp_equal_interp_remove(base);
                         // TODO: trigger problem? verus bug?
                         assume(equal(self.update(entry, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + entry * self.entry_size())));
