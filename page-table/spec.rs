@@ -1408,6 +1408,44 @@ impl Directory {
         }
     }
 
+    #[spec]
+    pub fn unmap(self, base: nat) -> Result<Self,()> {
+        decreases(self.arch.layers.len() - self.layer);
+        decreases_by(Self::check_unmap);
+
+        if self.inv() {
+            let offset = base - self.base_vaddr;
+            let base_offset = offset - (offset % self.entry_size());
+            let entry = base_offset / self.entry_size();
+            if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
+                // this condition implies that "entry < self.entries.len()"
+                match self.entries.index(entry) {
+                    NodeEntry::Page(p) =>
+                        Ok(Directory {
+                            entries: self.entries.update(entry, NodeEntry::Empty()),
+                            ..self
+                        }),
+                    NodeEntry::Directory(d) => d.unmap(base),
+                    NodeEntry::Empty() => Err(()),
+                }
+            } else {
+                Err(())
+            }
+        } else {
+            arbitrary()
+        }
+    }
+
+    #[proof] #[verifier(decreases_by)]
+    fn check_unmap(self, base: nat) {
+        if self.inv() && self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
+            self.lemma_entry_bounds_from_if_condition(base);
+            assert(self.directories_obey_invariant());
+        } else {
+        }
+    }
+
+
 }
 
 // FIXME: how to do this correctly?
