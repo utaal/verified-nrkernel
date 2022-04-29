@@ -54,3 +54,25 @@ pub fn subtract_mod_aligned(a: nat, b: nat) {
     requires(0 < b);
     ensures((a - (a % b)) % b == 0);
 }
+
+#[proof] #[verifier(external_body)]
+pub fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat) {
+    requires(a % (b * c) == 0);
+    ensures(a % b == 0);
+}
+
+#[proof] #[verifier(external_body)]
+pub fn subtract_mod_eq_zero(a: nat, b: nat, c: nat) {
+    requires([
+             a % c == 0,
+             b % c == 0,
+             a <= b,
+    ]);
+    ensures((b - a) % c == 0);
+}
+
+#[proof] #[verifier(non_linear)]
+pub fn zero_mod_eq_zero(a: nat) {
+    requires(a != 0);
+    ensures(0 % a == 0);
+}

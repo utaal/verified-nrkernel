@@ -199,61 +199,6 @@ impl PageTableContents {
         ]);
     }
 
-    // #[proof] #[verifier(non_linear)]
-    // pub fn lemma_overlap_aligned_equal_size_implies_equal_base(va1: nat, va2: nat, size: nat) {
-    //     requires([
-    //         aligned(va1, size),
-    //         aligned(va2, size),
-    //         size > 0,
-    //         overlap(
-    //             MemRegion { base: va1, size: size },
-    //             MemRegion { base: va2, size: size }),
-    //     ]);
-    //     ensures(va1 == va2);
-    // }
-
-    // #[proof]
-    // pub fn lemma_overlap_IMP_equal_base(self, va1: nat, base: nat, size: nat) {
-    //     requires([
-    //              self.inv(),
-    //              self.map.dom().contains(va1),
-    //              aligned(base, size),
-    //              size == self.map.index(va1).size,
-    //              size > 0, // TODO: this should probably be self.arch.layer_sizes.contains(size), along with 0 not being a valid size in the invariant
-    //              overlap(
-    //                  MemRegion { base: va1, size: self.map.index(va1).size },
-    //                  MemRegion { base: base, size: size }),
-    //     ]);
-    //     ensures(va1 == base);
-
-    //     if va1 <= base {
-    //         // assert(va1 + va1_size <= base);
-    //         if va1 < base {
-    //             assert(va1 < base);
-    //             assert(base < va1 + size);
-    //             assert(base % size == 0);
-    //             assert(va1 % size == 0);
-    //             // TODO: same as below
-    //             assume(false);
-    //             assert(va1 == base);
-    //         } else { }
-    //     } else {
-    //         assert(base < va1);
-    //         assert(va1 < base + size);
-    //         assert(va1 % size == 0);
-    //         assert(base % size == 0);
-    //         // assert(va1 % size == va1 - base);
-
-    //         // base    size
-    //         // |-------|
-    //         //     |-------|
-    //         //     va1     size
-    //         // TODO: need nonlinear reasoning? (isabelle sledgehammer can prove this)
-    //         assume(false);
-    //         assert(va1 == base);
-    //     }
-    // }
-
     // predicate (function -> bool)
     // #[spec] pub fn step_map_frame(&self /* s */, post: &PageTableContents /* s' */, base:nat, frame: MemRegion) -> bool {
     //     post == self.map_frame(base, frame)
@@ -279,25 +224,29 @@ impl PageTableContents {
         }
     }
 
+    #[spec] fn remove(self, n: nat) -> PageTableContents {
+        PageTableContents {
+            map: self.map.remove(n),
+            ..self
+        }
+    }
+
     /// Removes the frame from the address space that contains `base`.
-    #[spec] fn unmap(self, base: nat) -> PageTableContents {
+    #[spec] fn unmap(self, base: nat) -> Result<PageTableContents,()> {
         if self.map.dom().contains(base) {
-            PageTableContents {
-                map: self.map.remove(base),
-                ..self
-            }
+            Ok(self.remove(base))
         } else {
-            arbitrary()
+            Err(())
         }
     }
 
     #[proof] fn unmap_preserves_inv(self, base: nat) {
         requires([
             self.inv(),
-            self.map.dom().contains(base),
+            self.unmap(base).is_Ok()
         ]);
         ensures([
-            self.unmap(base).inv()
+            self.unmap(base).get_Ok_0().inv()
         ]);
     }
 }
@@ -883,11 +832,33 @@ impl Directory {
                  n < self.entries.len(),
                  self.entries.index(n).is_Empty(),
         ]);
-        ensures(forall(|va: nat|
+        ensures([
+                forall(|va: nat|
                        (#[trigger] self.interp().map.dom().contains(va))
                        >>= (va + self.interp().map.index(va).size <= self.base_vaddr + n * self.entry_size())
-                       || (self.base_vaddr + (n+1) * self.entry_size() <= va)));
+                       || (self.base_vaddr + (n+1) * self.entry_size() <= va)),
+               forall(|va: nat|
+                      self.base_vaddr + n * self.entry_size() <= va
+                      && va < self.base_vaddr + (n+1) * self.entry_size()
+                      >>= !(#[trigger] self.interp().map.dom().contains(va))),
+        ]);
         self.lemma_interp_aux_facts_empty(0, n);
+        assert_forall_by(|va: nat| {
+            requires(self.base_vaddr + n * self.entry_size() <= va
+                     && va < self.base_vaddr + (n+1) * self.entry_size());
+            ensures(!(#[trigger] self.interp().map.dom().contains(va)));
+
+            if self.interp().map.dom().contains(va) {
+                assert(va + self.interp().map.index(va).size <= self.base_vaddr + n * self.entry_size()
+                       || self.base_vaddr + (n+1) * self.entry_size() <= va);
+                if va + self.interp().map.index(va).size <= self.base_vaddr + n * self.entry_size() {
+                    self.inv_implies_interp_aux_entries_positive_entry_size(0);
+                    assert(self.interp().map.index(va).size > 0);
+                    assert(va < self.base_vaddr + n * self.entry_size());
+                } else {
+                }
+            }
+        });
     }
 
     #[proof]
@@ -1334,6 +1305,16 @@ impl Directory {
         }
     }
 
+
+    #[spec(checked)]
+    pub fn update(self, n: nat, e: NodeEntry) -> Self {
+        recommends(n < self.entries.len());
+        Directory {
+            entries: self.entries.update(n, e),
+            ..self
+        }
+    }
+
     #[spec]
     pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         self.interp().accepted_mapping(base, frame)
@@ -1359,22 +1340,14 @@ impl Directory {
                             Err(())
                         } else {
                             match d.map_frame(base, frame) {
-                                Ok(d) => {
-                                    Ok(Directory {
-                                        entries: self.entries.update(entry, NodeEntry::Directory(d)),
-                                        ..self
-                                    })
-                                },
+                                Ok(d)  => Ok(self.update(entry, NodeEntry::Directory(d))),
                                 Err(e) => Err(e),
                             }
                         }
                     },
                     NodeEntry::Empty() => {
                         if self.entry_size() == frame.size {
-                            Ok(Directory {
-                                entries: self.entries.update(entry, NodeEntry::Page(frame)),
-                                ..self
-                            })
+                            Ok(self.update(entry, NodeEntry::Page(frame)))
                         } else {
                             let new_dir = Directory {
                                 entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
@@ -1382,12 +1355,9 @@ impl Directory {
                                 base_vaddr: self.base_vaddr + offset,
                                 arch:       self.arch,
                             }.map_frame(base, frame);
-                            Ok(Directory {
                                 // FIXME: am i certain this mapping will always be ok? might be
                                 // tricky to prove.
-                                entries: self.entries.update(entry, NodeEntry::Directory(new_dir.get_Ok_0())),
-                                ..self
-                            })
+                            Ok(self.update(entry, NodeEntry::Directory(new_dir.get_Ok_0())))
                         }
                     },
                 }
@@ -1420,13 +1390,17 @@ impl Directory {
             if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
                 // this condition implies that "entry < self.entries.len()"
                 match self.entries.index(entry) {
-                    NodeEntry::Page(p) =>
-                        Ok(Directory {
-                            entries: self.entries.update(entry, NodeEntry::Empty()),
-                            ..self
-                        }),
+                    NodeEntry::Page(p)      => {
+                        if aligned(base, self.entry_size()) {
+                            // This implies base == self.base_vaddr + entry * self.entry_size()
+                            Ok(self.update(entry, NodeEntry::Empty()))
+                        } else {
+                            // This implies base > self.base_vaddr + entry * self.entry_size()
+                            Err(())
+                        }
+                    },
                     NodeEntry::Directory(d) => d.unmap(base),
-                    NodeEntry::Empty() => Err(()),
+                    NodeEntry::Empty()      => Err(()),
                 }
             } else {
                 Err(())
@@ -1445,7 +1419,160 @@ impl Directory {
         }
     }
 
+    #[proof]
+    fn lemma_update_empty_interp_equal_interp_remove(self, n: nat) {
+        ensures(equal(self.update(n, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + n * self.entry_size())));
+        assume(false);
+    }
 
+    #[proof]
+    fn lemma_derive_unmap_page_base_bound(self, base: nat) {
+        requires([
+                 self.inv(),
+                 self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries(),
+                 { let offset = base - self.base_vaddr;
+                   let base_offset = offset - (offset % self.entry_size());
+                   let entry = base_offset / self.entry_size();
+                   self.entries.index(entry).is_Page()
+                 },
+        ]);
+        ensures({
+            let offset = base - self.base_vaddr;
+            let base_offset = offset - (offset % self.entry_size());
+            let entry = base_offset / self.entry_size();
+            if aligned(base, self.entry_size()) {
+                base == self.base_vaddr + entry * self.entry_size()
+            } else {
+                base > self.base_vaddr + entry * self.entry_size()
+            }
+        });
+        let offset = base - self.base_vaddr;
+        let base_offset = offset - (offset % self.entry_size());
+        let entry = base_offset / self.entry_size();
+        if aligned(base, self.entry_size()) {
+            assert(base == self.base_vaddr + base - self.base_vaddr);
+            assert(base == self.base_vaddr + offset);
+            crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+            assert(aligned(self.base_vaddr, self.entry_size()));
+            assert(aligned(base, self.entry_size()));
+            assert(self.base_vaddr <= base);
+            crate::lib::subtract_mod_eq_zero(self.base_vaddr, base, self.entry_size());
+            assert(offset % self.entry_size() == 0);
+            assert(base == self.base_vaddr + offset - (offset % self.entry_size()));
+            assert(base == self.base_vaddr + base_offset);
+            crate::lib::div_mul_cancel(base_offset, self.entry_size());
+            assert(base == self.base_vaddr + (base_offset / self.entry_size()) * self.entry_size());
+            assert(base == self.base_vaddr + entry * self.entry_size());
+        } else {
+            assert(base % self.entry_size() > 0);
+            assert_by(base > 0, {
+                if base == 0 {
+                    crate::lib::zero_mod_eq_zero(self.entry_size());
+                }
+            });
+            crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+            assert(aligned(self.base_vaddr, self.entry_size()));
+            // TODO: nonlinear
+            assume((base - self.base_vaddr) % self.entry_size() > 0);
+            assert(offset % self.entry_size() > 0);
+            assert(offset % self.entry_size() <= self.entry_size());
+            crate::lib::mod_less_eq(base, self.entry_size());
+            assert(base % self.entry_size() <= base);
+            // TODO: nonlinear
+            assume((base - self.base_vaddr) % self.entry_size() <= base);
+            assert(offset % self.entry_size() <= base);
+            assert(base > base - (offset % self.entry_size()));
+            assert(base > self.base_vaddr + (base - self.base_vaddr) - (offset % self.entry_size()));
+            crate::lib::mod_less_eq(offset, self.entry_size());
+            assert(base > self.base_vaddr + (offset - (offset % self.entry_size())));
+            assert(base > self.base_vaddr + base_offset);
+            crate::lib::subtract_mod_aligned(offset, self.entry_size());
+            crate::lib::div_mul_cancel(base_offset, self.entry_size());
+            assert(base > self.base_vaddr + (base_offset / self.entry_size()) * self.entry_size());
+            assert(base > self.base_vaddr + entry * self.entry_size());
+            assert(base > self.base_vaddr + entry * self.entry_size());
+        }
+    }
+
+    #[proof]
+    fn unmap_refines_unmap(self, base: nat) {
+        requires(self.inv());
+        ensures(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+
+        self.inv_implies_interp_inv();
+        crate::lib::mul_commute(self.entry_size(), self.num_entries());
+
+        let offset = base - self.base_vaddr;
+        let base_offset = offset - (offset % self.entry_size());
+        let entry = base_offset / self.entry_size();
+        if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
+            self.lemma_entry_bounds_from_if_condition(base);
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    self.lemma_derive_unmap_page_base_bound(base);
+                    if aligned(base, self.entry_size()) {
+                        assert(base == self.base_vaddr + entry * self.entry_size());
+                        self.lemma_interp_facts_page(entry);
+                        assume(self.unmap(base).get_Ok_0().inv());
+                        self.lemma_update_empty_interp_equal_interp_remove(base);
+                        // TODO: trigger problem? verus bug?
+                        assume(equal(self.update(entry, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + entry * self.entry_size())));
+                        assert(equal(self.update(entry, NodeEntry::Empty()).interp(), self.interp().remove(base)));
+                    } else {
+                        assert(self.unmap(base).is_Err());
+                        self.lemma_interp_facts_page(entry);
+                        assert(self.interp().map.contains_pair(self.base_vaddr + entry * self.entry_size(), p));
+                        assert(self.interp().map.dom().contains(self.base_vaddr + entry * self.entry_size()));
+                        assert(base != self.base_vaddr + entry * self.entry_size());
+                        assert_by(!self.interp().map.dom().contains(base), {
+                            if self.interp().map.dom().contains(base) {
+                                let p2 = self.interp().map.index(base);
+                                assert(base > self.base_vaddr + entry * self.entry_size());
+                                assume(overlap(
+                                        MemRegion { base: base, size: p2.size },
+                                        MemRegion { base: self.base_vaddr + entry * self.entry_size(), size: p.size }
+                                        ));
+                            }
+                        });
+                        assert(self.interp().unmap(base).is_Err());
+                    }
+                },
+                NodeEntry::Directory(d) => {
+                    assume(false);
+                },
+                    // d.unmap(base),
+                NodeEntry::Empty() => {
+                    assume(false);
+                    // self.lemma_interp_facts_empty(entry);
+                    // if self.interp().map.dom().contains(entry) {
+                    // } else {
+                    // }
+                },
+            }
+        } else {
+            self.lemma_not_contains_from_if_condition(base);
+        }
+    }
+
+    #[proof]
+    fn lemma_not_contains_from_if_condition(self, base: nat) {
+        requires([
+                 self.inv(),
+                 !(self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries()),
+        ]);
+        ensures(!self.interp().map.dom().contains(base));
+        self.inv_implies_interp_inv();
+    }
+}
+
+impl<A,B> Result<A,B> {
+    #[spec]
+    pub fn map_ok<C, F: Fn(A) -> C>(self, f: F) -> Result<C,B> {
+        match self {
+            Ok(a)  => Ok(f(a)),
+            Err(b) => Err(b),
+        }
+    }
 }
 
 // FIXME: how to do this correctly?
