@@ -478,14 +478,27 @@ impl Directory {
                 self.inv_implies_interp_aux_inv(j);
                 if self.entries.index(i).is_Page() {
                     if va < self.base_vaddr + i * self.entry_size() {
-                        crate::lib::mul_distributive(i, self.entry_size());
+                        assert_nonlinear_by({
+                            ensures((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size());
+                        });
                         assert(false);
                     } else if va == self.base_vaddr + i * self.entry_size() {
-                        assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries())); // TODO verus bug
-                        assume(aligned(self.base_vaddr, self.entry_size())); // TODO verus nonlinear
-                        assume((i * self.entry_size()) % self.entry_size() == 0); // TODO verus nonlinear
-                        assert(aligned(i * self.entry_size(), self.entry_size()));
-                        assume(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size())); // TODO verus nonlinear
+                        assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries()));
+                        assert_nonlinear_by({
+                            requires([
+                                self.layer < self.arch.layers.len(),
+                                aligned(self.base_vaddr, self.entry_size() * self.num_entries()),
+                                self.entry_size() > 0,
+                                self.num_entries() > 0,
+                            ]);
+                            ensures(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
+
+                            crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+                            // assert(aligned(self.base_vaddr, self.entry_size()));
+                            crate::lib::mod_of_mul(i, self.entry_size());
+                            // assert((i * self.entry_size()) % self.entry_size() == 0);
+                            crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
+                        });
                     } else {
                     }
                 }
@@ -511,50 +524,38 @@ impl Directory {
                         let new_va = self.base_vaddr + i * self.entry_size();
                         if c1 != new_va && c2 != new_va {
                         } else if c1 == new_va {
-                            assert(c2 >= self.base_vaddr + (i + 1) * self.entry_size());
-                            crate::lib::mul_distributive(i, self.entry_size());
+                            assert_nonlinear_by({
+                                ensures((i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size());
+                            });
                         } else {
-                            assert(c2 == new_va);
-                            assert(c1 >= self.base_vaddr + (i + 1) * self.entry_size());
-                            assert(c2 == self.base_vaddr + i * self.entry_size());
-                            assume(c1 >= c2); // TODO verus nonlinear
+                            assert_nonlinear_by({
+                                requires([
+                                    c1 >= self.base_vaddr + (i + 1) * self.entry_size(),
+                                    c2 == self.base_vaddr + i * self.entry_size(),
+                                ]);
+                                ensures(c1 >= c2);
+                            });
                             assert(false);
                         }
                     },
                     NodeEntry::Directory(d) => {
                         d.inv_implies_interp_aux_inv(0);
-                        assert(self.entry_size() == d.entry_size() * d.num_entries());
-                        crate::lib::mul_commute(d.entry_size(), d.num_entries());
-                        crate::lib::mul_distributive(i, self.entry_size());
+                        assert_nonlinear_by({
+                            requires(self.entry_size() == d.entry_size() * d.num_entries());
+                            ensures([
+                                self.entry_size() == d.num_entries() * d.entry_size(),
+                                (i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size(),
+                            ]);
+                        });
 
-                        let i1_interp = self.interp_aux(i + 1).map;
-                        let d_interp = d.interp_aux(0).map;
-                        if i1_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
-                            assert_by(true
-                                      && !d_interp.dom().contains(c1)
-                                      && !d_interp.dom().contains(c2), {
-                                          if d_interp.dom().contains(c1) {
-                                              assert(c1 < self.base_vaddr + i * self.entry_size() + self.entry_size());
-                                              assert(c1 < self.base_vaddr + (i + 1) * self.entry_size());
-                                              assert(false);
-                                          } else {
-                                              if d_interp.dom().contains(c2) {
-                                                  assert(c2 < self.base_vaddr + i * self.entry_size() + d.num_entries() * d.entry_size());
-                                                  assert(c2 < self.base_vaddr + (i + 1) * self.entry_size());
-                                              }
-                                          }
-                                      });
-                        } else if d_interp.dom().contains(c1) && d_interp.dom().contains(c2) {
-                        } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
-                            assert(self.base_vaddr + (i + 1) * self.entry_size() <= c2);
-                            // TODO: nonlinear
-                            assert(self.base_vaddr + i * self.entry_size() + self.entry_size() <= c2);
-                        } else {
-                            assert(c2 <  (self.base_vaddr + i * self.entry_size()) + self.entry_size());
-                            // TODO: nonlinear
-                            assert(c2 <  self.base_vaddr + (i + 1) * self.entry_size());
-                            assert(false);
-                        }
+                        // let i1_interp = self.interp_aux(i + 1).map;
+                        // let d_interp = d.interp_aux(0).map;
+                        // if i1_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
+                        // } else if d_interp.dom().contains(c1) && d_interp.dom().contains(c2) {
+                        // } else if d_interp.dom().contains(c1) && i1_interp.dom().contains(c2) {
+                        // } else {
+                        //     assert(false);
+                        // }
                     },
                     NodeEntry::Empty() => (),
                 }
@@ -571,26 +572,27 @@ impl Directory {
 
             if i >= self.entries.len() {
             } else {
+                assert_nonlinear_by({
+                    ensures((va >= self.base_vaddr + (i + 1) * self.entry_size()) >>= (va >= self.base_vaddr + i * self.entry_size()));
+                });
+
                 self.inv_implies_interp_aux_inv(i + 1);
                 match self.entries.index(i) {
                     NodeEntry::Page(p) => {
                         let new_va = self.base_vaddr + i * self.entry_size();
                         if va == new_va {
-                            // Post2
-                            assert(equal(self.interp_aux(i).map.index(va), p));
-                            assert(i < self.num_entries());
-                            assert(p.size == self.entry_size());
-                            // TODO: nonlinear
-                            assume(i * self.entry_size() + p.size == (i + 1) * self.entry_size());
-                            assert(i + 1 <= self.num_entries());
-                            // TODO: nonlinear
-                            assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+                            assert_nonlinear_by({
+                                requires([
+                                    p.size == self.entry_size(),
+                                    i < self.num_entries(),
+                                ]);
+                                ensures([
+                                    i * self.entry_size() + p.size == (i + 1) * self.entry_size(),
+                                    (i + 1) * self.entry_size() <= self.num_entries() * self.entry_size(),
+                                ]);
+                            });
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                         } else {
-                            // Post1
-                            assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                            // TODO: nonlinear
-                            assume(va >= self.base_vaddr + i * self.entry_size());
                         }
                     },
                     NodeEntry::Directory(d) => {
@@ -598,27 +600,31 @@ impl Directory {
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
-                            // TODO:
-                            assert(self.entry_size() == d.entry_size() * d.num_entries());
-                            crate::lib::mul_commute(d.entry_size(), d.num_entries());
-                            assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
-                            // TODO: nonlinear
-                            assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size());
-                            assert(i + 1 <= self.num_entries());
-                            // TODO: nonlinear
-                            assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+                            // TODO replace with assert_nonlinear_by below
+                            // assert(self.entry_size() == d.entry_size() * d.num_entries());
+                            // crate::lib::mul_commute(d.entry_size(), d.num_entries());
+                            // assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
+                            // assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size());
+                            // assert(i + 1 <= self.num_entries());
+                            // assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+
+                            assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size()); // TODO
+                            assert_nonlinear_by({
+                                requires([
+                                    self.layer < self.arch.layers.len(),
+                                    self.entry_size() == d.entry_size() * d.num_entries(),
+                                    va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size(),
+                                    i + 1 <= self.num_entries(),
+                                ]);
+                                ensures([
+                                    va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size(),
+                                    (i + 1) * self.entry_size() <= self.num_entries() * self.entry_size(),
+                                ]);
+                            });
                         } else {
-                            // Post1
-                            assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                            // TODO: nonlinear
-                            assume(va >= self.base_vaddr + i * self.entry_size());
                         }
                     },
                     NodeEntry::Empty() => {
-                        // Post1
-                        assert(va >= self.base_vaddr + (i + 1) * self.entry_size());
-                        // TODO: nonlinear
-                        assume(va >= self.base_vaddr + i * self.entry_size());
                     },
                 }
                 // Post3
@@ -664,17 +670,20 @@ impl Directory {
 
                 if rem.dom().contains(va) && d_interp.dom().contains(va) {
                     self.inv_implies_interp_aux_inv(i+1);
-                    assert(va >= self.base_vaddr + (i+1) * self.entry_size());
-                    assume(va > self.base_vaddr + i * self.entry_size());
-
                     assert(self.directories_obey_invariant());
                     d.inv_implies_interp_aux_inv(0);
-                    assert(va < d.base_vaddr + d.num_entries() * d.entry_size());
-                    assert(d.entry_size() * d.num_entries() == self.entry_size());
-                    crate::lib::mul_commute(d.entry_size(), d.num_entries());
-                    assert(va < self.base_vaddr + i * self.entry_size() + self.entry_size());
-                    crate::lib::mul_distributive(i, self.entry_size());
-                    assert(va < self.base_vaddr + (i+1) * self.entry_size());
+                    assert_nonlinear_by({
+                        requires([
+                            self.entry_size() > 0,
+                            d.base_vaddr == self.base_vaddr + i * self.entry_size(),
+                            va >= self.base_vaddr + (i+1) * self.entry_size(),
+                            va < d.base_vaddr + d.num_entries() * d.entry_size(),
+                            d.entry_size() * d.num_entries() == self.entry_size(),
+                        ]);
+                        ensures([
+                            va < self.base_vaddr + (i+1) * self.entry_size(),
+                        ]);
+                    });
                 }
             });
             let un1 = rem.union_prefer_right(d_interp);
@@ -684,10 +693,13 @@ impl Directory {
 
         // Post2
         self.inv_implies_interp_aux_inv(i+1);
-        assert(forall(|va: nat| #[trigger] self.interp_aux(i+1).map.dom().contains(va) >>= va >= self.base_vaddr + (i+1) * self.entry_size()));
-        assert(self.entry_size() > 0);
-        // TODO: nonlinear
-        assume(forall(|va: nat| #[trigger] self.interp_aux(i+1).map.dom().contains(va) >>= va > self.base_vaddr + i * self.entry_size()));
+        assert_nonlinear_by({
+            requires([
+                self.entry_size() > 0,
+                forall(|va: nat| #[trigger] self.interp_aux(i+1).map.dom().contains(va) >>= va >= self.base_vaddr + (i+1) * self.entry_size()),
+            ]);
+            ensures(forall(|va: nat| #[trigger] self.interp_aux(i+1).map.dom().contains(va) >>= va > self.base_vaddr + i * self.entry_size()));
+        });
     }
 
     #[proof]

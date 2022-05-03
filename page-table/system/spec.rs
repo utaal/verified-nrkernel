@@ -12,11 +12,11 @@ use map::*;
 // MemRegion: address, size
 // from https://github.com/gz/rust-x86/blob/master/src/bits64/paging.rs#L1237
 #[derive(PartialEq, Eq, Structural)]
-struct Flags {
-    is_present: bool, // walker aborts if !is_present
-    is_writable: bool,
-    is_user_mode_allowed: bool,
-    instruction_fetching_disabled: bool,
+pub struct Flags {
+    pub is_present: bool, // walker aborts if !is_present
+    pub is_writable: bool,
+    pub is_user_mode_allowed: bool,
+    pub instruction_fetching_disabled: bool,
 }
 
 
@@ -80,9 +80,9 @@ enum StoreResult {
 //
 #[derive(PartialEq, Eq, Structural)]
 pub struct PageTableEntry {
-    p_addr: nat,
-    size: nat,
-    flags: Flags,
+    pub p_addr: nat,
+    pub size: nat,
+    pub flags: Flags,
 }
 
 state_machine! { MemoryTranslator {
