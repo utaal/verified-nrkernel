@@ -600,15 +600,16 @@ impl Directory {
                         let i1_interp = self.interp_aux(i + 1).map;
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
-                            // TODO replace with assert_nonlinear_by below
-                            // assert(self.entry_size() == d.entry_size() * d.num_entries());
-                            // crate::lib::mul_commute(d.entry_size(), d.num_entries());
-                            // assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
-                            // assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + (i + 1) * self.entry_size());
-                            // assert(i + 1 <= self.num_entries());
-                            // assume((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+                            assert(self.entry_size() == d.entry_size() * d.num_entries());
+                            crate::lib::mul_commute(d.entry_size(), d.num_entries());
+                            crate::lib::mul_distributive(i, self.entry_size());
+                            assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
+                            assert(i + 1 <= self.num_entries());
+                            assert_nonlinear_by({
+                                requires(i + 1 <= self.num_entries());
+                                ensures((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
+                            });
 
-                            assume(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size()); // TODO
                             assert_nonlinear_by({
                                 requires([
                                     self.layer < self.arch.layers.len(),
