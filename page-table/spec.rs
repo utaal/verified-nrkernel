@@ -601,10 +601,16 @@ impl Directory {
                         let d_interp = d.interp_aux(0).map;
                         if d_interp.dom().contains(va) {
                             assert(self.entry_size() == d.entry_size() * d.num_entries());
-                            crate::lib::mul_commute(d.entry_size(), d.num_entries());
-                            crate::lib::mul_distributive(i, self.entry_size());
+                            assert_nonlinear_by({
+                                ensures([
+                                    d.entry_size() * d.num_entries() == d.num_entries() * d.entry_size(),
+                                    (i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size(),
+                                ]);
+                            });
+
                             assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + i * self.entry_size() + self.entry_size());
                             assert(i + 1 <= self.num_entries());
+
                             assert_nonlinear_by({
                                 requires(i + 1 <= self.num_entries());
                                 ensures((i + 1) * self.entry_size() <= self.num_entries() * self.entry_size());
