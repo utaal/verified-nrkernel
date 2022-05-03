@@ -79,7 +79,7 @@ enum StoreResult {
 // //
 //
 #[derive(PartialEq, Eq, Structural)]
-struct PageTableEntry {
+pub struct PageTableEntry {
     p_addr: nat,
     size: nat,
     flags: Flags,

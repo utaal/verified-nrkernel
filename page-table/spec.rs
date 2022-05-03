@@ -8,7 +8,7 @@ use map::*;
 #[allow(unused_imports)]
 use set::*;
 #[allow(unused_imports)]
-use crate::{seq, seq_insert_rec, map, map_insert_rec};
+use crate::{seq, seq_insert_rec, map, map_insert_rec, assert_maps_equal};
 #[allow(unused_imports)]
 use result::{*, Result::*};
 
@@ -768,10 +768,13 @@ impl Directory {
                  n < self.entries.len(),
                  self.entries.index(n).is_Empty(),
         ]);
-        ensures(forall(|va: nat|
+        ensures([
+                forall(|va: nat|
                        (#[trigger] self.interp_aux(i).map.dom().contains(va))
                        >>= (va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + n * self.entry_size())
-                       || (self.base_vaddr + (n+1) * self.entry_size() <= va)));
+                       || (self.base_vaddr + (n+1) * self.entry_size() <= va)),
+                equal(self.interp_aux(n), self.interp_aux(n+1)),
+        ]);
 
         assert_forall_by(|va: nat| {
             requires(#[trigger] self.interp_aux(i).map.dom().contains(va));
@@ -837,10 +840,10 @@ impl Directory {
                        (#[trigger] self.interp().map.dom().contains(va))
                        >>= (va + self.interp().map.index(va).size <= self.base_vaddr + n * self.entry_size())
                        || (self.base_vaddr + (n+1) * self.entry_size() <= va)),
-               forall(|va: nat|
-                      self.base_vaddr + n * self.entry_size() <= va
-                      && va < self.base_vaddr + (n+1) * self.entry_size()
-                      >>= !(#[trigger] self.interp().map.dom().contains(va))),
+                forall(|va: nat|
+                       self.base_vaddr + n * self.entry_size() <= va
+                       && va < self.base_vaddr + (n+1) * self.entry_size()
+                       >>= !(#[trigger] self.interp().map.dom().contains(va))),
         ]);
         self.lemma_interp_aux_facts_empty(0, n);
         assert_forall_by(|va: nat| {
@@ -1389,6 +1392,29 @@ impl Directory {
         }
     }
 
+    // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
+    // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
+    // arbitrary.
+    #[proof]
+    fn lemma_update_leq_interp_aux_idempotent(self, i: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+        requires([
+                 self.inv(),
+        ]);
+        ensures(forall(|n: nat| n < i && n < self.entries.len() >>= equal((#[trigger] self.update(n, NodeEntry::Empty())).interp_aux(i), self.interp_aux(i))));
+
+        assert_forall_by(|n: nat| {
+            requires(n < i && n < self.entries.len());
+            ensures(equal((#[trigger] self.update(n, NodeEntry::Empty())).interp_aux(i), self.interp_aux(i)));
+
+            assume(self.update(n, NodeEntry::Empty()).inv());
+            if i >= self.entries.len() {
+            } else {
+                self.lemma_update_leq_interp_aux_idempotent(i+1);
+            }
+        });
+    }
+
     #[proof]
     fn lemma_update_empty_interp_aux_equal_interp_aux_remove(self, i: nat, n: nat) {
         decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
@@ -1396,36 +1422,50 @@ impl Directory {
                  self.inv(),
                  i <= n,
                  n < self.entries.len(),
-                 !equal(self.entries.index(n), NodeEntry::Empty())
+                 self.entries.index(n).is_Page(),
         ]);
         ensures(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
 
-        assert_by(self.interp_aux(i).map.dom().contains(self.base_vaddr + n * self.entry_size()), {
-            match self.entries.index(n) {
-                NodeEntry::Page(p)      => self.lemma_interp_aux_facts_page(i, n),
-                NodeEntry::Directory(d) => assume(false),
-                NodeEntry::Empty()      => (),
-            };
+        let n_vaddr = self.base_vaddr + n * self.entry_size();
+        let p = self.entries.index(n).get_Page_0();
+        assert_by(self.interp_aux(i).map.dom().contains(n_vaddr), {
+                self.lemma_interp_aux_facts_page(i, n);
         });
         self.inv_implies_interp_inv();
+        self.inv_implies_interp_aux_inv(i+1);
+        crate::lib::mul_distributive(i, self.entry_size());
 
+        let updi = self.update(n, NodeEntry::Empty());
+        assume(updi.inv());
         if i >= self.entries.len() {
         } else {
             if i == n {
-                assume(false);
+                assert(equal(updi.interp_aux(i), updi.interp_aux(i+1)));
+                assert(!self.interp_aux(i+1).map.dom().contains(n_vaddr));
+                assert_maps_equal!(self.interp_aux(i).remove(n_vaddr).map, self.interp_aux(i+1).map);
+                assert(equal(self.interp_aux(i).remove(n_vaddr), self.interp_aux(i+1)));
+                if i+1 < self.entries.len() {
+                    self.lemma_update_leq_interp_aux_idempotent(i+1);
+                } else {
+                }
+                assert(equal(updi.interp_aux(i), self.interp_aux(i).remove(n_vaddr)));
             } else {
+                assert(i < n);
                 self.lemma_update_empty_interp_aux_equal_interp_aux_remove(i+1, n);
                 assert(equal(
-                        self.update(n, NodeEntry::Empty()).interp_aux(i+1),
+                        updi.interp_aux(i+1),
                         self.interp_aux(i+1).remove(self.base_vaddr + n * self.entry_size())));
                 self.lemma_interp_aux_disjoint(i);
-                // let rem = self.interp_aux(i + 1).map;
+                let rem = self.interp_aux(i + 1).map;
                 match self.entries.index(i) {
                     NodeEntry::Page(p)      => {
+                        assert(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), p)));
+                        assert(equal(updi.entries.index(i), self.entries.index(i)));
                         assume(false);
                         // assert(equal(
                         //         self.update(n, NodeEntry::Empty()).interp_aux(i).map,
                         //         self.update(n, NodeEntry::Empty()).interp_aux(i+1).map.insert(self.base_vaddr + i * self.entry_size(), p)));
+                        // assert(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
 
                         //rem.insert(self.base_vaddr + i * self.entry_size(), p),
                         // assert(equal(
@@ -1444,6 +1484,7 @@ impl Directory {
 
     #[proof]
     fn lemma_update_empty_interp_equal_interp_remove(self, n: nat) {
+        requires(self.entries.index(n).is_Page());
         ensures(equal(self.update(n, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + n * self.entry_size())));
         assume(false);
     }
@@ -1572,9 +1613,7 @@ impl Directory {
                         assert(base == self.base_vaddr + entry * self.entry_size());
                         self.lemma_interp_facts_page(entry);
                         self.unmap_preserves_inv(base);
-                        self.lemma_update_empty_interp_equal_interp_remove(base);
-                        // TODO: trigger problem? verus bug?
-                        assume(equal(self.update(entry, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + entry * self.entry_size())));
+                        self.lemma_update_empty_interp_equal_interp_remove(entry);
                         assert(equal(self.update(entry, NodeEntry::Empty()).interp(), self.interp().remove(base)));
                     } else {
                         assert(self.unmap(base).is_Err());
@@ -1675,10 +1714,4 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
         // contradiction
         assert(s.remove(a).len() + 1 == 0);
     }
-}
-
-#[spec]
-fn spec_assert(p: bool) {
-    recommends(p);
-    ()
 }
