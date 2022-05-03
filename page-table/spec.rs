@@ -803,18 +803,15 @@ impl Directory {
                     self.lemma_interp_aux_facts_empty(i+1, n);
                     if va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + n * self.entry_size() {
                     } else {
+                        assert_nonlinear_by({
+                            ensures([
+                                (i + 1) * self.entry_size() == i * self.entry_size() + self.entry_size(),
+                                i + 1 <= n >>= (i + 1) * self.entry_size() <= n * self.entry_size(),
+                            ]);
+                        });
                         match self.entries.index(i) {
                             NodeEntry::Page(p) => {
                                 if va == self.base_vaddr + i * self.entry_size() {
-                                    // assert(i < n);
-                                    // self.inv_implies_interp_aux_inv(i+1);
-                                    // assert(forall(|va: nat| #[trigger] self.interp_aux(i+1).map.dom().contains(va) >>= va >= self.base_vaddr + (i+1) * self.entry_size()));
-                                    // assert(equal(self.interp_aux(i).map.index(va), p));
-                                    crate::lib::mul_distributive(i, self.entry_size());
-                                    // assert(va + self.entry_size() <= self.base_vaddr + (i+1) * self.entry_size());
-                                    crate::lib::mult_leq_mono1(i+1, n, self.entry_size());
-                                    // assert((i+1) * self.entry_size() <= n * self.entry_size());
-                                    // assert(va + self.entry_size() <= self.base_vaddr + n * self.entry_size());
                                 } else {
                                     assert(self.interp_aux(i+1).map.dom().contains(va));
                                 }
@@ -823,12 +820,9 @@ impl Directory {
                                 if !d.interp().map.dom().contains(va) {
                                     assert(self.interp_aux(i+1).map.dom().contains(va));
                                 } else {
-                                    assert(d.interp_aux(0).map.dom().contains(va));
                                     assert(self.directories_obey_invariant());
                                     d.inv_implies_interp_inv();
                                     assert(va + d.interp().map.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size());
-                                    crate::lib::mul_distributive(i, self.entry_size());
-                                    crate::lib::mult_leq_mono1(i+1, n, self.entry_size());
                                 }
                             },
                             NodeEntry::Empty() => {
