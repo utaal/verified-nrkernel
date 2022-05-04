@@ -57,18 +57,25 @@ pub struct Arch {
 }
 
 impl Arch {
-    #[spec]
+    #[spec(checked)]
     pub fn inv(&self) -> bool {
-        forall(|i:nat| with_triggers!([self.layers.index(i).entry_size], [self.layers.index(i).num_entries] => i < self.layers.len() >>= (
+        forall(|i:int| with_triggers!([self.layers.index(i).entry_size], [self.layers.index(i).num_entries] => 0 <= i && i < self.layers.len() >>= (
             true
             && self.layers.index(i).entry_size > 0
             && self.layers.index(i).num_entries > 0
-            && ((i + 1 < self.layers.len()) >>=
-                self.layers.index(i).entry_size == self.layers.index(i as int + 1).entry_size * self.layers.index(i as int + 1).num_entries))))
+            && self.entry_size_is_next_layer_size(i))))
     }
 
-    #[spec] pub fn contains_entry_size(&self, entry_size: nat) -> bool {
-        exists(|i: nat| #[trigger] self.layers.index(i).entry_size == entry_size)
+    #[spec(checked)]
+    pub fn entry_size_is_next_layer_size(self, i: int) -> bool {
+        recommends(0 <= i && i < self.layers.len());
+        i + 1 < self.layers.len() >>=
+            self.layers.index(i).entry_size == self.layers.index(i + 1).entry_size * self.layers.index(i + 1).num_entries
+    }
+
+    #[spec(checked)]
+    pub fn contains_entry_size(&self, entry_size: nat) -> bool {
+        exists(|i: nat| i < self.layers.len() && #[trigger] self.layers.index(i).entry_size == entry_size)
     }
 }
 
@@ -93,12 +100,12 @@ pub struct PageTableContents {
     pub arch: Arch,
 }
 
-#[spec]
+#[spec(checked)]
 pub fn aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }
 
-#[spec]
+#[spec(checked)]
 pub fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
         region2.base < region1.base + region1.size
@@ -129,23 +136,34 @@ fn overlap_sanity_check() {
 }
 
 impl PageTableContents {
-    #[spec]
+    #[spec(checked)]
     pub fn inv(&self) -> bool {
         true
         && self.arch.inv()
-        && forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] => self.map.dom().contains(va) >>=
-                  (aligned(va, self.map.index(va).size)
-                   && aligned(self.map.index(va).base, self.map.index(va).size))))
-        && forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
-            with_triggers!([self.map.index(b1), self.map.index(b2)],
-                           [self.map.dom().contains(b1), self.map.dom().contains(b2)] =>
-                           (self.map.dom().contains(b1) && self.map.dom().contains(b2)) >>= ((b1 == b2) || !overlap(
-                MemRegion { base: b1, size: self.map.index(b1).size },
-                MemRegion { base: b2, size: self.map.index(b2).size }
-            ))))
+        && self.mappings_are_aligned()
+        && self.mappings_dont_overlap()
     }
 
-    #[spec]
+    #[spec(checked)]
+    pub fn mappings_are_aligned(self) -> bool {
+        forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] =>
+                                        self.map.dom().contains(va)
+                                        >>= (aligned(va, self.map.index(va).size)
+                                             && aligned(self.map.index(va).base, self.map.index(va).size))))
+    }
+
+    #[spec(checked)]
+    pub fn mappings_dont_overlap(self) -> bool {
+        forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
+               with_triggers!([self.map.index(b1), self.map.index(b2)],
+                              [self.map.dom().contains(b1), self.map.dom().contains(b2)] =>
+                              (self.map.dom().contains(b1) && self.map.dom().contains(b2))
+                              >>= ((b1 == b2) || !overlap(
+                                      MemRegion { base: b1, size: self.map.index(b1).size },
+                                      MemRegion { base: b2, size: self.map.index(b2).size }))))
+    }
+
+    #[spec(checked)]
     pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         true
         && aligned(base, frame.size)
@@ -153,7 +171,8 @@ impl PageTableContents {
         && self.arch.contains_entry_size(frame.size)
     }
 
-    #[spec] pub fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {
+    #[spec(checked)]
+    pub fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {
         forall(|b: nat| #[auto_trigger] self.map.dom().contains(b) >>= !overlap(
                 MemRegion { base: base, size: frame.size },
                 MemRegion { base: b, size: self.map.index(b).size }
@@ -161,7 +180,8 @@ impl PageTableContents {
     }
 
     /// Maps the given `frame` at `base` in the address space
-    #[spec] pub fn map_frame(self, base: nat, frame: MemRegion) -> Result<PageTableContents,()> {
+    #[spec(checked)]
+    pub fn map_frame(self, base: nat, frame: MemRegion) -> Result<PageTableContents,()> {
         if self.accepted_mapping(base, frame) {
             if self.valid_mapping(base, frame) {
                 Ok(PageTableContents {
@@ -177,7 +197,8 @@ impl PageTableContents {
     }
 
     // don't think this is actually necessary for anything?
-    #[proof] fn map_frame_maps_valid(#[spec] self, base: nat, frame: MemRegion) {
+    #[proof]
+    fn map_frame_maps_valid(#[spec] self, base: nat, frame: MemRegion) {
         requires([
             self.inv(),
             self.accepted_mapping(base, frame),
@@ -188,7 +209,8 @@ impl PageTableContents {
         ]);
     }
 
-    #[proof] fn map_frame_preserves_inv(#[spec] self, base: nat, frame: MemRegion) {
+    #[proof]
+    fn map_frame_preserves_inv(#[spec] self, base: nat, frame: MemRegion) {
         requires([
             self.inv(),
             self.accepted_mapping(base, frame),
@@ -210,7 +232,8 @@ impl PageTableContents {
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
     // #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
-    #[spec] fn resolve(self, vaddr: nat) -> Result<nat,()> {
+    #[spec(checked)]
+    fn resolve(self, vaddr: nat) -> Result<nat,()> {
         if exists(|n:nat|
                   self.map.dom().contains(n) &&
                   n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size) {
@@ -224,7 +247,8 @@ impl PageTableContents {
         }
     }
 
-    #[spec] fn remove(self, n: nat) -> PageTableContents {
+    #[spec(checked)]
+    fn remove(self, n: nat) -> PageTableContents {
         PageTableContents {
             map: self.map.remove(n),
             ..self
@@ -232,7 +256,8 @@ impl PageTableContents {
     }
 
     /// Removes the frame from the address space that contains `base`.
-    #[spec] fn unmap(self, base: nat) -> Result<PageTableContents,()> {
+    #[spec(checked)]
+    fn unmap(self, base: nat) -> Result<PageTableContents,()> {
         if self.map.dom().contains(base) {
             Ok(self.remove(base))
         } else {
@@ -240,7 +265,8 @@ impl PageTableContents {
         }
     }
 
-    #[proof] fn unmap_preserves_inv(self, base: nat) {
+    #[proof]
+    fn unmap_preserves_inv(self, base: nat) {
         requires([
             self.inv(),
             self.unmap(base).is_Ok()
@@ -283,28 +309,28 @@ pub struct Directory {
 
 impl Directory {
 
-    #[spec]
+    #[spec(checked)]
     pub fn well_formed(&self) -> bool {
         true
         && self.arch.inv()
-        && aligned(self.base_vaddr, self.entry_size() * self.num_entries())
         && self.layer < self.arch.layers.len()
+        && aligned(self.base_vaddr, self.entry_size() * self.num_entries())
         && self.entries.len() == self.num_entries()
     }
 
-    #[spec]
+    #[spec(checked)]
     pub fn arch_layer(&self) -> ArchLayer {
         recommends(self.well_formed());
         self.arch.layers.index(self.layer)
     }
 
-    #[spec]
+    #[spec(checked)]
     pub fn entry_size(&self) -> nat {
         recommends(self.layer < self.arch.layers.len());
         self.arch.layers.index(self.layer).entry_size
     }
 
-    #[spec]
+    #[spec(checked)]
     pub fn num_entries(&self) -> nat { // number of entries
         recommends(self.layer < self.arch.layers.len());
         self.arch.layers.index(self.layer).num_entries
@@ -359,8 +385,8 @@ impl Directory {
     pub fn inv(&self) -> bool {
         decreases(self.arch.layers.len() - self.layer);
 
-        self.well_formed()
-        && true
+        true
+        && self.well_formed()
         && self.pages_match_entry_size()
         && self.directories_are_in_next_layer()
         && self.directories_match_arch()
@@ -891,7 +917,7 @@ impl Directory {
         }
     }
 
-    #[spec]
+    #[spec(checked)]
     fn resolve(self, vaddr: nat) -> Result<nat,()> {
         decreases(self.arch.layers.len() - self.layer);
         decreases_by(Self::check_resolve);
@@ -1301,7 +1327,7 @@ impl Directory {
         }
     }
 
-    #[spec]
+    #[spec(checked)]
     pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
         self.interp().accepted_mapping(base, frame)
     }
@@ -1335,6 +1361,10 @@ impl Directory {
                         if self.entry_size() == frame.size {
                             Ok(self.update(entry, NodeEntry::Page(frame)))
                         } else {
+                            // Indexing into self.arch.layers with self.layer + 1 is okay because
+                            // we know the frame size isn't this layer's entrysize (i.e. must be on
+                            // some lower level).
+                            // The index recommendation fails with spec(checked) though.
                             let new_dir = Directory {
                                 entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
                                 layer:      self.layer + 1,
@@ -1364,7 +1394,7 @@ impl Directory {
         }
     }
 
-    #[spec]
+    #[spec(checked)]
     pub fn unmap(self, base: nat) -> Result<Self,()> {
         decreases(self.arch.layers.len() - self.layer);
         decreases_by(Self::check_unmap);
@@ -1690,7 +1720,7 @@ impl Directory {
 }
 
 impl<A,B> Result<A,B> {
-    #[spec]
+    #[spec(checked)]
     pub fn map_ok<C, F: Fn(A) -> C>(self, f: F) -> Result<C,B> {
         match self {
             Ok(a)  => Ok(f(a)),
