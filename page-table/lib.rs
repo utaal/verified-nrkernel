@@ -58,6 +58,17 @@ pub fn zero_mod_eq_zero(a: nat) {
     ensures(0 % a == 0);
 }
 
+#[proof] #[verifier(external_body)]
+pub fn multiple_offsed_mod_gt_0(a: nat, b: nat, c: nat) {
+    requires([
+        a > b,
+        c > 0,
+        b % c == 0,
+        a % c > 0,
+    ]);
+    ensures((a - b) % c > 0);
+}
+
 //
 
 #[proof] #[verifier(nonlinear)]

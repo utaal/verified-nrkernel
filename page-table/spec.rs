@@ -337,6 +337,12 @@ impl Directory {
     }
 
     #[spec(checked)]
+    pub fn empty(&self) -> bool {
+        recommends(self.well_formed());
+        forall(|i: nat| i < self.num_entries() >>= self.entries.index(i).is_Empty())
+    }
+
+    #[spec(checked)]
     pub fn pages_match_entry_size(&self) -> bool {
         recommends(self.well_formed());
         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
@@ -1382,7 +1388,14 @@ impl Directory {
                             Err(())
                         }
                     },
-                    NodeEntry::Directory(d) => d.unmap(base),
+                    NodeEntry::Directory(d) => {
+                        d.unmap(base).map_ok(|new_d|
+                            self.update(entry, if d.empty() {
+                                NodeEntry::Empty()
+                            } else {
+                                NodeEntry::Directory(new_d)
+                            }))
+                    },
                     NodeEntry::Empty()      => Err(()),
                 }
             } else {
@@ -1530,33 +1543,26 @@ impl Directory {
                 crate::lib::div_mul_cancel(base_offset, self.entry_size());
             });
         } else {
-            assert(base % self.entry_size() > 0);
-            assert_by(base > 0, {
-                if base == 0 {
-                    crate::lib::zero_mod_eq_zero(self.entry_size());
-                }
+            assert_nonlinear_by({
+                requires([
+                    self.entry_size() > 0,
+                    base % self.entry_size() > 0,
+                    self.base_vaddr % (self.entry_size() * self.num_entries()) == 0,
+                    self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries(),
+                    offset == base - self.base_vaddr,
+                    base_offset == offset - (offset % self.entry_size()),
+                    entry == base_offset / self.entry_size(),
+                ]);
+                ensures([
+                    base > self.base_vaddr + entry * self.entry_size(),
+                ]);
+
+                crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+                crate::lib::multiple_offsed_mod_gt_0(base, self.base_vaddr, self.entry_size());
+                crate::lib::mod_less_eq(base, self.entry_size());
+                crate::lib::mod_less_eq(offset, self.entry_size());
+                crate::lib::subtract_mod_aligned(offset, self.entry_size());
             });
-            crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
-            assert(aligned(self.base_vaddr, self.entry_size()));
-            // TODO: nonlinear
-            assume((base - self.base_vaddr) % self.entry_size() > 0);
-            assert(offset % self.entry_size() > 0);
-            assert(offset % self.entry_size() <= self.entry_size());
-            crate::lib::mod_less_eq(base, self.entry_size());
-            assert(base % self.entry_size() <= base);
-            // TODO: nonlinear
-            assume((base - self.base_vaddr) % self.entry_size() <= base);
-            assert(offset % self.entry_size() <= base);
-            assert(base > base - (offset % self.entry_size()));
-            assert(base > self.base_vaddr + (base - self.base_vaddr) - (offset % self.entry_size()));
-            crate::lib::mod_less_eq(offset, self.entry_size());
-            assert(base > self.base_vaddr + (offset - (offset % self.entry_size())));
-            assert(base > self.base_vaddr + base_offset);
-            crate::lib::subtract_mod_aligned(offset, self.entry_size());
-            crate::lib::div_mul_cancel(base_offset, self.entry_size());
-            assert(base > self.base_vaddr + (base_offset / self.entry_size()) * self.entry_size());
-            assert(base > self.base_vaddr + entry * self.entry_size());
-            assert(base > self.base_vaddr + entry * self.entry_size());
         }
     }
 
@@ -1588,6 +1594,8 @@ impl Directory {
                 NodeEntry::Directory(d) => {
                     assert(self.directories_obey_invariant());
                     d.unmap_preserves_inv(base);
+                    let nself = self.unmap(base).get_Ok_0();
+                    assert(nself.directories_obey_invariant());
                 },
                 NodeEntry::Empty()      => (),
             }
