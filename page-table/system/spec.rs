@@ -83,29 +83,59 @@ pub struct PageTableEntry {
     pub p_addr: nat,
     pub size: nat,
     pub flags: Flags,
+    // track context identifiers
 }
 
 state_machine! { MemoryTranslator {
     fields {
+        // the tlb 
         pub tlb: Map</* VAddr */ nat, PageTableEntry>, // all the VAddr of a page move in sync
         pub page_table: Map</* VAddr */ nat, PageTableEntry>,
     }
 
     readonly! {
-        resolve(vaddr: nat, entry: PageTableEntry) {
-            require(pre.tlb.dom().contains(vaddr));
-            require(entry == pre.tlb.index(vaddr));
+        resolve(vaddr: nat, p_addr: nat, flags: Flags) {
+            require(exists(|base: nat| pre.tlb.dom().contains(base) >>=
+                base <= vaddr && vaddr < base + pre.tlb.index(base).size));
+            let base = choose(|base: nat| pre.tlb.dom().contains(base) >>=
+                base <= vaddr && vaddr < base + pre.tlb.index(base).size);
+            let entry = pre.tlb.index(base);
+            require(flags == entry.flags);
+            require(p_addr == entry.p_addr + (vaddr - base));
         }
     }
 
     transition! {
-        fill_tlb(vaddr: nat) {
-            require(pre.page_table.dom().contains(vaddr));
-            update tlb = pre.tlb.insert(vaddr, pre.page_table.index(vaddr));
+        fill_tlb(base: nat) {
+            require(!pre.tlb.dom().contains(base));
+            require(pre.page_table.dom().contains(base));
+            update tlb = pre.tlb.insert(base, pre.page_table.index(base));
         }
     }
 
-    // TODO: do we want a next transition?
+    transition! {
+        invalidate_tlb(base: nat) {
+            update tlb = pre.tlb.remove(base);
+        }
+    }
+
+    transition! {
+        flush_tlb() {
+            // TODO(andrea) update tlb = map![];
+        }
+    }
+    
+    // operation to flush by context identifier
+
+    transition! {
+        // root of the page table stays the same; this is "just" updating some entries, not a
+        // context switch
+        update_page_table(new_page_table: Map<nat, PageTableEntry>) {
+            update page_table = new_page_table;
+        }
+    }
+
+    // TODO: flush range?
 } }
 
 #[proof]
@@ -119,40 +149,38 @@ fn memory_translator_test_1() {
         tlb: map![128 => entry],
         ..mt
     };
-    // TODO ??? assert(MemoryTranslator::Step::fill_tlb(mt, mt_p, 128));
+    // assert(MemoryTranslator::Step::fill_tlb(mt, mt_p, 128));
+    let s1 = MemoryTranslator::Step::fill_tlb(128);
     // TODO ??? assert(MemoryTranslator::Step::resolve(mt, 128, entry));
 }
 
-// impl MemoryTranslator {
-// 
-//     fn invalidate(self, self', ) {
-// 
-//         // 
-//     }
-// 
-//     fn fill_tlb(self, self', ) {
-// 
-//         // TODO: is this always tied to a memory operation
-//         // Jon was suggesting this is always nondeterministic
-//         // TODO: this could be the invalidate op too!
-//     }
-// 
-//     fn resolve(self, self', vaddr: nat, PAddr, size: nat, Flags) {
-//         requires(self.tlb.contains(vaddr))
-// 
-//     }
-// 
-//     // TODO: does this work with the overall system model
-//     fn switch_page_table(self, self', Map<>) {
-// 
-//     }
-// 
+// TODO is the page table in memory?
+// struct ProcessSystem {
+//     usize_bytes: nat,
+//     bytes: Seq<usize>, // sequence of machine words
+//     memory_translator: MemoryTranslator,
+// }
+
+// pub enum IoOp {
+//     Store(new_value: usize, result: StoreResult), // represents a third party doing a write too
+//     Load(is_exec: bool, result: LoadResult),
 // }
 // 
-// struct Memory {
+// state_machine! { MemoryTranslator {
 // 
-// }
+//     transition! {
+//         io_op(vaddr: nat, op: IoOp) {
+//             match op {
+//                 IoOp::Store(new_value, result) => true,
+//                 IoOp::Load(is_exec, result) => true,
+//             }
+//         }
+//     }
 // 
+// } }
+
+
+
 // impl MemoryTranslator { // and TLB?
 //     fn translate(self, post, vaddr, paddr)   // this is the walker
 // }
