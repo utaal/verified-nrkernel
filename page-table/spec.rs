@@ -979,18 +979,21 @@ impl Directory {
         // TODO: weird nat/int cast behavior
         assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
         if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-            assert(offset < self.entry_size() * self.num_entries());
-            crate::lib::mod_less_eq(offset, self.entry_size());
-            assert(base_offset < self.entry_size() * self.num_entries());
-            crate::lib::subtract_mod_aligned(offset, self.entry_size());
-            // assert(aligned(base_offset, self.entry_size()));
-            crate::lib::div_mul_cancel(base_offset, self.entry_size());
-            assert(base_offset == base_offset / self.entry_size() * self.entry_size());
-            assert(base_offset / self.entry_size() * self.entry_size() < self.entry_size() * self.num_entries());
-            crate::lib::mul_commute(self.entry_size(), self.num_entries());
-            crate::lib::less_mul_cancel(base_offset / self.entry_size(), self.num_entries(), self.entry_size());
-            assert(base_offset / self.entry_size() < self.num_entries());
-            assert(entry < self.entries.len());
+            assert_nonlinear_by({
+                requires([
+                    self.entry_size() > 0,
+                    self.num_entries() > 0,
+                    base_offset == offset - (offset % self.entry_size()),
+                    entry == base_offset / self.entry_size(),
+                    offset < self.entry_size() * self.num_entries(),
+                ]);
+                ensures([
+                    base_offset / self.entry_size() < self.num_entries(),
+                    entry < self.num_entries(),
+                ]);
+                crate::lib::mod_less_eq(offset, self.entry_size());
+                crate::lib::subtract_mod_aligned(offset, self.entry_size());
+            });
         } else {
         }
     }
