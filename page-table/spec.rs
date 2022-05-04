@@ -976,8 +976,6 @@ impl Directory {
         let offset = vaddr - self.base_vaddr;
         let base_offset = offset - (offset % self.entry_size());
         let entry: nat = base_offset / self.entry_size();
-        // TODO: weird nat/int cast behavior
-        assume(base_offset >= 0 && self.entry_size() > 0 >>= entry >= 0);
         if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
             assert_nonlinear_by({
                 requires([
@@ -1139,46 +1137,22 @@ impl Directory {
             let base_offset = offset - (offset % self.entry_size());
             let entry = base_offset / self.entry_size();
             self.lemma_derive_entry_bounds_from_if_condition(vaddr);
-            // assume(entry < self.entries.len());
-            crate::lib::subtract_mod_aligned(offset, self.entry_size());
-            // assert(aligned(base_offset, self.entry_size()));
-            crate::lib::div_mul_cancel(base_offset, self.entry_size());
-            // assert(base_offset == base_offset / self.entry_size() * self.entry_size());
-            // assert(va_base == self.base_vaddr + base_offset);
-            crate::lib::mod_less_eq(offset, self.entry_size());
-            // assert(offset % self.entry_size() <= offset);
-            // assert(va_base == self.base_vaddr + offset - (offset % self.entry_size()));
-            // assert(va_base == self.base_vaddr + (vaddr - self.base_vaddr) - ((vaddr - self.base_vaddr) % self.entry_size()));
-            // assert(va_base == vaddr - ((vaddr - self.base_vaddr) % self.entry_size()));
+            let va_base = self.base_vaddr + entry * self.entry_size();
+            assert_by(
+                true
+                && va_base == vaddr - ((vaddr - self.base_vaddr) % self.entry_size())
+                && va_base <= vaddr
+                && vaddr - va_base == offset % self.entry_size(), {
+                crate::lib::subtract_mod_aligned(offset, self.entry_size());
+                crate::lib::div_mul_cancel(base_offset, self.entry_size());
+                crate::lib::mod_less_eq(offset, self.entry_size());
+            });
             match self.entries.index(entry) {
                 NodeEntry::Page(p) => {
-                    let va_base = self.base_vaddr + entry * self.entry_size();
                     let va_base_offset = vaddr - va_base;
 
                     self.lemma_interp_facts_page(entry);
-                    assert(self.interp().map.contains_pair(va_base, p));
-                    assert(va_base <= vaddr);
-                    assert(vaddr < va_base + p.size);
-                    // assert(self.interp().map.dom().contains(va_base) && va_base <= vaddr && vaddr < va_base + self.interp().map.index(va_base).size);
-                    assert_forall_by(|va: nat| {
-                        requires(true
-                                 && self.interp().map.dom().contains(va)
-                                 && va <= vaddr
-                                 && vaddr < va + (#[trigger] self.interp().map.index(va)).size
-                                 );
-                        ensures(va == va_base);
-
-                        // assert(self.interp().map.contains_pair(va_base, p));
-                        // assert(overlap(
-                        //     MemRegion { base: va,      size: self.interp().map.index(va).size },
-                        //     MemRegion { base: va_base, size: p.size }));
-                        self.inv_implies_interp_aux_inv(0);
-                    });
-                    assert(equal(self.interp().resolve(vaddr), Ok(p.base + va_base_offset)));
-
-
-                    assert(vaddr - va_base == offset % self.entry_size());
-                    assert(equal(self.resolve(vaddr), Ok(p.base + va_base_offset)));
+                    self.inv_implies_interp_aux_inv(0);
                 },
                 NodeEntry::Directory(d) => {
                     assert(self.directories_obey_invariant());
@@ -1228,30 +1202,24 @@ impl Directory {
                             let n = choose(|n:nat|
                                            self.interp().map.dom().contains(n) &&
                                            n <= vaddr && vaddr < n + (#[trigger] self.interp().map.index(n)).size);
-                            assert(self.interp().map.dom().contains(n));
-                            // self
-                            // |---------------------|
-                            //           |-d-| |-d2|
-                            //           |-n-|
-                            assert(n <= vaddr);
-                            assert(vaddr < n + self.interp().map.index(n).size);
-
-                            assert(self.entry_size() > 0);
-                            assume(offset % self.entry_size() < self.entry_size());
-                            assume(vaddr < vaddr + self.entry_size() - (offset % self.entry_size()));
-                            assume(vaddr < self.base_vaddr - self.base_vaddr + vaddr + self.entry_size() - (offset % self.entry_size()));
-                            assume(vaddr < self.base_vaddr + vaddr - self.base_vaddr + self.entry_size() - (offset % self.entry_size()));
-                            assume(vaddr < self.base_vaddr + (vaddr - self.base_vaddr) + self.entry_size() - (offset % self.entry_size()));
-                            assume(vaddr < self.base_vaddr + ((vaddr - self.base_vaddr) + self.entry_size() - (offset % self.entry_size())));
-                            assume(vaddr < self.base_vaddr + ((offset - (offset % self.entry_size())) + self.entry_size()));
-                            assume(vaddr < self.base_vaddr + (base_offset + self.entry_size()));
-                            assume(vaddr < self.base_vaddr + ((base_offset + self.entry_size()) / self.entry_size()) * self.entry_size());
-                            assume(vaddr < self.base_vaddr + ((base_offset / self.entry_size())+1) * self.entry_size());
-                            assume(vaddr < self.base_vaddr + (entry+1) * self.entry_size());
-                            assume(vaddr < (self.base_vaddr + entry * self.entry_size()) + self.entry_size());
-                            assume(vaddr < (self.base_vaddr + entry * self.entry_size()) + d.num_entries() * d.entry_size());
-                            assume(vaddr < d.base_vaddr + d.num_entries() * d.entry_size());
-
+                            assert_nonlinear_by({
+                                requires([
+                                    self.entry_size() == d.entry_size() * d.num_entries(),
+                                    self.entry_size() > 0,
+                                    offset == vaddr - self.base_vaddr,
+                                    base_offset == offset - (offset % self.entry_size()),
+                                    entry == base_offset / self.entry_size(),
+                                    self.base_vaddr + entry * self.entry_size() == d.base_vaddr,
+                                ]);
+                                ensures([
+                                    vaddr < d.base_vaddr + d.num_entries() * d.entry_size(),
+                                ]);
+                                crate::lib::subtract_mod_aligned(offset, self.entry_size());
+                                assert(aligned(base_offset, self.entry_size()));
+                                assert(vaddr < self.base_vaddr + (base_offset + self.entry_size()));
+                                crate::lib::mod_add_zero(base_offset, self.entry_size(), self.entry_size());
+                                assert(vaddr < self.base_vaddr + ((base_offset + self.entry_size()) / self.entry_size()) * self.entry_size());
+                            });
 
                             self.lemma_no_dir_interp_mapping_implies_no_self_interp_mapping(entry, vaddr, d);
                             assert(self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
@@ -1276,23 +1244,20 @@ impl Directory {
                         if n + self.interp().map.index(n).size <= self.base_vaddr + entry * self.entry_size() {
                         } else {
                             self.inv_implies_interp_inv();
-                            // assert(n + self.interp().map.index(n).size > self.base_vaddr + entry * self.entry_size());
-                            assert(self.base_vaddr + (entry+1) * self.entry_size() <= n);
-                            assert(self.base_vaddr + (entry+1) * self.entry_size() <= vaddr);
-                            assert_by(false, {
-
-                                // TODO: nonlinear
-                                assume(offset % self.entry_size() < self.entry_size());
-                                assume(vaddr < vaddr + self.entry_size() - (offset % self.entry_size()));
-                                assume(vaddr < self.base_vaddr - self.base_vaddr + vaddr + self.entry_size() - (offset % self.entry_size()));
-                                assume(vaddr < self.base_vaddr + vaddr - self.base_vaddr + self.entry_size() - (offset % self.entry_size()));
-                                assume(vaddr < self.base_vaddr + (vaddr - self.base_vaddr) + self.entry_size() - (offset % self.entry_size()));
-                                assume(vaddr < self.base_vaddr + ((vaddr - self.base_vaddr) + self.entry_size() - (offset % self.entry_size())));
-                                assume(vaddr < self.base_vaddr + ((offset - (offset % self.entry_size())) + self.entry_size()));
-                                assume(vaddr < self.base_vaddr + (base_offset + self.entry_size()));
-                                assume(vaddr < self.base_vaddr + ((base_offset + self.entry_size()) / self.entry_size()) * self.entry_size());
-                                assume(vaddr < self.base_vaddr + ((base_offset / self.entry_size())+1) * self.entry_size());
-                                assume(vaddr < self.base_vaddr + (entry+1) * self.entry_size());
+                            assert_nonlinear_by({
+                                requires([
+                                    self.entry_size() > 0,
+                                    offset == vaddr - self.base_vaddr,
+                                    base_offset == offset - (offset % self.entry_size()),
+                                    entry == base_offset / self.entry_size(),
+                                ]);
+                                ensures([
+                                    vaddr < self.base_vaddr + (entry + 1) * self.entry_size(),
+                                ]);
+                                crate::lib::subtract_mod_aligned(offset, self.entry_size());
+                                assert(vaddr < self.base_vaddr + (base_offset + self.entry_size()));
+                                crate::lib::mod_add_zero(base_offset, self.entry_size(), self.entry_size());
+                                assert(vaddr < self.base_vaddr + ((base_offset + self.entry_size()) / self.entry_size()) * self.entry_size());
                             });
                         }
                     });
@@ -1310,7 +1275,6 @@ impl Directory {
                 if self.interp().resolve(vaddr).is_Ok() {
                     assert(exists(|n: nat| #[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
                     let va = choose(|n: nat| #[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
-                    crate::lib::mul_commute(self.entry_size(), self.num_entries());
                     assert(va + self.interp().map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
                     assert(false);
                 }
@@ -1560,19 +1524,11 @@ impl Directory {
         let base_offset = offset - (offset % self.entry_size());
         let entry = base_offset / self.entry_size();
         if aligned(base, self.entry_size()) {
-            assert(base == self.base_vaddr + base - self.base_vaddr);
-            assert(base == self.base_vaddr + offset);
-            crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
-            assert(aligned(self.base_vaddr, self.entry_size()));
-            assert(aligned(base, self.entry_size()));
-            assert(self.base_vaddr <= base);
-            crate::lib::subtract_mod_eq_zero(self.base_vaddr, base, self.entry_size());
-            assert(offset % self.entry_size() == 0);
-            assert(base == self.base_vaddr + offset - (offset % self.entry_size()));
-            assert(base == self.base_vaddr + base_offset);
-            crate::lib::div_mul_cancel(base_offset, self.entry_size());
-            assert(base == self.base_vaddr + (base_offset / self.entry_size()) * self.entry_size());
-            assert(base == self.base_vaddr + entry * self.entry_size());
+            assert_by(base == self.base_vaddr + entry * self.entry_size(), {
+                crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+                crate::lib::subtract_mod_eq_zero(self.base_vaddr, base, self.entry_size());
+                crate::lib::div_mul_cancel(base_offset, self.entry_size());
+            });
         } else {
             assert(base % self.entry_size() > 0);
             assert_by(base > 0, {

@@ -58,7 +58,6 @@ pub fn zero_mod_eq_zero(a: nat) {
     ensures(0 % a == 0);
 }
 
-
 //
 
 #[proof] #[verifier(nonlinear)]
