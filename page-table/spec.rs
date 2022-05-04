@@ -12,6 +12,21 @@ use crate::{seq, seq_insert_rec, map, map_insert_rec, assert_maps_equal};
 #[allow(unused_imports)]
 use result::{*, Result::*};
 
+#[proof]
+fn ambient_lemmas() {
+    ensures([
+        true,
+        //forall(|a: nat, b: nat| a * b == b * a),
+    ]);
+
+    // assert_forall_by(|a: nat, b: nat| {
+    //     ensures(a * b == b * a);
+    //     assert_nonlinear_by({
+    //         ensures(a * b == b * a);
+    //     });
+    // });
+}
+
 pub struct MemRegion { pub base: nat, pub size: nat }
 
 // TODO use VAddr, PAddr
@@ -98,6 +113,8 @@ fn arch_inv_test() {
 pub struct PageTableContents {
     pub map: Map<nat /* VAddr */, MemRegion>,
     pub arch: Arch,
+    pub lower: nat,
+    pub upper: nat,
 }
 
 #[spec(checked)]
@@ -142,6 +159,7 @@ impl PageTableContents {
         && self.arch.inv()
         && self.mappings_are_aligned()
         && self.mappings_dont_overlap()
+        && self.mappings_in_bounds()
     }
 
     #[spec(checked)]
@@ -161,6 +179,14 @@ impl PageTableContents {
                               >>= ((b1 == b2) || !overlap(
                                       MemRegion { base: b1, size: self.map.index(b1).size },
                                       MemRegion { base: b2, size: self.map.index(b2).size }))))
+    }
+
+    #[spec(checked)]
+    pub fn mappings_in_bounds(self) -> bool {
+        forall(|b1: nat|
+               with_triggers!([self.map.index(b1)], [self.map.dom().contains(b1)] =>
+                              self.map.dom().contains(b1)
+                              >>= self.lower <= b1 && b1 + self.map.index(b1).size <= self.upper))
     }
 
     #[spec(checked)]
@@ -255,6 +281,15 @@ impl PageTableContents {
         }
     }
 
+    #[spec(checked)]
+    fn accepted_unmap(self, base:nat) -> bool {
+        true
+        && self.lower <= base
+        && base < self.upper
+        && exists(|size: nat| with_triggers!([self.arch.contains_entry_size(size)], [aligned(base, size)] => 
+            self.arch.contains_entry_size(size) && aligned(base, size)))
+    }
+
     /// Removes the frame from the address space that contains `base`.
     #[spec(checked)]
     fn unmap(self, base: nat) -> Result<PageTableContents,()> {
@@ -275,8 +310,29 @@ impl PageTableContents {
             self.unmap(base).get_Ok_0().inv()
         ]);
     }
-}
 
+    #[spec]
+    pub fn ranges_disjoint(self, other: Self) -> bool {
+        if self.lower <= other.lower {
+            self.upper <= other.lower
+        } else {
+            // other.lower < self.lower
+            other.upper <= self.lower
+        }
+    }
+
+    #[spec]
+    pub fn mappings_disjoint(self, other: Self) -> bool {
+        forall(|s: nat, o: nat| self.map.dom().contains(s) && other.map.dom().contains(o) >>=
+            !overlap(MemRegion { base: s, size: self.map.index(s).size }, MemRegion { base: o, size: other.map.index(o).size }))
+    }
+
+    #[proof]
+    pub fn lemma_disjunct_implies_disjoint(self, other: Self) {
+        requires(self.ranges_disjoint(other));
+        ensures(self.mappings_disjoint(other));
+    }
+}
 
 
 // Second refinement layer
@@ -407,6 +463,25 @@ impl Directory {
         // recommends(self.inv());
         self.interp_aux(0)
     }
+
+    #[spec]
+    pub fn vaddr_offset(self, vaddr: nat) -> nat {
+        vaddr - self.base_vaddr
+    }
+
+    #[spec]
+    pub fn entry_for(self, vaddr: nat) -> /*index: */ nat {
+         self.vaddr_offset(vaddr) / self.entry_size()
+    }
+
+    #[spec]
+    pub fn interp_of_entry(self, entry: nat) -> PageTableContents {
+
+    }
+
+
+    fn lemma_interp_of_entries_disjunct
+
 
     #[spec(checked)]
     pub fn interp_aux(self, i: nat) -> PageTableContents {
@@ -853,6 +928,8 @@ impl Directory {
                                 } else {
                                     assert(self.interp_aux(i+1).map.dom().contains(va));
                                 }
+                                assert((va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + n * self.entry_size())
+                                        || (self.base_vaddr + (n+1) * self.entry_size() <= va));
                             },
                             NodeEntry::Directory(d) => {
                                 if !d.interp().map.dom().contains(va) {
@@ -1367,39 +1444,48 @@ impl Directory {
         }
     }
 
+    // #[spec(checked)]
+    // pub fn vaddr_in_bounds(self, base: nat) -> bool {
+    //     recommends(self.well_formed());
+    //     self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries()
+    // }
+
     #[spec(checked)]
+    pub fn accepted_unmap(self, base: nat) -> bool {
+        recommends(self.well_formed());
+        true
+        && self.interp().accepted_unmap(base)
+        // && self.vaddr_in_bounds(base)
+    }
+
+    #[spec]
     pub fn unmap(self, base: nat) -> Result<Self,()> {
+        recommends(self.inv() && self.accepted_unmap(base));
         decreases(self.arch.layers.len() - self.layer);
         decreases_by(Self::check_unmap);
 
-        if self.inv() {
+        if self.inv() && self.accepted_unmap(base) {
             let offset = base - self.base_vaddr;
             let base_offset = offset - (offset % self.entry_size());
             let entry = base_offset / self.entry_size();
-            if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-                // this condition implies that "entry < self.entries.len()"
-                match self.entries.index(entry) {
-                    NodeEntry::Page(p)      => {
-                        if aligned(base, self.entry_size()) {
-                            // This implies base == self.base_vaddr + entry * self.entry_size()
-                            Ok(self.update(entry, NodeEntry::Empty()))
+            // this condition implies that "entry < self.entries.len()"
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    if aligned(base, self.entry_size()) {
+                        Ok(self.update(entry, NodeEntry::Empty()))
+                    } else {
+                        Err(())
+                    }
+                },
+                NodeEntry::Directory(d) => {
+                    d.unmap(base).map_ok(|new_d|
+                        self.update(entry, if d.empty() {
+                            NodeEntry::Empty()
                         } else {
-                            // This implies base > self.base_vaddr + entry * self.entry_size()
-                            Err(())
-                        }
-                    },
-                    NodeEntry::Directory(d) => {
-                        d.unmap(base).map_ok(|new_d|
-                            self.update(entry, if d.empty() {
-                                NodeEntry::Empty()
-                            } else {
-                                NodeEntry::Directory(new_d)
-                            }))
-                    },
-                    NodeEntry::Empty()      => Err(()),
-                }
-            } else {
-                Err(())
+                            NodeEntry::Directory(new_d)
+                        }))
+                },
+                NodeEntry::Empty() => Err(()),
             }
         } else {
             arbitrary()
@@ -1415,102 +1501,102 @@ impl Directory {
         }
     }
 
-    // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
-    // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
-    // arbitrary.
-    #[proof]
-    fn lemma_update_leq_interp_aux_idempotent(self, i: nat) {
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
-        requires([
-                 self.inv(),
-        ]);
-        ensures(forall(|n: nat| n < i && n < self.entries.len() >>= equal((#[trigger] self.update(n, NodeEntry::Empty())).interp_aux(i), self.interp_aux(i))));
+    // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
+    // // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
+    // // arbitrary.
+    // #[proof]
+    // fn lemma_update_leq_interp_aux_idempotent(self, i: nat) {
+    //     decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+    //     requires([
+    //              self.inv(),
+    //     ]);
+    //     ensures(forall(|n: nat| n < i && n < self.entries.len() >>= equal((#[trigger] self.update(n, NodeEntry::Empty())).interp_aux(i), self.interp_aux(i))));
 
-        assert_forall_by(|n: nat| {
-            requires(n < i && n < self.entries.len());
-            ensures(equal((#[trigger] self.update(n, NodeEntry::Empty())).interp_aux(i), self.interp_aux(i)));
+    //     assert_forall_by(|n: nat| {
+    //         requires(n < i && n < self.entries.len());
+    //         ensures(equal((#[trigger] self.update(n, NodeEntry::Empty())).interp_aux(i), self.interp_aux(i)));
 
-            assume(self.update(n, NodeEntry::Empty()).inv());
-            if i >= self.entries.len() {
-            } else {
-                self.lemma_update_leq_interp_aux_idempotent(i+1);
-            }
-        });
-    }
+    //         assume(self.update(n, NodeEntry::Empty()).inv());
+    //         if i >= self.entries.len() {
+    //         } else {
+    //             self.lemma_update_leq_interp_aux_idempotent(i+1);
+    //         }
+    //     });
+    // }
 
-    #[proof]
-    fn lemma_update_empty_interp_aux_equal_interp_aux_remove(self, i: nat, n: nat) {
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
-        requires([
-                 self.inv(),
-                 i <= n,
-                 n < self.entries.len(),
-                 self.entries.index(n).is_Page(),
-        ]);
-        ensures(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
+    // #[proof]
+    // fn lemma_update_empty_interp_aux_equal_interp_aux_remove(self, i: nat, n: nat) {
+    //     decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+    //     requires([
+    //              self.inv(),
+    //              i <= n,
+    //              n < self.entries.len(),
+    //              self.entries.index(n).is_Page(),
+    //     ]);
+    //     ensures(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
 
-        let n_vaddr = self.base_vaddr + n * self.entry_size();
-        let p = self.entries.index(n).get_Page_0();
-        assert_by(self.interp_aux(i).map.dom().contains(n_vaddr), {
-                self.lemma_interp_aux_facts_page(i, n);
-        });
-        self.inv_implies_interp_inv();
-        self.inv_implies_interp_aux_inv(i+1);
-        crate::lib::mul_distributive(i, self.entry_size());
+    //     let n_vaddr = self.base_vaddr + n * self.entry_size();
+    //     let p = self.entries.index(n).get_Page_0();
+    //     assert_by(self.interp_aux(i).map.dom().contains(n_vaddr), {
+    //             self.lemma_interp_aux_facts_page(i, n);
+    //     });
+    //     self.inv_implies_interp_inv();
+    //     self.inv_implies_interp_aux_inv(i+1);
+    //     crate::lib::mul_distributive(i, self.entry_size());
 
-        let updi = self.update(n, NodeEntry::Empty());
-        assume(updi.inv());
-        if i >= self.entries.len() {
-        } else {
-            if i == n {
-                assert(equal(updi.interp_aux(i), updi.interp_aux(i+1)));
-                assert(!self.interp_aux(i+1).map.dom().contains(n_vaddr));
-                assert_maps_equal!(self.interp_aux(i).remove(n_vaddr).map, self.interp_aux(i+1).map);
-                assert(equal(self.interp_aux(i).remove(n_vaddr), self.interp_aux(i+1)));
-                if i+1 < self.entries.len() {
-                    self.lemma_update_leq_interp_aux_idempotent(i+1);
-                } else {
-                }
-                assert(equal(updi.interp_aux(i), self.interp_aux(i).remove(n_vaddr)));
-            } else {
-                assert(i < n);
-                self.lemma_update_empty_interp_aux_equal_interp_aux_remove(i+1, n);
-                assert(equal(
-                        updi.interp_aux(i+1),
-                        self.interp_aux(i+1).remove(self.base_vaddr + n * self.entry_size())));
-                self.lemma_interp_aux_disjoint(i);
-                let rem = self.interp_aux(i + 1).map;
-                match self.entries.index(i) {
-                    NodeEntry::Page(p)      => {
-                        assert(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), p)));
-                        assert(equal(updi.entries.index(i), self.entries.index(i)));
-                        assume(false);
-                        // assert(equal(
-                        //         self.update(n, NodeEntry::Empty()).interp_aux(i).map,
-                        //         self.update(n, NodeEntry::Empty()).interp_aux(i+1).map.insert(self.base_vaddr + i * self.entry_size(), p)));
-                        // assert(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
+    //     let updi = self.update(n, NodeEntry::Empty());
+    //     assume(updi.inv());
+    //     if i >= self.entries.len() {
+    //     } else {
+    //         if i == n {
+    //             assert(equal(updi.interp_aux(i), updi.interp_aux(i+1)));
+    //             assert(!self.interp_aux(i+1).map.dom().contains(n_vaddr));
+    //             assert_maps_equal!(self.interp_aux(i).remove(n_vaddr).map, self.interp_aux(i+1).map);
+    //             assert(equal(self.interp_aux(i).remove(n_vaddr), self.interp_aux(i+1)));
+    //             if i+1 < self.entries.len() {
+    //                 self.lemma_update_leq_interp_aux_idempotent(i+1);
+    //             } else {
+    //             }
+    //             assert(equal(updi.interp_aux(i), self.interp_aux(i).remove(n_vaddr)));
+    //         } else {
+    //             assert(i < n);
+    //             self.lemma_update_empty_interp_aux_equal_interp_aux_remove(i+1, n);
+    //             assert(equal(
+    //                     updi.interp_aux(i+1),
+    //                     self.interp_aux(i+1).remove(self.base_vaddr + n * self.entry_size())));
+    //             self.lemma_interp_aux_disjoint(i);
+    //             let rem = self.interp_aux(i + 1).map;
+    //             match self.entries.index(i) {
+    //                 NodeEntry::Page(p)      => {
+    //                     assert(equal(self.interp_aux(i).map, rem.insert(self.base_vaddr + i * self.entry_size(), p)));
+    //                     assert(equal(updi.entries.index(i), self.entries.index(i)));
+    //                     assume(false);
+    //                     // assert(equal(
+    //                     //         self.update(n, NodeEntry::Empty()).interp_aux(i).map,
+    //                     //         self.update(n, NodeEntry::Empty()).interp_aux(i+1).map.insert(self.base_vaddr + i * self.entry_size(), p)));
+    //                     // assert(equal(self.update(n, NodeEntry::Empty()).interp_aux(i), self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
 
-                        //rem.insert(self.base_vaddr + i * self.entry_size(), p),
-                        // assert(equal(
-                        //         self.update(n, NodeEntry::Empty()).interp_aux(i),
-                        //         self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
-                    },
-                    NodeEntry::Directory(d) => {
-                        assume(false);
-                        //rem.union_prefer_right(d.interp_aux(0).map),
-                    },
-                    NodeEntry::Empty()      => (),
-                }
-            }
-        }
-    }
+    //                     //rem.insert(self.base_vaddr + i * self.entry_size(), p),
+    //                     // assert(equal(
+    //                     //         self.update(n, NodeEntry::Empty()).interp_aux(i),
+    //                     //         self.interp_aux(i).remove(self.base_vaddr + n * self.entry_size())));
+    //                 },
+    //                 NodeEntry::Directory(d) => {
+    //                     assume(false);
+    //                     //rem.union_prefer_right(d.interp_aux(0).map),
+    //                 },
+    //                 NodeEntry::Empty()      => (),
+    //             }
+    //         }
+    //     }
+    // }
 
-    #[proof]
-    fn lemma_update_empty_interp_equal_interp_remove(self, n: nat) {
-        requires(self.entries.index(n).is_Page());
-        ensures(equal(self.update(n, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + n * self.entry_size())));
-        assume(false);
-    }
+    // #[proof]
+    // fn lemma_update_empty_interp_equal_interp_remove(self, n: nat) {
+    //     requires(self.entries.index(n).is_Page());
+    //     ensures(equal(self.update(n, NodeEntry::Empty()).interp(), self.interp().remove(self.base_vaddr + n * self.entry_size())));
+    //     assume(false);
+    // }
 
     #[proof]
     fn lemma_derive_unmap_page_base_bound(self, base: nat) {
@@ -1569,8 +1655,9 @@ impl Directory {
     #[proof]
     fn unmap_preserves_inv(self, base: nat) {
         requires([
-                 self.inv(),
-                 self.unmap(base).is_Ok()
+            self.inv(),
+            self.accepted_unmap(base),
+            self.unmap(base).is_Ok(),
         ]);
         ensures(self.unmap(base).get_Ok_0().inv());
         decreases(self.arch.layers.len() - self.layer);
@@ -1578,100 +1665,115 @@ impl Directory {
         let offset = base - self.base_vaddr;
         let base_offset = offset - (offset % self.entry_size());
         let entry = base_offset / self.entry_size();
-        if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.lemma_derive_entry_bounds_from_if_condition(base);
-            match self.entries.index(entry) {
-                NodeEntry::Page(p)      => {
-                    self.lemma_derive_unmap_page_base_bound(base);
-                    if aligned(base, self.entry_size()) {
-                        let nself = self.update(entry, NodeEntry::Empty());
-                        assert(self.directories_obey_invariant());
-                        assert(nself.directories_obey_invariant());
-                        assert(nself.inv());
-                    } else {
-                    }
-                },
-                NodeEntry::Directory(d) => {
-                    assert(self.directories_obey_invariant());
-                    d.unmap_preserves_inv(base);
-                    let nself = self.unmap(base).get_Ok_0();
-                    assert(nself.directories_obey_invariant());
-                },
-                NodeEntry::Empty()      => (),
-            }
-        } else {
+        self.lemma_derive_entry_bounds_from_if_condition(base);
+        assert(entry < self.entries.len());
+        match self.entries.index(entry) {
+            NodeEntry::Page(p)      => {
+                self.lemma_derive_unmap_page_base_bound(base);
+                let nself = self.update(entry, NodeEntry::Empty());
+                assert(self.directories_obey_invariant());
+                assert(nself.directories_obey_invariant());
+                assert(nself.inv());
+                assert(self.unmap(base).get_Ok_0().inv());
+            },
+            NodeEntry::Directory(d) => {
+                assert(self.directories_obey_invariant());
+
+                assert(self.directories_obey_invariant());
+                assert(d.inv());
+                assert(d.well_formed());
+
+                // LEMMA ?
+                assert_nonlinear_by({
+                    requires([
+                        self.entry_size() > 0,
+                        self.entry_size() == d.entry_size() * d.num_entries(),
+                        offset == base - self.base_vaddr,
+                        base_offset == offset - (offset % self.entry_size()),
+                        entry == base_offset / self.entry_size(),
+                        d.base_vaddr == self.base_vaddr + entry * self.entry_size(),
+                        self.base_vaddr <= base,
+                    ]);
+                    ensures([
+                        d.base_vaddr <= base,
+                        base < d.base_vaddr + d.entry_size() * d.num_entries(), // TODO: extract as lemma
+                    ]);
+                    crate::lib::subtract_mod_aligned(offset, self.entry_size());
+                    crate::lib::mod_add_zero(base_offset, self.entry_size(), self.entry_size());
+                });
+                assert(d.vaddr_in_bounds(base));
+                assert(d.accepted_unmap(base));
+
+                d.unmap_preserves_inv(base);
+                let nself = self.unmap(base).get_Ok_0();
+                assert(nself.directories_obey_invariant());
+                assert(self.unmap(base).get_Ok_0().inv());
+            },
+            NodeEntry::Empty()      => {
+                assert(self.unmap(base).get_Ok_0().inv());
+            },
         }
     }
 
     #[proof]
     fn unmap_refines_unmap(self, base: nat) {
-        requires(self.inv());
+        requires([
+             self.inv(),
+             self.accepted_unmap(base),
+        ]);
         ensures(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
 
         self.inv_implies_interp_inv();
-        crate::lib::mul_commute(self.entry_size(), self.num_entries());
+
+        if let Ok(nself) = self.unmap(base) {
+            self.unmap_preserves_inv(base);
+            nself.inv_implies_interp_inv();
+            assert(nself.interp().inv());
+        }
+
+        let nself_res = self.unmap(base);
+        let nself = self.unmap(base).get_Ok_0();
+
+        let i_nself_res = self.interp().unmap(base);
+        let i_nself = i_nself_res.get_Ok_0();
 
         let offset = base - self.base_vaddr;
         let base_offset = offset - (offset % self.entry_size());
         let entry = base_offset / self.entry_size();
-        if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-            self.lemma_derive_entry_bounds_from_if_condition(base);
-            match self.entries.index(entry) {
-                NodeEntry::Page(p) => {
-                    self.lemma_derive_unmap_page_base_bound(base);
-                    if aligned(base, self.entry_size()) {
-                        assert(base == self.base_vaddr + entry * self.entry_size());
-                        self.lemma_interp_facts_page(entry);
-                        self.unmap_preserves_inv(base);
-                        self.lemma_update_empty_interp_equal_interp_remove(entry);
-                        assert(equal(self.update(entry, NodeEntry::Empty()).interp(), self.interp().remove(base)));
-                    } else {
-                        assert(self.unmap(base).is_Err());
-                        self.lemma_interp_facts_page(entry);
-                        assert(self.interp().map.contains_pair(self.base_vaddr + entry * self.entry_size(), p));
-                        assert(self.interp().map.dom().contains(self.base_vaddr + entry * self.entry_size()));
-                        assert(base > self.base_vaddr + entry * self.entry_size());
-                        assert_by(!self.interp().map.dom().contains(base), {
-                            if self.interp().map.dom().contains(base) {
-                                let p2 = self.interp().map.index(base);
-                                assert(base > self.base_vaddr + entry * self.entry_size());
+        assert(self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries());
+        self.lemma_derive_entry_bounds_from_if_condition(base);
+        assert(entry < self.entries.len());
+        match self.entries.index(entry) {
+            NodeEntry::Page(p)      => {
+                self.lemma_derive_unmap_page_base_bound(base);
+                if aligned(base, self.entry_size()) {
+                    assert(nself_res.is_Ok());
 
-                                assert(base < self.base_vaddr + base_offset + self.entry_size());
-                                crate::lib::subtract_mod_aligned(offset, self.entry_size());
-                                // TODO: nonlinear
-                                assume((base_offset + self.entry_size()) % self.entry_size() == 0);
-                                crate::lib::div_mul_cancel(base_offset+self.entry_size(), self.entry_size());
-                                assert(base < self.base_vaddr + (base_offset+self.entry_size()) / self.entry_size() * self.entry_size());
-                                // TODO: nonlinear
-                                assume(base < self.base_vaddr + (base_offset / self.entry_size()+1) * self.entry_size());
-                                assert(base < self.base_vaddr + (entry+1) * self.entry_size());
-                                crate::lib::mul_distributive(entry, self.entry_size());
-                                assert(base < self.base_vaddr + entry * self.entry_size() + self.entry_size());
-                                assert(base < self.base_vaddr + entry * self.entry_size() + p.size);
-                                assert(overlap(
-                                        MemRegion { base: base, size: p2.size },
-                                        MemRegion { base: self.base_vaddr + entry * self.entry_size(), size: p.size }
-                                        ));
-                            }
-                        });
-                        assert(self.interp().unmap(base).is_Err());
-                    }
-                },
-                NodeEntry::Directory(d) => {
-                    assume(false);
-                    // d.unmap(base),
-                },
-                NodeEntry::Empty() => {
-                    self.lemma_interp_facts_empty(entry);
-                    if self.interp().map.dom().contains(entry) {
-                        assume(false);
-                    } else {
-                        assume(false);
-                    }
-                },
-            }
-        } else {
-            self.lemma_not_contains_from_if_condition(base);
+                    assert(equal(nself, self.update(entry, NodeEntry::Empty())));
+
+                    self.lemma_interp_facts_page(entry);
+                    assert(base == self.base_vaddr + entry * self.entry_size());
+
+                    assert(equal(self.interp().remove(base), self.update(entry, NodeEntry::Empty()).interp()));
+
+                    assert(self.interp().map.contains_pair(base, p));
+
+                    assert(equal(i_nself, self.interp().remove(base)));
+
+                    assert(i_nself_res.is_Ok());
+                    assert(equal(nself.interp(), i_nself));
+
+                    assert(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+                } else {
+                    assume(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+                }
+            },
+            NodeEntry::Directory(d) => {
+                assume(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+            },
+            NodeEntry::Empty()      => {
+                assume(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+            },
         }
     }
 
