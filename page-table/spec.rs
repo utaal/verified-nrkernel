@@ -351,6 +351,15 @@ impl PageTableContents {
         ]);
         ensures(self.mappings_disjoint(other));
     }
+
+    #[proof]
+    fn lemma_mappings_have_positive_entry_size(self) {
+        requires(self.inv());
+        ensures([
+                forall(|va: nat| #[trigger] self.map.dom().contains(va)
+                       >>= self.map.index(va).size > 0),
+        ]);
+    }
 }
 
 
@@ -557,45 +566,6 @@ impl Directory {
         }
     }
 
-    #[proof]
-    fn inv_implies_interp_aux_entries_positive_entry_size(self, i: nat) {
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
-        requires(self.inv());
-        ensures([
-                forall(|va: nat| #[trigger] self.interp_aux(i).map.dom().contains(va)
-                       >>= self.interp_aux(i).map.index(va).size > 0),
-        ]);
-        assert_forall_by(|va: nat| {
-            requires(self.interp_aux(i).map.dom().contains(va));
-            ensures(#[trigger] self.interp_aux(i).map.index(va).size > 0);
-
-            if i >= self.entries.len() {
-            } else {
-                self.inv_implies_interp_aux_entries_positive_entry_size(i+1);
-                match self.entries.index(i) {
-                    NodeEntry::Page(p) => {
-                        let new_va = self.base_vaddr + i * self.entry_size();
-                        if new_va == va {
-                        } else {
-                            assert(self.interp_aux(i+1).map.index(va).size > 0);
-                        }
-                    },
-                    NodeEntry::Directory(d) => {
-                        assert(self.directories_obey_invariant());
-                        d.inv_implies_interp_aux_entries_positive_entry_size(0);
-                        if d.interp_aux(0).map.dom().contains(va) {
-                        } else {
-                            assert(self.interp_aux(i+1).map.dom().contains(va));
-                        }
-                    },
-                    NodeEntry::Empty() => {
-                        assert(self.interp_aux(i+1).map.index(va).size > 0);
-                    },
-                };
-            }
-        });
-    }
-
     // #[proof]
     // fn inv_implies_interp_aux_inv(self, i: nat) {
     //     decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
@@ -786,7 +756,7 @@ impl Directory {
     //                 },
     //             }
     //             // Post3
-    //             self.inv_implies_interp_aux_entries_positive_entry_size(i);
+    //             self.interp_aux(i).lemma_mappings_have_positive_entry_size();
     //         }
     //     });
     // }
@@ -1021,7 +991,7 @@ impl Directory {
     //             assert(va + self.interp().map.index(va).size <= self.base_vaddr + n * self.entry_size()
     //                    || self.base_vaddr + (n+1) * self.entry_size() <= va);
     //             if va + self.interp().map.index(va).size <= self.base_vaddr + n * self.entry_size() {
-    //                 self.inv_implies_interp_aux_entries_positive_entry_size(0);
+    //                 self.interp().lemma_mappings_have_positive_entry_size();
     //                 assert(self.interp().map.index(va).size > 0);
     //                 assert(va < self.base_vaddr + n * self.entry_size());
     //             } else {
