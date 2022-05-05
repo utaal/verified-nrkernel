@@ -20,9 +20,9 @@ pub struct Flags {
 }
 
 
-// 
+//
 //     is_pat flag
-// 
+//
 // // invariant: not map the page table accessible from userspace
 // impl OS {
 //     // this is a model of syscall
@@ -30,33 +30,55 @@ pub struct Flags {
 //     pub transition(self, post: Self, transition: TransitionLabel)
 //     // have a transaction that maps n pages as once
 // }
-// 
+//
 
+
+// RA: the ARMv8 architecture you can also load/store a pair of registers in one instruction,
+//     (and I think even more than that)
+//
+//     now these are technically two loads/stores as I assume.  From the manual (C6.2.130 LDP):
+//      data1 = Mem[address, dbytes, AccType_NORMAL];
+//      data2 = Mem[address+dbytes, dbytes, AccType_NORMAL];
+//      X[t] = data1;
+//      X[t2] = data2;
+//
+//     the ARMv7 has a load multiple.
+//
+//     the other thing to consider here would be the SIMD registers, where we can do a
+//     load/store of up to 512bits.
+//
+//     I think conceptually we could say that this will be just two load/stores. Though, the
+//     difference here may be subtle, if you do two independent load/stores, then there could be
+//     some rescheduling in between, whereas with `ldp` this is not the case (maybe tha load multiple
+//     is kind of "atomic")
+//
 #[derive(PartialEq, Eq, Structural)] #[is_variant]
 enum LoadResult {
     PageFault,
+    // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
     Value(usize), // word-sized load
 }
 
 #[derive(PartialEq, Eq, Structural)] #[is_variant]
 enum StoreResult {
     PageFault,
+    // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
     Ok,
 }
- 
+
 // enum TransitionLabel {
 //     // SYSCALL
 //     Map(vaddr, paddr, page_size, flags: Flags, is_ok)
 //     // have a transaction that maps n pages as once
-// 
+//
 //     // SYSCALL
 //     // one page
 //     Unmap(vaddr, is_ok)
-// 
+//
 //     // SYSCALL
 //     // lookup a mapping
 //     Resolve(vaddr, Result<(paddr, size, Flags)>)
-// 
+//
 //     // INSTRUCTION
 //     // write anywhere, on any length, maybe span two pages?
 //     // TODO: what happens if we straddle two pages and only one is mapped?
@@ -67,13 +89,13 @@ enum StoreResult {
 //         Load(is_exec, result: LoadResult),
 //         )
 // }
-// 
+//
 // // PageFault?
 // //  |
 // //  | IOOp(vaddr, size, Store(12, page_fault=true))
 // //  |
 // //  | Map(vaddr, ...)
-// 
+//
 // // ------
 // //
 // //
@@ -88,20 +110,39 @@ pub struct PageTableEntry {
 
 state_machine! { MemoryTranslator {
     fields {
-        // the tlb 
+        // the tlb
         pub tlb: Map</* VAddr */ nat, PageTableEntry>, // all the VAddr of a page move in sync
+
+        // RA: not sure whether we should call this "page_table_walker" or alike?
         pub page_table: Map</* VAddr */ nat, PageTableEntry>,
+
+        // RA: there could be something like:
+        //        state: IDLE | START_RESOLVING(vaddr) | REFILLING(VADDR) | RESOLVED_SUCCESS(vaddr, paddr) | RESOLVED_FAILURE ?
+        //     maybe there is a map<Vaddr, ResolveState> where the number of entries are the parallel resolves?
+        //     or os that too complex?
     }
 
+    // RA: somehow right now we have a resolve that requires the TLB to contain an entry,
+    //     and a fill_tlb that requires the TLB not to contain an entry. I think that should be fine?
+    //     or do we need something like a fill then resolve?
+
     readonly! {
+        // RA: wouldn't here resolve not be something like
+        //       resolve(vaddr, ResolveResult)?
+        //     or how do we express that resolve may fail?
         resolve(vaddr: nat, p_addr: nat, flags: Flags) {
             require(exists(|base: nat| pre.tlb.dom().contains(base) >>=
                 base <= vaddr && vaddr < base + pre.tlb.index(base).size));
             let base = choose(|base: nat| pre.tlb.dom().contains(base) >>=
                 base <= vaddr && vaddr < base + pre.tlb.index(base).size);
             let entry = pre.tlb.index(base);
+            // RA: that could be a bit too strinct, say, the entry allows read and write,
+            //     but you only want to resolve read-only.
             require(flags == entry.flags);
             require(p_addr == entry.p_addr + (vaddr - base));
+
+            // RA: resolve may actually also change the TLB state (or even the page table)
+            //     w.r.t. the accessed/dirty bits or alike.
         }
     }
 
@@ -114,28 +155,34 @@ state_machine! { MemoryTranslator {
     }
 
     transition! {
-        invalidate_tlb(base: nat) {
+        invalidate_tlb_by_addr(base: nat) {
             update tlb = pre.tlb.remove(base);
         }
     }
 
     transition! {
-        flush_tlb() {
+        invalidate_tlb_full() {
             // TODO(andrea) update tlb = map![];
         }
     }
-    
+
     // operation to flush by context identifier
 
     transition! {
         // root of the page table stays the same; this is "just" updating some entries, not a
         // context switch
+        //
+        // RA: do we need something like `set_entry` ?
         update_page_table(new_page_table: Map<nat, PageTableEntry>) {
             update page_table = new_page_table;
         }
     }
 
     // TODO: flush range?
+
+    //
+    // RA: We assume that the hardware is always enabled.
+    //     This is fine, as this is what it is during normal mode of operation after initalization.
 } }
 
 #[proof]
@@ -165,9 +212,9 @@ fn memory_translator_test_1() {
 //     Store(new_value: usize, result: StoreResult), // represents a third party doing a write too
 //     Load(is_exec: bool, result: LoadResult),
 // }
-// 
+//
 // state_machine! { MemoryTranslator {
-// 
+//
 //     transition! {
 //         io_op(vaddr: nat, op: IoOp) {
 //             match op {
@@ -176,7 +223,7 @@ fn memory_translator_test_1() {
 //             }
 //         }
 //     }
-// 
+//
 // } }
 
 
@@ -184,18 +231,18 @@ fn memory_translator_test_1() {
 // impl MemoryTranslator { // and TLB?
 //     fn translate(self, post, vaddr, paddr)   // this is the walker
 // }
-// 
+//
 // impl Memory {
 //     fn ...
 // }
-// 
+//
 // struct Env {
 //     page_table: _,
-// 
+//
 //     tlb: _,
-// 
+//
 // }
-// 
+//
 // // Bottom bread
 // // composition of program with its environment
 // struct ExecutableSystem<P: Program /* represents multiple programs */, T: OSImpl> {
@@ -203,8 +250,8 @@ fn memory_translator_test_1() {
 //     os: T,
 //     env: Env,
 // }
-// 
+//
 // // Trusted assembler that passes the map syscall to rust
 // // API boundary
-// 
-// 
+//
+//
