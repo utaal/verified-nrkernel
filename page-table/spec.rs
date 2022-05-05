@@ -492,6 +492,12 @@ impl Directory {
         self.interp_aux(0)
     }
 
+    #[spec(checked)]
+    pub fn upper_vaddr(self) -> nat {
+        recommends(self.well_formed());
+        self.base_vaddr + self.num_entries() * self.entry_size()
+    }
+
     #[spec]
     pub fn vaddr_offset(self, vaddr: nat) -> nat {
         vaddr - self.base_vaddr
@@ -554,6 +560,7 @@ impl Directory {
                             self.base_vaddr + i * self.entry_size() <= self.base_vaddr + j * self.entry_size(),
                             self.base_vaddr + (i+1) * self.entry_size() <= self.base_vaddr + j * self.entry_size()
                     ]);
+                    assume(false);
                 });
             } else {
                 assert_nonlinear_by({
@@ -581,12 +588,11 @@ impl Directory {
 
         if self.inv() {
             if i >= self.entries.len() {
-                let bounds = self.base_vaddr + self.num_entries() * self.entry_size();
                 PageTableContents {
                     map: map![],
                     arch: self.arch,
-                    lower: bounds,
-                    upper: bounds,
+                    lower: self.upper_vaddr(),
+                    upper: self.upper_vaddr(),
                 }
             } else { // i < self.entries.len()
                 let rem = self.interp_aux(i + 1);
@@ -619,6 +625,8 @@ impl Directory {
         ensures([
             self.interp_aux(i).inv(),
             i <= self.entries.len() >>= self.interp_aux(i).lower == self.entry_base(i),
+            self.interp_aux(i).upper == self.upper_vaddr(),
+            i == 0 >>= self.interp_aux(0).lower == self.base_vaddr,
         ]);
 
         let interp = self.interp_aux(i);
@@ -680,13 +688,17 @@ impl Directory {
                         requires([
                             self.inv(),
                             equal(entry_i, self.interp_of_entry(i)),
-                            d.interp_aux(0).mappings_in_bounds(),
+                            d.interp_aux(0).inv(),
+                            d.interp_aux(0).lower == self.entry_base(i),
+                            d.base_vaddr == self.entry_base(i),
+                            d.entry_size() * d.num_entries() == self.entry_size(),
+                            d.interp_aux(0).upper == d.upper_vaddr(),
                             equal(self.interp_of_entry(i).map, d.interp_aux(0).map),
                             i < self.entries.len(),
                         ]);
                         ensures(entry_i.mappings_in_bounds());
-                        assert(entry_i.upper >= d.interp_aux(0).upper);
-                        assert(entry_i.lower <= d.interp_aux(0).lower);
+                        assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
+                        assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
                     });
                 }
                 NodeEntry::Empty() => {}
@@ -694,6 +706,7 @@ impl Directory {
             assert(entry_i.mappings_in_bounds());
 
             assert(entry_i.inv());
+
 
             assert(self.interp_aux(i + 1).lower == self.entry_base(i + 1));
 
@@ -709,11 +722,37 @@ impl Directory {
             rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
 
             assert(interp.mappings_dont_overlap());
-            assume(interp.mappings_in_bounds());
-        }
 
-        assert(interp.arch.inv());
-        assert(interp.inv());
+            assert_nonlinear_by({
+                requires([
+                    equal(interp, self.interp_aux(i)),
+                    equal(entry_i, self.interp_of_entry(i)),
+                    equal(rem, self.interp_aux(i + 1)),
+                    self.interp_aux(i + 1).lower == self.entry_base(i + 1),
+                    entry_i.upper == self.entry_base(i + 1),
+                    interp.upper == self.upper_vaddr(),
+                ]);
+                ensures([
+                    interp.lower <= entry_i.lower,
+                    interp.upper >= entry_i.upper,
+                    interp.lower <= self.interp_aux(i + 1).lower,
+                    interp.upper >= self.interp_aux(i + 1).upper,
+                ]);
+            });
+
+            assert(interp.mappings_in_bounds());
+
+            if i == 0 {
+                assert_nonlinear_by({
+                    requires([
+                        equal(entry_i, self.interp_of_entry(i)),
+                        entry_i.lower == self.base_vaddr + i * self.entry_size(),
+                        i == 0,
+                    ]);
+                    ensures(self.interp_aux(0).lower == self.base_vaddr);
+                });
+            }
+        }
     }
 
     //     assert(self.directories_obey_invariant());
@@ -824,8 +863,8 @@ impl Directory {
     //         requires(self.interp_aux(i).map.dom().contains(va));
     //         ensures(#[auto_trigger] true
     //             && va >= self.base_vaddr + i * self.entry_size()
-    //             && va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()
-    //             && va < self.base_vaddr + self.num_entries() * self.entry_size());
+    //             && va + self.interp_aux(i).map.index(va).size <= self.upper_vaddr()
+    //             && va < self.upper_vaddr());
 
     //         if i >= self.entries.len() {
     //         } else {
@@ -848,7 +887,7 @@ impl Directory {
     //                                 (i + 1) * self.entry_size() <= self.num_entries() * self.entry_size(),
     //                             ]);
     //                         });
-    //                         assert(va + self.interp_aux(i).map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
+    //                         assert(va + self.interp_aux(i).map.index(va).size <= self.upper_vaddr());
     //                     } else {
     //                     }
     //                 },
@@ -1491,12 +1530,12 @@ impl Directory {
     //         self.inv_implies_interp_inv();
     //         if vaddr >= self.base_vaddr + self.entry_size() * self.num_entries() {
     //             assert(forall(|va: nat| self.interp().map.dom().contains(va)
-    //                           >>= va + #[trigger] self.interp().map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size()));
+    //                           >>= va + #[trigger] self.interp().map.index(va).size <= self.upper_vaddr()));
     //             assert(self.base_vaddr <= vaddr);
     //             if self.interp().resolve(vaddr).is_Ok() {
     //                 assert(exists(|n: nat| #[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size));
     //                 let va = choose(|n: nat| #[trigger] self.interp().map.dom().contains(n) && n <= vaddr && vaddr < n + self.interp().map.index(n).size);
-    //                 assert(va + self.interp().map.index(va).size <= self.base_vaddr + self.num_entries() * self.entry_size());
+    //                 assert(va + self.interp().map.index(va).size <= self.upper_vaddr());
     //                 assert(false);
     //             }
     //         } else {
