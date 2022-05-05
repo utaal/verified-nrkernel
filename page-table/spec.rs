@@ -859,15 +859,15 @@ impl Directory {
         self.inv_implies_interp_inv();
         match self.entries.index(i) {
             NodeEntry::Page(p) => {
-                assert(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
-                assert(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
+                assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
+                assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
             },
             NodeEntry::Directory(d) => {
                 assert(self.directories_obey_invariant());
                 assert(d.inv());
                 d.inv_implies_interp_inv();
-                assert(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
-                assert(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
+                assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
+                assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
             },
             NodeEntry::Empty() => {},
         }
@@ -1249,14 +1249,12 @@ impl Directory {
 
         let entry = self.index_for_vaddr(vaddr);
         self.lemma_index_for_vaddr_bounds(vaddr);
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
+
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
                 assert(self.resolve(vaddr).is_Ok());
-
-                self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
-
                 let p_vaddr = self.entry_base(entry);
-
                 assert(self.interp().map.contains_pair(p_vaddr, p));
                 assert(vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
             },
