@@ -268,12 +268,21 @@ impl PageTableContents {
 
     // TODO later /// Changes the mapping permissions of the region containing `vaddr` to `rights`.
     // TODO later fn adjust(self, vaddr: nat) -> Result<(VAddr, usize), KError>;
+    //
+
+    #[spec(checked)]
+    fn accepted_resolve(self, vaddr: nat) -> bool {
+        true
+        && self.lower <= vaddr
+        && vaddr < self.upper
+    }
 
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
     // #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
     #[spec(checked)]
     fn resolve(self, vaddr: nat) -> Result<nat,()> {
+        recommends(self.accepted_resolve(vaddr));
         if exists(|n:nat|
                   self.map.dom().contains(n) &&
                   n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size) {
@@ -504,7 +513,7 @@ impl Directory {
     }
 
     #[spec]
-    pub fn entry_for(self, vaddr: nat) -> /*index: */ nat {
+    pub fn index_for_vaddr(self, vaddr: nat) -> /*index: */ nat {
          self.vaddr_offset(vaddr) / self.entry_size()
     }
 
@@ -560,7 +569,6 @@ impl Directory {
                             self.base_vaddr + i * self.entry_size() <= self.base_vaddr + j * self.entry_size(),
                             self.base_vaddr + (i+1) * self.entry_size() <= self.base_vaddr + j * self.entry_size()
                     ]);
-                    assume(false);
                 });
             } else {
                 assert_nonlinear_by({
@@ -614,6 +622,8 @@ impl Directory {
         requires(self.inv());
         ensures([
             self.interp().inv(),
+            self.interp().upper == self.upper_vaddr(),
+            self.interp().lower == self.base_vaddr,
         ]);
         self.inv_implies_interp_aux_inv(0);
     }
@@ -995,84 +1005,89 @@ impl Directory {
     //     }
     // }
 
-    // #[spec(checked)]
-    // fn resolve(self, vaddr: nat) -> Result<nat,()> {
-    //     decreases(self.arch.layers.len() - self.layer);
-    //     decreases_by(Self::check_resolve);
+    #[spec(checked)]
+    fn resolve(self, vaddr: nat) -> Result<nat,()> {
+        recommends(self.inv() && self.interp().accepted_resolve(vaddr));
+        decreases_when(self.inv() && self.interp().accepted_resolve(vaddr));
+        decreases(self.arch.layers.len() - self.layer);
+        recommends_by(Self::check_resolve);
 
-    //     if self.inv() {
-    //         if self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //             // this condition implies that "entry < self.entries.len()"
-    //             let offset = vaddr - self.base_vaddr;
-    //             let base_offset = offset - (offset % self.entry_size());
-    //             let entry = base_offset / self.entry_size();
-    //             // let _ = spec_assert(0 <= entry);
-    //             // let _ = spec_assert(entry < self.num_entries());
-    //             // if entry < self.entries.len() {
-    //             match self.entries.index(entry) {
-    //                 NodeEntry::Page(p) => {
-    //                     Ok(p.base + offset % self.entry_size())
-    //                 },
-    //                 NodeEntry::Directory(d) => {
-    //                     d.resolve(vaddr)
-    //                 },
-    //                 NodeEntry::Empty() => {
-    //                     Err(())
-    //                 },
-    //             }
-    //         } else {
-    //             Err(())
-    //         }
-    //     } else {
-    //         arbitrary()
-    //     }
-    // }
+        // this condition implies that "entry < self.entries.len()"
+        // let _ = spec_assert(0 <= entry);
+        // let _ = spec_assert(entry < self.num_entries());
+        let entry = self.index_for_vaddr(vaddr);
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+                Ok(p.base + vaddr % self.entry_size())
+            },
+            NodeEntry::Directory(d) => {
+                d.resolve(vaddr)
+            },
+            NodeEntry::Empty() => {
+                Err(())
+            },
+        }
+    }
 
-    // #[proof] #[verifier(decreases_by)]
-    // fn check_resolve(self, vaddr: nat) {
-    //     if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //         self.lemma_derive_entry_bounds_from_if_condition(vaddr);
-    //         assert(self.directories_obey_invariant());
-    //     } else {
-    //     }
-    // }
+    #[proof] #[verifier(decreases_by)]
+    fn check_resolve(self, vaddr: nat) {
+        assert(self.inv());
+
+        self.inv_implies_interp_inv();
+
+        assert(self.base_vaddr <= vaddr && vaddr < self.upper_vaddr());
+        let entry = self.index_for_vaddr(vaddr);
+        self.lemma_index_for_vaddr_bounds(vaddr);
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+            },
+            NodeEntry::Directory(d) => {
+                assert(self.directories_obey_invariant());
+                assert(d.inv());
+                d.inv_implies_interp_inv();
+            },
+            NodeEntry::Empty() => {
+            },
+        }
+    }
 
     // // Proves 'entry < self.entries.len()', given the if condition
-    // #[proof]
-    // fn lemma_derive_entry_bounds_from_if_condition(self, vaddr: nat) {
-    //     requires([
-    //              self.inv(),
-    //              self.base_vaddr <= vaddr,
-    //              vaddr < self.base_vaddr + self.entry_size() * self.num_entries(),
-    //     ]);
-    //     ensures({
-    //         let offset = vaddr - self.base_vaddr;
-    //         let base_offset = offset - (offset % self.entry_size());
-    //         let entry = base_offset / self.entry_size();
-    //         entry < self.entries.len()
-    //     });
-    //     let offset = vaddr - self.base_vaddr;
-    //     let base_offset = offset - (offset % self.entry_size());
-    //     let entry: nat = base_offset / self.entry_size();
-    //     if self.inv() && self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //         assert_nonlinear_by({
-    //             requires([
-    //                 self.entry_size() > 0,
-    //                 self.num_entries() > 0,
-    //                 base_offset == offset - (offset % self.entry_size()),
-    //                 entry == base_offset / self.entry_size(),
-    //                 offset < self.entry_size() * self.num_entries(),
-    //             ]);
-    //             ensures([
-    //                 base_offset / self.entry_size() < self.num_entries(),
-    //                 entry < self.num_entries(),
-    //             ]);
-    //             crate::lib::mod_less_eq(offset, self.entry_size());
-    //             crate::lib::subtract_mod_aligned(offset, self.entry_size());
-    //         });
-    //     } else {
-    //     }
-    // }
+    #[proof] #[verifier(nonlinear)]
+    fn lemma_index_for_vaddr_bounds(self, vaddr: nat) {
+        requires(self.inv());
+        ensures([
+            (false
+            || self.interp().accepted_resolve(vaddr)
+            || self.interp().accepted_unmap(vaddr)
+            || exists(|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame))) >>=
+            {
+                let i = self.index_for_vaddr(vaddr);
+                true
+                && i < self.num_entries()
+                && vaddr >= self.entry_base(i)
+                && vaddr < self.entry_base(i + 1)
+            },
+            forall(|i: nat| (#[auto_trigger] i < self.num_entries() && self.entries.index(i).is_Directory()) >>=
+                   self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1)),
+        ]);
+        let i = self.index_for_vaddr(vaddr);
+        if (false
+            || self.interp().accepted_resolve(vaddr)
+            || self.interp().accepted_unmap(vaddr)
+            || exists(|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame))) {
+
+            self.inv_implies_interp_inv();
+        }
+        assert_forall_by(|i: nat| {
+            requires(i < self.num_entries() && self.entries.index(i).is_Directory());
+            ensures(#[auto_trigger] self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1));
+
+            assert(self.directories_obey_invariant());
+            if let NodeEntry::Directory(d) = self.entries.index(i) {
+                assert(d.inv());
+            }
+        });
+    }
 
     // #[proof]
     // fn lemma_no_dir_interp_aux_mapping_implies_no_self_interp_aux_mapping(self, i: nat, n: nat, vaddr: nat, d: Directory) {
