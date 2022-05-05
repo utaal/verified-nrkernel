@@ -748,7 +748,6 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
-                assume(false); // TODO: proof unstable, leave for later
             });
 
             assert(interp.mappings_in_bounds());
@@ -857,7 +856,21 @@ impl Directory {
             forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
         ]);
 
-        assume(false);
+        self.inv_implies_interp_inv();
+        match self.entries.index(i) {
+            NodeEntry::Page(p) => {
+                assert(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
+                assert(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
+            },
+            NodeEntry::Directory(d) => {
+                assert(self.directories_obey_invariant());
+                assert(d.inv());
+                d.inv_implies_interp_inv();
+                assert(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
+                assert(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
+            },
+            NodeEntry::Empty() => {},
+        }
     }
 
     // #[proof]
@@ -1022,7 +1035,8 @@ impl Directory {
         let entry = self.index_for_vaddr(vaddr);
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
-                Ok(p.base + vaddr % self.entry_size())
+                let offset = vaddr - self.entry_base(entry);
+                Ok(p.base + offset)
             },
             NodeEntry::Directory(d) => {
                 d.resolve(vaddr)
@@ -1070,6 +1084,7 @@ impl Directory {
                 && i < self.num_entries()
                 && vaddr >= self.entry_base(i)
                 && vaddr < self.entry_base(i + 1)
+                && self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()
             },
             forall(|i: nat| (#[auto_trigger] i < self.num_entries() && self.entries.index(i).is_Directory()) >>=
                    self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1)),
@@ -1236,7 +1251,6 @@ impl Directory {
         self.lemma_index_for_vaddr_bounds(vaddr);
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
-                // Ok(p.base + vaddr % self.entry_size())
                 assert(self.resolve(vaddr).is_Ok());
 
                 self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
@@ -1244,11 +1258,7 @@ impl Directory {
                 let p_vaddr = self.entry_base(entry);
 
                 assert(self.interp().map.contains_pair(p_vaddr, p));
-                assert(self.interp().map.dom().contains(p_vaddr));
-                assert(p_vaddr <= vaddr && vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
-
-                assert(self.interp().resolve(vaddr).is_Ok());
-                assert(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+                assert(vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
             },
             NodeEntry::Directory(d) => {
                 // d.resolve(vaddr)
