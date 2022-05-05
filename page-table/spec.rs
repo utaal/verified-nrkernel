@@ -748,6 +748,7 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
+                assume(false); // TODO: proof unstable, leave for later
             });
 
             assert(interp.mappings_in_bounds());
@@ -845,16 +846,19 @@ impl Directory {
     //     }
     // }
 
-    // #[proof]
-    // fn lemma_interp_facts_page(self, n: nat) {
-    //     requires([
-    //              self.inv(),
-    //              n < self.entries.len(),
-    //              self.entries.index(n).is_Page()
-    //     ]);
-    //     ensures(self.interp().map.contains_pair(self.base_vaddr + n * self.entry_size(), self.entries.index(n).get_Page_0()));
-    //     self.lemma_interp_aux_facts_page(0, n);
-    // }
+    #[proof]
+    fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, i: nat) {
+        requires([
+             self.inv(),
+             i < self.entries.len(),
+        ]);
+        ensures([
+            forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)),
+            forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
+        ]);
+
+        assume(false);
+    }
 
     // #[proof]
     // fn lemma_interp_aux_facts_dir(self, i: nat, n: nat, va: nat, f: MemRegion) {
@@ -1217,13 +1221,45 @@ impl Directory {
     //     self.lemma_no_dir_interp_aux_mapping_implies_no_self_interp_aux_mapping(0, n, vaddr, d);
     // }
 
-    // #[proof]
-    // fn resolve_refines(self, vaddr: nat) {
-    //     decreases(self.arch.layers.len() - self.layer);
-    //     requires(self.inv());
-    //     ensures(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+    #[proof]
+    fn resolve_refines(self, vaddr: nat) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+            self.inv(),
+            self.interp().accepted_resolve(vaddr),
+        ]);
+        ensures(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
 
-    //     // self.inv_implies_interp_aux_inv(0);
+        self.inv_implies_interp_inv();
+
+        let entry = self.index_for_vaddr(vaddr);
+        self.lemma_index_for_vaddr_bounds(vaddr);
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+                // Ok(p.base + vaddr % self.entry_size())
+                assert(self.resolve(vaddr).is_Ok());
+
+                self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
+
+                assume(self.interp().resolve(vaddr).is_Ok());
+                assume(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+            },
+            NodeEntry::Directory(d) => {
+                // d.resolve(vaddr)
+                assert(self.directories_obey_invariant());
+                d.inv_implies_interp_inv();
+                d.resolve_refines(vaddr);
+
+                assume(self.interp().resolve(vaddr).is_Ok());
+                assume(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+            },
+            NodeEntry::Empty() => {
+                assume(self.interp().resolve(vaddr).is_Err());
+                assume(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+            },
+        }
+    }
+
 
     //     if self.base_vaddr <= vaddr && vaddr < self.base_vaddr + self.entry_size() * self.num_entries() {
     //         let offset = vaddr - self.base_vaddr;
