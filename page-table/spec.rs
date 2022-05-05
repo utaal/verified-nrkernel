@@ -612,7 +612,7 @@ impl Directory {
         self.inv_implies_interp_aux_inv(0);
     }
 
-    #[proof]
+    #[proof] #[verifier(nonlinear)]
     fn inv_implies_interp_aux_inv(self, i: nat) {
         decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires(self.inv());
@@ -635,12 +635,8 @@ impl Directory {
             let entry_i = self.interp_of_entry(i);
             let rem = self.interp_aux(i+1);
 
-            match entry {
-                NodeEntry::Page(p) => {}
-                NodeEntry::Directory(d) => {
-                    d.inv_implies_interp_aux_inv(0);
-                }
-                NodeEntry::Empty() => { }
+            if let NodeEntry::Directory(d) = entry {
+                d.inv_implies_interp_aux_inv(0);
             }
 
             assert(interp.mappings_are_of_valid_size());
@@ -663,21 +659,14 @@ impl Directory {
 
             assert(interp.mappings_are_aligned());
 
-            assert_by(entry_i.inv(), {
-                assert(entry_i.mappings_in_bounds());
-            });
+            if let NodeEntry::Directory(d) = entry {
+                assume(entry_i.mappings_in_bounds());
+            }
+
+            assert(entry_i.inv());
 
             assert(self.interp_aux(i + 1).lower == self.entry_base(i + 1));
 
-            assert_nonlinear_by({
-                requires([
-                    self.inv(),
-                    equal(rem, self.interp_aux(i + 1)),
-                    equal(entry_i, self.interp_of_entry(i)),
-                    self.interp_aux(i + 1).lower == self.entry_base(i + 1)
-                ]);
-                ensures(rem.ranges_disjoint(entry_i));
-            });
             rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
 
             assert(interp.mappings_dont_overlap());
