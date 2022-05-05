@@ -612,7 +612,7 @@ impl Directory {
         self.inv_implies_interp_aux_inv(0);
     }
 
-    #[proof] #[verifier(nonlinear)]
+    #[proof]
     fn inv_implies_interp_aux_inv(self, i: nat) {
         decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires(self.inv());
@@ -635,8 +635,12 @@ impl Directory {
             let entry_i = self.interp_of_entry(i);
             let rem = self.interp_aux(i+1);
 
-            if let NodeEntry::Directory(d) = entry {
-                d.inv_implies_interp_aux_inv(0);
+            match entry {
+                NodeEntry::Page(p) => {}
+                NodeEntry::Directory(d) => {
+                    d.inv_implies_interp_aux_inv(0);
+                }
+                NodeEntry::Empty() => { }
             }
 
             assert(interp.mappings_are_of_valid_size());
@@ -659,14 +663,49 @@ impl Directory {
 
             assert(interp.mappings_are_aligned());
 
-            if let NodeEntry::Directory(d) = entry {
-                assume(entry_i.mappings_in_bounds());
+            match entry {
+                NodeEntry::Page(p) => {
+                    assert_nonlinear_by({
+                        requires([
+                            self.inv(),
+                            equal(entry_i, self.interp_of_entry(i)),
+                            self.entry_size() == p.size,
+                            i < self.entries.len(),
+                        ]);
+                        ensures(entry_i.candidate_mapping_in_bounds(self.entry_base(i), p));
+                    });
+                }
+                NodeEntry::Directory(d) => {
+                    assert_nonlinear_by({
+                        requires([
+                            self.inv(),
+                            equal(entry_i, self.interp_of_entry(i)),
+                            d.interp_aux(0).mappings_in_bounds(),
+                            equal(self.interp_of_entry(i).map, d.interp_aux(0).map),
+                            i < self.entries.len(),
+                        ]);
+                        ensures(entry_i.mappings_in_bounds());
+                        assert(entry_i.upper >= d.interp_aux(0).upper);
+                        assert(entry_i.lower <= d.interp_aux(0).lower);
+                    });
+                }
+                NodeEntry::Empty() => {}
             }
+            assert(entry_i.mappings_in_bounds());
 
             assert(entry_i.inv());
 
             assert(self.interp_aux(i + 1).lower == self.entry_base(i + 1));
 
+            assert_nonlinear_by({
+                requires([
+                    self.inv(),
+                    equal(rem, self.interp_aux(i + 1)),
+                    equal(entry_i, self.interp_of_entry(i)),
+                    self.interp_aux(i + 1).lower == self.entry_base(i + 1)
+                ]);
+                ensures(rem.ranges_disjoint(entry_i));
+            });
             rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
 
             assert(interp.mappings_dont_overlap());
