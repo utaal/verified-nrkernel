@@ -1241,8 +1241,14 @@ impl Directory {
 
                 self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
 
-                assume(self.interp().resolve(vaddr).is_Ok());
-                assume(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+                let p_vaddr = self.entry_base(entry);
+
+                assert(self.interp().map.contains_pair(p_vaddr, p));
+                assert(self.interp().map.dom().contains(p_vaddr));
+                assert(p_vaddr <= vaddr && vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
+
+                assert(self.interp().resolve(vaddr).is_Ok());
+                assert(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
             },
             NodeEntry::Directory(d) => {
                 // d.resolve(vaddr)
