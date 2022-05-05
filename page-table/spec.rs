@@ -530,7 +530,41 @@ impl Directory {
     }
 
     #[proof]
-    fn lemma_interp_of_entries_disjunct(self) {
+    fn lemma_interp_of_entries_disjoint(self) {
+        requires(self.inv());
+        ensures(forall(|i: nat, j: nat|
+                       i < self.num_entries() && j < self.num_entries() && i != j
+                       >>= self.interp_of_entry(i).ranges_disjoint(self.interp_of_entry(j))));
+        assert_forall_by(|i: nat, j: nat| {
+            requires(i < self.num_entries() && j < self.num_entries() && i != j);
+            ensures(self.interp_of_entry(i).ranges_disjoint(self.interp_of_entry(j)));
+
+            if i < j {
+                assert_nonlinear_by({
+                    requires([
+                             self.inv(),
+                             i < j,
+                             self.entry_size() > 0
+                    ]);
+                    ensures([
+                            self.base_vaddr + i * self.entry_size() <= self.base_vaddr + j * self.entry_size(),
+                            self.base_vaddr + (i+1) * self.entry_size() <= self.base_vaddr + j * self.entry_size()
+                    ]);
+                });
+            } else {
+                assert_nonlinear_by({
+                    requires([
+                             self.inv(),
+                             j < i,
+                             self.entry_size() > 0
+                    ]);
+                    ensures([
+                            self.base_vaddr + j * self.entry_size() < self.base_vaddr + i * self.entry_size(),
+                            self.base_vaddr + (j+1) * self.entry_size() <= self.base_vaddr + i * self.entry_size()
+                    ]);
+                });
+            }
+        });
 
     }
 
