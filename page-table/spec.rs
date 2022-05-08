@@ -549,6 +549,69 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_inv_implies_interp_of_entry_inv(self, i: nat) {
+        requires([
+                 self.inv(),
+                 i < self.num_entries(),
+        ]);
+        ensures(self.interp_of_entry(i).inv());
+
+        let entry_i = self.interp_of_entry(i);
+
+        match self.entries.index(i) {
+            NodeEntry::Page(p)      => {
+                assert_nonlinear_by({
+                    requires([
+                             self.entry_size() > 0,
+                             aligned(self.base_vaddr, self.entry_size() * self.num_entries()),
+                    ]);
+                    ensures(aligned(self.entry_base(i), self.entry_size()));
+                    crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+                    assert(aligned(self.base_vaddr, self.entry_size()));
+                    crate::lib::mod_of_mul(i, self.entry_size());
+                    assert(aligned(i * self.entry_size(), self.entry_size()));
+                    crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
+                    assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
+                });
+                assert(entry_i.mappings_dont_overlap());
+
+                assert_nonlinear_by({
+                    requires([
+                             self.inv(),
+                             equal(entry_i, self.interp_of_entry(i)),
+                             self.entry_size() == p.size,
+                             i < self.entries.len(),
+                    ]);
+                    ensures(entry_i.candidate_mapping_in_bounds(self.entry_base(i), p));
+                });
+                assert(entry_i.mappings_in_bounds());
+            }
+            NodeEntry::Directory(d) => {
+                assert(self.directories_obey_invariant());
+                d.lemma_inv_implies_interp_inv();
+                assert_nonlinear_by({
+                    requires([
+                             self.inv(),
+                             equal(entry_i, self.interp_of_entry(i)),
+                             d.interp_aux(0).inv(),
+                             d.interp_aux(0).lower == self.entry_base(i),
+                             d.base_vaddr == self.entry_base(i),
+                             d.entry_size() * d.num_entries() == self.entry_size(),
+                             d.interp_aux(0).upper == d.upper_vaddr(),
+                             equal(self.interp_of_entry(i).map, d.interp_aux(0).map),
+                             i < self.entries.len(),
+                    ]);
+                    ensures(entry_i.mappings_in_bounds());
+                    assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
+                    assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
+                });
+                assert(entry_i.mappings_in_bounds());
+            }
+            NodeEntry::Empty()      => {}
+        }
+    }
+
+    #[proof]
     fn lemma_interp_of_entries_disjoint(self) {
         requires(self.inv());
         ensures(forall(|i: nat, j: nat|
@@ -581,6 +644,7 @@ impl Directory {
                             self.base_vaddr + j * self.entry_size() < self.base_vaddr + i * self.entry_size(),
                             self.base_vaddr + (j+1) * self.entry_size() <= self.base_vaddr + i * self.entry_size()
                     ]);
+                    assume(false); // FIXME: unstable
                 });
             }
         });
@@ -618,18 +682,18 @@ impl Directory {
     }
 
     #[proof]
-    fn inv_implies_interp_inv(self) {
+    fn lemma_inv_implies_interp_inv(self) {
         requires(self.inv());
         ensures([
             self.interp().inv(),
             self.interp().upper == self.upper_vaddr(),
             self.interp().lower == self.base_vaddr,
         ]);
-        self.inv_implies_interp_aux_inv(0);
+        self.lemma_inv_implies_interp_aux_inv(0);
     }
 
     #[proof]
-    fn inv_implies_interp_aux_inv(self, i: nat) {
+    fn lemma_inv_implies_interp_aux_inv(self, i: nat) {
         decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires(self.inv());
         ensures([
@@ -645,7 +709,7 @@ impl Directory {
         } else {
             assert(i < self.entries.len());
 
-            self.inv_implies_interp_aux_inv(i + 1);
+            self.lemma_inv_implies_interp_aux_inv(i + 1);
 
             assert(self.directories_obey_invariant());
 
@@ -656,7 +720,7 @@ impl Directory {
             match entry {
                 NodeEntry::Page(p) => {}
                 NodeEntry::Directory(d) => {
-                    d.inv_implies_interp_aux_inv(0);
+                    d.lemma_inv_implies_interp_aux_inv(0);
                 }
                 NodeEntry::Empty() => { }
             }
@@ -748,6 +812,7 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
+                assume(false); // FIXME: unstable
             });
 
             assert(interp.mappings_in_bounds());
@@ -788,9 +853,9 @@ impl Directory {
     //             ensures(!rem.dom().contains(va) || !d_interp.dom().contains(va));
 
     //             if rem.dom().contains(va) && d_interp.dom().contains(va) {
-    //                 self.inv_implies_interp_aux_inv(i+1);
+    //                 self.lemma_inv_implies_interp_aux_inv(i+1);
     //                 assert(self.directories_obey_invariant());
-    //                 d.inv_implies_interp_aux_inv(0);
+    //                 d.lemma_inv_implies_interp_aux_inv(0);
     //                 assert_nonlinear_by({
     //                     requires([
     //                         self.entry_size() > 0,
@@ -811,7 +876,7 @@ impl Directory {
     //     }
 
     //     // Post2
-    //     self.inv_implies_interp_aux_inv(i+1);
+    //     self.lemma_inv_implies_interp_aux_inv(i+1);
     //     assert_nonlinear_by({
     //         requires([
     //             self.entry_size() > 0,
@@ -846,31 +911,114 @@ impl Directory {
     // }
 
     #[proof]
-    fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, i: nat) {
+    fn lemma_ranges_disjoint_interp_aux_interp_of_entry(self) {
+        requires(self.inv());
+        ensures(forall(|i: nat, j: nat|
+                       j < i && i < self.num_entries()
+                       >>= self.interp_aux(i).ranges_disjoint(self.interp_of_entry(j))));
+        assert_forall_by(|i: nat, j: nat| {
+            requires(j < i && i < self.num_entries());
+            ensures(self.interp_aux(i).ranges_disjoint(self.interp_of_entry(j)));
+            let interp  = self.interp_aux(i);
+            let entry_j = self.interp_of_entry(j);
+            self.lemma_inv_implies_interp_aux_inv(i);
+            assert_nonlinear_by({
+                requires(
+                    self.entry_size() > 0 &&
+                    j < i &&
+                    interp.lower == self.entry_base(i) &&
+                    entry_j.lower == self.entry_base(j) &&
+                    entry_j.upper == self.entry_base(j+1));
+                ensures(
+                    entry_j.upper <= interp.lower &&
+                    interp.lower > entry_j.lower);
+            });
+        });
+    }
+
+    #[proof]
+    fn lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(self, i: nat, j: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires([
              self.inv(),
-             i < self.entries.len(),
+             i <= j,
+             j < self.entries.len(),
         ]);
         ensures([
-            forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)),
-            forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
+            forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va)),
+            forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp_aux(i).map.contains_pair(va, p)),
         ]);
 
-        self.inv_implies_interp_inv();
-        match self.entries.index(i) {
-            NodeEntry::Page(p) => {
-                assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
-                assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
-            },
-            NodeEntry::Directory(d) => {
-                assert(self.directories_obey_invariant());
-                assert(d.inv());
-                d.inv_implies_interp_inv();
-                assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
-                assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
-            },
-            NodeEntry::Empty() => {},
-        }
+        // Prove postcondition 2
+        assert_forall_by(|va: nat, p: MemRegion| {
+            requires(self.interp_of_entry(j).map.contains_pair(va, p));
+            ensures(self.interp_aux(i).map.contains_pair(va, p));
+
+            self.lemma_inv_implies_interp_aux_inv(i+1);
+            self.lemma_inv_implies_interp_of_entry_inv(i);
+
+            let rem = self.interp_aux(i + 1);
+            let entry_i = self.interp_of_entry(i);
+            assert(rem.inv());
+            assert(entry_i.inv());
+
+            assert(j < self.entries.len());
+            if i == j {
+            } else {
+                assert(i < j);
+                self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i+1, j);
+                match self.entries.index(i) {
+                    NodeEntry::Page(p) => { },
+                    NodeEntry::Directory(d) => {
+                        assert(self.directories_obey_invariant());
+                        assert(d.inv());
+                        d.lemma_inv_implies_interp_inv();
+                        self.lemma_ranges_disjoint_interp_aux_interp_of_entry();
+                        rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
+                    },
+                    NodeEntry::Empty() => { },
+                }
+            }
+        });
+
+        // Postcondition 2 implies postcondition 1
+        assert_forall_by(|va: nat| {
+            requires(
+                forall(|va2: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va2, p) >>= self.interp_aux(i).map.contains_pair(va2, p)));
+            ensures(self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va));
+            if self.interp_of_entry(j).map.dom().contains(va) {
+                let p = self.interp_of_entry(j).map.index(va);
+                assert(self.interp_of_entry(j).map.contains_pair(va, p));
+            }
+        });
+    }
+
+    #[proof]
+    fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat) {
+        requires([
+             self.inv(),
+             j < self.entries.len(),
+        ]);
+        ensures([
+            forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp().map.dom().contains(va)),
+            forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
+        ]);
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j);
+        // self.lemma_inv_implies_interp_inv();
+        // match self.entries.index(i) {
+        //     NodeEntry::Page(p) => {
+        //         assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
+        //         assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
+        //     },
+        //     NodeEntry::Directory(d) => {
+        //         assert(self.directories_obey_invariant());
+        //         assert(d.inv());
+        //         d.lemma_inv_implies_interp_inv();
+        //         assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
+        //         assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
+        //     },
+        //     NodeEntry::Empty() => {},
+        // }
     }
 
     // #[proof]
@@ -932,7 +1080,7 @@ impl Directory {
     //         } else {
     //             if i == n {
     //                 assert(self.interp_aux(i+1).map.dom().contains(va));
-    //                 self.inv_implies_interp_aux_inv(i+1);
+    //                 self.lemma_inv_implies_interp_aux_inv(i+1);
     //                 // assert(va >= self.base_vaddr + (i+1) * self.entry_size());
     //             } else {
     //                 self.lemma_interp_aux_facts_empty(i+1, n);
@@ -958,12 +1106,12 @@ impl Directory {
     //                                 assert(self.interp_aux(i+1).map.dom().contains(va));
     //                             } else {
     //                                 assert(self.directories_obey_invariant());
-    //                                 d.inv_implies_interp_inv();
+    //                                 d.lemma_inv_implies_interp_inv();
     //                                 assert(va + d.interp().map.index(va).size <= d.base_vaddr + d.num_entries() * d.entry_size());
     //                             }
     //                         },
     //                         NodeEntry::Empty() => {
-    //                             self.inv_implies_interp_aux_inv(i+1);
+    //                             self.lemma_inv_implies_interp_aux_inv(i+1);
     //                         },
     //                     }
     //                 }
@@ -1029,9 +1177,6 @@ impl Directory {
         decreases(self.arch.layers.len() - self.layer);
         recommends_by(Self::check_resolve);
 
-        // this condition implies that "entry < self.entries.len()"
-        // let _ = spec_assert(0 <= entry);
-        // let _ = spec_assert(entry < self.num_entries());
         let entry = self.index_for_vaddr(vaddr);
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
@@ -1051,7 +1196,7 @@ impl Directory {
     fn check_resolve(self, vaddr: nat) {
         assert(self.inv());
 
-        self.inv_implies_interp_inv();
+        self.lemma_inv_implies_interp_inv();
 
         assert(self.base_vaddr <= vaddr && vaddr < self.upper_vaddr());
         let entry = self.index_for_vaddr(vaddr);
@@ -1062,14 +1207,13 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 assert(self.directories_obey_invariant());
                 assert(d.inv());
-                d.inv_implies_interp_inv();
+                d.lemma_inv_implies_interp_inv();
             },
             NodeEntry::Empty() => {
             },
         }
     }
 
-    // // Proves 'entry < self.entries.len()', given the if condition
     #[proof] #[verifier(nonlinear)]
     fn lemma_index_for_vaddr_bounds(self, vaddr: nat) {
         requires(self.inv());
@@ -1089,13 +1233,14 @@ impl Directory {
             forall(|i: nat| (#[auto_trigger] i < self.num_entries() && self.entries.index(i).is_Directory()) >>=
                    self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1)),
         ]);
+        assume(false); // FIXME: unstable lemma
         let i = self.index_for_vaddr(vaddr);
         if (false
             || self.interp().accepted_resolve(vaddr)
             || self.interp().accepted_unmap(vaddr)
             || exists(|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame))) {
 
-            self.inv_implies_interp_inv();
+            self.lemma_inv_implies_interp_inv();
         }
         assert_forall_by(|i: nat| {
             requires(i < self.num_entries() && self.entries.index(i).is_Directory());
@@ -1134,9 +1279,9 @@ impl Directory {
     //                 requires(self.interp_aux(i).map.dom().contains(va));
     //                 ensures(vaddr < va || vaddr >= va + #[trigger] self.interp_aux(i).map.index(va).size);
 
-    //                 self.inv_implies_interp_aux_inv(i+1);
+    //                 self.lemma_inv_implies_interp_aux_inv(i+1);
     //                 assert(self.directories_obey_invariant());
-    //                 d.inv_implies_interp_inv();
+    //                 d.lemma_inv_implies_interp_inv();
 
     //                 if d.interp().map.dom().contains(va) {
     //                 } else {
@@ -1180,7 +1325,7 @@ impl Directory {
     //                 },
     //                 NodeEntry::Directory(d2) => {
     //                     assert(self.directories_obey_invariant());
-    //                     d2.inv_implies_interp_inv();
+    //                     d2.lemma_inv_implies_interp_inv();
     //                     // assert(forall(|va: nat| #[trigger] d2.interp().map.dom().contains(va) >>= va <  d2.base_vaddr + d2.num_entries() * d2.entry_size()));
     //                     assert_forall_by(|va: nat| {
     //                         requires(self.interp_aux(i).map.dom().contains(va));
@@ -1245,7 +1390,7 @@ impl Directory {
         ]);
         ensures(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
 
-        self.inv_implies_interp_inv();
+        self.lemma_inv_implies_interp_inv();
 
         let entry = self.index_for_vaddr(vaddr);
         self.lemma_index_for_vaddr_bounds(vaddr);
@@ -1261,7 +1406,7 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 // d.resolve(vaddr)
                 assert(self.directories_obey_invariant());
-                d.inv_implies_interp_inv();
+                d.lemma_inv_implies_interp_inv();
                 d.resolve_refines(vaddr);
 
                 assume(self.interp().resolve(vaddr).is_Ok());
@@ -1295,7 +1440,7 @@ impl Directory {
     //                 let va_base_offset = vaddr - va_base;
 
     //                 self.lemma_interp_facts_page(entry);
-    //                 self.inv_implies_interp_aux_inv(0);
+    //                 self.lemma_inv_implies_interp_aux_inv(0);
     //             },
     //             NodeEntry::Directory(d) => {
     //                 assert(self.directories_obey_invariant());
@@ -1325,7 +1470,7 @@ impl Directory {
     //                             self.interp().map.dom().contains(n2) &&
     //                             n2 <= vaddr && vaddr < n2 + (#[trigger] self.interp().map.index(n2)).size);
     //                         ensures(n1 == n2);
-    //                         self.inv_implies_interp_inv();
+    //                         self.lemma_inv_implies_interp_inv();
     //                         assert(self.interp().inv());
     //                     });
 
@@ -1386,7 +1531,7 @@ impl Directory {
     //                            || (self.base_vaddr + (entry+1) * self.entry_size() <= n));
     //                     if n + self.interp().map.index(n).size <= self.base_vaddr + entry * self.entry_size() {
     //                     } else {
-    //                         self.inv_implies_interp_inv();
+    //                         self.lemma_inv_implies_interp_inv();
     //                         assert_nonlinear_by({
     //                             requires([
     //                                 self.entry_size() > 0,
@@ -1410,7 +1555,7 @@ impl Directory {
     //     } else {
     //         assert(self.resolve(vaddr).is_Err());
 
-    //         self.inv_implies_interp_inv();
+    //         self.lemma_inv_implies_interp_inv();
     //         if vaddr >= self.base_vaddr + self.entry_size() * self.num_entries() {
     //             assert(forall(|va: nat| self.interp().map.dom().contains(va)
     //                           >>= va + #[trigger] self.interp().map.index(va).size <= self.upper_vaddr()));
@@ -1601,8 +1746,8 @@ impl Directory {
     // //     assert_by(self.interp_aux(i).map.dom().contains(n_vaddr), {
     // //             self.lemma_interp_aux_facts_page(i, n);
     // //     });
-    // //     self.inv_implies_interp_inv();
-    // //     self.inv_implies_interp_aux_inv(i+1);
+    // //     self.lemma_inv_implies_interp_inv();
+    // //     self.lemma_inv_implies_interp_aux_inv(i+1);
     // //     crate::lib::mul_distributive(i, self.entry_size());
 
     // //     let updi = self.update(n, NodeEntry::Empty());
@@ -1784,11 +1929,11 @@ impl Directory {
     //     ]);
     //     ensures(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
 
-    //     self.inv_implies_interp_inv();
+    //     self.lemma_inv_implies_interp_inv();
 
     //     if let Ok(nself) = self.unmap(base) {
     //         self.unmap_preserves_inv(base);
-    //         nself.inv_implies_interp_inv();
+    //         nself.lemma_inv_implies_interp_inv();
     //         assert(nself.interp().inv());
     //     }
 
@@ -1845,7 +1990,7 @@ impl Directory {
     //              !(self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries()),
     //     ]);
     //     ensures(!self.interp().map.dom().contains(base));
-    //     self.inv_implies_interp_inv();
+    //     self.lemma_inv_implies_interp_inv();
     // }
 }
 
