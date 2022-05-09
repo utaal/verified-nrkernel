@@ -953,72 +953,26 @@ impl Directory {
                    >>= !self.interp_aux(i).map.dom().contains(va)),
         ]);
 
-        // Prove postcondition 1
-        assert_forall_by(|va: nat, p: MemRegion| {
-            requires(self.interp_of_entry(j).map.contains_pair(va, p));
-            ensures(self.interp_aux(i).map.contains_pair(va, p));
+        self.lemma_inv_implies_interp_aux_inv(i+1);
+        self.lemma_inv_implies_interp_of_entry_inv(i);
+        self.lemma_inv_implies_interp_of_entry_inv(j);
 
-            self.lemma_inv_implies_interp_aux_inv(i+1);
-            self.lemma_inv_implies_interp_of_entry_inv(i);
+        let rem = self.interp_aux(i + 1);
+        let entry_i = self.interp_of_entry(i);
 
-            let rem = self.interp_aux(i + 1);
-            let entry_i = self.interp_of_entry(i);
-            assert(rem.inv());
-            assert(entry_i.inv());
+        if i != j {
+            self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i+1, j);
 
-            assert(j < self.entries.len());
-            if i == j {
-            } else {
-                assert(i < j);
-                self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i+1, j);
-                match self.entries.index(i) {
-                    NodeEntry::Page(p) => { },
-                    NodeEntry::Directory(d) => {
-                        assert(self.directories_obey_invariant());
-                        assert(d.inv());
-                        d.lemma_inv_implies_interp_inv();
-                        self.lemma_ranges_disjoint_interp_aux_interp_of_entry();
-                        rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
-                    },
-                    NodeEntry::Empty() => { },
-                }
+            if let NodeEntry::Directory(d) = self.entries.index(i) {
+                assert(self.directories_obey_invariant());
+                assert(d.inv());
+                d.lemma_inv_implies_interp_inv();
+                self.lemma_ranges_disjoint_interp_aux_interp_of_entry();
+                rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
             }
-        });
+        }
 
-        // Postcondition 1 implies postcondition 2
-        assert_forall_by(|va: nat| {
-            requires(
-                forall(|va2: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va2, p) >>= self.interp_aux(i).map.contains_pair(va2, p)));
-            ensures(self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va));
-            if self.interp_of_entry(j).map.dom().contains(va) {
-                let p = self.interp_of_entry(j).map.index(va);
-                assert(self.interp_of_entry(j).map.contains_pair(va, p));
-            }
-        });
-
-        // Prove postcondition 3
-        assert_forall_by(|va: nat| {
-            requires(self.entry_base(j) <= va && va < self.entry_base(j+1) && !self.interp_of_entry(j).map.dom().contains(va));
-            ensures(!self.interp_aux(i).map.dom().contains(va));
-
-            self.lemma_inv_implies_interp_aux_inv(i+1);
-            self.lemma_inv_implies_interp_of_entry_inv(i);
-            self.lemma_inv_implies_interp_of_entry_inv(j);
-
-            let rem = self.interp_aux(i + 1);
-            let entry_i = self.interp_of_entry(i);
-            assert(rem.inv());
-            assert(entry_i.inv());
-
-            assert(j < self.entries.len());
-            if i == j {
-            } else {
-                assert(i < j);
-                self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i+1, j);
-                self.lemma_entry_base();
-                assert(!entry_i.map.dom().contains(va));
-            }
-        });
+        self.lemma_entry_base();
     }
 
     #[proof]
