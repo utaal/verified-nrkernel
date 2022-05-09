@@ -519,7 +519,28 @@ impl Directory {
 
     #[spec]
     pub fn entry_base(self, entry: nat) -> nat {
+        recommends(self.inv());
         self.base_vaddr + entry * self.entry_size()
+    }
+
+    #[proof] #[verifier(nonlinear)]
+    pub fn lemma_entry_base(self) {
+        requires(self.inv());
+        ensures([
+                forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
+                forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
+        ]);
+
+        // Postcondition 2
+        assert_forall_by(|i: nat| {
+            ensures(#[auto_trigger] aligned(self.entry_base(i), self.entry_size()));
+            crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+            assert(aligned(self.base_vaddr, self.entry_size()));
+            crate::lib::mod_of_mul(i, self.entry_size());
+            assert(aligned(i * self.entry_size(), self.entry_size()));
+            crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
+            assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
+        });
     }
 
     #[spec]
@@ -554,25 +575,17 @@ impl Directory {
                  self.inv(),
                  i < self.num_entries(),
         ]);
-        ensures(self.interp_of_entry(i).inv());
+        ensures([
+            self.interp_of_entry(i).inv(),
+            self.interp_of_entry(i).lower == self.entry_base(i),
+            self.interp_of_entry(i).upper == self.entry_base(i+1),
+        ]);
 
         let entry_i = self.interp_of_entry(i);
 
+        self.lemma_entry_base();
         match self.entries.index(i) {
             NodeEntry::Page(p)      => {
-                assert_nonlinear_by({
-                    requires([
-                             self.entry_size() > 0,
-                             aligned(self.base_vaddr, self.entry_size() * self.num_entries()),
-                    ]);
-                    ensures(aligned(self.entry_base(i), self.entry_size()));
-                    crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
-                    assert(aligned(self.base_vaddr, self.entry_size()));
-                    crate::lib::mod_of_mul(i, self.entry_size());
-                    assert(aligned(i * self.entry_size(), self.entry_size()));
-                    crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
-                    assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
-                });
                 assert(entry_i.mappings_dont_overlap());
 
                 assert_nonlinear_by({
@@ -728,19 +741,7 @@ impl Directory {
             assert(interp.mappings_are_of_valid_size());
 
             if let NodeEntry::Page(p) = entry {
-                assert_nonlinear_by({
-                    requires([
-                        self.entry_size() > 0,
-                        aligned(self.base_vaddr, self.entry_size() * self.num_entries()),
-                    ]);
-                    ensures(aligned(self.entry_base(i), self.entry_size()));
-                    crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
-                    assert(aligned(self.base_vaddr, self.entry_size()));
-                    crate::lib::mod_of_mul(i, self.entry_size());
-                    assert(aligned(i * self.entry_size(), self.entry_size()));
-                    crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
-                    assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
-                });
+                self.lemma_entry_base();
             }
 
             assert(interp.mappings_are_aligned());
@@ -945,11 +946,14 @@ impl Directory {
              j < self.entries.len(),
         ]);
         ensures([
-            forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va)),
             forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp_aux(i).map.contains_pair(va, p)),
+            forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va)),
+            forall(|va: nat|
+                   self.entry_base(j) <= va && va < self.entry_base(j+1) && !self.interp_of_entry(j).map.dom().contains(va)
+                   >>= !self.interp_aux(i).map.dom().contains(va)),
         ]);
 
-        // Prove postcondition 2
+        // Prove postcondition 1
         assert_forall_by(|va: nat, p: MemRegion| {
             requires(self.interp_of_entry(j).map.contains_pair(va, p));
             ensures(self.interp_aux(i).map.contains_pair(va, p));
@@ -981,7 +985,7 @@ impl Directory {
             }
         });
 
-        // Postcondition 2 implies postcondition 1
+        // Postcondition 1 implies postcondition 2
         assert_forall_by(|va: nat| {
             requires(
                 forall(|va2: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va2, p) >>= self.interp_aux(i).map.contains_pair(va2, p)));
@@ -989,6 +993,30 @@ impl Directory {
             if self.interp_of_entry(j).map.dom().contains(va) {
                 let p = self.interp_of_entry(j).map.index(va);
                 assert(self.interp_of_entry(j).map.contains_pair(va, p));
+            }
+        });
+
+        // Prove postcondition 3
+        assert_forall_by(|va: nat| {
+            requires(self.entry_base(j) <= va && va < self.entry_base(j+1) && !self.interp_of_entry(j).map.dom().contains(va));
+            ensures(!self.interp_aux(i).map.dom().contains(va));
+
+            self.lemma_inv_implies_interp_aux_inv(i+1);
+            self.lemma_inv_implies_interp_of_entry_inv(i);
+            self.lemma_inv_implies_interp_of_entry_inv(j);
+
+            let rem = self.interp_aux(i + 1);
+            let entry_i = self.interp_of_entry(i);
+            assert(rem.inv());
+            assert(entry_i.inv());
+
+            assert(j < self.entries.len());
+            if i == j {
+            } else {
+                assert(i < j);
+                self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i+1, j);
+                self.lemma_entry_base();
+                assert(!entry_i.map.dom().contains(va));
             }
         });
     }
@@ -1002,23 +1030,11 @@ impl Directory {
         ensures([
             forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp().map.dom().contains(va)),
             forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
+            forall(|va: nat| #[auto_trigger]
+                   self.entry_base(j) <= va && va < self.entry_base(j+1) && !self.interp_of_entry(j).map.dom().contains(va)
+                   >>= !self.interp().map.dom().contains(va)),
         ]);
         self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j);
-        // self.lemma_inv_implies_interp_inv();
-        // match self.entries.index(i) {
-        //     NodeEntry::Page(p) => {
-        //         assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
-        //         assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
-        //     },
-        //     NodeEntry::Directory(d) => {
-        //         assert(self.directories_obey_invariant());
-        //         assert(d.inv());
-        //         d.lemma_inv_implies_interp_inv();
-        //         assume(forall(|va: nat| #[auto_trigger] self.interp_of_entry(i).map.dom().contains(va) >>= self.interp().map.dom().contains(va)));
-        //         assume(forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(i).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)));
-        //     },
-        //     NodeEntry::Empty() => {},
-        // }
     }
 
     // #[proof]
@@ -1242,15 +1258,7 @@ impl Directory {
 
             self.lemma_inv_implies_interp_inv();
         }
-        assert_forall_by(|i: nat| {
-            requires(i < self.num_entries() && self.entries.index(i).is_Directory());
-            ensures(#[auto_trigger] self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1));
-
-            assert(self.directories_obey_invariant());
-            if let NodeEntry::Directory(d) = self.entries.index(i) {
-                assert(d.inv());
-            }
-        });
+        self.lemma_entry_base();
     }
 
     // #[proof]
