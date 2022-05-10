@@ -36,6 +36,11 @@ pub fn strictly_decreasing(s: Seq<nat>) -> bool {
     forall(|i: nat, j: nat| i < j && j < s.len() >>= s.index(i) > s.index(j))
 }
 
+#[spec]
+pub fn between(x: nat, a: nat, b: nat) -> bool {
+    a <= x && x < b
+}
+
 // page_size, next_sizes
 // 2**40    , [ 2 ** 30, 2 ** 20 ]
 // 2**30    , [ 2 ** 20 ]
@@ -74,7 +79,7 @@ pub struct Arch {
 impl Arch {
     #[spec(checked)]
     pub fn inv(&self) -> bool {
-        forall(|i:int| with_triggers!([self.layers.index(i).entry_size], [self.layers.index(i).num_entries] => 0 <= i && i < self.layers.len() >>= (
+        forall(|i:nat| with_triggers!([self.layers.index(i).entry_size], [self.layers.index(i).num_entries] => i < self.layers.len() >>= (
             true
             && self.layers.index(i).entry_size > 0
             && self.layers.index(i).num_entries > 0
@@ -82,10 +87,10 @@ impl Arch {
     }
 
     #[spec(checked)]
-    pub fn entry_size_is_next_layer_size(self, i: int) -> bool {
-        recommends(0 <= i && i < self.layers.len());
+    pub fn entry_size_is_next_layer_size(self, i: nat) -> bool {
+        recommends(i < self.layers.len());
         i + 1 < self.layers.len() >>=
-            self.layers.index(i).entry_size == self.layers.index(i + 1).entry_size * self.layers.index(i + 1).num_entries
+            self.layers.index(i).entry_size == self.layers.index((i + 1) as nat).entry_size * self.layers.index((i + 1) as nat).num_entries
     }
 
     #[spec(checked)]
@@ -272,9 +277,7 @@ impl PageTableContents {
 
     #[spec(checked)]
     fn accepted_resolve(self, vaddr: nat) -> bool {
-        true
-        && self.lower <= vaddr
-        && vaddr < self.upper
+        between(vaddr, self.lower, self.upper)
     }
 
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
@@ -283,14 +286,14 @@ impl PageTableContents {
     #[spec(checked)]
     fn resolve(self, vaddr: nat) -> Result<nat,()> {
         recommends(self.accepted_resolve(vaddr));
-        if exists(|n:nat|
-                  self.map.dom().contains(n) &&
-                  n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size) {
-            let n = choose(|n:nat|
-                           self.map.dom().contains(n) &&
-                           n <= vaddr && vaddr < n + (#[trigger] self.map.index(n)).size);
-            let offset = vaddr - n;
-            Ok(self.map.index(n).base + offset)
+        if exists(|base:nat|
+                  self.map.dom().contains(base) &&
+                  between(vaddr, base, base + (#[trigger] self.map.index(base)).size)) {
+            let base = choose(|base:nat|
+                           self.map.dom().contains(base) &&
+                           between(vaddr, base, base + (#[trigger] self.map.index(base)).size));
+            let offset = vaddr - base;
+            Ok(self.map.index(base).base + offset)
         } else {
             Err(())
         }
@@ -307,8 +310,7 @@ impl PageTableContents {
     #[spec(checked)]
     fn accepted_unmap(self, base:nat) -> bool {
         true
-        && self.lower <= base
-        && base < self.upper
+        && between(base, self.lower, self.upper)
         && exists(|size: nat| with_triggers!([self.arch.contains_entry_size(size)], [aligned(base, size)] => 
             self.arch.contains_entry_size(size) && aligned(base, size)))
     }
@@ -949,7 +951,7 @@ impl Directory {
             forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp_aux(i).map.contains_pair(va, p)),
             forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va)),
             forall(|va: nat|
-                   self.entry_base(j) <= va && va < self.entry_base(j+1) && !self.interp_of_entry(j).map.dom().contains(va)
+                   between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
                    >>= !self.interp_aux(i).map.dom().contains(va)),
         ]);
 
@@ -985,7 +987,7 @@ impl Directory {
             forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp().map.dom().contains(va)),
             forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
             forall(|va: nat| #[auto_trigger]
-                   self.entry_base(j) <= va && va < self.entry_base(j+1) && !self.interp_of_entry(j).map.dom().contains(va)
+                   between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
                    >>= !self.interp().map.dom().contains(va)),
         ]);
         self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j);
@@ -1168,7 +1170,7 @@ impl Directory {
 
         self.lemma_inv_implies_interp_inv();
 
-        assert(self.base_vaddr <= vaddr && vaddr < self.upper_vaddr());
+        assert(between(vaddr, self.base_vaddr, self.upper_vaddr()));
         let entry = self.index_for_vaddr(vaddr);
         self.lemma_index_for_vaddr_bounds(vaddr);
         match self.entries.index(entry) {
@@ -1196,8 +1198,7 @@ impl Directory {
                 let i = self.index_for_vaddr(vaddr);
                 true
                 && i < self.num_entries()
-                && vaddr >= self.entry_base(i)
-                && vaddr < self.entry_base(i + 1)
+                && between(vaddr, self.entry_base(i), self.entry_base(i + 1))
                 && self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()
             },
             forall(|i: nat| (#[auto_trigger] i < self.num_entries() && self.entries.index(i).is_Directory()) >>=
@@ -1366,17 +1367,50 @@ impl Directory {
                 assert(vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
             },
             NodeEntry::Directory(d) => {
-                // d.resolve(vaddr)
                 assert(self.directories_obey_invariant());
                 d.lemma_inv_implies_interp_inv();
                 d.resolve_refines(vaddr);
 
-                assume(self.interp().resolve(vaddr).is_Ok());
-                assume(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+                assert(equal(self.interp_of_entry(entry), d.interp()));
+
+                assert(equal(d.interp().resolve(vaddr), d.resolve(vaddr)));
+
+                if d.resolve(vaddr).is_Ok() {
+                    assert(self.resolve(vaddr).is_Ok());
+                    assert(exists(|base: nat|
+                                  d.interp().map.dom().contains(base) &&
+                                  between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size)));
+
+                    let base = choose(|base:nat|
+                                    d.interp().map.dom().contains(base) &&
+                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size));
+
+                    assert(self.interp().map.contains_pair(base, self.interp_of_entry(entry).map.index(base)));
+
+                    assert(d.resolve(vaddr).is_Ok());
+                    assert(d.interp().resolve(vaddr).is_Ok());
+                    assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
+                } else {
+                    assert(d.resolve(vaddr).is_Err());
+                    assert(self.resolve(vaddr).is_Err());
+
+                    assert(d.interp().resolve(vaddr).is_Err());
+                    assert(!exists(|base:nat|
+                                   d.interp().map.dom().contains(base) &&
+                                   between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size)));
+                    assume(!exists(|base:nat|
+                                   self.interp().map.dom().contains(base) &&
+                                   between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)));
+                    assert(self.interp().resolve(vaddr).is_Err());
+                }
+                assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
             },
             NodeEntry::Empty() => {
-                assume(self.interp().resolve(vaddr).is_Err());
-                assume(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
+                assert(self.resolve(vaddr).is_Err());
+                assume(!exists(|base:nat|
+                               self.interp().map.dom().contains(base) &&
+                               between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)));
+                assert(self.interp().resolve(vaddr).is_Err());
             },
         }
     }
