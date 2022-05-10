@@ -50,7 +50,7 @@ pub fn between(x: nat, a: nat, b: nat) -> bool {
 // [1T  # 1G  , 1M  , 1K  ] // pages mapped at this level are this size <--
 
 // [n0  # n1  , n2  , n3  ] // number_of_entries
-// [1   # 1024, 1024, 1024] 
+// [1   # 1024, 1024, 1024]
 
 // es1 == es0 / n1 -- n1 * es1 == es0
 // es2 == es1 / n2 -- n2 * es2 == es1
@@ -72,7 +72,7 @@ pub struct ArchLayer {
 #[spec]
 pub struct Arch {
     pub layers: Seq<ArchLayer>,
-    // [512G, 1G  , 2M  , 4K  ] 
+    // [512G, 1G  , 2M  , 4K  ]
     // [512 , 512 , 512 , 512 ]
 }
 
@@ -311,7 +311,7 @@ impl PageTableContents {
     fn accepted_unmap(self, base:nat) -> bool {
         true
         && between(base, self.lower, self.upper)
-        && exists(|size: nat| with_triggers!([self.arch.contains_entry_size(size)], [aligned(base, size)] => 
+        && exists(|size: nat| with_triggers!([self.arch.contains_entry_size(size)], [aligned(base, size)] =>
             self.arch.contains_entry_size(size) && aligned(base, size)))
     }
 
@@ -390,14 +390,14 @@ pub struct Directory {
     pub base_vaddr: nat,
     pub arch: Arch,
 }
-// 
+//
 // // Layer 0: 425 Directory ->
 // // Layer 1: 47  Directory ->
 // // Layer 2: 5   Page (1K)
-// 
+//
 // // Layer 1: 46  Directory -> (1M)
 // // Layer 2: 1024 Pages
-// 
+//
 // // Layer 0: 1024 Directories (1T)
 // // Layer 1: 1024 Directories (1G)
 // // Layer 2: 1024 Pages
@@ -1398,7 +1398,38 @@ impl Directory {
                     assert(!exists(|base:nat|
                                    d.interp().map.dom().contains(base) &&
                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size)));
-                    assume(!exists(|base:nat|
+                    assert_forall_by(|base:nat| {
+                        requires(true
+                                 && self.interp().map.dom().contains(base)
+                                 && between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
+                        ensures(between(base, d.base_vaddr, d.upper_vaddr()));
+                        assert(between(vaddr, d.base_vaddr, d.upper_vaddr()));
+                        assume(false);
+                        // FIXME: this should become a lemma
+                        assert(between(base, d.base_vaddr, d.upper_vaddr()));
+                    });
+                    assert_by(!exists(|base:nat|
+                                      self.interp().map.dom().contains(base) &&
+                                      between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)), {
+                        if exists(|base:nat|
+                                  self.interp().map.dom().contains(base) &&
+                                  between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)) {
+                            let base = choose(|base:nat|
+                                              self.interp().map.dom().contains(base) &&
+                                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
+                            assert(between(base, d.base_vaddr, d.upper_vaddr()));
+                            assert(between(base, self.entry_base(entry), self.entry_base(entry+1)));
+                            if self.interp_of_entry(entry).map.dom().contains(base) {
+                                // then d.interp().resolve(vaddr) shouldn't be Err
+                                assert(d.interp().map.dom().contains(base));
+                                // FIXME
+                                assume(equal(d.interp().map.index(base), self.interp().map.index(base)));
+                                assert(between(vaddr, base, d.interp().map.index(base).size));
+                                assert(d.interp().resolve(vaddr).is_Ok());
+                            }
+                        }
+                    });
+                    assert(!exists(|base:nat|
                                    self.interp().map.dom().contains(base) &&
                                    between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)));
                     assert(self.interp().resolve(vaddr).is_Err());
