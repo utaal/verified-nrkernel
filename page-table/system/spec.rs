@@ -108,31 +108,38 @@ pub struct PageTableEntry {
     // track context identifiers
 }
 
+// This model assumes "linearizability" of the memory subsystem, in particular it
+// assumes monotonic observations (no non-monotonic reads)
+//
+// If this assumption doesn't hold, we may need start/end operation transitions (e.g. request
+// initiated, resolution complete)
+//
+// RA| state: IDLE | START_RESOLVING(vaddr) | REFILLING(VADDR) | RESOLVED_SUCCESS(vaddr, paddr) | RESOLVED_FAILURE ?
+//   | maybe there is a map<Vaddr, ResolveState> where the number of entries are the parallel resolves?
 state_machine! { MemoryTranslator {
     fields {
         // the tlb
         pub tlb: Map</* VAddr */ nat, PageTableEntry>, // all the VAddr of a page move in sync
+            // NOTE: drity/accessed bits are probably not in the TLB (as there's no explicit write-back)
+            // | maybe this is only relevant for dirty/accessed bits
 
         // RA: not sure whether we should call this "page_table_walker" or alike?
         pub page_table: Map</* VAddr */ nat, PageTableEntry>,
-
-        // RA: there could be something like:
-        //        state: IDLE | START_RESOLVING(vaddr) | REFILLING(VADDR) | RESOLVED_SUCCESS(vaddr, paddr) | RESOLVED_FAILURE ?
-        //     maybe there is a map<Vaddr, ResolveState> where the number of entries are the parallel resolves?
-        //     or os that too complex?
     }
 
     // RA: somehow right now we have a resolve that requires the TLB to contain an entry,
     //     and a fill_tlb that requires the TLB not to contain an entry. I think that should be fine?
     //     or do we need something like a fill then resolve?
+    // | When are the dirty/accessed bits set on the TLB vs the page-table.
+    // | Does the TLB have a "cache" of the dirty/accessed bits? Do they need to be written back?
+
+    // RA: resolve may actually also change the TLB state (or even the page table)
+    //     w.r.t. the accessed/dirty bits or alike.
+    // | only for accessed/dirty bits, which we don't need yet
 
     readonly! {
-        // RA: wouldn't here resolve not be something like
-        //       resolve(vaddr, ResolveResult)?
-        //     or how do we express that resolve may fail?
-        resolve(vaddr: nat, p_addr: nat, flags: Flags) {
-            require(exists(|base: nat| pre.tlb.dom().contains(base) >>=
-                base <= vaddr && vaddr < base + pre.tlb.index(base).size));
+        tlb_hit(vaddr: nat, p_addr: nat, flags: Flags) {
+            require(exists(|base: nat| pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).size));
             let base = choose(|base: nat| pre.tlb.dom().contains(base) >>=
                 base <= vaddr && vaddr < base + pre.tlb.index(base).size);
             let entry = pre.tlb.index(base);
@@ -140,9 +147,20 @@ state_machine! { MemoryTranslator {
             //     but you only want to resolve read-only.
             require(flags == entry.flags);
             require(p_addr == entry.p_addr + (vaddr - base));
+        }
+    }
 
-            // RA: resolve may actually also change the TLB state (or even the page table)
-            //     w.r.t. the accessed/dirty bits or alike.
+    // RA: wouldn't here resolve not be something like
+    //       resolve(vaddr, ResolveResult)?
+    //     or how do we express that resolve may fail?
+    // | tlb_miss:
+    // |    - resolve_fail
+    // | or - fill_tlb -> tlb_hit
+
+    readonly! {
+        resolve_fail(vaddr: nat) {
+            require(!exists(|base: nat| pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).size));
+            require(!exists(|base: nat| pre.page_table.dom().contains(base) && base <= vaddr && vaddr < base + pre.page_table.index(base).size));
         }
     }
 
@@ -180,9 +198,9 @@ state_machine! { MemoryTranslator {
 
     // TODO: flush range?
 
-    //
     // RA: We assume that the hardware is always enabled.
     //     This is fine, as this is what it is during normal mode of operation after initalization.
+    // | Yes!
 } }
 
 #[proof]

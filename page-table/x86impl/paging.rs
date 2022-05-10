@@ -9,6 +9,7 @@ use builtin_macros::*;
 #[allow(unused_imports)]
 #[macro_use]
 use crate::pervasive::*;
+use seq::*;
 
 //use super::bitflags::*;
 use core::convert::Into;
@@ -512,7 +513,14 @@ impl PML4Flags {
 }
 
 #[repr(transparent)]
+#[derive(Copy, PartialEq, Eq, Structural)]
 pub struct PML4Entry(pub u64);
+
+impl Clone for PML4Entry {
+    fn clone(&self) -> Self {
+        PML4Entry(self.0)
+    }
+}
 
 impl PML4Entry {
     pub fn new(pml4: PAddr, flags: u64) -> Self {
@@ -531,6 +539,37 @@ impl PML4Entry {
 
 // TODO(blocker?): No array support
 //pub type PML4 = [PML4Entry; 512];
+
+#[verifier(external_body)]
+pub struct PML4 {
+    storage: [PML4Entry; 512]
+}
+
+impl PML4 {
+    fndecl!(pub fn view(&self) -> Seq<PML4Entry>);
+
+    #[spec]
+    pub fn inv(&self) -> bool {
+        self.view().len() == 512
+    }
+
+    #[verifier(external_body)]
+    #[inline(always)]
+    pub fn index(&self, i: usize) -> PML4Entry {
+        requires(i < self.view().len());
+        ensures(|r: PML4Entry| r == self.view().index(i as int));
+
+        self.storage[i]
+    }
+
+    #[verifier(external_body)]
+    pub fn set(&mut self, i: usize, v: PML4Entry) {
+        requires(i < old(self).view().len());
+        ensures(equal(self.view(), old(self).view().update(i, v)));
+
+        self.storage[i] = v;
+    }
+}
 
 /// Present; must be 1 to reference a page-directory-pointer table
 #[spec] // TODO: not spec
