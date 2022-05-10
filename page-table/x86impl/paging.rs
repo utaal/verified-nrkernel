@@ -541,12 +541,12 @@ impl PML4Entry {
 //pub type PML4 = [PML4Entry; 512];
 
 #[verifier(external_body)]
-pub struct PML4 {
-    storage: [PML4Entry; 512]
+pub struct Directory<#[verifier(strictly_positive)] T> {
+    storage: [T; 512]
 }
 
-impl PML4 {
-    fndecl!(pub fn view(&self) -> Seq<PML4Entry>);
+impl<T: Clone+Copy> Directory<T> {
+    fndecl!(pub fn view(&self) -> Seq<T>);
 
     #[spec]
     pub fn inv(&self) -> bool {
@@ -555,21 +555,24 @@ impl PML4 {
 
     #[verifier(external_body)]
     #[inline(always)]
-    pub fn index(&self, i: usize) -> PML4Entry {
+    pub fn index(&self, i: usize) -> T {
         requires(i < self.view().len());
-        ensures(|r: PML4Entry| r == self.view().index(i as int));
+        ensures(|r: T| equal(r, self.view().index(i as int)));
 
         self.storage[i]
     }
 
     #[verifier(external_body)]
-    pub fn set(&mut self, i: usize, v: PML4Entry) {
+    pub fn set(&mut self, i: usize, v: T) {
         requires(i < old(self).view().len());
         ensures(equal(self.view(), old(self).view().update(i, v)));
 
         self.storage[i] = v;
     }
 }
+
+// pub type PML4 = Directory<PML4Entry>;
+// Gerd: you're going to have to use the full type name for now: `Directory<PML4Entry>`
 
 /// Present; must be 1 to reference a page-directory-pointer table
 #[spec] // TODO: not spec
