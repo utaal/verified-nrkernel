@@ -1316,6 +1316,9 @@ impl Directory {
         let entry = self.index_for_vaddr(base);
         self.lemma_index_for_vaddr_bounds(base);
 
+        let _ = self.interp_of_entry(entry);
+
+        assert(entry < self.num_entries());
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
                 if aligned(base, self.entry_size()) {
@@ -1325,6 +1328,8 @@ impl Directory {
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
+                assume(equal(self.interp_of_entry(entry), d.interp())); // FIXME
+                assert(d.accepted_unmap(base));
                 match d.unmap(base) {
                     Ok(new_d) => {
                         d.lemma_unmap_preserves_inv(base);
