@@ -326,7 +326,7 @@ impl PageTableContents {
     }
 
     #[proof]
-    fn unmap_preserves_inv(self, base: nat) {
+    fn lemma_unmap_preserves_inv(self, base: nat) {
         requires([
             self.inv(),
             self.unmap(base).is_Ok()
@@ -529,6 +529,7 @@ impl Directory {
         ensures([
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
+                forall(|i: nat| #[trigger] self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()),
         ]);
 
         // Postcondition 2
@@ -1004,18 +1005,31 @@ impl Directory {
                 && i < self.num_entries()
                 && between(vaddr, self.entry_base(i), self.entry_base(i + 1))
                 && self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()
+                && (aligned(vaddr, self.entry_size()) >>= vaddr == self.base_vaddr + i * self.entry_size())
             },
-            forall(|i: nat| (#[auto_trigger] i < self.num_entries() && self.entries.index(i).is_Directory()) >>=
-                   self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1)),
         ]);
-        assume(false); // FIXME: unstable
+        assume(false); // FIXME: extremely unstable lemma
+        self.lemma_inv_implies_interp_inv();
         let i = self.index_for_vaddr(vaddr);
+        // assume(aligned(vaddr, self.entry_size()) >>= vaddr == self.base_vaddr + i * self.entry_size());
         if (false
             || self.interp().accepted_resolve(vaddr)
             || self.interp().accepted_unmap(vaddr)
             || exists(|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame))) {
-
-            self.lemma_inv_implies_interp_inv();
+            assert(self.base_vaddr <= vaddr);
+            if aligned(vaddr, self.entry_size()) {
+                assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries()));
+                assert(aligned(vaddr, self.entry_size()));
+                crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+                assert(aligned(self.base_vaddr, self.entry_size()));
+                crate::lib::subtract_mod_eq_zero(self.base_vaddr, vaddr, self.entry_size());
+                assert(aligned(self.vaddr_offset(vaddr), self.entry_size()));
+                crate::lib::div_mul_cancel(self.vaddr_offset(vaddr), self.entry_size());
+                assert(self.vaddr_offset(vaddr) / self.entry_size() * self.entry_size() == self.vaddr_offset(vaddr));
+                assert(self.base_vaddr + self.vaddr_offset(vaddr) == self.base_vaddr + i * self.entry_size());
+                assert(vaddr == self.base_vaddr + i * self.entry_size());
+                // assert(vaddr == self.base_vaddr + i * self.entry_size());
+            }
         }
         self.lemma_entry_base();
     }
@@ -1237,12 +1251,6 @@ impl Directory {
     //     }
     // }
 
-    // // #[spec(checked)]
-    // // pub fn vaddr_in_bounds(self, base: nat) -> bool {
-    // //     recommends(self.well_formed());
-    // //     self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries()
-    // // }
-
     #[spec(checked)]
     pub fn accepted_unmap(self, base: nat) -> bool {
         recommends(self.well_formed());
@@ -1291,6 +1299,44 @@ impl Directory {
         } else {
         }
     }
+
+    #[proof]
+    fn lemma_unmap_preserves_inv(self, base: nat) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+            self.inv(),
+            self.accepted_unmap(base),
+            self.unmap(base).is_Ok(),
+        ]);
+        ensures(self.unmap(base).get_Ok_0().inv());
+
+        let res = self.unmap(base).get_Ok_0();
+        assert(self.directories_obey_invariant());
+
+        let entry = self.index_for_vaddr(base);
+        self.lemma_index_for_vaddr_bounds(base);
+
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+                if aligned(base, self.entry_size()) {
+                    assert(res.directories_obey_invariant());
+                } else {
+                }
+            },
+            NodeEntry::Directory(d) => {
+                d.lemma_inv_implies_interp_inv();
+                match d.unmap(base) {
+                    Ok(new_d) => {
+                        d.lemma_unmap_preserves_inv(base);
+                        assert(res.directories_obey_invariant());
+                    }
+                    Err(_) => { }
+                }
+            },
+            NodeEntry::Empty() => { },
+        }
+    }
+
 
     // // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
     // // // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is

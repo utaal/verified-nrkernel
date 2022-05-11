@@ -107,4 +107,3 @@ pub fn mult_leq_mono2(a: nat, b: nat, c: nat) {
     requires(a <= b);
     ensures(c * a <= c * a);
 }
-
