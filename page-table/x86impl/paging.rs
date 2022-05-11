@@ -9,6 +9,7 @@ use builtin_macros::*;
 #[allow(unused_imports)]
 #[macro_use]
 use crate::pervasive::*;
+#[allow(unused_imports)]
 use seq::*;
 
 //use super::bitflags::*;

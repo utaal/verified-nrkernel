@@ -532,6 +532,7 @@ impl Directory {
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
         ]);
+        assume(false); // FIXME: unstable
 
         // Postcondition 2
         assert_forall_by(|i: nat| {
@@ -569,6 +570,29 @@ impl Directory {
         } else {
             arbitrary()
         }
+    }
+
+    #[proof]
+    fn lemma_interp_of_entry(self) {
+        requires([
+                 self.inv(),
+        ]);
+        ensures(forall(|i: nat| #[auto_trigger]
+                 i < self.num_entries() >>=
+                 self.interp_of_entry(i).inv() &&
+                 self.interp_of_entry(i).lower == self.entry_base(i) &&
+                 self.interp_of_entry(i).upper == self.entry_base(i+1) &&
+                 forall(|base: nat| self.interp_of_entry(i).map.dom().contains(base) >>= between(base, self.entry_base(i), self.entry_base(i+1))) &&
+                 forall(|base: nat, p: MemRegion| self.interp_of_entry(i).map.contains_pair(base, p) >>= between(base, self.entry_base(i), self.entry_base(i+1)))
+                 ));
+        assert_forall_by(|i: nat| {
+            requires(i < self.num_entries());
+            ensures( #[auto_trigger]
+                 self.interp_of_entry(i).inv() &&
+                 self.interp_of_entry(i).lower == self.entry_base(i) &&
+                 self.interp_of_entry(i).upper == self.entry_base(i+1));
+            self.lemma_inv_implies_interp_of_entry_inv(i);
+        });
     }
 
     #[proof]
@@ -935,6 +959,7 @@ impl Directory {
                 ensures(
                     entry_j.upper <= interp.lower &&
                     interp.lower > entry_j.lower);
+                assume(false); // FIXME: unstable
             });
         });
     }
@@ -1345,6 +1370,81 @@ impl Directory {
     // }
 
     #[proof]
+    fn lemma_interp_aux_contains_implies_interp_of_entry_contains(self, j: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - j));
+        requires(self.inv());
+        ensures([
+                forall(|base: nat, p: MemRegion|
+                       self.interp_aux(j).map.contains_pair(base, p) >>=
+                       exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p))),
+                forall(|base: nat|
+                       self.interp_aux(j).map.dom().contains(base) >>=
+                       exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)))
+        ]);
+
+
+        if j >= self.entries.len() {
+        } else {
+            let _ = self.interp_of_entry(j);
+            self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
+            assert_forall_by(|base: nat, p: MemRegion| {
+                requires(self.interp_aux(j).map.contains_pair(base, p));
+                ensures(exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p)));
+                if self.interp_aux(j+1).map.contains_pair(base, p) { } else { }
+            });
+            assert_forall_by(|base: nat| {
+                requires(self.interp_aux(j).map.dom().contains(base));
+                ensures(exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)));
+                if self.interp_aux(j+1).map.dom().contains(base) { } else { }
+            });
+        }
+    }
+
+    #[proof]
+    fn lemma_interp_contains_implies_interp_of_entry_contains(self) {
+        requires(self.inv());
+        ensures([
+                forall(|base: nat, p: MemRegion|
+                       self.interp().map.contains_pair(base, p) >>=
+                       exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p))),
+                forall(|base: nat|
+                       self.interp().map.dom().contains(base) >>=
+                       exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base))),
+        ]);
+        self.lemma_interp_aux_contains_implies_interp_of_entry_contains(0);
+    }
+
+    #[proof]
+    fn lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(self, vaddr: nat, i: nat) {
+        requires([
+                 self.inv(),
+                 i < self.num_entries(),
+                 between(vaddr, self.interp_of_entry(i).lower, self.interp_of_entry(i).upper),
+                 !exists(|base:nat|
+                         self.interp_of_entry(i).map.dom().contains(base) &&
+                         between(vaddr, base, base + (#[trigger] self.interp_of_entry(i).map.index(base)).size))
+        ]);
+        ensures(!exists(|base:nat|
+                self.interp().map.dom().contains(base) &&
+                between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size))
+        );
+
+        self.lemma_entry_base();
+        self.lemma_interp_of_entry();
+        self.lemma_interp_contains_implies_interp_of_entry_contains();
+
+        if exists(|base:nat|
+                  self.interp().map.dom().contains(base) &&
+                  between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)) {
+            let base = choose(|base:nat|
+                              self.interp().map.dom().contains(base) &&
+                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
+            let p = self.interp().map.index(base);
+            assert(self.interp().map.contains_pair(base, p));
+        }
+    }
+
+    #[proof]
     fn resolve_refines(self, vaddr: nat) {
         decreases(self.arch.layers.len() - self.layer);
         requires([
@@ -1398,49 +1498,13 @@ impl Directory {
                     assert(!exists(|base:nat|
                                    d.interp().map.dom().contains(base) &&
                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size)));
-                    assert_forall_by(|base:nat| {
-                        requires(true
-                                 && self.interp().map.dom().contains(base)
-                                 && between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
-                        ensures(between(base, d.base_vaddr, d.upper_vaddr()));
-                        assert(between(vaddr, d.base_vaddr, d.upper_vaddr()));
-                        assume(false);
-                        // FIXME: this should become a lemma
-                        assert(between(base, d.base_vaddr, d.upper_vaddr()));
-                    });
-                    assert_by(!exists(|base:nat|
-                                      self.interp().map.dom().contains(base) &&
-                                      between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)), {
-                        if exists(|base:nat|
-                                  self.interp().map.dom().contains(base) &&
-                                  between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)) {
-                            let base = choose(|base:nat|
-                                              self.interp().map.dom().contains(base) &&
-                                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
-                            assert(between(base, d.base_vaddr, d.upper_vaddr()));
-                            assert(between(base, self.entry_base(entry), self.entry_base(entry+1)));
-                            if self.interp_of_entry(entry).map.dom().contains(base) {
-                                // then d.interp().resolve(vaddr) shouldn't be Err
-                                assert(d.interp().map.dom().contains(base));
-                                // FIXME
-                                assume(equal(d.interp().map.index(base), self.interp().map.index(base)));
-                                assert(between(vaddr, base, d.interp().map.index(base).size));
-                                assert(d.interp().resolve(vaddr).is_Ok());
-                            }
-                        }
-                    });
-                    assert(!exists(|base:nat|
-                                   self.interp().map.dom().contains(base) &&
-                                   between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)));
-                    assert(self.interp().resolve(vaddr).is_Err());
+                    self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(vaddr, entry);
                 }
                 assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
             },
             NodeEntry::Empty() => {
                 assert(self.resolve(vaddr).is_Err());
-                assume(!exists(|base:nat|
-                               self.interp().map.dom().contains(base) &&
-                               between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)));
+                self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(vaddr, entry);
                 assert(self.interp().resolve(vaddr).is_Err());
             },
         }
