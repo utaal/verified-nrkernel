@@ -530,7 +530,6 @@ impl Directory {
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
         ]);
-        assume(false); // FIXME: unstable
 
         // Postcondition 2
         assert_forall_by(|i: nat| {
@@ -681,7 +680,6 @@ impl Directory {
                             self.base_vaddr + j * self.entry_size() < self.base_vaddr + i * self.entry_size(),
                             self.base_vaddr + (j+1) * self.entry_size() <= self.base_vaddr + i * self.entry_size()
                     ]);
-                    assume(false); // FIXME: unstable
                 });
             }
         });
@@ -837,7 +835,6 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
-                assume(false); // FIXME: unstable
             });
 
             assert(interp.mappings_in_bounds());
@@ -877,7 +874,6 @@ impl Directory {
                 ensures(
                     entry_j.upper <= interp.lower &&
                     interp.lower > entry_j.lower);
-                assume(false); // FIXME: unstable
             });
         });
     }
@@ -1012,7 +1008,7 @@ impl Directory {
             forall(|i: nat| (#[auto_trigger] i < self.num_entries() && self.entries.index(i).is_Directory()) >>=
                    self.entries.index(i).get_Directory_0().upper_vaddr() == self.entry_base(i + 1)),
         ]);
-        assume(false); // FIXME: unstable lemma
+        assume(false); // FIXME: unstable
         let i = self.index_for_vaddr(vaddr);
         if (false
             || self.interp().accepted_resolve(vaddr)
@@ -1165,14 +1161,14 @@ impl Directory {
         }
     }
 
-    // #[spec(checked)]
-    // pub fn update(self, n: nat, e: NodeEntry) -> Self {
-    //     recommends(n < self.entries.len());
-    //     Directory {
-    //         entries: self.entries.update(n, e),
-    //         ..self
-    //     }
-    // }
+    #[spec(checked)]
+    pub fn update(self, n: nat, e: NodeEntry) -> Self {
+        recommends(n < self.entries.len());
+        Directory {
+            entries: self.entries.update(n, e),
+            ..self
+        }
+    }
 
     // #[spec(checked)]
     // pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
@@ -1247,57 +1243,54 @@ impl Directory {
     // //     self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries()
     // // }
 
-    // #[spec(checked)]
-    // pub fn accepted_unmap(self, base: nat) -> bool {
-    //     recommends(self.well_formed());
-    //     true
-    //     && self.interp().accepted_unmap(base)
-    //     // && self.vaddr_in_bounds(base)
-    // }
+    #[spec(checked)]
+    pub fn accepted_unmap(self, base: nat) -> bool {
+        recommends(self.well_formed());
+        true
+        && self.interp().accepted_unmap(base)
+    }
 
-    // #[spec]
-    // pub fn unmap(self, base: nat) -> Result<Self,()> {
-    //     recommends(self.inv() && self.accepted_unmap(base));
-    //     decreases(self.arch.layers.len() - self.layer);
-    //     decreases_by(Self::check_unmap);
+    #[spec]
+    pub fn unmap(self, base: nat) -> Result<Self,()> {
+        recommends(self.inv() && self.accepted_unmap(base));
+        decreases(self.arch.layers.len() - self.layer);
+        decreases_by(Self::check_unmap);
 
-    //     if self.inv() && self.accepted_unmap(base) {
-    //         let offset = base - self.base_vaddr;
-    //         let base_offset = offset - (offset % self.entry_size());
-    //         let entry = base_offset / self.entry_size();
-    //         // this condition implies that "entry < self.entries.len()"
-    //         match self.entries.index(entry) {
-    //             NodeEntry::Page(p) => {
-    //                 if aligned(base, self.entry_size()) {
-    //                     Ok(self.update(entry, NodeEntry::Empty()))
-    //                 } else {
-    //                     Err(())
-    //                 }
-    //             },
-    //             NodeEntry::Directory(d) => {
-    //                 d.unmap(base).map_ok(|new_d|
-    //                     self.update(entry, if d.empty() {
-    //                         NodeEntry::Empty()
-    //                     } else {
-    //                         NodeEntry::Directory(new_d)
-    //                     }))
-    //             },
-    //             NodeEntry::Empty() => Err(()),
-    //         }
-    //     } else {
-    //         arbitrary()
-    //     }
-    // }
+        if self.inv() && self.accepted_unmap(base) {
+            let entry = self.index_for_vaddr(base);
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    if aligned(base, self.entry_size()) {
+                        // This implies:
+                        // base == self.base_vaddr + entry * self.entry_size()
+                        // (i.e. no remainder on division)
+                        Ok(self.update(entry, NodeEntry::Empty()))
+                    } else {
+                        Err(())
+                    }
+                },
+                NodeEntry::Directory(d) => {
+                    d.unmap(base).map_ok(|new_d|
+                        self.update(entry, if d.empty() {
+                            NodeEntry::Empty()
+                        } else {
+                            NodeEntry::Directory(new_d)
+                        }))
+                },
+                NodeEntry::Empty() => Err(()),
+            }
+        } else {
+            arbitrary()
+        }
+    }
 
-    // #[proof] #[verifier(decreases_by)]
-    // fn check_unmap(self, base: nat) {
-    //     assume(false);
-    //     if self.inv() && self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //         self.lemma_derive_entry_bounds_from_if_condition(base);
-    //         assert(self.directories_obey_invariant());
-    //     } else {
-    //     }
-    // }
+    #[proof] #[verifier(decreases_by)]
+    fn check_unmap(self, base: nat) {
+        if self.inv() && self.accepted_unmap(base) {
+            self.lemma_index_for_vaddr_bounds(base);
+        } else {
+        }
+    }
 
     // // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
     // // // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
