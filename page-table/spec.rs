@@ -1328,7 +1328,13 @@ impl Directory {
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
-                assume(equal(self.interp_of_entry(entry), d.interp())); // FIXME
+                assert(d.interp().lower == d.base_vaddr);
+                assert(d.interp().upper == d.upper_vaddr());
+                // assert(equal(self.interp_of_entry(entry).map, d.interp().map)); // FIXME
+                assert(equal(self.interp_of_entry(entry).lower, self.entry_base(entry)));
+                assert(equal(self.interp_of_entry(entry).upper, self.entry_base(entry+1)));
+                assert(between(base, self.interp_of_entry(entry).lower, self.interp_of_entry(entry).upper));
+                assume(between(base, d.interp().lower, d.interp().upper));
                 assert(d.accepted_unmap(base));
                 match d.unmap(base) {
                     Ok(new_d) => {
