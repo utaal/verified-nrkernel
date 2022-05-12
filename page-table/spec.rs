@@ -530,6 +530,7 @@ impl Directory {
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
                 forall(|i: nat| #[trigger] self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()),
+                self.entry_base(0) == self.base_vaddr,
         ]);
 
         // Postcondition 2
