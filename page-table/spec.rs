@@ -1280,7 +1280,7 @@ impl Directory {
                 },
                 NodeEntry::Directory(d) => {
                     d.unmap(base).map_ok(|new_d|
-                        self.update(entry, if new_d.empty() {
+                        self.update(entry, if d.empty() {
                             NodeEntry::Empty()
                         } else {
                             NodeEntry::Directory(new_d)
