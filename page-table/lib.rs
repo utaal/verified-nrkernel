@@ -38,13 +38,17 @@ pub fn subtract_mod_aligned(a: nat, b: nat) {
 
 #[proof] #[verifier(external_body)]
 pub fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat) {
-    requires(a % (b * c) == 0);
+    requires([
+        a % (b * c) == 0,
+        c > 0,
+    ]);
     ensures(a % b == 0);
 }
 
 #[proof] #[verifier(external_body)]
 pub fn subtract_mod_eq_zero(a: nat, b: nat, c: nat) {
     requires([
+             c > 0,
              a % c == 0,
              b % c == 0,
              a <= b,
