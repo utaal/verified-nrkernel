@@ -992,7 +992,7 @@ impl Directory {
         }
     }
 
-    #[proof] #[verifier(nonlinear)]
+    #[proof] #[verifier(nonlinear)] #[verifier(spinoff_z3)]
     fn lemma_index_for_vaddr_bounds(self, vaddr: nat) {
         requires(self.inv());
         ensures([
