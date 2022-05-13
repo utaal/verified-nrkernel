@@ -1272,6 +1272,7 @@ impl Directory {
                         // This implies:
                         // base == self.base_vaddr + entry * self.entry_size()
                         // (i.e. no remainder on division)
+                        // (proved in lemma_index_for_vaddr_bounds)
                         Ok(self.update(entry, NodeEntry::Empty()))
                     } else {
                         Err(())
@@ -1340,6 +1341,65 @@ impl Directory {
         }
     }
 
+    #[proof]
+    fn lemma_unmap_refines_unmap(self, base: nat) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+             self.inv(),
+             self.accepted_unmap(base),
+        ]);
+        ensures(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+
+        self.lemma_inv_implies_interp_inv();
+
+        if let Ok(nself) = self.unmap(base) {
+            self.lemma_unmap_preserves_inv(base);
+            assert(nself.inv());
+            assert(nself.directories_obey_invariant());
+            nself.lemma_inv_implies_interp_inv();
+            assert(nself.interp().inv());
+        }
+
+        let nself_res = self.unmap(base);
+        let nself     = self.unmap(base).get_Ok_0();
+        assert(self.directories_obey_invariant());
+
+        let i_nself_res = self.interp().unmap(base);
+        let i_nself     = self.interp().unmap(base).get_Ok_0();
+
+        let entry = self.index_for_vaddr(base);
+        self.lemma_index_for_vaddr_bounds(base);
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
+
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+                if aligned(base, self.entry_size()) {
+                    assume(false);
+                } else {
+                    assume(false);
+                }
+            },
+            NodeEntry::Directory(d) => {
+                assert(d.inv());
+                d.lemma_inv_implies_interp_inv();
+                // requiring d.inv() here to silence the recommends failures
+                assert_nonlinear_by({ requires(d.inv()); ensures(equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
+                assert(d.accepted_unmap(base));
+                d.lemma_unmap_refines_unmap(base);
+                match d.unmap(base) {
+                    Ok(new_d) => {
+                        assert(d.unmap(base).is_Ok());
+                        assert(d.interp().unmap(base).is_Ok());
+                        assert(equal(new_d.interp(), d.interp().unmap(base).get_Ok_0()));
+                        // if new_d.empty
+                        assume(equal(nself.interp(), i_nself));
+                    }
+                    Err(_) => { }
+                }
+            },
+            NodeEntry::Empty() => { },
+        }
+    }
 
     // // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
     // // // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
