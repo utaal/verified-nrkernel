@@ -1408,22 +1408,22 @@ impl Directory {
         }
     }
 
-    // #[proof]
-    // fn lemma_remove_from_interp_of_entry_implies_remove_from_interp(self, j: nat, vaddr: nat, n: NodeEntry) {
-    //     requires([
-    //              j < self.num_entries(),
-    //              self.interp_of_entry(j).map.dom().contains(vaddr),
-    //              equal(
-    //                  self.interp_of_entry(j).map.remove(vaddr),
-    //                  match n {
-    //                      NodeEntry::Page(p)      => map![self.entry_base(j) => p],
-    //                      NodeEntry::Directory(d) => d.interp_aux(0).map,
-    //                      NodeEntry::Empty()      => map![],
-    //                  })
-    //     ]);
-    //     ensures(equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map));
-    //     assume(false);
-    // }
+    #[proof]
+    fn lemma_remove_from_interp_of_entry_implies_remove_from_interp(self, j: nat, vaddr: nat, n: NodeEntry) {
+        requires([
+                 j < self.num_entries(),
+                 self.interp_of_entry(j).map.dom().contains(vaddr),
+                 equal(
+                     self.interp_of_entry(j).map.remove(vaddr),
+                     match n {
+                         NodeEntry::Page(p)      => map![self.entry_base(j) => p],
+                         NodeEntry::Directory(d) => d.interp_aux(0).map,
+                         NodeEntry::Empty()      => map![],
+                     })
+        ]);
+        ensures(equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map));
+        assume(false);
+    }
 
     // // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
     // // // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
