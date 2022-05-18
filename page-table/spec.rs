@@ -16,7 +16,7 @@ use result::{*, Result::*};
 fn ambient_lemmas() {
     ensures([
             forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
-            forall(|d: Directory, i: nat| with_triggers!([d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
+            forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
     ]);
 
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
@@ -836,6 +836,7 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
+                assume(false);
             });
 
             assert(interp.mappings_in_bounds());
@@ -1134,7 +1135,6 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 assert(self.directories_obey_invariant());
                 d.lemma_inv_implies_interp_inv();
-                assume(false);
                 d.resolve_refines(vaddr);
 
                 assert(equal(self.interp_of_entry(entry), d.interp()));
