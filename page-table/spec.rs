@@ -523,7 +523,7 @@ impl Directory {
         self.base_vaddr + entry * self.entry_size()
     }
 
-    #[proof] #[verifier(nonlinear)]
+    #[proof] #[verifier(nonlinear)] #[verifier(spinoff_z3)]
     pub fn lemma_entry_base(self) {
         requires(self.inv());
         ensures([
