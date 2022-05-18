@@ -15,16 +15,16 @@ use result::{*, Result::*};
 #[proof]
 fn ambient_lemmas() {
     ensures([
-        true,
-        //forall(|a: nat, b: nat| a * b == b * a),
+            forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
+            forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
     ]);
 
-    // assert_forall_by(|a: nat, b: nat| {
-    //     ensures(a * b == b * a);
-    //     assert_nonlinear_by({
-    //         ensures(a * b == b * a);
-    //     });
-    // });
+    assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
+    assert_forall_by(|d: Directory, i: nat| {
+        requires(#[auto_trigger] d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory());
+        ensures(#[auto_trigger] d.entries.index(i).get_Directory_0().inv());
+        assert(d.directories_obey_invariant());
+    });
 }
 
 pub struct MemRegion { pub base: nat, pub size: nat }
@@ -531,7 +531,6 @@ impl Directory {
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
                 forall(|i: nat| #[trigger] self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()),
         ]);
-        assume(false); // FIXME: instability
 
         // Postcondition 2
         assert_forall_by(|i: nat| {
@@ -992,7 +991,7 @@ impl Directory {
         }
     }
 
-    #[proof] #[verifier(nonlinear)] #[verifier(spinoff_z3)]
+    #[proof] #[verifier(nonlinear)]
     fn lemma_index_for_vaddr_bounds(self, vaddr: nat) {
         requires(self.inv());
         ensures([
@@ -1135,6 +1134,7 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 assert(self.directories_obey_invariant());
                 d.lemma_inv_implies_interp_inv();
+                assume(false);
                 d.resolve_refines(vaddr);
 
                 assert(equal(self.interp_of_entry(entry), d.interp()));
@@ -1302,6 +1302,7 @@ impl Directory {
         }
     }
 
+
     #[proof]
     fn lemma_unmap_preserves_inv(self, base: nat) {
         decreases(self.arch.layers.len() - self.layer);
@@ -1311,6 +1312,8 @@ impl Directory {
             self.unmap(base).is_Ok(),
         ]);
         ensures(self.unmap(base).get_Ok_0().inv());
+
+        ambient_lemmas();
 
         let res = self.unmap(base).get_Ok_0();
         assert(self.directories_obey_invariant());
@@ -1328,7 +1331,6 @@ impl Directory {
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
-                assert_nonlinear_by({ ensures(equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
                 assert(d.accepted_unmap(base));
                 match d.unmap(base) {
                     Ok(new_d) => {
