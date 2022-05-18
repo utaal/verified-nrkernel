@@ -16,9 +16,10 @@ use result::{*, Result::*};
 fn ambient_lemmas() {
     ensures([
             forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
-            forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
+            forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv())),
+            forall(|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite())
     ]);
-
+    lemma_finite_map_union::<nat,MemRegion>();
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
     assert_forall_by(|d: Directory, i: nat| {
         requires(#[auto_trigger] d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory());
@@ -161,6 +162,7 @@ impl PageTableContents {
     #[spec(checked)]
     pub fn inv(&self) -> bool {
         true
+        && self.map.dom().finite()
         && self.arch.inv()
         && self.mappings_are_of_valid_size()
         && self.mappings_are_aligned()
@@ -334,6 +336,21 @@ impl PageTableContents {
         ensures([
             self.unmap(base).get_Ok_0().inv()
         ]);
+    }
+
+    #[proof]
+    fn lemma_unmap_decrements_len(self, base: nat) {
+        requires([
+                 self.inv(),
+                 self.unmap(base).is_Ok()
+        ]);
+        ensures([
+                self.map.dom().len() > 0,
+                equal(self.unmap(base).get_Ok_0().map.dom(), self.map.dom().remove(base)),
+                self.unmap(base).get_Ok_0().map.dom().len() == self.map.dom().len() - 1
+        ]);
+        assert(self.map.dom().contains(base));
+        lemma_set_contains_IMP_len_greater_zero::<nat>(self.map.dom(), base);
     }
 
     #[spec]
@@ -739,6 +756,8 @@ impl Directory {
             i == 0 >>= self.interp_aux(0).lower == self.base_vaddr,
         ]);
 
+        ambient_lemmas();
+
         let interp = self.interp_aux(i);
 
         if i >= self.entries.len() {
@@ -839,6 +858,8 @@ impl Directory {
             });
 
             assert(interp.mappings_in_bounds());
+
+            assert(interp.map.dom().finite());
 
             if i == 0 {
                 assert_nonlinear_by({
@@ -990,7 +1011,7 @@ impl Directory {
         }
     }
 
-    #[proof] #[verifier(nonlinear)]
+    #[proof] #[verifier(nonlinear)] #[verifier(spinoff_z3)]
     fn lemma_index_for_vaddr_bounds(self, vaddr: nat) {
         requires(self.inv());
         ensures([
@@ -1743,6 +1764,13 @@ pub fn new_seq_aux(s: Seq<NodeEntry>, i: nat) -> Seq<NodeEntry> {
     } else {
         new_seq_aux(s.add(seq![NodeEntry::Empty()]), i-1)
     }
+}
+
+#[proof]
+pub fn lemma_finite_map_union<S,T>() {
+    ensures(forall(|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()));
+    assume(false);
+    // assert(s1.union_prefer_right(s2).dom().len() <= s1.dom().len() + s2.dom().len());
 }
 
 #[proof]
