@@ -16,7 +16,7 @@ use result::{*, Result::*};
 fn ambient_lemmas() {
     ensures([
             forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
-            forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
+            forall(|d: Directory, i: nat| with_triggers!([d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
     ]);
 
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
