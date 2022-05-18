@@ -16,7 +16,7 @@ use result::{*, Result::*};
 fn ambient_lemmas() {
     ensures([
             forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
-            // forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
+            forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv()))
     ]);
 
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
@@ -836,7 +836,6 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
-                assume(false);
             });
 
             assert(interp.mappings_in_bounds());
@@ -974,6 +973,7 @@ impl Directory {
     fn check_resolve(self, vaddr: nat) {
         assert(self.inv());
 
+        ambient_lemmas();
         self.lemma_inv_implies_interp_inv();
 
         assert(between(vaddr, self.base_vaddr, self.upper_vaddr()));
@@ -983,8 +983,6 @@ impl Directory {
             NodeEntry::Page(p) => {
             },
             NodeEntry::Directory(d) => {
-                assert(self.directories_obey_invariant());
-                assert(d.inv());
                 d.lemma_inv_implies_interp_inv();
             },
             NodeEntry::Empty() => {
@@ -1119,6 +1117,7 @@ impl Directory {
         ]);
         ensures(equal(self.interp().resolve(vaddr), self.resolve(vaddr)));
 
+        ambient_lemmas();
         self.lemma_inv_implies_interp_inv();
 
         let entry = self.index_for_vaddr(vaddr);
@@ -1133,7 +1132,6 @@ impl Directory {
                 assert(vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
             },
             NodeEntry::Directory(d) => {
-                assert(self.directories_obey_invariant());
                 d.lemma_inv_implies_interp_inv();
                 d.resolve_refines(vaddr);
 
@@ -1316,7 +1314,6 @@ impl Directory {
         ambient_lemmas();
 
         let res = self.unmap(base).get_Ok_0();
-        assert(self.directories_obey_invariant());
 
         let entry = self.index_for_vaddr(base);
         self.lemma_index_for_vaddr_bounds(base);
@@ -1351,21 +1348,24 @@ impl Directory {
              self.inv(),
              self.accepted_unmap(base),
         ]);
-        ensures(equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)));
+        ensures([
+                equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)),
+                self.unmap(base).is_Ok() && self.unmap(base).get_Ok_0().empty() >>= self.interp().map.dom().len() == 1
+        ]);
+        assume(self.unmap(base).is_Ok() && self.unmap(base).get_Ok_0().empty() >>= self.interp().map.dom().len() == 1);
 
+        ambient_lemmas();
         self.lemma_inv_implies_interp_inv();
 
         if let Ok(nself) = self.unmap(base) {
             self.lemma_unmap_preserves_inv(base);
             assert(nself.inv());
-            assert(nself.directories_obey_invariant());
             nself.lemma_inv_implies_interp_inv();
             assert(nself.interp().inv());
         }
 
         let nself_res = self.unmap(base);
         let nself     = self.unmap(base).get_Ok_0();
-        assert(self.directories_obey_invariant());
 
         let i_nself_res = self.interp().unmap(base);
         let i_nself     = self.interp().unmap(base).get_Ok_0();
@@ -1385,8 +1385,6 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 assert(d.inv());
                 d.lemma_inv_implies_interp_inv();
-                // requiring d.inv() here to silence the recommends failures
-                assert_nonlinear_by({ requires(d.inv()); ensures(equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
                 assert(d.accepted_unmap(base));
                 d.lemma_unmap_refines_unmap(base);
                 match d.unmap(base) {
@@ -1397,10 +1395,17 @@ impl Directory {
                         assert(d.interp().unmap(base).is_Ok());
                         assert(equal(new_d.interp(), d.interp().unmap(base).get_Ok_0()));
                         if new_d.empty() {
-                            assume(equal(nself.interp(), i_nself));
+                            assert(nself_res.is_Ok());
+                            assert(equal(self.interp_of_entry(entry).map, d.interp().map));
+                            assert(equal(d.interp().unmap(base).get_Ok_0().map, d.interp().map.remove(base)));
+                            // assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                            assume(equal(self.interp_of_entry(entry).map.remove(base), map![]));
+                            self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
+                            assert(equal(nself.interp(), i_nself));
+                            // assume(equal(nself.interp(), i_nself));
                         } else {
-                            // self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Directory(new_d));
-                            assume(equal(nself.interp(), i_nself));
+                            self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Directory(new_d));
+                            // assume(equal(nself.interp(), i_nself));
                         }
                     }
                     Err(_) => { }
@@ -1410,22 +1415,22 @@ impl Directory {
         }
     }
 
-    // #[proof]
-    // fn lemma_remove_from_interp_of_entry_implies_remove_from_interp(self, j: nat, vaddr: nat, n: NodeEntry) {
-    //     requires([
-    //              j < self.num_entries(),
-    //              self.interp_of_entry(j).map.dom().contains(vaddr),
-    //              equal(
-    //                  self.interp_of_entry(j).map.remove(vaddr),
-    //                  match n {
-    //                      NodeEntry::Page(p)      => map![self.entry_base(j) => p],
-    //                      NodeEntry::Directory(d) => d.interp_aux(0).map,
-    //                      NodeEntry::Empty()      => map![],
-    //                  })
-    //     ]);
-    //     ensures(equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map));
-    //     assume(false);
-    // }
+    #[proof]
+    fn lemma_remove_from_interp_of_entry_implies_remove_from_interp(self, j: nat, vaddr: nat, n: NodeEntry) {
+        requires([
+                 j < self.num_entries(),
+                 self.interp_of_entry(j).map.dom().contains(vaddr),
+                 equal(
+                     self.interp_of_entry(j).map.remove(vaddr),
+                     match n {
+                         NodeEntry::Page(p)      => map![self.entry_base(j) => p],
+                         NodeEntry::Directory(d) => d.interp_aux(0).map,
+                         NodeEntry::Empty()      => map![],
+                     })
+        ]);
+        ensures(equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map));
+        assume(false);
+    }
 
     // // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
     // // // pages and directories to ensure the invariant remains intact. Otherwise interp_aux is
