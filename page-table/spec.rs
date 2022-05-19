@@ -17,7 +17,8 @@ fn ambient_lemmas() {
     ensures([
             forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
             forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv())),
-            forall(|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite())
+            forall(|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()),
+            forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a),
     ]);
     lemma_finite_map_union::<nat,MemRegion>();
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
@@ -320,6 +321,7 @@ impl PageTableContents {
     /// Removes the frame from the address space that contains `base`.
     #[spec(checked)]
     fn unmap(self, base: nat) -> Result<PageTableContents,()> {
+        recommends(self.accepted_unmap(base));
         if self.map.dom().contains(base) {
             Ok(self.remove(base))
         } else {
@@ -540,13 +542,12 @@ impl Directory {
         self.base_vaddr + entry * self.entry_size()
     }
 
-    #[proof] #[verifier(nonlinear)] #[verifier(spinoff_z3)]
+    #[proof] #[verifier(nonlinear)]
     pub fn lemma_entry_base(self) {
         requires(self.inv());
         ensures([
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
-                forall(|i: nat| #[trigger] self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()),
         ]);
 
         // Postcondition 2
@@ -1412,9 +1413,21 @@ impl Directory {
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
                 if aligned(base, self.entry_size()) {
-                    assume(false);
+                    assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                    self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                 } else {
-                    assume(false);
+                    self.lemma_entry_base();
+                    assert_nonlinear_by({
+                        requires([
+                            aligned(self.entry_base(entry), self.entry_size()),
+                            !aligned(base, self.entry_size()),
+                        ]);
+                        ensures([
+                            base != self.entry_base(entry),
+                        ]);
+                    });
+                    assert(!self.interp().map.dom().contains(base));
+                    assert(i_nself_res.is_Err());
                 }
             },
             NodeEntry::Directory(d) => {
@@ -1436,18 +1449,14 @@ impl Directory {
                             assert(d.interp().map.dom().len() == 1);
                             assert(d.interp().map.dom().contains(base));
                             assert_sets_equal!(d.interp().map.dom(), set![base]);
-                            assert(equal(d.interp().map.dom(), set![base]));
                             assert(nself_res.is_Ok());
                             assert(equal(self.interp_of_entry(entry).map, d.interp().map));
                             assert(equal(d.interp().unmap(base).get_Ok_0().map, d.interp().map.remove(base)));
                             assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
-                            assert(equal(self.interp_of_entry(entry).map.remove(base), map![]));
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                             assert(equal(nself.interp(), i_nself));
-                            // assume(equal(nself.interp(), i_nself));
                         } else {
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Directory(new_d));
-                            // assume(equal(nself.interp(), i_nself));
                         }
                     }
                     Err(_) => { }
@@ -1793,9 +1802,16 @@ pub fn lemma_finite_map_union<S,T>() {
     assert_forall_by(|s1: Map<S,T>, s2: Map<S,T>| {
         requires(s1.dom().finite() && s2.dom().finite());
         ensures(#[auto_trigger] s1.union_prefer_right(s2).dom().finite());
-        // assert_sets_equal!(s1.union_prefer_right(s2).dom(), s1.dom().union(s2.dom()));
-        // FIXME:
-        assume(equal(s1.union_prefer_right(s2).dom(), s1.dom().union(s2.dom())));
+
+        assert(s1.dom().union(s2.dom()).finite());
+
+        let union_dom = s1.union_prefer_right(s2).dom();
+        let dom_union = s1.dom().union(s2.dom());
+
+        assert(forall(|s: S| union_dom.contains(s) >>= dom_union.contains(s)));
+        assert(forall(|s: S| dom_union.contains(s) >>= union_dom.contains(s)));
+
+        assert_sets_equal!(union_dom, dom_union);
     });
 }
 
