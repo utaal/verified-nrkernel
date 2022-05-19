@@ -44,6 +44,10 @@ pub struct Flags {
 // //
 // //
 //
+
+
+// TODO: Use this as the precise system model, not the high-level process API
+
 #[derive(PartialEq, Eq, Structural)]
 pub struct PageTableEntry {
     pub p_addr: nat,
@@ -196,30 +200,40 @@ pub enum StoreResult {
     Ok,
 }
 
-// enum TransitionLabel {
-//     // SYSCALL
-//     Map(vaddr, paddr, page_size, flags: Flags, is_ok)
-//     // have a transaction that maps n pages as once
-//
-//     // SYSCALL
-//     // one page
-//     Unmap(vaddr, is_ok)
-//
-//     // SYSCALL
-//     // lookup a mapping
-//     Resolve(vaddr, Result<(paddr, size, Flags)>)
-//
-//     // INSTRUCTION
-//     // write anywhere, on any length, maybe span two pages?
-//     // TODO: what happens if we straddle two pages and only one is mapped?
-//     // everything is persistent memory!
-//     // AVX gather scatter? if they are not atomic, just represent them with a seq of these
-//     IOOp(vaddr, size,
-//         Store(new_value, result: StoreResult), // represents a third party doing a write too
-//         Load(is_exec, result: LoadResult),
-//         )
-// }
-//
+// operations on the kernel+hardware systems
+// =========================================
+
+// TODO sharing between processes, sharing domains
+enum TransitionLabel {
+    // SYSCALL
+    // exception is device drivers that ask for a paddr
+    //   - contiguous physical memory
+    //
+    // the user process cannot request aliased mappings
+    // TODO Map { mappings: Set</* vaddr: */ nat>, flags: Flags, is_ok: bool },
+ 
+    // consider MapDevice { mappings: Set</* vaddr: */ nat>, flags: Flags, is_ok: bool },
+
+    // TODO do we need this? MapObject { mappings: Set</* vaddr: */ nat>, device_id: nat, flags: Flags, is_ok: bool },
+    //   - a device can be currently modeled as a process Store/Load that hallucinates the correct vaddr
+    // have a transaction that maps n pages as once
+
+    // SYSCALL
+    // one page
+    // TODO Unmap { mappings: Set<nat>, is_ok: bool }, // TODO: 
+
+    // SYSCALL
+    // user processes do not lookup mappings, except for device drivers
+    // Resolve { vaddr: nat, Result<(/* paddr: */ nat, Flags)> },
+
+    // INSTRUCTION
+    // write anywhere, on any length, maybe span two pages?
+    // TODO: what happens if we straddle two pages and only one is mapped?
+    // everything is persistent memory!
+    // AVX gather scatter? if they are not atomic, just represent them with a seq of these
+    IOOp { vaddr: nat, io_op: IoOp },
+}
+
 
 // TODO is the page table in memory?
 
