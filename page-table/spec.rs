@@ -687,6 +687,7 @@ impl Directory {
                             self.base_vaddr + i * self.entry_size() <= self.base_vaddr + j * self.entry_size(),
                             self.base_vaddr + (i+1) * self.entry_size() <= self.base_vaddr + j * self.entry_size()
                     ]);
+                    assume(false); // unstable
                 });
             } else {
                 assert_nonlinear_by({
@@ -1414,6 +1415,7 @@ impl Directory {
             NodeEntry::Page(p) => {
                 if aligned(base, self.entry_size()) {
                     assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                    assert(self.update(entry, NodeEntry::Empty()).inv());
                     self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                 } else {
                     self.lemma_entry_base();
@@ -1453,9 +1455,11 @@ impl Directory {
                             assert(equal(self.interp_of_entry(entry).map, d.interp().map));
                             assert(equal(d.interp().unmap(base).get_Ok_0().map, d.interp().map.remove(base)));
                             assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                            assert(self.update(entry, NodeEntry::Empty()).inv());
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                             assert(equal(nself.interp(), i_nself));
                         } else {
+                            assert(self.update(entry, NodeEntry::Directory(new_d)).inv());
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Directory(new_d));
                         }
                     }
@@ -1467,10 +1471,86 @@ impl Directory {
     }
 
     #[proof]
-    fn lemma_remove_from_interp_of_entry_implies_remove_from_interp(self, j: nat, vaddr: nat, n: NodeEntry) {
+    fn lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(self, j: nat, i: nat, vaddr: nat, n: NodeEntry) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires([
+                 self.inv(),
+                 i <= j,
                  j < self.num_entries(),
                  self.interp_of_entry(j).map.dom().contains(vaddr),
+                 self.update(j, n).inv(),
+                 equal(
+                     self.interp_of_entry(j).map.remove(vaddr),
+                     match n {
+                         NodeEntry::Page(p)      => map![self.entry_base(j) => p],
+                         NodeEntry::Directory(d) => d.interp_aux(0).map,
+                         NodeEntry::Empty()      => map![],
+                     })
+        ]);
+        ensures([
+            equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map),
+        ]);
+
+        assert(j < self.entries.len());
+        ambient_lemmas();
+        self.lemma_inv_implies_interp_aux_inv(i);
+        self.lemma_inv_implies_interp_aux_inv(i + 1);
+        self.lemma_inv_implies_interp_of_entry_inv(i);
+        self.lemma_inv_implies_interp_of_entry_inv(j);
+
+        self.lemma_interp_of_entry();
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i, j);
+
+        assume(forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>| 
+                      (m1.dom().contains(vaddr) && !m2.dom().contains(vaddr))
+                      >>= equal(m1.remove(vaddr).union_prefer_right(m2), m1.union_prefer_right(m2).remove(vaddr))));
+
+        let nself = self.update(j, n);
+
+        if i >= self.entries.len() {
+        } else {
+            if i == j {
+                assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
+
+                assert(equal(self.interp_of_entry(i).map.remove(vaddr), nself.interp_of_entry(i).map));
+                
+                assert(equal(self.interp_aux(i + 1).map, nself.interp_aux(i + 1).map));
+
+                assert(equal(self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).remove(vaddr),
+                             nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
+
+                assert(equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map));
+            } else {
+                assert(i < j);
+                assert(self.directories_obey_invariant());
+
+                self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, i + 1, vaddr, n);
+                self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i + 1, j);
+
+                assert(self.interp_aux(j).map.dom().contains(vaddr));
+                assert(self.interp_aux(i + 1).map.dom().contains(vaddr));
+
+                assert(equal(self.interp_aux(i + 1).map.remove(vaddr), self.update(j, n).interp_aux(i + 1).map));
+
+                assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
+
+
+
+                assert(nself.inv());
+                assert(equal(nself.interp_aux(i).map, nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
+
+                assert(equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map));
+            }
+        }
+    }
+
+    #[proof]
+    fn lemma_remove_from_interp_of_entry_implies_remove_from_interp(self, j: nat, vaddr: nat, n: NodeEntry) {
+        requires([
+                 self.inv(),
+                 j < self.num_entries(),
+                 self.interp_of_entry(j).map.dom().contains(vaddr),
+                 self.update(j, n).inv(),
                  equal(
                      self.interp_of_entry(j).map.remove(vaddr),
                      match n {
@@ -1480,7 +1560,8 @@ impl Directory {
                      })
         ]);
         ensures(equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map));
-        assume(false);
+
+        self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, 0, vaddr, n);
     }
 
     // // // This is only proved for NodeEntry::Empty() because we'd have to have more requirements on
