@@ -8,7 +8,7 @@ use map::*;
 #[allow(unused_imports)]
 use set::*;
 #[allow(unused_imports)]
-use crate::{seq, seq_insert_rec, map, map_insert_rec, assert_maps_equal};
+use crate::{seq, seq_insert_rec, map, map_insert_rec, assert_maps_equal, assert_sets_equal, set, set_insert_rec};
 #[allow(unused_imports)]
 use result::{*, Result::*};
 
@@ -875,6 +875,20 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_empty_implies_interp_empty(self) {
+        requires([
+                 self.inv(),
+                 self.empty()
+        ]);
+        ensures([
+                equal(self.interp().map, Map::empty()),
+                equal(self.interp().map.dom(), Set::empty())
+        ]);
+        // FIXME:
+        assume(false);
+    }
+
+    #[proof]
     fn lemma_ranges_disjoint_interp_aux_interp_of_entry(self) {
         requires(self.inv());
         ensures(forall(|i: nat, j: nat|
@@ -1371,9 +1385,9 @@ impl Directory {
         ]);
         ensures([
                 equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)),
-                self.unmap(base).is_Ok() && self.unmap(base).get_Ok_0().empty() >>= self.interp().map.dom().len() == 1
+                // self.unmap(base).is_Ok() && self.unmap(base).get_Ok_0().empty() >>= self.interp().map.dom().len() == 1
         ]);
-        assume(self.unmap(base).is_Ok() && self.unmap(base).get_Ok_0().empty() >>= self.interp().map.dom().len() == 1);
+        // assume(self.unmap(base).is_Ok() && self.unmap(base).get_Ok_0().empty() >>= self.interp().map.dom().len() == 1);
 
         ambient_lemmas();
         self.lemma_inv_implies_interp_inv();
@@ -1416,11 +1430,18 @@ impl Directory {
                         assert(d.interp().unmap(base).is_Ok());
                         assert(equal(new_d.interp(), d.interp().unmap(base).get_Ok_0()));
                         if new_d.empty() {
+                            new_d.lemma_empty_implies_interp_empty();
+                            d.interp().lemma_unmap_decrements_len(base);
+                            assert(new_d.interp().map.dom().len() == 0);
+                            assert(d.interp().map.dom().len() == 1);
+                            assert(d.interp().map.dom().contains(base));
+                            assert_sets_equal!(d.interp().map.dom(), set![base]);
+                            assert(equal(d.interp().map.dom(), set![base]));
                             assert(nself_res.is_Ok());
                             assert(equal(self.interp_of_entry(entry).map, d.interp().map));
                             assert(equal(d.interp().unmap(base).get_Ok_0().map, d.interp().map.remove(base)));
-                            // assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
-                            assume(equal(self.interp_of_entry(entry).map.remove(base), map![]));
+                            assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                            assert(equal(self.interp_of_entry(entry).map.remove(base), map![]));
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                             assert(equal(nself.interp(), i_nself));
                             // assume(equal(nself.interp(), i_nself));
@@ -1769,8 +1790,13 @@ pub fn new_seq_aux(s: Seq<NodeEntry>, i: nat) -> Seq<NodeEntry> {
 #[proof]
 pub fn lemma_finite_map_union<S,T>() {
     ensures(forall(|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()));
-    assume(false);
-    // assert(s1.union_prefer_right(s2).dom().len() <= s1.dom().len() + s2.dom().len());
+    assert_forall_by(|s1: Map<S,T>, s2: Map<S,T>| {
+        requires(s1.dom().finite() && s2.dom().finite());
+        ensures(#[auto_trigger] s1.union_prefer_right(s2).dom().finite());
+        // assert_sets_equal!(s1.union_prefer_right(s2).dom(), s1.dom().union(s2.dom()));
+        // FIXME:
+        assume(equal(s1.union_prefer_right(s2).dom(), s1.dom().union(s2.dom())));
+    });
 }
 
 #[proof]
