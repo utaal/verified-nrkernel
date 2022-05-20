@@ -15,10 +15,15 @@ use result::{*, Result::*};
 #[proof]
 fn ambient_lemmas() {
     ensures([
-            forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())),
             forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv())),
             forall(|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()),
             forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a),
+            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+                   (m1.dom().contains(n) && !m2.dom().contains(n))
+                   >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
+            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+                   (m2.dom().contains(n) && !m1.dom().contains(n))
+                   >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
     ]);
     lemma_finite_map_union::<nat,MemRegion>();
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
@@ -27,6 +32,8 @@ fn ambient_lemmas() {
         ensures(#[auto_trigger] d.entries.index(i).get_Directory_0().inv());
         assert(d.directories_obey_invariant());
     });
+    lemma_map_union_prefer_right_remove_commute::<nat,MemRegion>();
+
 }
 
 pub struct MemRegion { pub base: nat, pub size: nat }
@@ -857,6 +864,7 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
+                assume(false); // unstable
             });
 
             assert(interp.mappings_in_bounds());
@@ -877,6 +885,27 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_empty_implies_interp_aux_empty(self, i: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+        requires([
+                 self.inv(),
+                 self.empty()
+        ]);
+        ensures([
+                equal(self.interp_aux(i).map, Map::empty()),
+                equal(self.interp_aux(i).map.dom(), Set::empty())
+        ]);
+
+        if i >= self.entries.len() {
+        } else {
+            let rem = self.interp_aux(i + 1);
+            let entry_i = self.interp_of_entry(i);
+            self.lemma_empty_implies_interp_aux_empty(i + 1);
+            assert_maps_equal!(rem.map.union_prefer_right(entry_i.map), Map::empty());
+        }
+    }
+
+    #[proof]
     fn lemma_empty_implies_interp_empty(self) {
         requires([
                  self.inv(),
@@ -886,8 +915,7 @@ impl Directory {
                 equal(self.interp().map, Map::empty()),
                 equal(self.interp().map.dom(), Set::empty())
         ]);
-        // FIXME:
-        assume(false);
+        self.lemma_empty_implies_interp_aux_empty(0);
     }
 
     #[proof]
@@ -1044,10 +1072,9 @@ impl Directory {
                 && (aligned(vaddr, self.entry_size()) >>= vaddr == self.base_vaddr + i * self.entry_size())
             },
         ]);
-        assume(false); // FIXME: extremely unstable lemma
+        assume(false); // unstable
         self.lemma_inv_implies_interp_inv();
         let i = self.index_for_vaddr(vaddr);
-        // assume(aligned(vaddr, self.entry_size()) >>= vaddr == self.base_vaddr + i * self.entry_size());
         if (false
             || self.interp().accepted_resolve(vaddr)
             || self.interp().accepted_unmap(vaddr)
@@ -1471,6 +1498,31 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_entries_equal_implies_interp_aux_equal(self, other: Directory, i: nat) {
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
+        requires([
+                 self.inv(),
+                 other.inv(),
+                 equal(self.arch, other.arch),
+                 equal(self.layer, other.layer),
+                 equal(self.base_vaddr, other.base_vaddr),
+                 equal(self.num_entries(), other.num_entries()),
+                 forall(|j: nat| i <= j && j < self.entries.len() >>= equal(self.entries.index(j), other.entries.index(j))),
+        ]);
+        ensures(equal(self.interp_aux(i), other.interp_aux(i)));
+
+        if i >= self.entries.len() {
+        } else {
+            let rem1 = self.interp_aux(i + 1);
+            let rem2 = other.interp_aux(i + 1);
+            let entry_i1 = self.interp_of_entry(i);
+            let entry_i2 = other.interp_of_entry(i);
+            self.lemma_entries_equal_implies_interp_aux_equal(other, i + 1);
+            assert_maps_equal!(rem1.map.union_prefer_right(entry_i1.map), rem2.map.union_prefer_right(entry_i2.map));
+        }
+    }
+
+    #[proof]
     fn lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(self, j: nat, i: nat, vaddr: nat, n: NodeEntry) {
         decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires([
@@ -1501,10 +1553,6 @@ impl Directory {
         self.lemma_interp_of_entry();
         self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i, j);
 
-        assume(forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>| 
-                      (m1.dom().contains(vaddr) && !m2.dom().contains(vaddr))
-                      >>= equal(m1.remove(vaddr).union_prefer_right(m2), m1.union_prefer_right(m2).remove(vaddr))));
-
         let nself = self.update(j, n);
 
         if i >= self.entries.len() {
@@ -1513,7 +1561,7 @@ impl Directory {
                 assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
 
                 assert(equal(self.interp_of_entry(i).map.remove(vaddr), nself.interp_of_entry(i).map));
-                
+                self.lemma_entries_equal_implies_interp_aux_equal(nself, i+1);
                 assert(equal(self.interp_aux(i + 1).map, nself.interp_aux(i + 1).map));
 
                 assert(equal(self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).remove(vaddr),
@@ -1875,6 +1923,38 @@ pub fn new_seq_aux(s: Seq<NodeEntry>, i: nat) -> Seq<NodeEntry> {
     } else {
         new_seq_aux(s.add(seq![NodeEntry::Empty()]), i-1)
     }
+}
+
+#[proof]
+pub fn lemma_map_union_prefer_right_remove_commute<S,T>() {
+    ensures([
+            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+                   (m1.dom().contains(n) && !m2.dom().contains(n))
+                   >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
+            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+                   (m2.dom().contains(n) && !m1.dom().contains(n))
+                   >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
+    ]);
+    assert_forall_by(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat| {
+        requires(m1.dom().contains(n) && !m2.dom().contains(n));
+        ensures(equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)));
+        let union1 = m1.remove(n).union_prefer_right(m2);
+        let union2 = m1.union_prefer_right(m2).remove(n);
+        assert_maps_equal!(union1, union2);
+        assert(equal(union1, union2));
+        // TODO: verus bug? (uncomment assertions below)
+        // substituting union1 and/or union2's definition makes the assertion fail:
+        // assert(equal(m1.remove(n).union_prefer_right(m2), union2));
+        // assert(equal(union1, m1.union_prefer_right(m2).remove(n)));
+    });
+    assert_forall_by(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat| {
+        requires(m2.dom().contains(n) && !m1.dom().contains(n));
+        ensures(equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)));
+        let union1 = m1.union_prefer_right(m2.remove(n));
+        let union2 = m1.union_prefer_right(m2).remove(n);
+        assert_maps_equal!(union1, union2);
+        assert(equal(union1, union2));
+    });
 }
 
 #[proof]
