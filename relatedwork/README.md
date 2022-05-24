@@ -25,7 +25,8 @@ TODO: we could put the actual appers here as well.
  * [Relaxed virtual memory in Armv8-A](https://link.springer.com/chapter/10.1007/978-3-030-99336-8_6)
  * [Related virtual memory in Armv8-A Website](https://www.cl.cam.ac.uk/~pes20/RelaxedVM-Arm/)
  * [A lot of papers by Sewell et al](https://www.cl.cam.ac.uk/~pes20/papers/topics.html#relaxed_all)
- * Komodo ARM model in Dafny: https://github.com/microsoft/Komodo/blob/master/verified/ARMdef.s.dfy
+ * [Komodo ARM model in Dafny](https://github.com/microsoft/Komodo/blob/master/verified/ARMdef.s.dfy) Pretty detailed but models TLB in-validation with one boolean
+ * [Verve](https://people.csail.mit.edu/jeanyang/papers/pldi117-yang.pdf) microkernel used for Ironclad apps
 
 **Sail**
  * Sail is a langauge to express ISA semantics 
