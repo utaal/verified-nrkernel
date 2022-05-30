@@ -501,6 +501,14 @@ impl Directory {
                >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch))
     }
 
+    #[spec]
+    pub fn directories_are_nonempty(&self) -> bool {
+        recommends(self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch());
+        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+               >>= !(#[trigger] self.entries.index(i).get_Directory_0().empty()))
+            // TODO: Maybe pick a more aggressive trigger?
+    }
+
     #[spec(checked)]
     pub fn frames_aligned(&self) -> bool {
         recommends(self.well_formed());
@@ -518,6 +526,7 @@ impl Directory {
         && self.directories_are_in_next_layer()
         && self.directories_match_arch()
         && self.directories_obey_invariant()
+        && self.directories_are_nonempty()
         && self.frames_aligned()
     }
 
@@ -556,6 +565,7 @@ impl Directory {
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
         ]);
+        assume(false); // unstable
 
         // Postcondition 2
         assert_forall_by(|i: nat| {
@@ -1247,72 +1257,122 @@ impl Directory {
         }
     }
 
-    // #[spec(checked)]
-    // pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
-    //     self.interp().accepted_mapping(base, frame)
-    // }
+    #[spec(checked)]
+    pub fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
+        recommends(self.well_formed());
+        self.interp().accepted_mapping(base, frame)
+    }
 
-    // #[spec]
-    // pub fn map_frame(self, base: nat, frame: MemRegion) -> Result<Self,()> {
-    //     decreases(self.arch.layers.len() - self.layer);
-    //     decreases_by(Self::check_map_frame);
+    #[spec]
+    pub fn map_frame(self, base: nat, frame: MemRegion) -> Result<Self,()> {
+        // recommends(self.inv());
+        decreases(self.arch.layers.len() - self.layer);
+        decreases_by(Self::check_map_frame);
 
-    //     if self.inv() && self.accepted_mapping(base, frame) {
-    //         let offset = base - self.base_vaddr;
-    //         let base_offset = offset - (offset % self.entry_size());
-    //         let entry = base_offset / self.entry_size();
-    //         if self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //             // this condition implies that "entry < self.entries.len()"
-    //             match self.entries.index(entry) {
-    //                 NodeEntry::Page(p) => {
-    //                     Err(())
-    //                 },
-    //                 NodeEntry::Directory(d) => {
-    //                     if self.entry_size() == frame.size {
-    //                         Err(())
-    //                     } else {
-    //                         match d.map_frame(base, frame) {
-    //                             Ok(d)  => Ok(self.update(entry, NodeEntry::Directory(d))),
-    //                             Err(e) => Err(e),
-    //                         }
-    //                     }
-    //                 },
-    //                 NodeEntry::Empty() => {
-    //                     if self.entry_size() == frame.size {
-    //                         Ok(self.update(entry, NodeEntry::Page(frame)))
-    //                     } else {
-    //                         // Indexing into self.arch.layers with self.layer + 1 is okay because
-    //                         // we know the frame size isn't this layer's entrysize (i.e. must be on
-    //                         // some lower level).
-    //                         // The index recommendation fails with spec(checked) though.
-    //                         let new_dir = Directory {
-    //                             entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
-    //                             layer:      self.layer + 1,
-    //                             base_vaddr: self.base_vaddr + offset,
-    //                             arch:       self.arch,
-    //                         }.map_frame(base, frame);
-    //                             // FIXME: am i certain this mapping will always be ok? might be
-    //                             // tricky to prove.
-    //                         Ok(self.update(entry, NodeEntry::Directory(new_dir.get_Ok_0())))
-    //                     }
-    //                 },
-    //             }
-    //         } else {
-    //             Err(())
-    //         }
-    //     } else {
-    //         arbitrary()
-    //     }
-    // }
+        if self.inv() && self.accepted_mapping(base, frame) {
+            let entry = self.index_for_vaddr(base);
+            match self.entries.index(entry) {
+                NodeEntry::Page(p) => {
+                    Err(())
+                },
+                NodeEntry::Directory(d) => {
+                    if self.entry_size() == frame.size {
+                        Err(())
+                    } else {
+                        match d.map_frame(base, frame) {
+                            Ok(d)  => Ok(self.update(entry, NodeEntry::Directory(d))),
+                            Err(e) => Err(e),
+                        }
+                    }
+                },
+                NodeEntry::Empty() => {
+                    if self.entry_size() == frame.size {
+                        Ok(self.update(entry, NodeEntry::Page(frame)))
+                    } else {
+                        // Indexing into self.arch.layers with self.layer + 1 is okay because
+                        // we know the frame size isn't this layer's entrysize (i.e. must be on
+                        // some lower level).
+                        // The index recommendation fails with spec(checked) though.
+                        let new_dir = Directory {
+                            entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
+                            layer:      self.layer + 1,
+                            base_vaddr: self.entry_base(entry),
+                            arch:       self.arch,
+                        };
+                        match new_dir.map_frame(base, frame) {
+                            Ok(d) => Ok(self.update(entry, NodeEntry::Directory(d))),
+                            // We never fail to insert an accepted mapping into an empty directory
+                            Err(e) => arbitrary(),
+                        }
+                    }
+                },
+            }
+        } else {
+            arbitrary()
+        }
+    }
 
-    // #[proof] #[verifier(decreases_by)]
-    // fn check_map_frame(self, base: nat, frame: MemRegion) {
-    //     if self.inv() && self.base_vaddr <= base && base < self.base_vaddr + self.entry_size() * self.num_entries() {
-    //         self.lemma_derive_entry_bounds_from_if_condition(base);
-    //         assert(self.directories_obey_invariant());
-    //     } else {
-    //     }
-    // }
+    #[proof] #[verifier(decreases_by)]
+    fn check_map_frame(self, base: nat, frame: MemRegion) {
+        if self.inv() && self.accepted_mapping(base, frame) {
+            self.lemma_index_for_vaddr_bounds(base);
+        }
+    }
+
+    #[proof]
+    fn lemma_map_preserves_inv(self, base: nat, frame: MemRegion) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+            self.inv(),
+            self.accepted_mapping(base, frame),
+            self.map_frame(base, frame).is_Ok(),
+        ]);
+        ensures(self.map_frame(base, frame).get_Ok_0().inv());
+
+        ambient_lemmas();
+        self.lemma_index_for_vaddr_bounds(base);
+
+        let entry = self.index_for_vaddr(base);
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+                assert(self.map_frame(base, frame).get_Ok_0().inv());
+            },
+            NodeEntry::Directory(d) => {
+                if self.entry_size() == frame.size {
+                    assert(self.map_frame(base, frame).get_Ok_0().inv());
+                } else {
+                    assume(self.map_frame(base, frame).get_Ok_0().inv());
+                    // match d.map_frame(base, frame) {
+                    //     Ok(d)  => Ok(self.update(entry, NodeEntry::Directory(d))),
+                    //     Err(e) => Err(e),
+                    // }
+                }
+            },
+            NodeEntry::Empty() => {
+                if self.entry_size() == frame.size {
+                    assume(self.map_frame(base, frame).get_Ok_0().inv());
+                    // Ok(self.update(entry, NodeEntry::Page(frame)))
+                } else {
+                    // Indexing into self.arch.layers with self.layer + 1 is okay because
+                    // we know the frame size isn't this layer's entrysize (i.e. must be on
+                    // some lower level).
+                    // The index recommendation fails with spec(checked) though.
+                    let new_dir = Directory {
+                        entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
+                        layer:      self.layer + 1,
+                        base_vaddr: self.entry_base(entry),
+                        arch:       self.arch,
+                    };
+                    // match new_dir.map_frame(base, frame) {
+                    //     Ok(d) => Ok(self.update(entry, NodeEntry::Directory(d))),
+                    //     // We never fail to insert an accepted mapping into an empty directory
+                    //     Err(e) => arbitrary(),
+                    // }
+                    assume(self.map_frame(base, frame).get_Ok_0().inv());
+                }
+            },
+        }
+    }
 
     #[spec(checked)]
     pub fn accepted_unmap(self, base: nat) -> bool {
