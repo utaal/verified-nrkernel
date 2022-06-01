@@ -36,19 +36,19 @@ fn ambient_lemmas1() {
 }
 
 
-#[proof]
-fn ambient_lemmas2() {
-    ensures([
-            forall(|d: Directory, base: nat, frame: MemRegion|
-                   d.inv() && #[trigger] d.accepted_mapping(base, frame) >>=
-                   d.interp().accepted_mapping(base, frame)),
-    ]);
-    assert_forall_by(|d: Directory, base: nat, frame: MemRegion| {
-        requires(d.inv() && #[trigger] d.accepted_mapping(base, frame));
-        ensures(d.interp().accepted_mapping(base, frame));
-        d.lemma_accepted_mapping_implies_interp_accepted_mapping();
-    });
-}
+// #[proof]
+// fn ambient_lemmas2() {
+//     ensures([
+//             forall(|d: Directory, base: nat, frame: MemRegion|
+//                    d.inv() && #[trigger] d.accepted_mapping(base, frame) >>=
+//                    d.interp().accepted_mapping(base, frame)),
+//     ]);
+//     assert_forall_by(|d: Directory, base: nat, frame: MemRegion| {
+//         requires(d.inv() && #[trigger] d.accepted_mapping(base, frame));
+//         ensures(d.interp().accepted_mapping(base, frame));
+//         d.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
+//     });
+// }
 
 pub struct MemRegion { pub base: nat, pub size: nat }
 
@@ -1288,7 +1288,25 @@ impl Directory {
     }
 
     #[proof]
-    pub fn lemma_accepted_mapping_implies_interp_accepted_mapping(self) {
+    pub fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, frame: MemRegion) {
+        requires([
+                 self.inv(),
+                 self.accepted_mapping(base, frame)
+        ]);
+        ensures(self.interp().accepted_mapping(base, frame));
+
+        self.lemma_inv_implies_interp_inv();
+        assert(aligned(base, frame.size));
+        assert(aligned(frame.base, frame.size));
+        assert(self.base_vaddr <= base && base + frame.size <= self.entry_base(self.num_entries()));
+        // assert(self.
+        // self.lower <= base && base + frame.size <= self.upper
+        assert(self.interp().candidate_mapping_in_bounds(base, frame));
+        assert(self.interp().arch.contains_entry_size(frame.size));
+    }
+
+    #[proof]
+    pub fn lemma_accepted_mapping_implies_interp_accepted_mapping_auto(self) {
         ensures(forall(|base: nat, frame: MemRegion|
                        self.inv() && #[trigger] self.accepted_mapping(base, frame) >>=
                        self.interp().accepted_mapping(base, frame)));
@@ -1297,14 +1315,7 @@ impl Directory {
             requires(self.inv() && #[trigger] self.accepted_mapping(base, frame));
             ensures(self.interp().accepted_mapping(base, frame));
 
-            self.lemma_inv_implies_interp_inv();
-            assert(aligned(base, frame.size));
-            assert(aligned(frame.base, frame.size));
-            assert(self.base_vaddr <= base && base + frame.size <= self.entry_base(self.num_entries()));
-            // assert(self.
-        // self.lower <= base && base + frame.size <= self.upper
-            assert(self.interp().candidate_mapping_in_bounds(base, frame));
-            assert(self.interp().arch.contains_entry_size(frame.size));
+            self.lemma_accepted_mapping_implies_interp_accepted_mapping_manual(base, frame);
         });
     }
 
@@ -1360,7 +1371,7 @@ impl Directory {
     #[proof] #[verifier(decreases_by)]
     fn check_map_frame(self, base: nat, frame: MemRegion) {
         ambient_lemmas1();
-        self.lemma_accepted_mapping_implies_interp_accepted_mapping();
+        self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         if self.inv() && self.accepted_mapping(base, frame) {
             self.lemma_index_for_vaddr_bounds(base);
         }
@@ -1382,7 +1393,7 @@ impl Directory {
         ]);
 
         ambient_lemmas1();
-        ambient_lemmas2();
+        self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         self.lemma_index_for_vaddr_bounds(base);
 
         let res = self.map_frame(base, frame).get_Ok_0();
