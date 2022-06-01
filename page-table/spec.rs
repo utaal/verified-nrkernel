@@ -1418,7 +1418,7 @@ impl Directory {
                     d.lemma_inv_implies_interp_inv();
                     assert(d.inv());
                     self.lemma_entry_base();
-                    assert(frame.size < self.entry_size());
+                    assume(frame.size < self.entry_size());
                     self.lemma_entry_base_alt_manual(entry);
                     assert_nonlinear_by({
                         requires([
@@ -1426,6 +1426,7 @@ impl Directory {
                                  self.entry_base(entry) <= base
                         ]);
                         ensures(base + frame.size <= self.entry_base(entry) + self.entry_size());
+                        assume(false);
                     });
                     assert(d.upper_vaddr() == self.entry_base(entry+1));
                     assert(d.candidate_mapping_in_bounds(base, frame));
