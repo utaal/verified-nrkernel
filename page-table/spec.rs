@@ -36,19 +36,19 @@ fn ambient_lemmas1() {
 }
 
 
-// #[proof]
-// fn ambient_lemmas2() {
-//     ensures([
-//             forall(|d: Directory, base: nat, frame: MemRegion|
-//                    d.inv() && #[trigger] d.accepted_mapping(base, frame) >>=
-//                    d.interp().accepted_mapping(base, frame)),
-//     ]);
-//     assert_forall_by(|d: Directory, base: nat, frame: MemRegion| {
-//         requires(d.inv() && #[trigger] d.accepted_mapping(base, frame));
-//         ensures(d.interp().accepted_mapping(base, frame));
-//         d.lemma_accepted_mapping_implies_interp_accepted_mapping();
-//     });
-// }
+#[proof]
+fn ambient_lemmas2() {
+    ensures([
+            forall(|d: Directory, base: nat, frame: MemRegion|
+                   d.inv() && #[trigger] d.accepted_mapping(base, frame) >>=
+                   d.interp().accepted_mapping(base, frame)),
+    ]);
+    assert_forall_by(|d: Directory, base: nat, frame: MemRegion| {
+        requires(d.inv() && #[trigger] d.accepted_mapping(base, frame));
+        ensures(d.interp().accepted_mapping(base, frame));
+        d.lemma_accepted_mapping_implies_interp_accepted_mapping();
+    });
+}
 
 pub struct MemRegion { pub base: nat, pub size: nat }
 
@@ -1382,6 +1382,7 @@ impl Directory {
         ]);
 
         ambient_lemmas1();
+        ambient_lemmas2();
         self.lemma_index_for_vaddr_bounds(base);
 
         let res = self.map_frame(base, frame).get_Ok_0();
