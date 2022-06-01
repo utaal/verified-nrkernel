@@ -87,8 +87,8 @@ state_machine! { MemoryTranslator {
 
     readonly! {
         tlb_hit(vaddr: nat, p_addr: nat, flags: Flags) {
-            require(exists(|base: nat| pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).size));
-            let base = choose(|base: nat| pre.tlb.dom().contains(base) >>=
+            require(exists(|base: nat| #[auto_trigger] pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).size));
+            let base = choose(|base: nat| #[auto_trigger] pre.tlb.dom().contains(base) >>=
                 base <= vaddr && vaddr < base + pre.tlb.index(base).size);
             let entry = pre.tlb.index(base);
             // RA: that could be a bit too strinct, say, the entry allows read and write,
@@ -107,8 +107,8 @@ state_machine! { MemoryTranslator {
 
     readonly! {
         resolve_fail(vaddr: nat) {
-            require(!exists(|base: nat| pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).size));
-            require(!exists(|base: nat| pre.page_table.dom().contains(base) && base <= vaddr && vaddr < base + pre.page_table.index(base).size));
+            require(!exists(|base: nat| #[auto_trigger] pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).size));
+            require(!exists(|base: nat| #[auto_trigger] pre.page_table.dom().contains(base) && base <= vaddr && vaddr < base + pre.page_table.index(base).size));
         }
     }
 
