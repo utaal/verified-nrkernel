@@ -572,14 +572,25 @@ impl Directory {
         self.base_vaddr + entry * self.entry_size()
     }
 
+    // The postcondition of this lemma can't be universally quantified over i because that would
+    // require a mixed function/arithmetic trigger. (Or a very dangerous trigger on
+    // `self.entry_base(i)`).
+    #[proof] #[verifier(nonlinear)]
+    pub fn lemma_entry_base_alt_manual(self, i: nat) {
+        ensures(self.entry_base(i+1) == self.entry_base(i) + self.entry_size());
+    }
+
     #[proof] #[verifier(nonlinear)]
     pub fn lemma_entry_base(self) {
         requires(self.inv());
         ensures([
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
                 forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
+                // forall(|i: nat| i < self.num_entries() && self.entries.index(i).is_Directory() >>= {
+                //     let d = self.entries.index(i).get_Directory_0();
+                //     d.upper_vaddr() == self.entry_base(i+1)
+                // })
         ]);
-        assume(false); // unstable
 
         // Postcondition 2
         assert_forall_by(|i: nat| {
@@ -1274,7 +1285,7 @@ impl Directory {
     #[spec(checked)]
     pub fn candidate_mapping_in_bounds(self, base: nat, frame: MemRegion) -> bool {
         recommends(self.inv());
-        self.base_vaddr <= base && base + frame.size <= self.entry_base(self.num_entries())
+        self.base_vaddr <= base && base + frame.size <= self.upper_vaddr()
     }
 
     #[spec(checked)]
@@ -1405,7 +1416,20 @@ impl Directory {
                 if self.entry_size() == frame.size {
                 } else {
                     d.lemma_inv_implies_interp_inv();
-                    assume(d.accepted_mapping(base, frame));
+                    assert(d.inv());
+                    self.lemma_entry_base();
+                    assert(frame.size < self.entry_size());
+                    self.lemma_entry_base_alt_manual(entry);
+                    assert_nonlinear_by({
+                        requires([
+                                 frame.size < self.entry_size(),
+                                 self.entry_base(entry) <= base
+                        ]);
+                        ensures(base + frame.size <= self.entry_base(entry) + self.entry_size());
+                    });
+                    assert(d.upper_vaddr() == self.entry_base(entry+1));
+                    assert(d.candidate_mapping_in_bounds(base, frame));
+                    assert(d.accepted_mapping(base, frame));
                     d.lemma_map_frame_preserves_inv(base, frame);
                     assert(res.well_formed());
                     assert(res.pages_match_entry_size());
