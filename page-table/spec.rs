@@ -10,11 +10,14 @@ use set::*;
 #[allow(unused_imports)]
 use crate::{seq, seq_insert_rec, map, map_insert_rec, assert_maps_equal, assert_sets_equal, set, set_insert_rec};
 #[allow(unused_imports)]
+use crate::lib::aligned;
+#[allow(unused_imports)]
 use result::{*, Result::*};
 
 #[proof]
 fn ambient_lemmas1() {
     ensures([
+            forall(|addr: nat, size: nat| equal(aligned(addr, size), addr % size == 0)),
             forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv())),
             forall(|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()),
             forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a),
@@ -25,6 +28,7 @@ fn ambient_lemmas1() {
                    (m2.dom().contains(n) && !m1.dom().contains(n))
                    >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
     ]);
+    crate::lib::aligned_def();
     lemma_finite_map_union::<nat,MemRegion>();
     assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
     assert_forall_by(|d: Directory, i: nat| {
@@ -117,8 +121,43 @@ impl Arch {
     }
 
     #[spec(checked)]
+    pub fn contains_entry_size_at_index_atleast(&self, entry_size: nat, min_idx: nat) -> bool {
+        exists(|i: nat| min_idx <= i && i < self.layers.len() && #[trigger] self.layers.index(i).entry_size == entry_size)
+    }
+
+    #[spec(checked)]
     pub fn contains_entry_size(&self, entry_size: nat) -> bool {
-        exists(|i: nat| i < self.layers.len() && #[trigger] self.layers.index(i).entry_size == entry_size)
+        self.contains_entry_size_at_index_atleast(entry_size, 0)
+    }
+
+    #[proof]
+    pub fn lemma_entry_sizes_aligned(self, i: nat, j: nat) {
+        decreases(self.layers.len() - i);
+        requires([
+                 self.inv(),
+                 i <= j,
+                 j < self.layers.len()
+        ]);
+        ensures(aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size));
+        ambient_lemmas1();
+        if i == j {
+        } else {
+            self.lemma_entry_sizes_aligned(i+1,j);
+            crate::lib::mod_of_mul_auto();
+            crate::lib::aligned_transitive_auto();
+        }
+    }
+
+    #[proof]
+    pub fn lemma_entry_sizes_aligned_auto(self) {
+        ensures(forall(|i: nat, j: nat|
+                       self.inv() && i <= j && j < self.layers.len() >>=
+                       aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size)));
+        assert_forall_by(|i: nat, j: nat| {
+            requires(self.inv() && i <= j && j < self.layers.len());
+            ensures(aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size));
+            self.lemma_entry_sizes_aligned(i, j);
+        });
     }
 }
 
@@ -143,11 +182,6 @@ pub struct PageTableContents {
     pub arch: Arch,
     pub lower: nat,
     pub upper: nat,
-}
-
-#[spec(checked)]
-pub fn aligned(addr: nat, size: nat) -> bool {
-    addr % size == 0
 }
 
 #[spec(checked)]
@@ -1295,7 +1329,7 @@ impl Directory {
         && aligned(base, frame.size)
         && aligned(frame.base, frame.size)
         && self.candidate_mapping_in_bounds(base, frame)
-        && self.arch.contains_entry_size(frame.size)
+        && self.arch.contains_entry_size_at_index_atleast(frame.size, self.layer)
     }
 
     #[proof]
@@ -1307,13 +1341,11 @@ impl Directory {
         ensures(self.interp().accepted_mapping(base, frame));
 
         self.lemma_inv_implies_interp_inv();
-        assert(aligned(base, frame.size));
-        assert(aligned(frame.base, frame.size));
-        assert(self.base_vaddr <= base && base + frame.size <= self.entry_base(self.num_entries()));
-        // assert(self.
-        // self.lower <= base && base + frame.size <= self.upper
-        assert(self.interp().candidate_mapping_in_bounds(base, frame));
-        assert(self.interp().arch.contains_entry_size(frame.size));
+        // assert(aligned(base, frame.size));
+        // assert(aligned(frame.base, frame.size));
+        // assert(self.base_vaddr <= base && base + frame.size <= self.entry_base(self.num_entries()));
+        // assert(self.interp().candidate_mapping_in_bounds(base, frame));
+        // assert(self.interp().arch.contains_entry_size(frame.size));
     }
 
     #[proof]
@@ -1389,6 +1421,45 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, frame: MemRegion) {
+        requires([
+                 self.inv(),
+                 self.accepted_mapping(base, frame),
+                 self.entries.index(self.index_for_vaddr(base)).is_Directory(),
+                 self.entry_size() != frame.size
+        ]);
+        ensures(self.entries.index(self.index_for_vaddr(base)).get_Directory_0().accepted_mapping(base, frame));
+        ambient_lemmas1();
+        self.lemma_index_for_vaddr_bounds(base);
+        self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
+        self.lemma_entry_base();
+
+        let entry = self.index_for_vaddr(base);
+        let d = self.entries.index(entry).get_Directory_0();
+        assert(self.directories_obey_invariant());
+        assert(d.inv());
+
+        assert(aligned(base, frame.size));
+        assert(aligned(frame.base, frame.size));
+        assert(d.arch.contains_entry_size_at_index_atleast(frame.size, d.layer));
+
+        assert(self.entry_base(entry) <= base);
+        assert(aligned(base, frame.size));
+        self.arch.lemma_entry_sizes_aligned_auto();
+        assert(aligned(self.entry_size(), frame.size));
+
+        crate::lib::aligned_transitive_auto();
+        assert(aligned(self.entry_base(entry+1), frame.size));
+        crate::lib::leq_add_aligned_less(base, frame.size, self.entry_base(entry+1));
+        assert(base + frame.size <= self.entry_base(entry+1));
+        assert(base + frame.size <= self.entry_base(entry) + self.entry_size());
+        assert(base + frame.size <= d.base_vaddr + self.entry_size());
+        assert(base + frame.size <= d.base_vaddr + d.num_entries() * d.entry_size());
+        assert(base + frame.size <= d.upper_vaddr());
+        assert(d.candidate_mapping_in_bounds(base, frame));
+    }
+
+    #[proof]
     fn lemma_map_frame_preserves_inv(self, base: nat, frame: MemRegion) {
         decreases(self.arch.layers.len() - self.layer);
         requires([
@@ -1406,6 +1477,7 @@ impl Directory {
         ambient_lemmas1();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         self.lemma_index_for_vaddr_bounds(base);
+        self.lemma_entry_base();
 
         let res = self.map_frame(base, frame).get_Ok_0();
 
@@ -1415,22 +1487,9 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 if self.entry_size() == frame.size {
                 } else {
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame);
                     d.lemma_inv_implies_interp_inv();
                     assert(d.inv());
-                    self.lemma_entry_base();
-                    assume(frame.size < self.entry_size());
-                    self.lemma_entry_base_alt_manual(entry);
-                    assert_nonlinear_by({
-                        requires([
-                                 frame.size < self.entry_size(),
-                                 self.entry_base(entry) <= base
-                        ]);
-                        ensures(base + frame.size <= self.entry_base(entry) + self.entry_size());
-                        assume(false);
-                    });
-                    assert(d.upper_vaddr() == self.entry_base(entry+1));
-                    assert(d.candidate_mapping_in_bounds(base, frame));
-                    assert(d.accepted_mapping(base, frame));
                     d.lemma_map_frame_preserves_inv(base, frame);
                     assert(res.well_formed());
                     assert(res.pages_match_entry_size());
