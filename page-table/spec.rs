@@ -776,6 +776,7 @@ impl Directory {
                             self.base_vaddr + j * self.entry_size() < self.base_vaddr + i * self.entry_size(),
                             self.base_vaddr + (j+1) * self.entry_size() <= self.base_vaddr + i * self.entry_size()
                     ]);
+                    assume(false); // unstable
                 });
             }
         });
@@ -1141,7 +1142,7 @@ impl Directory {
                 && (aligned(vaddr, self.entry_size()) >>= vaddr == self.base_vaddr + i * self.entry_size())
             },
         ]);
-        assume(false); // unstable
+        // assume(false); // unstable
         self.lemma_inv_implies_interp_inv();
         let i = self.index_for_vaddr(vaddr);
         if (false
@@ -1398,11 +1399,8 @@ impl Directory {
                             base_vaddr: self.entry_base(entry),
                             arch:       self.arch,
                         };
-                        match new_dir.map_frame(base, frame) {
-                            Ok(d) => Ok(self.update(entry, NodeEntry::Directory(d))),
-                            // We never fail to insert an accepted mapping into an empty directory
-                            Err(e) => arbitrary(),
-                        }
+                        // We never fail to insert an accepted mapping into an empty directory
+                        Ok(self.update(entry, NodeEntry::Directory(new_dir.map_frame(base, frame).get_Ok_0())))
                     }
                 },
             }
@@ -1421,21 +1419,25 @@ impl Directory {
     }
 
     #[proof]
-    fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, frame: MemRegion) {
+    fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, frame: MemRegion, d: Directory) {
         requires([
                  self.inv(),
                  self.accepted_mapping(base, frame),
-                 self.entries.index(self.index_for_vaddr(base)).is_Directory(),
+                 equal(d.arch, self.arch),
+                 d.base_vaddr == self.entry_base(self.index_for_vaddr(base)),
+                 d.upper_vaddr() == self.entry_base(self.index_for_vaddr(base)+1),
+                 d.inv(),
+                 d.layer == self.layer + 1,
                  self.entry_size() != frame.size
         ]);
-        ensures(self.entries.index(self.index_for_vaddr(base)).get_Directory_0().accepted_mapping(base, frame));
+        ensures(d.accepted_mapping(base, frame));
+
         ambient_lemmas1();
         self.lemma_index_for_vaddr_bounds(base);
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         self.lemma_entry_base();
 
         let entry = self.index_for_vaddr(base);
-        let d = self.entries.index(entry).get_Directory_0();
         assert(self.directories_obey_invariant());
         assert(d.inv());
 
@@ -1457,6 +1459,21 @@ impl Directory {
         assert(base + frame.size <= d.base_vaddr + d.num_entries() * d.entry_size());
         assert(base + frame.size <= d.upper_vaddr());
         assert(d.candidate_mapping_in_bounds(base, frame));
+        assert(aligned(base, frame.size));
+        assert(aligned(frame.base, frame.size));
+    }
+
+    #[proof]
+    fn lemma_map_frame_empty_is_ok(self, base: nat, frame: MemRegion) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+                 self.inv(),
+                 self.accepted_mapping(base, frame),
+                 self.entries.index(self.index_for_vaddr(base)).is_Empty()
+        ]);
+        ensures([
+                self.map_frame(base, frame).is_Ok()
+        ]);
     }
 
     #[proof]
@@ -1472,7 +1489,7 @@ impl Directory {
                 equal(self.map_frame(base, frame).get_Ok_0().arch, self.arch),
                 equal(self.map_frame(base, frame).get_Ok_0().base_vaddr, self.base_vaddr),
                 !self.map_frame(base, frame).get_Ok_0().empty(),
-                self.map_frame(base, frame).get_Ok_0().inv()
+                self.map_frame(base, frame).get_Ok_0().inv(),
         ]);
 
         ambient_lemmas1();
@@ -1488,7 +1505,7 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 if self.entry_size() == frame.size {
                 } else {
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame);
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, d);
                     d.lemma_inv_implies_interp_inv();
                     assert(d.inv());
                     d.lemma_map_frame_preserves_inv(base, frame);
@@ -1518,35 +1535,46 @@ impl Directory {
             },
             NodeEntry::Empty() => {
                 if self.entry_size() == frame.size {
-                    assume(self.map_frame(base, frame).get_Ok_0().inv());
-                    assert(equal(self.map_frame(base, frame).get_Ok_0().layer, self.layer));
-                    assume(!self.map_frame(base, frame).get_Ok_0().empty());
+                    assert(equal(res.layer, self.layer));
+                    assert(res.entries.index(entry).is_Page());
+                    assert(!res.empty());
+                    assert(res.directories_are_in_next_layer());
+                    assert(res.directories_obey_invariant());
+                    assert(res.inv());
                     // Ok(self.update(entry, NodeEntry::Page(frame)))
                 } else {
-                    // Indexing into self.arch.layers with self.layer + 1 is okay because
-                    // we know the frame size isn't this layer's entrysize (i.e. must be on
-                    // some lower level).
-                    // The index recommendation fails with spec(checked) though.
-                    // FIXME: assuming this to silence recommends failure
-                    assume(((self.layer + 1) as nat) < self.arch.layers.len());
+                    assert(((self.layer + 1) as nat) < self.arch.layers.len());
+                    let dir_entries = self.arch.layers.index((self.layer + 1) as nat).num_entries;
                     let new_dir = Directory {
-                        entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
+                        entries:    new_seq(dir_entries),
                         layer:      self.layer + 1,
                         base_vaddr: self.entry_base(entry),
                         arch:       self.arch,
                     };
-                    assume(new_dir.inv());
-                    assume(new_dir.accepted_mapping(base, frame));
-                    assume(new_dir.map_frame(base, frame).is_Ok());
+                    lemma_new_seq(dir_entries);
+                    assert(new_dir.directories_are_in_next_layer());
+                    assert(new_dir.directories_obey_invariant());
+                    assert(new_dir.directories_are_nonempty());
+                    assert(new_dir.frames_aligned());
+                    assert(new_dir.inv());
+
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, new_dir);
+                    new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
+                    assert(new_dir.accepted_mapping(base, frame));
+                    new_dir.lemma_index_for_vaddr_bounds(base);
+                    let nd_entry = new_dir.index_for_vaddr(base);
+                    assert(new_dir.entries.index(nd_entry).is_Empty());
+                    new_dir.lemma_map_frame_empty_is_ok(base, frame);
                     new_dir.lemma_map_frame_preserves_inv(base, frame);
-                    // match new_dir.map_frame(base, frame) {
-                    //     Ok(d) => Ok(self.update(entry, NodeEntry::Directory(d))),
-                    //     // We never fail to insert an accepted mapping into an empty directory
-                    //     Err(e) => arbitrary(),
-                    // }
-                    assume(self.map_frame(base, frame).get_Ok_0().inv());
-                    assert(equal(self.map_frame(base, frame).get_Ok_0().layer, self.layer));
-                    assume(!self.map_frame(base, frame).get_Ok_0().empty());
+
+                    assert(res.directories_are_in_next_layer());
+                    assert(res.directories_obey_invariant());
+                    assert(res.directories_are_nonempty());
+                    assert(res.frames_aligned());
+                    assert(res.inv());
+                    assert(equal(res.layer, self.layer));
+                    assert(res.entries.index(entry).is_Directory());
+                    assert(!res.empty());
                 }
             },
         }
@@ -1862,16 +1890,24 @@ impl<A,B> Result<A,B> {
 // FIXME: how to do this correctly?
 #[spec]
 pub fn new_seq(i: nat) -> Seq<NodeEntry> {
-    new_seq_aux(seq![], i)
-}
-
-#[spec]
-pub fn new_seq_aux(s: Seq<NodeEntry>, i: nat) -> Seq<NodeEntry> {
     decreases(i);
     if i == 0 {
-        s
+        seq![]
     } else {
-        new_seq_aux(s.add(seq![NodeEntry::Empty()]), i-1)
+        new_seq(i-1).add(seq![NodeEntry::Empty()])
+    }
+}
+
+#[proof]
+pub fn lemma_new_seq(i: nat) {
+    decreases(i);
+    ensures([
+            new_seq(i).len() == i,
+            forall(|j: nat| j < new_seq(i).len() >>= equal(new_seq(i).index(j), NodeEntry::Empty()))
+    ]);
+    if i == 0 {
+    } else {
+        lemma_new_seq(i-1);
     }
 }
 
