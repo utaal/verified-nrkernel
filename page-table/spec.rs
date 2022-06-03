@@ -57,8 +57,8 @@ fn ambient_lemmas1() {
 #[proof]
 fn ambient_lemmas2() {
     ensures([
-            forall(|d: Directory| d.inv() >>= (#[trigger] d.interp().upper == d.upper_vaddr())),
-            forall(|d: Directory| d.inv() >>= (#[trigger] d.interp().lower == d.base_vaddr)),
+            forall(|d: Directory| d.inv() >>= (#[trigger] d.interp()).upper == d.upper_vaddr()),
+            forall(|d: Directory| d.inv() >>= (#[trigger] d.interp()).lower == d.base_vaddr),
     ]);
     assert_forall_by(|d: Directory| {
         requires(d.inv());
@@ -1700,20 +1700,12 @@ impl Directory {
                             assume(self.interp().valid_mapping(base, frame));
                             assert(self.map_frame(base, frame).is_Ok());
                             self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(nd), frame);
-                            assert(self.map_frame(base, frame).is_Ok());
                             assert(self.interp().map_frame(base, frame).is_Ok());
 
                             assert(equal(self.interp().map.insert(base, frame), self.update(entry, NodeEntry::Directory(nd)).interp().map));
                             assert(equal(self.interp().map.insert(base, frame), self.interp().map_frame(base, frame).get_Ok_0().map));
 
-                            // assert(equal(nd.interp(), d.interp().map_frame(base, frame).get_Ok_0()));
-                            assert(equal(self.map_frame(base, frame).get_Ok_0().interp().map, self.interp().map_frame(base, frame).get_Ok_0().map));
-                            assert(equal(self.map_frame(base, frame).get_Ok_0().interp().arch, self.interp().map_frame(base, frame).get_Ok_0().arch));
-                            assert(equal(self.map_frame(base, frame).get_Ok_0().interp().lower, self.interp().map_frame(base, frame).get_Ok_0().lower));
-                            assert(equal(self.map_frame(base, frame).get_Ok_0().interp().upper, self.interp().map_frame(base, frame).get_Ok_0().upper));
                             assert(equal(self.map_frame(base, frame).get_Ok_0().interp(), self.interp().map_frame(base, frame).get_Ok_0()));
-                            // assume(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
-                            // Ok(self.update(entry, NodeEntry::Directory(d))),
                         },
                         Err(e) => {
                             assume(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
