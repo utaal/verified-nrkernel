@@ -34,3 +34,6 @@ TODO: we could put the actual appers here as well.
 
 **VRM**
  * [Formal Verification of a Multiprocessor Hypervisor on Arm Relaxed Memory Hardware](https://www.cs.columbia.edu/~rgu/publications/sosp21-tao.pdf)
+
+**TSO**
+ * [https://dl.acm.org/doi/pdf/10.1145/1594834.1480929](https://dl.acm.org/doi/pdf/10.1145/1594834.1480929)
