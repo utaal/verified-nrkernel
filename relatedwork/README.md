@@ -29,11 +29,13 @@ TODO: we could put the actual appers here as well.
  * [Verve](https://people.csail.mit.edu/jeanyang/papers/pldi117-yang.pdf) microkernel used for Ironclad apps
 
 **Sail**
- * Sail is a langauge to express ISA semantics 
+ * Sail is a language to express ISA semantics
  * [Project website](https://www.cl.cam.ac.uk/~pes20/sail/)
 
 **VRM**
  * [Formal Verification of a Multiprocessor Hypervisor on Arm Relaxed Memory Hardware](https://www.cs.columbia.edu/~rgu/publications/sosp21-tao.pdf)
 
 **TSO**
- * [https://dl.acm.org/doi/pdf/10.1145/1594834.1480929](https://dl.acm.org/doi/pdf/10.1145/1594834.1480929)
+ * [x86-CC](https://dl.acm.org/doi/pdf/10.1145/1594834.1480929)
+ * [x86-TSO](https://dl.acm.org/doi/10.1145/1785414.1785443) ([Extended version with HOL4 model](https://www.cl.cam.ac.uk/~pes20/weakmemory/x86tso-paper.pdf))
+
