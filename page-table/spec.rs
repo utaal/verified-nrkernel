@@ -1538,9 +1538,9 @@ impl Directory {
     fn lemma_map_frame_preserves_inv(self, base: nat, frame: MemRegion) {
         decreases(self.arch.layers.len() - self.layer);
         requires([
-            self.inv(),
-            self.accepted_mapping(base, frame),
-            self.map_frame(base, frame).is_Ok(),
+                 self.inv(),
+                 self.accepted_mapping(base, frame),
+                 self.map_frame(base, frame).is_Ok(),
         ]);
         ensures([
                 equal(self.map_frame(base, frame).get_Ok_0().layer, self.layer),
@@ -1548,6 +1548,9 @@ impl Directory {
                 equal(self.map_frame(base, frame).get_Ok_0().base_vaddr, self.base_vaddr),
                 !self.map_frame(base, frame).get_Ok_0().empty(),
                 self.map_frame(base, frame).get_Ok_0().inv(),
+                !exists(|b:nat| true
+                        && self.interp().map.dom().contains(b)
+                        && between(base, b, b + (#[trigger] self.interp().map.index(b)).size))
         ]);
 
         ambient_lemmas1();
@@ -1589,9 +1592,11 @@ impl Directory {
 
                     assert(res.entries.index(entry).is_Directory());
                     assert(!res.empty());
+                    self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(base, entry);
                 }
             },
             NodeEntry::Empty() => {
+                self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(base, entry);
                 if self.entry_size() == frame.size {
                     assert(equal(res.layer, self.layer));
                     assert(res.entries.index(entry).is_Page());
@@ -1644,6 +1649,18 @@ impl Directory {
         assume(false);
         // self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, 0, base, n);
     }
+
+    #[proof]
+    fn lemma_nonempty_implies_exists_interp_dom_contains(self) {
+        requires([
+                 self.inv(),
+                 !self.empty()
+        ]);
+        ensures(exists(|b: nat| self.interp().map.dom().contains(b)));
+        // ensures(exists(|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty()));
+        assume(false);
+    }
+
     #[proof]
     fn lemma_map_frame_refines_map_frame(self, base: nat, frame: MemRegion) {
         decreases(self.arch.layers.len() - self.layer);
@@ -1678,16 +1695,20 @@ impl Directory {
                 assert(self.interp().map_frame(base, frame).is_Err());
             },
             NodeEntry::Directory(d) => {
+                d.lemma_inv_implies_interp_inv();
+                assert(d.inv());
                 if self.entry_size() == frame.size {
                     assert(self.map_frame(base, frame).is_Err());
-                    // proof sketch: invariant tells us that there's a non-empty entry, i.e.
-                    // there's an entry in the interpretation which would overlap with the new mapping
-                    assume(self.interp().map_frame(base, frame).is_Err());
+                    d.lemma_nonempty_implies_exists_interp_dom_contains();
+                    let b = choose(|b: nat| d.interp().map.dom().contains(b));
+                    assert(self.interp().map.dom().contains(b));
+                    self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
+
+                    assert(!self.interp().valid_mapping(base, frame));
+                    assert(self.interp().map_frame(base, frame).is_Err());
                 } else {
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, d);
                     assert(d.accepted_mapping(base, frame));
-                    d.lemma_inv_implies_interp_inv();
-                    assert(d.inv());
                     d.lemma_map_frame_refines_map_frame(base, frame);
                     assert(equal(d.map_frame(base, frame).map_ok(|d| d.interp()), d.interp().map_frame(base, frame)));
                     match d.map_frame(base, frame) {
@@ -1697,7 +1718,7 @@ impl Directory {
                             assert(d.interp().accepted_mapping(base, frame));
                             assert(d.interp().valid_mapping(base, frame));
                             assert(self.interp().accepted_mapping(base, frame));
-                            assume(self.interp().valid_mapping(base, frame));
+                            assert(self.interp().valid_mapping(base, frame));
                             assert(self.map_frame(base, frame).is_Ok());
                             self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(nd), frame);
                             assert(self.interp().map_frame(base, frame).is_Ok());
