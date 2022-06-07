@@ -1630,11 +1630,87 @@ impl Directory {
     }
 
     #[proof]
+    fn lemma_insert_interp_of_entry_implies_insert_interp_aux(self, i: nat, j: nat, base: nat, n: NodeEntry, frame: MemRegion) {
+        decreases(self.arch.layers.len() - self.layer);
+        requires([
+                 self.inv(),
+                 i <= j,
+                 j < self.num_entries(),
+                 !self.interp_aux(i).map.dom().contains(base),
+                 self.update(j, n).inv(),
+                 equal(
+                     self.interp_of_entry(j).map.insert(base, frame),
+                     match n {
+                         NodeEntry::Page(p)      => map![self.entry_base(j) => p],
+                         NodeEntry::Directory(d) => d.interp_aux(0).map,
+                         NodeEntry::Empty()      => map![],
+                     })
+        ]);
+        ensures(equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map));
+
+        ambient_lemmas1();
+        ambient_lemmas2();
+
+        self.lemma_inv_implies_interp_aux_inv(i);
+        self.lemma_inv_implies_interp_aux_inv(i + 1);
+        self.lemma_inv_implies_interp_of_entry_inv(i);
+        self.lemma_inv_implies_interp_of_entry_inv(j);
+
+        self.lemma_interp_of_entry();
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i, j);
+
+        let nself = self.update(j, n);
+
+        if i >= self.entries.len() {
+        } else {
+            if i == j {
+                assert(!self.interp_aux(i + 1).map.dom().contains(base));
+                assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
+
+                assert(equal(self.interp_of_entry(i).map.insert(base, frame), nself.interp_of_entry(i).map));
+                self.lemma_entries_equal_implies_interp_aux_equal(nself, i+1);
+                assert(equal(self.interp_aux(i + 1).map, nself.interp_aux(i + 1).map));
+
+
+                assert(!self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).dom().contains(base));
+
+                assume(false);
+                assert(equal(self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).insert(base, frame),
+                             nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
+
+                assert(equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map));
+            } else {
+                assert(i < j);
+                assume(false);
+                // assert(self.directories_obey_invariant());
+
+                // self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, i + 1, vaddr, n);
+                // self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i + 1, j);
+
+                // assert(self.interp_aux(j).map.dom().contains(vaddr));
+                // assert(self.interp_aux(i + 1).map.dom().contains(vaddr));
+
+                // assert(equal(self.interp_aux(i + 1).map.remove(vaddr), self.update(j, n).interp_aux(i + 1).map));
+
+                // assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
+
+
+
+                // assert(nself.inv());
+                // assert(equal(nself.interp_aux(i).map, nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
+
+                // assert(equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map));
+            }
+        }
+    }
+
+    #[proof]
     fn lemma_insert_interp_of_entry_implies_insert_interp(self, j: nat, base: nat, n: NodeEntry, frame: MemRegion) {
+        decreases(self.arch.layers.len() - self.layer);
         requires([
                  self.inv(),
                  j < self.num_entries(),
-                 !self.interp_of_entry(j).map.dom().contains(base),
+                 !self.interp().map.dom().contains(base),
                  self.update(j, n).inv(),
                  equal(
                      self.interp_of_entry(j).map.insert(base, frame),
@@ -1646,19 +1722,36 @@ impl Directory {
         ]);
         ensures(equal(self.interp().map.insert(base, frame), self.update(j, n).interp().map));
 
-        assume(false);
-        // self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, 0, base, n);
+        self.lemma_insert_interp_of_entry_implies_insert_interp_aux(0, j, base, n, frame);
     }
 
     #[proof]
     fn lemma_nonempty_implies_exists_interp_dom_contains(self) {
+        decreases(self.arch.layers.len() - self.layer);
         requires([
                  self.inv(),
                  !self.empty()
         ]);
         ensures(exists(|b: nat| self.interp().map.dom().contains(b)));
-        // ensures(exists(|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty()));
-        assume(false);
+
+        ambient_lemmas1();
+
+        assert(exists(|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty()));
+        let i = choose(|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty());
+        assert(i < self.num_entries());
+        assert(!self.entries.index(i).is_Empty());
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(i);
+        match self.entries.index(i) {
+            NodeEntry::Page(p)      => {
+                assert(self.interp().map.dom().contains(self.entry_base(i)));
+            },
+            NodeEntry::Directory(d) => {
+                d.lemma_nonempty_implies_exists_interp_dom_contains();
+                let b = choose(|b: nat| d.interp().map.dom().contains(b));
+                assert(self.interp().map.dom().contains(b));
+            },
+            NodeEntry::Empty()      => (),
+        }
     }
 
     #[proof]
@@ -1729,7 +1822,30 @@ impl Directory {
                             assert(equal(self.map_frame(base, frame).get_Ok_0().interp(), self.interp().map_frame(base, frame).get_Ok_0()));
                         },
                         Err(e) => {
-                            assume(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
+                            assert(d.map_frame(base, frame).is_Err());
+                            assert(d.interp().map_frame(base, frame).is_Err());
+                            assert(d.interp().accepted_mapping(base, frame));
+                            assert(!d.interp().valid_mapping(base, frame));
+                            let b = choose(|b: nat| #[auto_trigger]
+                                           d.interp().map.dom().contains(b) && overlap(
+                                               MemRegion { base: base, size: frame.size },
+                                               MemRegion { base: b, size: d.interp().map.index(b).size }
+                                               ));
+                            let bbase = d.interp().map.index(b).base;
+                            let bsize = d.interp().map.index(b).size;
+                            assert(d.interp().map.contains_pair(b, MemRegion { base: bbase, size: bsize }));
+                            assert(overlap(
+                                    MemRegion { base: base, size: frame.size },
+                                    MemRegion { base: b, size: bsize }
+                                    ));
+                            self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
+                            assert(self.interp().map.contains_pair(b, MemRegion { base: bbase, size: bsize }));
+
+                            assert(self.interp().accepted_mapping(base, frame));
+                            assert(!self.interp().valid_mapping(base, frame));
+
+                            assert(self.map_frame(base, frame).is_Err());
+                            assert(self.interp().map_frame(base, frame).is_Err());
                         },
                     }
                     // d.lemma_map_frame_preserves_inv(base, frame);
