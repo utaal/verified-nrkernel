@@ -969,7 +969,6 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
-                assume(false); // unstable
             });
 
             assert(interp.mappings_in_bounds());
@@ -1862,14 +1861,32 @@ impl Directory {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
                     let new_dir = self.new_empty_dir(entry);
                     self.lemma_new_empty_dir(entry);
+                    assert(new_dir.inv());
 
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-                    // assert(new_dir.accepted_mapping(base, frame));
-                    // new_dir.lemma_index_for_vaddr_bounds(base);
-                    // new_dir.lemma_map_frame_empty_is_ok(base, frame);
-                    // new_dir.lemma_map_frame_preserves_inv(base, frame);
-                    assume(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
+                    assert(new_dir.accepted_mapping(base, frame));
+                    new_dir.lemma_index_for_vaddr_bounds(base);
+                    new_dir.lemma_map_frame_empty_is_ok(base, frame);
+                    new_dir.lemma_map_frame_preserves_inv(base, frame);
+
+                    let new_dir_mapped = new_dir.map_frame(base, frame).get_Ok_0();
+                    assert(new_dir.map_frame(base, frame).is_Ok());
+                    assert(new_dir_mapped.inv());
+                    new_dir.lemma_map_frame_refines_map_frame(base, frame);
+                    assert(new_dir.interp().map_frame(base, frame).is_Ok());
+                    assert(equal(new_dir_mapped.interp(), new_dir.interp().map_frame(base, frame).get_Ok_0()));
+
+                    new_dir.lemma_empty_implies_interp_empty();
+                    assert_maps_equal!(new_dir.interp().map, map![]);
+                    assert_maps_equal!(new_dir.interp().map_frame(base, frame).get_Ok_0().map, map![base => frame]);
+                    assert_maps_equal!(self.interp_of_entry(entry).map, map![]);
+                    assert(equal(self.interp_of_entry(entry).map, map![]));
+                    assert(equal(map![].insert(base, frame), new_dir_mapped.interp().map));
+                    assert(equal(self.interp_of_entry(entry).map.insert(base, frame), new_dir_mapped.interp().map));
+                    self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(new_dir_mapped), frame);
+
+                    assert(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
                 }
             },
         }
