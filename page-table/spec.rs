@@ -40,6 +40,12 @@ fn ambient_lemmas1() {
             forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
                    (m2.dom().contains(n) && !m1.dom().contains(n))
                    >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
+            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
+                   (!m1.dom().contains(n) && !m2.dom().contains(n))
+                   >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v))),
+            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
+                   (!m1.dom().contains(n) && !m2.dom().contains(n))
+                   >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v))),
             // forall(|d: Directory| d.inv() >>= (#[trigger] d.interp().upper == d.upper_vaddr())),
             // forall(|d: Directory| d.inv() >>= (#[trigger] d.interp().lower == d.base_vaddr)),
     ]);
@@ -52,6 +58,7 @@ fn ambient_lemmas1() {
         assert(d.directories_obey_invariant());
     });
     lemma_map_union_prefer_right_remove_commute::<nat,MemRegion>();
+    lemma_map_union_prefer_right_insert_commute::<nat,MemRegion>();
 }
 
 #[proof]
@@ -1631,7 +1638,7 @@ impl Directory {
 
     #[proof]
     fn lemma_insert_interp_of_entry_implies_insert_interp_aux(self, i: nat, j: nat, base: nat, n: NodeEntry, frame: MemRegion) {
-        decreases(self.arch.layers.len() - self.layer);
+        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         requires([
                  self.inv(),
                  i <= j,
@@ -1674,32 +1681,28 @@ impl Directory {
 
                 assert(!self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).dom().contains(base));
 
-                assume(false);
                 assert(equal(self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).insert(base, frame),
-                             nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
+                             self.update(j, n).interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
 
                 assert(equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map));
             } else {
                 assert(i < j);
-                assume(false);
-                // assert(self.directories_obey_invariant());
+                assert(self.directories_obey_invariant());
 
-                // self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, i + 1, vaddr, n);
-                // self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i + 1, j);
+                self.lemma_insert_interp_of_entry_implies_insert_interp_aux(i + 1, j, base, n, frame);
+                self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i + 1, j);
+                assert(!self.interp_of_entry(j).map.dom().contains(base));
 
-                // assert(self.interp_aux(j).map.dom().contains(vaddr));
-                // assert(self.interp_aux(i + 1).map.dom().contains(vaddr));
+                assert(!self.interp_aux(i).map.dom().contains(base));
 
-                // assert(equal(self.interp_aux(i + 1).map.remove(vaddr), self.update(j, n).interp_aux(i + 1).map));
+                assert(equal(self.interp_aux(i + 1).map.insert(base, frame), self.update(j, n).interp_aux(i + 1).map));
 
-                // assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
+                assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
 
+                assert(nself.inv());
+                assert(equal(nself.interp_aux(i).map, nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
 
-
-                // assert(nself.inv());
-                // assert(equal(nself.interp_aux(i).map, nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
-
-                // assert(equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map));
+                assert(equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map));
             }
         }
     }
@@ -2203,16 +2206,44 @@ pub fn lemma_new_seq(i: nat) {
 }
 
 #[proof]
+pub fn lemma_map_union_prefer_right_insert_commute<S,T>() {
+    ensures([
+            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
+                   (!m1.dom().contains(n) && !m2.dom().contains(n))
+                   >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v))),
+            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
+                   (!m1.dom().contains(n) && !m2.dom().contains(n))
+                   >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v))),
+    ]);
+    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T| {
+        requires(!m1.dom().contains(n) && !m2.dom().contains(n));
+        ensures(equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)));
+        let union1 = m1.insert(n, v).union_prefer_right(m2);
+        let union2 = m1.union_prefer_right(m2).insert(n, v);
+        assert_maps_equal!(union1, union2);
+        assert(equal(union1, union2));
+    });
+    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T| {
+        requires(!m1.dom().contains(n) && !m2.dom().contains(n));
+        ensures(equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)));
+        let union1 = m1.union_prefer_right(m2.insert(n, v));
+        let union2 = m1.union_prefer_right(m2).insert(n, v);
+        assert_maps_equal!(union1, union2);
+        assert(equal(union1, union2));
+    });
+}
+
+#[proof]
 pub fn lemma_map_union_prefer_right_remove_commute<S,T>() {
     ensures([
-            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
                    (m1.dom().contains(n) && !m2.dom().contains(n))
                    >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
-            forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
                    (m2.dom().contains(n) && !m1.dom().contains(n))
                    >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
     ]);
-    assert_forall_by(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat| {
+    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S| {
         requires(m1.dom().contains(n) && !m2.dom().contains(n));
         ensures(equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)));
         let union1 = m1.remove(n).union_prefer_right(m2);
@@ -2224,7 +2255,7 @@ pub fn lemma_map_union_prefer_right_remove_commute<S,T>() {
         // assert(equal(m1.remove(n).union_prefer_right(m2), union2));
         // assert(equal(union1, m1.union_prefer_right(m2).remove(n)));
     });
-    assert_forall_by(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat| {
+    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S| {
         requires(m2.dom().contains(n) && !m1.dom().contains(n));
         ensures(equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)));
         let union1 = m1.union_prefer_right(m2.remove(n));
