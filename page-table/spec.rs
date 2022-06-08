@@ -1856,7 +1856,8 @@ impl Directory {
             },
             NodeEntry::Empty() => {
                 if self.entry_size() == frame.size {
-                    assume(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
+                    self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Page(frame), frame);
+                    assert(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
                 } else {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
                     let new_dir = self.new_empty_dir(entry);
