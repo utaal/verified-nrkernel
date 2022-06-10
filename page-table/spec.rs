@@ -61,6 +61,8 @@ fn ambient_lemmas1() {
     lemma_map_union_prefer_right_insert_commute::<nat,MemRegion>();
 }
 
+// This contains postconditions for which we need to call lemmas that depend on ambient_lemmas1.
+// Proving these in ambient_lemmas1 would cause infinite recursion.
 #[proof]
 fn ambient_lemmas2() {
     ensures([
@@ -639,14 +641,6 @@ impl Directory {
     pub fn entry_base(self, entry: nat) -> nat {
         recommends(self.inv());
         self.base_vaddr + entry * self.entry_size()
-    }
-
-    // The postcondition of this lemma can't be universally quantified over i because that would
-    // require a mixed function/arithmetic trigger. (Or a very dangerous trigger on
-    // `self.entry_base(i)`).
-    #[proof] #[verifier(nonlinear)]
-    pub fn lemma_entry_base_alt_manual(self, i: nat) {
-        ensures(self.entry_base(i+1) == self.entry_base(i) + self.entry_size());
     }
 
     #[proof] #[verifier(nonlinear)]
@@ -1592,7 +1586,6 @@ impl Directory {
                     assert(res.directories_are_in_next_layer());
                     assert(res.directories_obey_invariant());
                     assert(res.directories_are_nonempty());
-                    assert(res.frames_aligned());
                     assert(res.inv());
                     assert(equal(self.map_frame(base, frame).get_Ok_0().layer, self.layer));
 
