@@ -2378,51 +2378,35 @@ impl PageTable {
         && self.inv_at(0, self.memory.root())
     }
 
-    // #[spec(checked)]
-    // pub fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
-    //     decreases_when(self.well_formed());
-    //     decreases((self.arch.layers.len() - layer, 0));
-    //     // decreases_by(Self::directories_obey_invariant_at_decreases);
-
-    //     forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
-    //         let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
-    //         entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
-    //     })
-    // }
-
     #[spec(checked)]
-    pub fn inv_at(&self, layer: nat, ptr: usize) -> bool {
-        // decreases_when(self.well_formed());
-        decreases(self.arch.layers.len() - layer);
-        recommends(self.well_formed());
+    pub fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
+        decreases_when(self.well_formed() && self.layer_in_range(layer));
+        decreases((self.arch.layers.len() - layer, 0));
 
-        true
-        && layer < self.arch.layers.len()
-        // && self.directories_obey_invariant_at(layer, ptr)
-        && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+        forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
             let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
             entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
         })
     }
 
-    // #[proof] #[verifier(decreases_by)]
-    // fn directories_obey_invariant_at_decreases(&self, layer: nat, ptr: usize) {
-    //     if layer + 1 < self.arch.layers.len() {
-    //         if exists(|i: nat|
-    //             i < self.arch.layers.index(layer).num_entries && {
-    //             parse_entry_bytes(#[trigger] self.get_entry_bytes(ptr, i)).is_Directory()
-    //         }) {
-    //             let i = choose(|i: nat|
-    //                 i < self.arch.layers.index(layer).num_entries && {
-    //                 parse_entry_bytes(#[trigger] self.get_entry_bytes(ptr, i)).is_Directory()
-    //             });
-    //             assume(false);
-    //         } else {
-    //         }
-    //     } else {
-    //         assume(false);
-    //     }
-    // }
+    #[spec]
+    pub fn layer_in_range(self, layer: nat) -> bool {
+        layer < self.arch.layers.len()
+    }
+
+    #[spec(checked)]
+    pub fn inv_at(&self, layer: nat, ptr: usize) -> bool {
+        decreases(self.arch.layers.len() - layer);
+        recommends(self.well_formed());
+
+        true
+        && self.layer_in_range(layer)
+        && self.directories_obey_invariant_at(layer, ptr)
+        && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+            let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+        })
+    }
 
     #[spec]
     pub fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry {
