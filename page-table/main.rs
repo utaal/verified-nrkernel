@@ -7,5 +7,6 @@ pub mod pervasive;
 pub mod spec;
 pub mod system;
 pub mod x86impl;
+pub mod high_level_spec;
 
 fn main() {}
