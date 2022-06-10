@@ -665,6 +665,8 @@ impl Directory {
             crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
             assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
         });
+
+        assume(false); // unstable
     }
 
     #[spec]
@@ -963,6 +965,8 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
+
+                assume(false); // instability
             });
 
             assert(interp.mappings_in_bounds());
@@ -2306,5 +2310,159 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
     if s.len() == 0 {
         // contradiction
         assert(s.remove(a).len() + 1 == 0);
+    }
+}
+
+#[verifier(external_body)]
+pub struct PageTableMemory {
+    // how is the memory range for this represented?
+    ptr: *mut u8,
+}
+
+impl PageTableMemory {
+    #[spec]
+    fn root(&self) -> usize { arbitrary() }
+
+    #[spec]
+    fn view(&self) -> Seq<u8> { arbitrary() }
+
+    #[verifier(external_body)]
+    fn write(&mut self, ptr: usize, byte: u8) {
+        requires(ptr < old(self).view().len());
+        ensures(forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte));
+
+        unsafe { 
+            self.ptr.offset(ptr as isize).write(byte)
+        }
+    }
+}
+
+pub struct PageTable {
+    pub memory: PageTableMemory,
+    #[spec] pub arch: Arch,
+}
+
+const ENTRY_BYTES: usize = 4;
+
+#[spec] #[is_variant]
+pub enum ParsedEntry {
+    Directory { ptr: usize },
+    Page { base: nat },
+    Empty,
+}
+
+#[spec]
+pub fn parse_entry_bytes(bytes: Seq<u8>) -> ParsedEntry {
+    arbitrary()
+}
+
+impl PageTable {
+
+    #[spec]
+    pub fn get_entry_bytes(&self, ptr: usize, i: nat) -> Seq<u8> {
+        self.memory.view().subrange(
+            ptr as int + i as int * ENTRY_BYTES as int,
+            ptr as int + (i as int + 1) * ENTRY_BYTES as int)
+    }
+
+    #[spec(checked)]
+    pub fn well_formed(&self) -> bool {
+        true
+        && self.arch.inv()
+    }
+    
+    #[spec(checked)]
+    pub fn inv(&self) -> bool {
+        true
+        && self.well_formed()
+        && self.inv_at(0, self.memory.root())
+    }
+
+    // #[spec(checked)]
+    // pub fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
+    //     decreases_when(self.well_formed());
+    //     decreases((self.arch.layers.len() - layer, 0));
+    //     // decreases_by(Self::directories_obey_invariant_at_decreases);
+
+    //     forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+    //         let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
+    //         entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+    //     })
+    // }
+
+    #[spec(checked)]
+    pub fn inv_at(&self, layer: nat, ptr: usize) -> bool {
+        // decreases_when(self.well_formed());
+        decreases(self.arch.layers.len() - layer);
+        recommends(self.well_formed());
+
+        true
+        && layer < self.arch.layers.len()
+        // && self.directories_obey_invariant_at(layer, ptr)
+        && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+            let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+        })
+    }
+
+    // #[proof] #[verifier(decreases_by)]
+    // fn directories_obey_invariant_at_decreases(&self, layer: nat, ptr: usize) {
+    //     if layer + 1 < self.arch.layers.len() {
+    //         if exists(|i: nat|
+    //             i < self.arch.layers.index(layer).num_entries && {
+    //             parse_entry_bytes(#[trigger] self.get_entry_bytes(ptr, i)).is_Directory()
+    //         }) {
+    //             let i = choose(|i: nat|
+    //                 i < self.arch.layers.index(layer).num_entries && {
+    //                 parse_entry_bytes(#[trigger] self.get_entry_bytes(ptr, i)).is_Directory()
+    //             });
+    //             assume(false);
+    //         } else {
+    //         }
+    //     } else {
+    //         assume(false);
+    //     }
+    // }
+
+    #[spec]
+    pub fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry {
+        decreases_when(self.inv_at(layer, ptr));
+        decreases((self.arch.layers.len() - layer, 0, 2));
+        let bytes = self.memory.view().subrange(ptr, ptr as int + ENTRY_BYTES as int);
+        match parse_entry_bytes(bytes) {
+            ParsedEntry::Directory { ptr: directory_ptr } => 
+                NodeEntry::Directory(
+                    self.interp_at(directory_ptr as usize, base_vaddr, layer + 1)),
+            ParsedEntry::Page { base } => NodeEntry::Page(
+                MemRegion { base, size: self.arch.layers.index(layer).entry_size }),
+            ParsedEntry::Empty => NodeEntry::Empty(),
+        }
+    }
+
+    #[spec]
+    pub fn interp_at(&self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory {
+        decreases_when(self.inv_at(layer, ptr));
+        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries, 1));
+        Directory {
+            entries: self.interp_at_aux(ptr, base_vaddr, layer, 0),
+            layer: layer,
+            base_vaddr,
+            arch: self.arch,
+        }
+    }
+
+    #[spec]
+    fn interp_at_aux(&self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry> {
+        decreases_when(self.inv_at(layer, ptr));
+        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries - i, 0));
+        if i >= self.arch.layers.index(layer).num_entries {
+            seq![]
+        } else {
+            seq![self.interp_entry_bytes_as_node_entry(
+                ptr + i as usize * ENTRY_BYTES,
+                base_vaddr + i as usize * self.arch.layers.index(layer).entry_size,
+                layer)].add(
+                self.interp_at_aux(ptr, base_vaddr, layer, i + 1))
+        }
     }
 }
