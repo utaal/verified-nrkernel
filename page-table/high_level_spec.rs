@@ -1,10 +1,10 @@
 #[allow(unused_imports)] use crate::pervasive::*;
 use seq::*;
-use crate::*;
+#[allow(unused_imports)] use crate::*;
 #[allow(unused_imports)] use builtin::*;
 #[allow(unused_imports)] use builtin_macros::*;
 #[allow(unused_imports)] use state_machines_macros::*;
-use map::*;
+#[allow(unused_imports)] use map::*;
 
 // RA: the ARMv8 architecture you can also load/store a pair of registers in one instruction,
 //     (and I think even more than that)

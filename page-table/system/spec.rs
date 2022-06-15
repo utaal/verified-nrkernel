@@ -89,7 +89,7 @@ state_machine! { MemoryTranslator {
 
 #[proof]
 fn memory_translator_test_1() {
-    let entry = PageTableEntry { p_addr: 16, size: 8, flags: Flags { is_present: true, is_writable: true, is_user_mode_allowed: true, instruction_fetching_disabled: true } };
+    let entry = PageTableEntry { p_addr: 16, size: 8, flags: Flags { is_writable: true, is_user_mode_allowed: true, instruction_fetching_disabled: true } };
     let mt = MemoryTranslator::State {
         tlb: map![],
         page_table: map![128 => entry],
