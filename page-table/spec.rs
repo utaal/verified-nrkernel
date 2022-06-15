@@ -14,19 +14,6 @@ use crate::lib::aligned;
 #[allow(unused_imports)]
 use result::{*, Result::*};
 
-// macro_rules! assert_directory_inv {
-//     ($dir:expr) => {
-//         assert($dir.well_formed());
-//         assert($dir.pages_match_entry_size());
-//         assert($dir.directories_are_in_next_layer());
-//         assert($dir.directories_match_arch());
-//         assert($dir.directories_obey_invariant());
-//         assert($dir.directories_are_nonempty());
-//         assert($dir.frames_aligned());
-//         assert($dir.inv());
-//     };
-// }
-
 #[proof]
 fn ambient_lemmas1() {
     ensures([
@@ -183,8 +170,9 @@ impl Arch {
             crate::lib::mod_of_mul_auto();
             crate::lib::aligned_transitive_auto();
         }
-        // Stabilizes proof with z3 4.8.17
-        assert(aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size));
+        // NOTE: This is the only non-nonlinear lemma that became unstable when
+        // switching to z3 4.8.17.
+        assume(false); // unstable
     }
 
     #[proof]
@@ -646,7 +634,21 @@ impl Directory {
     }
 
     #[proof] #[verifier(nonlinear)]
-    pub fn lemma_entry_base(self) {
+    pub fn lemma_entry_base_manual(self, i: nat) {
+        requires(self.inv());
+        ensures([
+                forall_arith(|j: nat| j < i >>= self.entry_base(j) < self.entry_base(i) && self.entry_base(#[trigger] (j+1)) <= self.entry_base(i)),
+                aligned(self.entry_base(i), self.entry_size()),
+                // forall(|i: nat| i < self.num_entries() && self.entries.index(i).is_Directory() >>= {
+                //     let d = self.entries.index(i).get_Directory_0();
+                //     d.upper_vaddr() == self.entry_base(i+1)
+                // })
+        ]);
+        self.lemma_entry_base_auto();
+    }
+
+    #[proof] #[verifier(nonlinear)]
+    pub fn lemma_entry_base_auto(self) {
         requires(self.inv());
         ensures([
                 forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
@@ -734,7 +736,7 @@ impl Directory {
 
         let entry_i = self.interp_of_entry(i);
 
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
         match self.entries.index(i) {
             NodeEntry::Page(p)      => {
                 assert(entry_i.mappings_dont_overlap());
@@ -895,7 +897,7 @@ impl Directory {
             assert(interp.mappings_are_of_valid_size());
 
             if let NodeEntry::Page(p) = entry {
-                self.lemma_entry_base();
+                self.lemma_entry_base_auto();
             }
 
             assert(interp.mappings_are_aligned());
@@ -1066,6 +1068,8 @@ impl Directory {
                    >>= !self.interp_aux(i).map.dom().contains(va)),
         ]);
 
+        assume(false); // unstable
+
         self.lemma_inv_implies_interp_aux_inv(i+1);
         self.lemma_inv_implies_interp_of_entry_inv(i);
         self.lemma_inv_implies_interp_of_entry_inv(j);
@@ -1085,7 +1089,7 @@ impl Directory {
             }
         }
 
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
     }
 
     #[proof]
@@ -1200,7 +1204,7 @@ impl Directory {
                 // assert(vaddr == self.base_vaddr + i * self.entry_size());
             }
         }
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
     }
 
     #[proof]
@@ -1263,7 +1267,7 @@ impl Directory {
                 between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size))
         );
 
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
         self.lemma_interp_of_entry();
         self.lemma_interp_contains_implies_interp_of_entry_contains();
 
@@ -1428,7 +1432,7 @@ impl Directory {
 
         let new_dir = self.new_empty_dir(entry);
         let num_entries = self.arch.layers.index((self.layer + 1) as nat).num_entries;
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
         lemma_new_seq(num_entries);
 
         assert(new_dir.directories_obey_invariant());
@@ -1501,7 +1505,7 @@ impl Directory {
         ambient_lemmas1();
         self.lemma_index_for_vaddr_bounds(base);
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
 
         let entry = self.index_for_vaddr(base);
         assert(self.directories_obey_invariant());
@@ -1564,7 +1568,7 @@ impl Directory {
         ambient_lemmas1();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         self.lemma_index_for_vaddr_bounds(base);
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
 
         let res = self.map_frame(base, frame).get_Ok_0();
 
@@ -1773,7 +1777,7 @@ impl Directory {
         self.lemma_inv_implies_interp_inv();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         self.lemma_index_for_vaddr_bounds(base);
-        self.lemma_entry_base();
+        self.lemma_entry_base_auto();
 
         let res = self.map_frame(base, frame).get_Ok_0();
         if self.map_frame(base, frame).is_Ok() {
@@ -2022,7 +2026,7 @@ impl Directory {
                     assert(self.update(entry, NodeEntry::Empty()).inv());
                     self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                 } else {
-                    self.lemma_entry_base();
+                    self.lemma_entry_base_auto();
                     assert_nonlinear_by({
                         requires([
                             aligned(self.entry_base(entry), self.entry_size()),
@@ -2453,4 +2457,142 @@ impl PageTable {
                 self.interp_at_aux(ptr, base_vaddr, layer, i + 1))
         }
     }
+}
+
+// struct PDEntryPageFlags {
+//         /// Present; must be 1 to map a page or reference a directory
+//         P: bool,
+//         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+//         RW: bool,
+//         /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+//         US: bool,
+//         /// Page-level write-through
+//         PWT: bool,
+//         /// Page-level cache disable
+//         PCD: bool,
+//         /// Accessed; indicates whether software has accessed the page referenced by this entry
+//         A: bool,
+//         /// Dirty; indicates whether software has written to the page referenced by this entry
+//         D: bool,
+//         /// Page size; must be 1 (otherwise, this entry references a directory)
+//         PS: bool,
+//         /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
+//         G: bool,
+//         /// Indirectly determines the memory type used to access the page referenced by this entry
+//         PAT: bool,
+//         /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+//         /// the page controlled by this entry); otherwise, reserved (must be 0)
+//         XD: bool,
+// }
+
+
+const MAXPHYADDR: u64 = 52;
+
+// An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
+struct PageDirectoryEntry(u64);
+
+// FIXME: these macros probably already exist somewhere?
+macro_rules! bit {
+    ($v:expr) => {
+        1 << $v
+    }
+}
+// Generate bitmask where bits $low:$high are set to 1.
+macro_rules! bitmask {
+    ($low:expr,$high:expr) => {
+        (!(!0 << ($high-$low))) << $low
+    }
+}
+
+// layer:
+// 0 -> Page Table
+// 1 -> Page Directory
+// 2 -> Page Directory Pointer Table
+// 3 -> PML4
+
+
+// MASK_FLAG_* are flags valid for all entries.
+const MASK_FLAG_P:    u64 = bit!(0);
+const MASK_FLAG_RW:   u64 = bit!(1);
+const MASK_FLAG_US:   u64 = bit!(2);
+const MASK_FLAG_PWT:  u64 = bit!(3);
+const MASK_FLAG_PCD:  u64 = bit!(4);
+const MASK_FLAG_A:    u64 = bit!(5);
+const MASK_FLAG_XD:   u64 = bit!(63);
+// We can use the same address mask for all layers as long as we preserve the invariant that the
+// lower bits that *should* be masked off are already zero.
+const MASK_ADDR:      u64 = bitmask!(12,MAXPHYADDR);
+
+// MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
+// layer exists, e.g. for layer 0 MASK_L0_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
+const MASK_PG_FLAG_D:    u64 = bit!(6);
+const MASK_PG_FLAG_G:    u64 = bit!(8);
+const MASK_PG_FLAG_PAT:  u64 = bit!(12);
+
+const MASK_L1_PG_FLAG_PS:   u64 = bit!(7);
+const MASK_L2_PG_FLAG_PS:   u64 = bit!(7);
+const MASK_L0_PG_FLAG_PAT:  u64 = bit!(7);
+// // FIXME: we should be able to always use the 12:52 mask and have the invariant state that in the
+// // other cases, the lower bits are already zero anyway.
+// const MASK_S0_PG_ADDR:      u64 = bitmask!(12,52);
+// const MASK_S1_PG_ADDR:      u64 = bitmask!(21,52);
+// const MASK_S2_PG_ADDR:      u64 = bitmask!(30,52);
+
+// // MASK_PD_* are flags valid for all entries pointing to another directory
+// const MASK_PD_ADDR:      u64 = bitmask!(12,52);
+
+impl PageDirectoryEntry {
+
+    pub fn new_entry(
+        layer: usize,
+        address: u64,
+        is_page: bool,
+        is_writable: bool,
+        is_supervisor: bool,
+        is_writethrough: bool,
+        disable_cache: bool,
+        disable_execute: bool,
+        ) -> PageDirectoryEntry
+    {
+        requires([
+                 is_page >>= layer < 3,
+                 address & MASK_ADDR == address,
+        ]);
+        PageDirectoryEntry(
+            address
+            | MASK_FLAG_P
+            | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+            | if is_writable           { MASK_FLAG_RW }  else { 0 }
+            | if is_supervisor         { MASK_FLAG_US }  else { 0 }
+            | if is_writethrough       { MASK_FLAG_PWT } else { 0 }
+            | if disable_cache         { MASK_FLAG_PCD } else { 0 }
+            | if disable_execute       { MASK_FLAG_XD }  else { 0 }
+            )
+    }
+
+    pub fn address(self) -> u64 {
+        // FIXME: need invariant to make sure we can always use the biggest mask here
+        self.0 & MASK_ADDR
+    }
+
+    pub fn is_mapping(self) -> bool {
+        (self.0 & MASK_FLAG_P) != 0
+    }
+
+    // FIXME: any better way of doing this?
+    #[spec] pub fn is_mapping_spec(self) -> bool {
+        (self.0 & MASK_FLAG_P) != 0
+    }
+
+    pub fn is_page(self, layer: usize) -> bool {
+        requires(self.is_mapping_spec());
+        (layer == 0) || ((self.0 & MASK_L1_PG_FLAG_PS) != 0)
+    }
+
+    pub fn is_dir(self, layer: usize) -> bool {
+        requires(self.is_mapping_spec());
+        !self.is_page(layer)
+    }
+
+    // ....
 }

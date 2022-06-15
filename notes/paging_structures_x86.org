@@ -1,0 +1,42 @@
+Main takeaway: Directories only differ in whether certain bits are ignored or
+must-be-zero. For page mappings, the only difference is PAT/PS location for 4K
+pages and the address mask.
+
+The table contains the bit-locations of each field for each of PML4, PDPT, PD,
+PT when mapping either a page or a directory.
+Fields that are specified as ignored or must-be-zero are listed as such.
+The table should be complete (i.e. for each column the listed bit locations
+should cover 63:0).
+
+M refers to MAXPHYADDR.
+Note: PML4/PML5 can't map pages and PT can't map directories; I.e. those are omitted.
+We assume "ordinary" paging, no HLAT. We assume "not (CR4.PKE or CR4.PKS = 1)" (meaning bits 62:59 in all entries are ignored/mbz).
+
+| Field  | Name                     | PML5/Dir     | PML4/Dir     | PDPT/Dir     | PD/Dir    |       PDPT/Page |         PD/Page |   PT/Page |
+|--------+--------------------------+--------------+--------------+--------------+-----------+-----------------+-----------------+-----------|
+| P      | Present                  | 0            | 0            | 0            | 0         |               0 |               0 |         0 |
+| RW     | Read/write               | 1            | 1            | 1            | 1         |               1 |               1 |         1 |
+| US     | User/supervisor          | 2            | 2            | 2            | 2         |               2 |               2 |         2 |
+| PWT    | page-level write-through | 3            | 3            | 3            | 3         |               3 |               3 |         3 |
+| PCD    | page-level cache disable | 4            | 4            | 4            | 4         |               4 |               4 |         4 |
+| A      | accessed                 | 5            | 5            | 5            | 5         |               5 |               5 |         5 |
+| D      | dirty                    | -            | -            | -            | -         |               6 |               6 |         6 |
+| PS     | page size                | -            | -            | -            | -         |               7 |               7 |         - |
+| G      | global                   | -            | -            | -            | -         |               8 |               8 |         8 |
+| PAT    | PAT memory type stuff    | -            | -            | -            | -         |              12 |              12 |         7 |
+| XD     | execute-disable          | 63           | 63           | 63           | 63        |              63 |              63 |        63 |
+| Addr   | Physical address         | M-1:12       | M-1:12       | M-1:12       | M-1:12    |          M-1:30 |          M-1:21 |    M-1:12 |
+|        |                          |              |              |              |           |                 |                 |           |
+| Ignore | Ignored                  | 62:52,11:8,6 | 62:52,11:8,6 | 62:52,11:8,6 | 11:8,6    |      62:52,11:9 |            11:9 |      11:9 |
+| MB0    | Must be 0                | 51:M,7       | 51:M,7       | 51:M,7       | 62:M,7    |      51:M,29:13 |      62:M,20:13 |      62:M |
+|        |                          |              |              |              |           |                 |                 |           |
+| Ig/MB0 | Ignored OR must be 0     | 62:M,11:6    | 62:M,11:6    | 62:M,11:6    | 62:M,11:6 | 62:M,29:13,11:9 | 62:M,20:13,11:9 | 62:M,11:9 |
+
+Relevant tables from the intel manual:
+
+- PML4/Dir: 4-15
+- PDPT/Page: 4-16
+- PDPT/Dir: 4-17
+- PD/Page: 4-9
+- PD/Dir: 4-10
+- PT/Page: 4-11
