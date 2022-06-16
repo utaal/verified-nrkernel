@@ -173,7 +173,7 @@ impl Arch {
         }
         // NOTE: This is the only non-nonlinear lemma that became unstable when
         // switching to z3 4.8.17.
-        assume(false); // unstable
+        // assume(false); // unstable
     }
 
     #[proof]
@@ -2366,11 +2366,11 @@ macro_rules! bitmask_inc {
         (!(!0 << (($high+1)-$low))) << $low
     }
 }
-macro_rules! bitmask {
-    ($low:expr,$high:expr) => {
-        (!(!0 << ($high-$low))) << $low
-    }
-}
+// macro_rules! bitmask {
+//     ($low:expr,$high:expr) => {
+//         (!(!0 << ($high-$low))) << $low
+//     }
+// }
 
 // layer:
 // 0 -> Page Table
