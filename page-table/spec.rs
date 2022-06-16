@@ -2322,144 +2322,6 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
     }
 }
 
-#[verifier(external_body)]
-pub struct PageTableMemory {
-    // how is the memory range for this represented?
-    ptr: *mut u8,
-}
-
-impl PageTableMemory {
-    #[spec]
-    fn root(&self) -> usize { arbitrary() }
-
-    #[spec]
-    fn view(&self) -> Seq<u8> { arbitrary() }
-
-    #[verifier(external_body)]
-    fn write(&mut self, ptr: usize, byte: u8) {
-        requires(ptr < old(self).view().len());
-        ensures(forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte));
-
-        unsafe { 
-            self.ptr.offset(ptr as isize).write(byte)
-        }
-    }
-}
-
-pub struct PageTable {
-    pub memory: PageTableMemory,
-    #[spec] pub arch: Arch,
-}
-
-const ENTRY_BYTES: usize = 4;
-
-#[spec] #[is_variant]
-pub enum ParsedEntry {
-    Directory { ptr: usize },
-    Page { base: nat },
-    Empty,
-}
-
-#[spec]
-pub fn parse_entry_bytes(bytes: Seq<u8>) -> ParsedEntry {
-    arbitrary()
-}
-
-impl PageTable {
-
-    #[spec]
-    pub fn get_entry_bytes(&self, ptr: usize, i: nat) -> Seq<u8> {
-        self.memory.view().subrange(
-            ptr as int + i as int * ENTRY_BYTES as int,
-            ptr as int + (i as int + 1) * ENTRY_BYTES as int)
-    }
-
-    #[spec(checked)]
-    pub fn well_formed(&self) -> bool {
-        true
-        && self.arch.inv()
-    }
-    
-    #[spec(checked)]
-    pub fn inv(&self) -> bool {
-        true
-        && self.well_formed()
-        && self.inv_at(0, self.memory.root())
-    }
-
-    #[spec(checked)]
-    pub fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
-        decreases_when(self.well_formed() && self.layer_in_range(layer));
-        decreases((self.arch.layers.len() - layer, 0));
-
-        forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
-            let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
-            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
-        })
-    }
-
-    #[spec]
-    pub fn layer_in_range(self, layer: nat) -> bool {
-        layer < self.arch.layers.len()
-    }
-
-    #[spec(checked)]
-    pub fn inv_at(&self, layer: nat, ptr: usize) -> bool {
-        decreases(self.arch.layers.len() - layer);
-        recommends(self.well_formed());
-
-        true
-        && self.layer_in_range(layer)
-        && self.directories_obey_invariant_at(layer, ptr)
-        && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
-            let entry = #[trigger] parse_entry_bytes(self.get_entry_bytes(ptr, i));
-            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
-        })
-    }
-
-    #[spec]
-    pub fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry {
-        decreases_when(self.inv_at(layer, ptr));
-        decreases((self.arch.layers.len() - layer, 0, 2));
-        let bytes = self.memory.view().subrange(ptr, ptr as int + ENTRY_BYTES as int);
-        match parse_entry_bytes(bytes) {
-            ParsedEntry::Directory { ptr: directory_ptr } => 
-                NodeEntry::Directory(
-                    self.interp_at(directory_ptr as usize, base_vaddr, layer + 1)),
-            ParsedEntry::Page { base } => NodeEntry::Page(
-                MemRegion { base, size: self.arch.layers.index(layer).entry_size }),
-            ParsedEntry::Empty => NodeEntry::Empty(),
-        }
-    }
-
-    #[spec]
-    pub fn interp_at(&self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory {
-        decreases_when(self.inv_at(layer, ptr));
-        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries, 1));
-        Directory {
-            entries: self.interp_at_aux(ptr, base_vaddr, layer, 0),
-            layer: layer,
-            base_vaddr,
-            arch: self.arch,
-        }
-    }
-
-    #[spec]
-    fn interp_at_aux(&self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry> {
-        decreases_when(self.inv_at(layer, ptr));
-        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries - i, 0));
-        if i >= self.arch.layers.index(layer).num_entries {
-            seq![]
-        } else {
-            seq![self.interp_entry_bytes_as_node_entry(
-                ptr + i as usize * ENTRY_BYTES,
-                base_vaddr + i as usize * self.arch.layers.index(layer).entry_size,
-                layer)].add(
-                self.interp_at_aux(ptr, base_vaddr, layer, i + 1))
-        }
-    }
-}
-
 // struct PDEntryPageFlags {
 //         /// Present; must be 1 to map a page or reference a directory
 //         P: bool,
@@ -2498,7 +2360,12 @@ macro_rules! bit {
         1 << $v
     }
 }
-// Generate bitmask where bits $low:$high are set to 1.
+// Generate bitmask where bits $low:$high are set to 1. (inclusive on upper end)
+macro_rules! bitmask_inc {
+    ($low:expr,$high:expr) => {
+        (!(!0 << (($high+1)-$low))) << $low
+    }
+}
 macro_rules! bitmask {
     ($low:expr,$high:expr) => {
         (!(!0 << ($high-$low))) << $low
@@ -2522,7 +2389,7 @@ const MASK_FLAG_A:    u64 = bit!(5);
 const MASK_FLAG_XD:   u64 = bit!(63);
 // We can use the same address mask for all layers as long as we preserve the invariant that the
 // lower bits that *should* be masked off are already zero.
-const MASK_ADDR:      u64 = bitmask!(12,MAXPHYADDR);
+const MASK_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 0 MASK_L0_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
@@ -2533,6 +2400,12 @@ const MASK_PG_FLAG_PAT:  u64 = bit!(12);
 const MASK_L1_PG_FLAG_PS:   u64 = bit!(7);
 const MASK_L2_PG_FLAG_PS:   u64 = bit!(7);
 const MASK_L0_PG_FLAG_PAT:  u64 = bit!(7);
+
+const MASK_DIR_REFC:           u64 = bitmask_inc!(52,62); // Ignored bits for storing refcount in L3 and L2
+const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8,12); // Ignored bits for storing refcount in L1
+const MASK_DIR_REFC_SHIFT:     u64 = 52;
+const MASK_DIR_L1_REFC_SHIFT:  u64 = 8;
+
 // // FIXME: we should be able to always use the 12:52 mask and have the invariant state that in the
 // // other cases, the lower bits are already zero anyway.
 // const MASK_S0_PG_ADDR:      u64 = bitmask!(12,52);
@@ -2576,6 +2449,11 @@ impl PageDirectoryEntry {
         self.0 & MASK_ADDR
     }
 
+    #[spec] pub fn address_spec(self) -> u64 {
+        // FIXME: need invariant to make sure we can always use the biggest mask here
+        self.0 & MASK_ADDR
+    }
+
     pub fn is_mapping(self) -> bool {
         (self.0 & MASK_FLAG_P) != 0
     }
@@ -2590,10 +2468,194 @@ impl PageDirectoryEntry {
         (layer == 0) || ((self.0 & MASK_L1_PG_FLAG_PS) != 0)
     }
 
+    #[spec] pub fn is_page_spec(self, layer: usize) -> bool {
+        recommends(self.is_mapping_spec());
+        if self.is_mapping_spec() {
+            (layer == 0) || ((self.0 & MASK_L1_PG_FLAG_PS) != 0)
+        } else {
+            arbitrary()
+        }
+    }
+
     pub fn is_dir(self, layer: usize) -> bool {
         requires(self.is_mapping_spec());
         !self.is_page(layer)
     }
 
+    #[spec] pub fn is_dir_spec(self, layer: usize) -> bool {
+        recommends(self.is_mapping_spec());
+        if self.is_mapping_spec() {
+            !self.is_page_spec(layer)
+        } else {
+            arbitrary()
+        }
+    }
+
+    // FIXME: this can't really be an associated function because it needs to read one of the
+    // entries, i.e. it would have to read at the address pointer that it stores
+    pub fn refcount(self, layer: usize) -> u64 {
+        requires([
+                 self.is_mapping_spec(),
+                 self.is_dir_spec(layer)
+        ]);
+        assert(layer > 0);
+        if layer == 1 {
+            0
+            // MASK_DIR_L1_REFC
+        } else {
+            0
+            // MASK_DIR_REFC
+        }
+    }
+
     // ....
 }
+
+
+#[verifier(external_body)]
+pub struct PageTableMemory {
+    // how is the memory range for this represented?
+    ptr: *mut u8,
+}
+
+impl PageTableMemory {
+    #[spec]
+    fn root(&self) -> usize { arbitrary() }
+
+    #[spec]
+    fn view(&self) -> Seq<u8> { arbitrary() }
+
+    #[verifier(external_body)]
+    fn write(&mut self, ptr: usize, byte: u8) {
+        requires(ptr < old(self).view().len());
+        ensures(forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte));
+
+        unsafe { 
+            self.ptr.offset(ptr as isize).write(byte)
+        }
+    }
+}
+
+pub struct PageTable {
+    pub memory: PageTableMemory,
+    #[spec] pub arch: Arch,
+}
+
+const ENTRY_BYTES: usize = 4;
+
+#[spec] #[is_variant]
+pub enum ParsedEntry {
+    Directory { ptr: usize },
+    Page { base: nat },
+    Empty,
+}
+
+#[spec]
+pub fn parse_entry_bytes(layer: nat, bytes: Seq<u8>) -> ParsedEntry {
+    let entry = PageDirectoryEntry(arbitrary());
+    if entry.is_mapping_spec() {
+        if entry.is_page_spec(layer as usize) {
+            ParsedEntry::Page { base: entry.address_spec() }
+        } else {
+            ParsedEntry::Directory { ptr: entry.address_spec() as usize }
+        }
+    } else {
+        ParsedEntry::Empty
+    }
+}
+
+impl PageTable {
+
+    #[spec]
+    pub fn get_entry_bytes(&self, ptr: usize, i: nat) -> Seq<u8> {
+        self.memory.view().subrange(
+            ptr as int + i as int * ENTRY_BYTES as int,
+            ptr as int + (i as int + 1) * ENTRY_BYTES as int)
+    }
+
+    #[spec(checked)]
+    pub fn well_formed(&self) -> bool {
+        true
+        && self.arch.inv()
+    }
+    
+    #[spec(checked)]
+    pub fn inv(&self) -> bool {
+        true
+        && self.well_formed()
+        && self.inv_at(0, self.memory.root())
+    }
+
+    #[spec(checked)]
+    pub fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
+        decreases_when(self.well_formed() && self.layer_in_range(layer));
+        decreases((self.arch.layers.len() - layer, 0));
+
+        forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+            let entry = #[trigger] parse_entry_bytes(layer, self.get_entry_bytes(ptr, i));
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+        })
+    }
+
+    #[spec]
+    pub fn layer_in_range(self, layer: nat) -> bool {
+        layer < self.arch.layers.len()
+    }
+
+    #[spec(checked)]
+    pub fn inv_at(&self, layer: nat, ptr: usize) -> bool {
+        decreases(self.arch.layers.len() - layer);
+        recommends(self.well_formed());
+
+        true
+        && self.layer_in_range(layer)
+        && self.directories_obey_invariant_at(layer, ptr)
+        && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+            let entry = #[trigger] parse_entry_bytes(layer, self.get_entry_bytes(ptr, i));
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+        })
+    }
+
+    #[spec]
+    pub fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry {
+        decreases_when(self.inv_at(layer, ptr));
+        decreases((self.arch.layers.len() - layer, 0, 2));
+        let bytes = self.memory.view().subrange(ptr, ptr as int + ENTRY_BYTES as int);
+        match parse_entry_bytes(layer, bytes) {
+            ParsedEntry::Directory { ptr: directory_ptr } => 
+                NodeEntry::Directory(
+                    self.interp_at(directory_ptr as usize, base_vaddr, layer + 1)),
+            ParsedEntry::Page { base } => NodeEntry::Page(
+                MemRegion { base, size: self.arch.layers.index(layer).entry_size }),
+            ParsedEntry::Empty => NodeEntry::Empty(),
+        }
+    }
+
+    #[spec]
+    pub fn interp_at(&self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory {
+        decreases_when(self.inv_at(layer, ptr));
+        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries, 1));
+        Directory {
+            entries: self.interp_at_aux(ptr, base_vaddr, layer, 0),
+            layer: layer,
+            base_vaddr,
+            arch: self.arch,
+        }
+    }
+
+    #[spec]
+    fn interp_at_aux(&self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry> {
+        decreases_when(self.inv_at(layer, ptr));
+        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries - i, 0));
+        if i >= self.arch.layers.index(layer).num_entries {
+            seq![]
+        } else {
+            seq![self.interp_entry_bytes_as_node_entry(
+                ptr + i as usize * ENTRY_BYTES,
+                base_vaddr + i as usize * self.arch.layers.index(layer).entry_size,
+                layer)].add(
+                self.interp_at_aux(ptr, base_vaddr, layer, i + 1))
+        }
+    }
+}
+
