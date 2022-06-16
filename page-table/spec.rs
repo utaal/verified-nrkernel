@@ -2,6 +2,7 @@
 use builtin::*;
 use builtin_macros::*;
 use crate::pervasive::*;
+use modes::*;
 use seq::*;
 use map::*;
 #[allow(unused_imports)]
@@ -2351,7 +2352,11 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
 const MAXPHYADDR: u64 = 52;
 
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
-struct PageDirectoryEntry(u64);
+#[repr(transparent)]
+struct PageDirectoryEntry {
+    entry: u64,
+    layer: Ghost<nat>,
+}
 
 // FIXME: these macros probably already exist somewhere?
 macro_rules! bit {
@@ -2431,46 +2436,49 @@ impl PageDirectoryEntry {
                  is_page >>= layer < 3,
                  address & MASK_ADDR == address,
         ]);
-        PageDirectoryEntry(
-            address
-            | MASK_FLAG_P
-            | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
-            | if is_writable           { MASK_FLAG_RW }  else { 0 }
-            | if is_supervisor         { MASK_FLAG_US }  else { 0 }
-            | if is_writethrough       { MASK_FLAG_PWT } else { 0 }
-            | if disable_cache         { MASK_FLAG_PCD } else { 0 }
-            | if disable_execute       { MASK_FLAG_XD }  else { 0 }
-            )
+        PageDirectoryEntry {
+            entry:
+                address
+                | MASK_FLAG_P
+                | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+                | if is_writable           { MASK_FLAG_RW }  else { 0 }
+                | if is_supervisor         { MASK_FLAG_US }  else { 0 }
+                | if is_writethrough       { MASK_FLAG_PWT } else { 0 }
+                | if disable_cache         { MASK_FLAG_PCD } else { 0 }
+                | if disable_execute       { MASK_FLAG_XD }  else { 0 },
+            layer: Ghost::new(layer as nat),
+
+        }
     }
 
     pub fn address(self) -> u64 {
         // FIXME: need invariant to make sure we can always use the biggest mask here
-        self.0 & MASK_ADDR
+        self.entry & MASK_ADDR
     }
 
     #[spec] pub fn address_spec(self) -> u64 {
         // FIXME: need invariant to make sure we can always use the biggest mask here
-        self.0 & MASK_ADDR
+        self.entry & MASK_ADDR
     }
 
     pub fn is_mapping(self) -> bool {
-        (self.0 & MASK_FLAG_P) != 0
+        (self.entry & MASK_FLAG_P) != 0
     }
 
     // FIXME: any better way of doing this?
     #[spec] pub fn is_mapping_spec(self) -> bool {
-        (self.0 & MASK_FLAG_P) != 0
+        (self.entry & MASK_FLAG_P) != 0
     }
 
     pub fn is_page(self, layer: usize) -> bool {
         requires(self.is_mapping_spec());
-        (layer == 0) || ((self.0 & MASK_L1_PG_FLAG_PS) != 0)
+        (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) != 0)
     }
 
     #[spec] pub fn is_page_spec(self, layer: usize) -> bool {
         recommends(self.is_mapping_spec());
         if self.is_mapping_spec() {
-            (layer == 0) || ((self.0 & MASK_L1_PG_FLAG_PS) != 0)
+            (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) != 0)
         } else {
             arbitrary()
         }
@@ -2551,7 +2559,7 @@ pub enum ParsedEntry {
 
 #[spec]
 pub fn parse_entry_bytes(layer: nat, bytes: Seq<u8>) -> ParsedEntry {
-    let entry = PageDirectoryEntry(arbitrary());
+    let entry = PageDirectoryEntry { entry: arbitrary(), layer: arbitrary() };
     if entry.is_mapping_spec() {
         if entry.is_page_spec(layer as usize) {
             ParsedEntry::Page { base: entry.address_spec() }
