@@ -1,14 +1,13 @@
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-#[macro_use]
 use crate::pervasive::*;
 use seq::*;
 use map::*;
 #[allow(unused_imports)]
 use set::*;
-#[allow(unused_imports)]
-use crate::{seq, seq_insert_rec, map, map_insert_rec, assert_maps_equal, assert_sets_equal, set, set_insert_rec};
+use set_lib::*;
+
 #[allow(unused_imports)]
 use crate::lib::aligned;
 #[allow(unused_imports)]
