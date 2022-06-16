@@ -2322,40 +2322,49 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
     }
 }
 
-// struct PDEntryPageFlags {
-//         /// Present; must be 1 to map a page or reference a directory
-//         P: bool,
-//         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-//         RW: bool,
-//         /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
-//         US: bool,
-//         /// Page-level write-through
-//         PWT: bool,
-//         /// Page-level cache disable
-//         PCD: bool,
-//         /// Accessed; indicates whether software has accessed the page referenced by this entry
-//         A: bool,
-//         /// Dirty; indicates whether software has written to the page referenced by this entry
-//         D: bool,
-//         /// Page size; must be 1 (otherwise, this entry references a directory)
-//         PS: bool,
-//         /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
-//         G: bool,
-//         /// Indirectly determines the memory type used to access the page referenced by this entry
-//         PAT: bool,
-//         /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-//         /// the page controlled by this entry); otherwise, reserved (must be 0)
-//         XD: bool,
-// }
+// PD has a PDEntry which maps a PT
 
+#[spec] #[is_variant]
+pub enum GhostPageDirectoryEntry {
+    Directory {
+        // FIXME: only have existing flags
+        addr: nat,
+        /// Present; must be 1 to map a page or reference a directory
+        flag_P: bool,
+        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+        flag_RW: bool,
+        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+        flag_US: bool,
+        /// Page-level write-through
+        flag_PWT: bool,
+        /// Page-level cache disable
+        flag_PCD: bool,
+        /// Accessed; indicates whether software has accessed the page referenced by this entry
+        flag_A: bool,
+        // /// Dirty; indicates whether software has written to the page referenced by this entry
+        // flag_D: bool,
+        // /// Page size; must be 1 (otherwise, this entry references a directory)
+        // flag_PS: bool,
+        // /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
+        // flag_G: bool,
+        // /// Indirectly determines the memory type used to access the page referenced by this entry
+        // flag_PAT: bool,
+        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+        /// the page controlled by this entry); otherwise, reserved (must be 0)
+        flag_XD: bool,
+    },
+    Page { base: nat },
+    Empty,
+}
 
 const MAXPHYADDR: u64 = 52;
 
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
-#[repr(transparent)]
+// #[repr(transparent)]
 struct PageDirectoryEntry {
     entry: u64,
-    layer: Ghost<nat>,
+    pub view: Ghost<GhostPageDirectoryEntry>,
+    pub layer: Ghost<nat>,
 }
 
 // FIXME: these macros probably already exist somewhere?
@@ -2421,6 +2430,14 @@ const MASK_DIR_L1_REFC_SHIFT:  u64 = 8;
 
 impl PageDirectoryEntry {
 
+    #[spec] pub fn view(self) -> GhostPageDirectoryEntry {
+        *self.view
+    }
+
+    #[spec] pub fn layer(self) -> nat {
+        *self.layer
+    }
+
     pub fn new_entry(
         layer: usize,
         address: u64,
@@ -2437,7 +2454,7 @@ impl PageDirectoryEntry {
                  address & MASK_ADDR == address,
         ]);
         PageDirectoryEntry {
-            entry:
+            entry: {
                 address
                 | MASK_FLAG_P
                 | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
@@ -2445,9 +2462,10 @@ impl PageDirectoryEntry {
                 | if is_supervisor         { MASK_FLAG_US }  else { 0 }
                 | if is_writethrough       { MASK_FLAG_PWT } else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD } else { 0 }
-                | if disable_execute       { MASK_FLAG_XD }  else { 0 },
-            layer: Ghost::new(layer as nat),
-
+                | if disable_execute       { MASK_FLAG_XD }  else { 0 }
+            },
+            layer: Ghost::exec(layer as nat),
+            view: Ghost::exec(arbitrary()),
         }
     }
 
@@ -2456,63 +2474,29 @@ impl PageDirectoryEntry {
         self.entry & MASK_ADDR
     }
 
-    #[spec] pub fn address_spec(self) -> u64 {
-        // FIXME: need invariant to make sure we can always use the biggest mask here
-        self.entry & MASK_ADDR
-    }
-
     pub fn is_mapping(self) -> bool {
-        (self.entry & MASK_FLAG_P) != 0
-    }
-
-    // FIXME: any better way of doing this?
-    #[spec] pub fn is_mapping_spec(self) -> bool {
+        ensures(|r: bool| r == !self.view().is_Empty());
+        assume(false);
         (self.entry & MASK_FLAG_P) != 0
     }
 
     pub fn is_page(self, layer: usize) -> bool {
-        requires(self.is_mapping_spec());
+        requires([
+                 !self.view().is_Empty(),
+                 layer as nat == *self.layer
+        ]);
+        ensures(|r: bool| if r { self.view().is_Page() } else { self.view().is_Directory() });
+        assume(false);
         (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) != 0)
     }
 
-    #[spec] pub fn is_page_spec(self, layer: usize) -> bool {
-        recommends(self.is_mapping_spec());
-        if self.is_mapping_spec() {
-            (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) != 0)
-        } else {
-            arbitrary()
-        }
-    }
-
     pub fn is_dir(self, layer: usize) -> bool {
-        requires(self.is_mapping_spec());
-        !self.is_page(layer)
-    }
-
-    #[spec] pub fn is_dir_spec(self, layer: usize) -> bool {
-        recommends(self.is_mapping_spec());
-        if self.is_mapping_spec() {
-            !self.is_page_spec(layer)
-        } else {
-            arbitrary()
-        }
-    }
-
-    // FIXME: this can't really be an associated function because it needs to read one of the
-    // entries, i.e. it would have to read at the address pointer that it stores
-    pub fn refcount(self, layer: usize) -> u64 {
         requires([
-                 self.is_mapping_spec(),
-                 self.is_dir_spec(layer)
+                 !self.view().is_Empty(),
+                 layer as nat == *self.layer
         ]);
-        assert(layer > 0);
-        if layer == 1 {
-            0
-            // MASK_DIR_L1_REFC
-        } else {
-            0
-            // MASK_DIR_REFC
-        }
+        ensures(|r: bool| if r { self.view().is_Directory() } else { self.view().is_Page() });
+        !self.is_page(layer)
     }
 
     // ....
@@ -2559,16 +2543,17 @@ pub enum ParsedEntry {
 
 #[spec]
 pub fn parse_entry_bytes(layer: nat, bytes: Seq<u8>) -> ParsedEntry {
-    let entry = PageDirectoryEntry { entry: arbitrary(), layer: arbitrary() };
-    if entry.is_mapping_spec() {
-        if entry.is_page_spec(layer as usize) {
-            ParsedEntry::Page { base: entry.address_spec() }
-        } else {
-            ParsedEntry::Directory { ptr: entry.address_spec() as usize }
-        }
-    } else {
-        ParsedEntry::Empty
-    }
+    arbitrary()
+    // let entry = PageDirectoryEntry { entry: arbitrary(), layer: arbitrary(), view: arbitrary() };
+    // if entry.is_mapping_spec() {
+    //     if entry.is_page_spec(layer as usize) {
+    //         ParsedEntry::Page { base: entry.address_spec() }
+    //     } else {
+    //         ParsedEntry::Directory { ptr: entry.address_spec() as usize }
+    //     }
+    // } else {
+    //     ParsedEntry::Empty
+    // }
 }
 
 impl PageTable {
@@ -2665,4 +2650,3 @@ impl PageTable {
         }
     }
 }
-
