@@ -212,7 +212,7 @@ fn paddr_to_kernel_vaddr(pa: PAddr) -> VAddr {
     // TODO(verusquestion): pa.inv() not working?
     requires([pa.0 < MAXPHYADDR]);
 
-    VAddr::new(pa.0)
+    VAddr::new(pa.0) // TODO offset kernel base
 }
 
 fn kernel_vaddr_to_paddr(va: VAddr) -> PAddr {

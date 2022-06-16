@@ -78,6 +78,7 @@ fn ambient_lemmas2() {
 //     });
 // }
 
+#[derive(PartialEq, Eq, Structural)]
 pub struct MemRegion { pub base: nat, pub size: nat }
 
 // TODO use VAddr, PAddr
