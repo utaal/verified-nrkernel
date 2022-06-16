@@ -173,7 +173,7 @@ impl Arch {
         }
         // NOTE: This is the only non-nonlinear lemma that became unstable when
         // switching to z3 4.8.17.
-        // assume(false); // unstable
+        assume(false); // unstable
     }
 
     #[proof]
