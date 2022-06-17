@@ -4,6 +4,7 @@ use builtin_macros::*;
 use crate::pervasive::*;
 use modes::*;
 use seq::*;
+#[allow(unused_imports)]
 use option::{*, Option::*};
 use map::*;
 #[allow(unused_imports)]
@@ -2484,31 +2485,33 @@ impl PageDirectoryEntry {
             layer: Ghost::exec(layer as nat),
             view: Ghost::exec(
                 if is_page {
-                    GhostPageDirectoryEntry::Page {
-                        addr:      nat,
-                        flag_P:    true,
-                        flag_RW:   is_writable,
-                        flag_US:   is_supervisor,
-                        flag_PWT:  is_writethrough,
-                        flag_PCD:  disable_cache,
-                        flag_A:    false,
-                        flag_D:    false,
-                        flag_PS:   if layer == 0 { None } else { Some(true) },
-                        flag_G:    false,
-                        flag_PAT:  false,
-                        flag_XD:   disable_execute,
-                    }
+                    arbitrary()
+                    // GhostPageDirectoryEntry::Page {
+                    //     addr:      nat,
+                    //     flag_P:    true,
+                    //     flag_RW:   is_writable,
+                    //     flag_US:   is_supervisor,
+                    //     flag_PWT:  is_writethrough,
+                    //     flag_PCD:  disable_cache,
+                    //     flag_A:    false,
+                    //     flag_D:    false,
+                    //     flag_PS:   if layer == 0 { None } else { Some(true) },
+                    //     flag_G:    false,
+                    //     flag_PAT:  false,
+                    //     flag_XD:   disable_execute,
+                    // }
                 } else {
-                    GhostPageDirectoryEntry::Directory {
-                        addr: nat,
-                        flag_P: true,
-                        flag_RW: is_writable,
-                        flag_US: is_supervisor,
-                        flag_PWT: is_writethrough,
-                        flag_PCD: disable_cache,
-                        flag_A: false,
-                        flag_XD: disable_execute,
-                    }
+                    arbitrary()
+                    // GhostPageDirectoryEntry::Directory {
+                    //     addr: nat,
+                    //     flag_P: true,
+                    //     flag_RW: is_writable,
+                    //     flag_US: is_supervisor,
+                    //     flag_PWT: is_writethrough,
+                    //     flag_PCD: disable_cache,
+                    //     flag_A: false,
+                    //     flag_XD: disable_execute,
+                    // }
                 }),
         }
     }
