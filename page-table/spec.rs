@@ -4,6 +4,7 @@ use builtin_macros::*;
 use crate::pervasive::*;
 use modes::*;
 use seq::*;
+use option::{*, Option::*};
 use map::*;
 #[allow(unused_imports)]
 use set::*;
