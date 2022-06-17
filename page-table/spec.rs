@@ -2456,6 +2456,9 @@ impl PageDirectoryEntry {
         *self.layer
     }
 
+    // #[spec] pub fn inv(self) -> bool {
+    // }
+
     pub fn new_entry(
         layer: usize,
         address: u64,
@@ -2524,7 +2527,7 @@ impl PageDirectoryEntry {
     pub fn is_mapping(self) -> bool {
         ensures(|r: bool| r == !self.view().is_Empty());
         assume(false);
-        (self.entry & MASK_FLAG_P) != 0
+        (self.entry & MASK_FLAG_P) == MASK_FLAG_P
     }
 
     pub fn is_page(self, layer: usize) -> bool {
@@ -2534,7 +2537,7 @@ impl PageDirectoryEntry {
         ]);
         ensures(|r: bool| if r { self.view().is_Page() } else { self.view().is_Directory() });
         assume(false);
-        (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) != 0)
+        (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) == 0)
     }
 
     pub fn is_dir(self, layer: usize) -> bool {
