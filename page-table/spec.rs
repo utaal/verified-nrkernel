@@ -2322,12 +2322,11 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
     }
 }
 
-// PD has a PDEntry which maps a PT
-
+// FIXME: We can probably remove bits from here that we don't use, e.g. accessed, dirty, PAT. (And
+// set them to zero when we create a new entry.)
 #[spec] #[is_variant]
 pub enum GhostPageDirectoryEntry {
     Directory {
-        // FIXME: only have existing flags
         addr: nat,
         /// Present; must be 1 to map a page or reference a directory
         flag_P: bool,
@@ -2341,19 +2340,36 @@ pub enum GhostPageDirectoryEntry {
         flag_PCD: bool,
         /// Accessed; indicates whether software has accessed the page referenced by this entry
         flag_A: bool,
-        // /// Dirty; indicates whether software has written to the page referenced by this entry
-        // flag_D: bool,
-        // /// Page size; must be 1 (otherwise, this entry references a directory)
-        // flag_PS: bool,
-        // /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
-        // flag_G: bool,
-        // /// Indirectly determines the memory type used to access the page referenced by this entry
-        // flag_PAT: bool,
         /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
         /// the page controlled by this entry); otherwise, reserved (must be 0)
         flag_XD: bool,
     },
-    Page { base: nat },
+    Page {
+        addr: nat,
+        /// Present; must be 1 to map a page or reference a directory
+        flag_P: bool,
+        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+        flag_RW: bool,
+        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+        flag_US: bool,
+        /// Page-level write-through
+        flag_PWT: bool,
+        /// Page-level cache disable
+        flag_PCD: bool,
+        /// Accessed; indicates whether software has accessed the page referenced by this entry
+        flag_A: bool,
+        /// Dirty; indicates whether software has written to the page referenced by this entry
+        flag_D: bool,
+        /// Page size; must be 1 (otherwise, this entry references a directory)
+        flag_PS: Option<bool>, // (Page size only exists for layers 1, 2)
+        /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
+        flag_G: bool,
+        /// Indirectly determines the memory type used to access the page referenced by this entry
+        flag_PAT: bool,
+        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+        /// the page controlled by this entry); otherwise, reserved (must be 0)
+        flag_XD: bool,
+    },
     Empty,
 }
 
@@ -2458,14 +2474,41 @@ impl PageDirectoryEntry {
                 address
                 | MASK_FLAG_P
                 | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
-                | if is_writable           { MASK_FLAG_RW }  else { 0 }
-                | if is_supervisor         { MASK_FLAG_US }  else { 0 }
-                | if is_writethrough       { MASK_FLAG_PWT } else { 0 }
-                | if disable_cache         { MASK_FLAG_PCD } else { 0 }
-                | if disable_execute       { MASK_FLAG_XD }  else { 0 }
+                | if is_writable           { MASK_FLAG_RW }        else { 0 }
+                | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
+                | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
+                | if disable_execute       { MASK_FLAG_XD }        else { 0 }
             },
             layer: Ghost::exec(layer as nat),
-            view: Ghost::exec(arbitrary()),
+            view: Ghost::exec(
+                if is_page {
+                    GhostPageDirectoryEntry::Page {
+                        addr:      nat,
+                        flag_P:    true,
+                        flag_RW:   is_writable,
+                        flag_US:   is_supervisor,
+                        flag_PWT:  is_writethrough,
+                        flag_PCD:  disable_cache,
+                        flag_A:    false,
+                        flag_D:    false,
+                        flag_PS:   if layer == 0 { None } else { Some(true) },
+                        flag_G:    false,
+                        flag_PAT:  false,
+                        flag_XD:   disable_execute,
+                    }
+                } else {
+                    GhostPageDirectoryEntry::Directory {
+                        addr: nat,
+                        flag_P: true,
+                        flag_RW: is_writable,
+                        flag_US: is_supervisor,
+                        flag_PWT: is_writethrough,
+                        flag_PCD: disable_cache,
+                        flag_A: false,
+                        flag_XD: disable_execute,
+                    }
+                }),
         }
     }
 
@@ -2503,6 +2546,8 @@ impl PageDirectoryEntry {
 }
 
 
+// FIXME: We need to allow the dirty and accessed bits to change in the memory.
+// Or maybe we just don't read those bits at all?
 #[verifier(external_body)]
 pub struct PageTableMemory {
     // how is the memory range for this represented?
