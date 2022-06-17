@@ -2329,7 +2329,7 @@ pub fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
 #[spec] #[is_variant]
 pub enum GhostPageDirectoryEntry {
     Directory {
-        addr: nat,
+        addr: usize,
         /// Present; must be 1 to map a page or reference a directory
         flag_P: bool,
         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
@@ -2347,7 +2347,7 @@ pub enum GhostPageDirectoryEntry {
         flag_XD: bool,
     },
     Page {
-        addr: nat,
+        addr: usize,
         /// Present; must be 1 to map a page or reference a directory
         flag_P: bool,
         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
@@ -2362,8 +2362,9 @@ pub enum GhostPageDirectoryEntry {
         flag_A: bool,
         /// Dirty; indicates whether software has written to the page referenced by this entry
         flag_D: bool,
-        /// Page size; must be 1 (otherwise, this entry references a directory)
-        flag_PS: Option<bool>, // (Page size only exists for layers 1, 2)
+        // /// Page size; must be 1 (otherwise, this entry references a directory)
+        // flag_PS: Option<bool>,
+        // PS is entirely determined by the Page variant and the layer
         /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
         flag_G: bool,
         /// Indirectly determines the memory type used to access the page referenced by this entry
@@ -2376,14 +2377,6 @@ pub enum GhostPageDirectoryEntry {
 }
 
 const MAXPHYADDR: u64 = 52;
-
-// An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
-// #[repr(transparent)]
-struct PageDirectoryEntry {
-    entry: u64,
-    pub view: Ghost<GhostPageDirectoryEntry>,
-    pub layer: Ghost<nat>,
-}
 
 // FIXME: these macros probably already exist somewhere?
 macro_rules! bit {
@@ -2446,18 +2439,54 @@ const MASK_DIR_L1_REFC_SHIFT:  u64 = 8;
 // // MASK_PD_* are flags valid for all entries pointing to another directory
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
 
+// An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
+#[repr(transparent)]
+struct PageDirectoryEntry {
+    entry: u64,
+    // pub view: Ghost<GhostPageDirectoryEntry>,
+    pub layer: Ghost<nat>,
+}
+
 impl PageDirectoryEntry {
 
     #[spec] pub fn view(self) -> GhostPageDirectoryEntry {
-        *self.view
+        // *self.view
+        if self.layer() <= 3 {
+            let v = self.entry;
+            if v & MASK_FLAG_P == MASK_FLAG_P {
+                let addr     = (v & MASK_ADDR) as usize; // FIXME: is this safe?
+                let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
+                let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
+                let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
+                let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
+                let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
+                let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
+                let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
+                if (self.layer() == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) == 0) {
+                    let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
+                    let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
+                    let flag_PAT = if self.layer() == 0 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L0_PG_FLAG_PAT == MASK_L0_PG_FLAG_PAT };
+                    GhostPageDirectoryEntry::Page {
+                        addr,
+                        flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
+                        flag_A, flag_D, flag_G, flag_PAT, flag_XD,
+                    }
+                } else {
+                    GhostPageDirectoryEntry::Directory {
+                        addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
+                    }
+                }
+            } else {
+                GhostPageDirectoryEntry::Empty
+            }
+        } else {
+            arbitrary()
+        }
     }
 
     #[spec] pub fn layer(self) -> nat {
         *self.layer
     }
-
-    // #[spec] pub fn inv(self) -> bool {
-    // }
 
     pub fn new_entry(
         layer: usize,
@@ -2486,36 +2515,36 @@ impl PageDirectoryEntry {
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 }
             },
             layer: Ghost::exec(layer as nat),
-            view: Ghost::exec(
-                if is_page {
-                    arbitrary()
-                    // GhostPageDirectoryEntry::Page {
-                    //     addr:      nat,
-                    //     flag_P:    true,
-                    //     flag_RW:   is_writable,
-                    //     flag_US:   is_supervisor,
-                    //     flag_PWT:  is_writethrough,
-                    //     flag_PCD:  disable_cache,
-                    //     flag_A:    false,
-                    //     flag_D:    false,
-                    //     flag_PS:   if layer == 0 { None } else { Some(true) },
-                    //     flag_G:    false,
-                    //     flag_PAT:  false,
-                    //     flag_XD:   disable_execute,
-                    // }
-                } else {
-                    arbitrary()
-                    // GhostPageDirectoryEntry::Directory {
-                    //     addr: nat,
-                    //     flag_P: true,
-                    //     flag_RW: is_writable,
-                    //     flag_US: is_supervisor,
-                    //     flag_PWT: is_writethrough,
-                    //     flag_PCD: disable_cache,
-                    //     flag_A: false,
-                    //     flag_XD: disable_execute,
-                    // }
-                }),
+            // view: Ghost::exec(
+            //     if is_page {
+            //         arbitrary()
+            //         // GhostPageDirectoryEntry::Page {
+            //         //     addr:      nat,
+            //         //     flag_P:    true,
+            //         //     flag_RW:   is_writable,
+            //         //     flag_US:   is_supervisor,
+            //         //     flag_PWT:  is_writethrough,
+            //         //     flag_PCD:  disable_cache,
+            //         //     flag_A:    false,
+            //         //     flag_D:    false,
+            //         //     flag_PS:   if layer == 0 { None } else { Some(true) },
+            //         //     flag_G:    false,
+            //         //     flag_PAT:  false,
+            //         //     flag_XD:   disable_execute,
+            //         // }
+            //     } else {
+            //         arbitrary()
+            //         // GhostPageDirectoryEntry::Directory {
+            //         //     addr: nat,
+            //         //     flag_P: true,
+            //         //     flag_RW: is_writable,
+            //         //     flag_US: is_supervisor,
+            //         //     flag_PWT: is_writethrough,
+            //         //     flag_PCD: disable_cache,
+            //         //     flag_A: false,
+            //         //     flag_XD: disable_execute,
+            //         // }
+            //     }),
         }
     }
 
@@ -2573,7 +2602,7 @@ impl PageTableMemory {
         requires(ptr < old(self).view().len());
         ensures(forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte));
 
-        unsafe { 
+        unsafe {
             self.ptr.offset(ptr as isize).write(byte)
         }
     }
@@ -2584,28 +2613,34 @@ pub struct PageTable {
     #[spec] pub arch: Arch,
 }
 
-const ENTRY_BYTES: usize = 4;
+const ENTRY_BYTES: usize = 8;
 
-#[spec] #[is_variant]
-pub enum ParsedEntry {
-    Directory { ptr: usize },
-    Page { base: nat },
-    Empty,
-}
+// #[spec] #[is_variant]
+// pub enum ParsedEntry {
+//     Directory { ptr: usize },
+//     Page { base: nat },
+//     Empty,
+// }
 
-#[spec]
-pub fn parse_entry_bytes(layer: nat, bytes: Seq<u8>) -> ParsedEntry {
+// #[spec]
+// pub fn parse_entry_bytes(layer: nat, bytes: Seq<u8>) -> ParsedEntry {
+//     arbitrary()
+//     // let entry = PageDirectoryEntry { entry: arbitrary(), layer: arbitrary(), view: arbitrary() };
+//     // if entry.is_mapping_spec() {
+//     //     if entry.is_page_spec(layer as usize) {
+//     //         ParsedEntry::Page { base: entry.address_spec() }
+//     //     } else {
+//     //         ParsedEntry::Directory { ptr: entry.address_spec() as usize }
+//     //     }
+//     // } else {
+//     //     ParsedEntry::Empty
+//     // }
+// }
+
+#[spec] pub fn u64_from_le_bytes(bytes: Seq<u8>) -> u64 {
+    recommends(bytes.len() == 8);
+    // u64::from_le_bytes(bytes)
     arbitrary()
-    // let entry = PageDirectoryEntry { entry: arbitrary(), layer: arbitrary(), view: arbitrary() };
-    // if entry.is_mapping_spec() {
-    //     if entry.is_page_spec(layer as usize) {
-    //         ParsedEntry::Page { base: entry.address_spec() }
-    //     } else {
-    //         ParsedEntry::Directory { ptr: entry.address_spec() as usize }
-    //     }
-    // } else {
-    //     ParsedEntry::Empty
-    // }
 }
 
 impl PageTable {
@@ -2622,7 +2657,7 @@ impl PageTable {
         true
         && self.arch.inv()
     }
-    
+
     #[spec(checked)]
     pub fn inv(&self) -> bool {
         true
@@ -2630,14 +2665,23 @@ impl PageTable {
         && self.inv_at(0, self.memory.root())
     }
 
-    #[spec(checked)]
+    /// Get the view of the entry at address ptr + i * ENTRY_BYTES
+    #[spec] pub fn view_at(self, layer: nat, ptr: usize, i: nat) -> GhostPageDirectoryEntry {
+        PageDirectoryEntry {
+            entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)),
+            layer: Ghost::new(layer),
+        }.view()
+    }
+
+    #[spec]
     pub fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
         decreases_when(self.well_formed() && self.layer_in_range(layer));
         decreases((self.arch.layers.len() - layer, 0));
 
         forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
-            let entry = #[trigger] parse_entry_bytes(layer, self.get_entry_bytes(ptr, i));
-            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+            let entry = #[trigger] self.view_at(layer, ptr, i);
+            // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }.view();
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
         })
     }
 
@@ -2646,7 +2690,7 @@ impl PageTable {
         layer < self.arch.layers.len()
     }
 
-    #[spec(checked)]
+    #[spec]
     pub fn inv_at(&self, layer: nat, ptr: usize) -> bool {
         decreases(self.arch.layers.len() - layer);
         recommends(self.well_formed());
@@ -2655,8 +2699,8 @@ impl PageTable {
         && self.layer_in_range(layer)
         && self.directories_obey_invariant_at(layer, ptr)
         && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
-            let entry = #[trigger] parse_entry_bytes(layer, self.get_entry_bytes(ptr, i));
-            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_ptr())
+            let entry = #[trigger] self.view_at(layer, ptr, i);
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
         })
     }
 
@@ -2664,14 +2708,15 @@ impl PageTable {
     pub fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry {
         decreases_when(self.inv_at(layer, ptr));
         decreases((self.arch.layers.len() - layer, 0, 2));
-        let bytes = self.memory.view().subrange(ptr, ptr as int + ENTRY_BYTES as int);
-        match parse_entry_bytes(layer, bytes) {
-            ParsedEntry::Directory { ptr: directory_ptr } => 
+        match self.view_at(layer, ptr, 0) {
+            GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =>
                 NodeEntry::Directory(
-                    self.interp_at(directory_ptr as usize, base_vaddr, layer + 1)),
-            ParsedEntry::Page { base } => NodeEntry::Page(
-                MemRegion { base, size: self.arch.layers.index(layer).entry_size }),
-            ParsedEntry::Empty => NodeEntry::Empty(),
+                    self.interp_at(dir_addr, base_vaddr, layer + 1)),
+            GhostPageDirectoryEntry::Page { addr, .. } =>
+                NodeEntry::Page(
+                    MemRegion { base: addr, size: self.arch.layers.index(layer).entry_size }),
+            GhostPageDirectoryEntry::Empty =>
+                NodeEntry::Empty(),
         }
     }
 
