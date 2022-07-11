@@ -2384,7 +2384,7 @@ macro_rules! bit {
         1 << $v
     }
 }
-// Generate bitmask where bits $low:$high are set to 1. (inclusive on upper end)
+// Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
 macro_rules! bitmask_inc {
     ($low:expr,$high:expr) => {
         (!(!0 << (($high+1)-$low))) << $low
@@ -2414,6 +2414,7 @@ const MASK_FLAG_XD:   u64 = bit!(63);
 // We can use the same address mask for all layers as long as we preserve the invariant that the
 // lower bits that *should* be masked off are already zero.
 const MASK_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
+// const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 0 MASK_L0_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
@@ -2432,9 +2433,32 @@ const MASK_DIR_L1_REFC_SHIFT:  u64 = 8;
 
 // // FIXME: we should be able to always use the 12:52 mask and have the invariant state that in the
 // // other cases, the lower bits are already zero anyway.
-// const MASK_S0_PG_ADDR:      u64 = bitmask!(12,52);
-// const MASK_S1_PG_ADDR:      u64 = bitmask!(21,52);
-// const MASK_S2_PG_ADDR:      u64 = bitmask!(30,52);
+const MASK_L0_PG_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
+const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21,MAXPHYADDR);
+const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30,MAXPHYADDR);
+
+#[proof] #[verifier(bit_vector)]
+fn lemma_bv_ambient() {
+    ensures([
+            // commute
+            forall(|a: u64, b: u64| a & b == b & a),
+            forall(|a: u64, b: u64| a | b == b | a),
+            // // bitmask absorb and
+            // forall(|a: u64, i: u64, j: u64, k: u64|
+            //        i < j && j < 64 >>=
+            //        (a & bitmask_inc!(i, k)) & bitmask_inc!(j, k) == a & bitmask_inc!(i, k)),
+    ]);
+}
+
+// TODO: can we get support for consts in bit vector reasoning?
+#[proof]// #[verifier(bit_vector)]
+fn lemma_addr_masks_facts(address: u64) {
+    ensures([
+            (bitmask_inc!(21 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address),
+            (bitmask_inc!(30 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address)
+    ]);
+    assume(false); // TODO: unstable
+}
 
 // // MASK_PD_* are flags valid for all entries pointing to another directory
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
@@ -2484,8 +2508,63 @@ impl PageDirectoryEntry {
         }
     }
 
+    #[spec] pub fn inv(self) -> bool {
+        true
+        && self.layer() <= 3
+        && self.addr_is_zero_padded()
+    }
+
+    #[spec] pub fn addr_is_zero_padded(self) -> bool {
+        if self.layer() == 0 {
+            self.entry & MASK_ADDR == self.entry & MASK_L0_PG_ADDR
+        } else if self.layer() == 1 {
+            self.entry & MASK_ADDR == self.entry & MASK_L1_PG_ADDR
+        } else if self.layer() == 2 {
+            self.entry & MASK_ADDR == self.entry & MASK_L2_PG_ADDR
+        } else {
+            true
+        }
+    }
+
     #[spec] pub fn layer(self) -> nat {
         *self.layer
+    }
+
+    #[proof] pub fn lemma_new_entry_addr_mask_is_address(
+        layer: usize,
+        address: u64,
+        is_page: bool,
+        is_writable: bool,
+        is_supervisor: bool,
+        is_writethrough: bool,
+        disable_cache: bool,
+        disable_execute: bool,
+        ) {
+        requires([
+                 layer <= 3,
+                 is_page >>= layer < 3,
+                 if layer == 0 {
+                     address & MASK_L0_PG_ADDR == address
+                 } else if layer == 1 {
+                     address & MASK_L1_PG_ADDR == address
+                 } else if layer == 2 {
+                     address & MASK_L2_PG_ADDR == address
+                 } else { true }
+        ]);
+        ensures([
+                {
+                    let e = address
+                        | MASK_FLAG_P
+                        | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+                        | if is_writable           { MASK_FLAG_RW }        else { 0 }
+                        | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                        | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
+                        | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
+                        | if disable_execute       { MASK_FLAG_XD }        else { 0 };
+                    e & MASK_ADDR == address
+                }
+        ]);
+        assume(false);
     }
 
     pub fn new_entry(
@@ -2500,9 +2579,19 @@ impl PageDirectoryEntry {
         ) -> PageDirectoryEntry
     {
         requires([
+                 layer <= 3,
                  is_page >>= layer < 3,
-                 address & MASK_ADDR == address,
+                 if layer == 0 {
+                     address & MASK_L0_PG_ADDR == address
+                 } else if layer == 1 {
+                     address & MASK_L1_PG_ADDR == address
+                 } else if layer == 2 {
+                     address & MASK_L2_PG_ADDR == address
+                 } else { true }
         ]);
+        ensures(|r: Self| r.inv());
+
+        let e =
         PageDirectoryEntry {
             entry: {
                 address
@@ -2545,7 +2634,31 @@ impl PageDirectoryEntry {
             //         //     flag_XD: disable_execute,
             //         // }
             //     }),
-        }
+        };
+
+        assert(e.layer() <= 3);
+
+        assert_by(e.addr_is_zero_padded(), {
+            lemma_bv_ambient();
+            lemma_addr_masks_facts(address);
+            Self::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+            if e.layer() == 0 {
+            } else if e.layer() == 1 {
+                assert(address & MASK_L1_PG_ADDR == address);
+                assert(MASK_L1_PG_ADDR & address == address);
+                assert(bitmask_inc!(21 as u64, 52 as u64) & address == address);
+                // (bitmask_inc!(21 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address),
+                assert(bitmask_inc!(12 as u64, 52 as u64) & address == address);
+                // assert(MASK_ADDR & address == address & MASK_L1_PG_ADDR);
+                assume(false);
+                assert((e.entry & MASK_ADDR) & MASK_ADDR == (e.entry & MASK_ADDR) & MASK_L1_PG_ADDR);
+                assert(e.entry & MASK_ADDR == e.entry & MASK_L1_PG_ADDR);
+            } else if e.layer() == 2 {
+                assume(false);
+                assert(e.entry & MASK_ADDR == e.entry & MASK_L2_PG_ADDR);
+            }
+        });
+        e
     }
 
     pub fn address(self) -> u64 {
