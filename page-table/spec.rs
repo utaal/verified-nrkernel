@@ -2437,19 +2437,6 @@ const MASK_L0_PG_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
 const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21,MAXPHYADDR);
 const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30,MAXPHYADDR);
 
-#[proof] #[verifier(bit_vector)]
-fn lemma_bv_ambient() {
-    ensures([
-            // commute
-            forall(|a: u64, b: u64| a & b == b & a),
-            forall(|a: u64, b: u64| a | b == b | a),
-            // // bitmask absorb and
-            // forall(|a: u64, i: u64, j: u64, k: u64|
-            //        i < j && j < 64 >>=
-            //        (a & bitmask_inc!(i, k)) & bitmask_inc!(j, k) == a & bitmask_inc!(i, k)),
-    ]);
-}
-
 // TODO: can we get support for consts in bit vector reasoning?
 #[proof]// #[verifier(bit_vector)]
 fn lemma_addr_masks_facts(address: u64) {
@@ -2458,6 +2445,14 @@ fn lemma_addr_masks_facts(address: u64) {
             (bitmask_inc!(30 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address)
     ]);
     assume(false); // TODO: unstable
+}
+
+#[proof] #[verifier(bit_vector)]
+fn lemma_addr_masks_facts2(address: u64) {
+    ensures([
+            ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64)),
+            ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64)),
+    ]);
 }
 
 // // MASK_PD_* are flags valid for all entries pointing to another directory
@@ -2530,7 +2525,8 @@ impl PageDirectoryEntry {
         *self.layer
     }
 
-    #[proof] pub fn lemma_new_entry_addr_mask_is_address(
+    #[proof]
+    pub fn lemma_new_entry_addr_mask_is_address(
         layer: usize,
         address: u64,
         is_page: bool,
@@ -2639,24 +2635,9 @@ impl PageDirectoryEntry {
         assert(e.layer() <= 3);
 
         assert_by(e.addr_is_zero_padded(), {
-            lemma_bv_ambient();
             lemma_addr_masks_facts(address);
+            lemma_addr_masks_facts2(e.entry);
             Self::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
-            if e.layer() == 0 {
-            } else if e.layer() == 1 {
-                assert(address & MASK_L1_PG_ADDR == address);
-                assert(MASK_L1_PG_ADDR & address == address);
-                assert(bitmask_inc!(21 as u64, 52 as u64) & address == address);
-                // (bitmask_inc!(21 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address),
-                assert(bitmask_inc!(12 as u64, 52 as u64) & address == address);
-                // assert(MASK_ADDR & address == address & MASK_L1_PG_ADDR);
-                assume(false);
-                assert((e.entry & MASK_ADDR) & MASK_ADDR == (e.entry & MASK_ADDR) & MASK_L1_PG_ADDR);
-                assert(e.entry & MASK_ADDR == e.entry & MASK_L1_PG_ADDR);
-            } else if e.layer() == 2 {
-                assume(false);
-                assert(e.entry & MASK_ADDR == e.entry & MASK_L2_PG_ADDR);
-            }
         });
         e
     }
