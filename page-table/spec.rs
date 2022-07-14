@@ -132,8 +132,9 @@ impl Arch {
             && self.entry_size_is_next_layer_size(i))))
     }
 
-    pub closed spec(checked) fn entry_size_is_next_layer_size(self, i: nat) -> bool {
-        recommends(i < self.layers.len());
+    pub closed spec(checked) fn entry_size_is_next_layer_size(self, i: nat) -> bool
+        recommends i < self.layers.len()
+    {
         i + 1 < self.layers.len() >>=
             self.layers.index(i).entry_size == self.layers.index((i + 1) as nat).entry_size * self.layers.index((i + 1) as nat).num_entries
     }
@@ -334,8 +335,9 @@ impl PageTableContents {
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
     // #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
-    spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()> {
-        recommends(self.accepted_resolve(vaddr));
+    spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()>
+        recommends self.accepted_resolve(vaddr)
+    {
         if exists(|base:nat|
                   self.map.dom().contains(base) &&
                   between(vaddr, base, base + (#[trigger] self.map.index(base)).size)) {
@@ -364,8 +366,9 @@ impl PageTableContents {
     }
 
     /// Removes the frame from the address space that contains `base`.
-    spec(checked) fn unmap(self, base: nat) -> Result<PageTableContents,()> {
-        recommends(self.accepted_unmap(base));
+    spec(checked) fn unmap(self, base: nat) -> Result<PageTableContents,()>
+        recommends self.accepted_unmap(base)
+    {
         if self.map.dom().contains(base) {
             Ok(self.remove(base))
         } else {
@@ -463,34 +466,40 @@ impl Directory {
         && self.entries.len() == self.num_entries()
     }
 
-    pub closed spec(checked) fn arch_layer(&self) -> ArchLayer {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn arch_layer(&self) -> ArchLayer
+        recommends self.well_formed()
+    {
         self.arch.layers.index(self.layer)
     }
 
-    pub closed spec(checked) fn entry_size(&self) -> nat {
-        recommends(self.layer < self.arch.layers.len());
+    pub closed spec(checked) fn entry_size(&self) -> nat
+        recommends self.layer < self.arch.layers.len()
+    {
         self.arch.layers.index(self.layer).entry_size
     }
 
-    pub closed spec(checked) fn num_entries(&self) -> nat { // number of entries
-        recommends(self.layer < self.arch.layers.len());
+    pub closed spec(checked) fn num_entries(&self) -> nat // number of entries
+        recommends self.layer < self.arch.layers.len()
+    {
         self.arch.layers.index(self.layer).num_entries
     }
 
-    pub closed spec(checked) fn empty(&self) -> bool {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn empty(&self) -> bool
+        recommends self.well_formed()
+    {
         forall(|i: nat| i < self.num_entries() >>= self.entries.index(i).is_Empty())
     }
 
-    pub closed spec(checked) fn pages_match_entry_size(&self) -> bool {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn pages_match_entry_size(&self) -> bool
+        recommends self.well_formed()
+    {
         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
                >>= (#[trigger] self.entries.index(i)).get_Page_0().size == self.entry_size())
     }
 
-    pub closed spec(checked) fn directories_are_in_next_layer(&self) -> bool {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn directories_are_in_next_layer(&self) -> bool
+        recommends self.well_formed()
+    {
         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
                >>= {
                     let directory = (#[trigger] self.entries.index(i)).get_Directory_0();
@@ -500,10 +509,13 @@ impl Directory {
                 })
     }
 
-    pub closed spec(checked) fn directories_obey_invariant(&self) -> bool {
-        decreases((self.arch.layers.len() - self.layer, 0));
-        recommends(self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch());
-
+    pub closed spec(checked) fn directories_obey_invariant(&self) -> bool
+        recommends
+            self.well_formed(),
+            self.directories_are_in_next_layer(),
+            self.directories_match_arch(),
+        decreases (self.arch.layers.len() - self.layer, 0)
+    {
         if self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch() {
             forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
                    >>= (#[trigger] self.entries.index(i)).get_Directory_0().inv())
@@ -517,22 +529,27 @@ impl Directory {
                >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch))
     }
 
-    pub closed spec fn directories_are_nonempty(&self) -> bool {
-        recommends(self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch());
+    pub closed spec fn directories_are_nonempty(&self) -> bool
+        recommends
+            self.well_formed(),
+            self.directories_are_in_next_layer(),
+            self.directories_match_arch(),
+    {
         forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
                >>= !(#[trigger] self.entries.index(i).get_Directory_0().empty()))
             // TODO: Maybe pick a more aggressive trigger?
     }
 
-    pub closed spec(checked) fn frames_aligned(&self) -> bool {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn frames_aligned(&self) -> bool
+        recommends self.well_formed()
+    {
         forall(|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() >>=
                   aligned((#[trigger] self.entries.index(i)).get_Page_0().base, self.entry_size()))
     }
 
-    pub closed spec(checked) fn inv(&self) -> bool {
-        decreases(self.arch.layers.len() - self.layer);
-
+    pub closed spec(checked) fn inv(&self) -> bool
+        decreases self.arch.layers.len() - self.layer
+    {
         true
         && self.well_formed()
         && self.pages_match_entry_size()
@@ -544,12 +561,12 @@ impl Directory {
     }
 
     pub closed spec(checked) fn interp(self) -> PageTableContents {
-        // recommends(self.inv());
         self.interp_aux(0)
     }
 
-    pub closed spec(checked) fn upper_vaddr(self) -> nat {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn upper_vaddr(self) -> nat
+        recommends self.well_formed()
+    {
         self.base_vaddr + self.num_entries() * self.entry_size()
     }
 
@@ -561,8 +578,9 @@ impl Directory {
          self.vaddr_offset(vaddr) / self.entry_size()
     }
 
-    pub closed spec(checked) fn entry_base(self, entry: nat) -> nat {
-        recommends(self.inv());
+    pub closed spec(checked) fn entry_base(self, entry: nat) -> nat
+        recommends self.inv()
+    {
         self.base_vaddr + entry * self.entry_size()
     }
 
@@ -612,9 +630,9 @@ impl Directory {
         (self.entry_base(entry), self.entry_base(entry + 1))
     }
 
-    pub closed spec fn interp_of_entry(self, entry: nat) -> PageTableContents {
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - entry, 0));
-
+    pub closed spec fn interp_of_entry(self, entry: nat) -> PageTableContents
+        decreases (self.arch.layers.len() - self.layer, self.num_entries() - entry, 0)
+    {
         if self.inv() && entry < self.entries.len() {
             let (lower, upper) = self.entry_bounds(entry);
             PageTableContents {
@@ -749,11 +767,9 @@ impl Directory {
         });
     }
 
-    pub closed spec(checked) fn interp_aux(self, i: nat) -> PageTableContents {
-        // TODO: Adding the recommendation causes a warning on the recursive call, which we can't
-        // prevent without writing assertions.
-        // recommends(self.inv());
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i, 1));
+    pub closed spec(checked) fn interp_aux(self, i: nat) -> PageTableContents
+        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i, 1)
+    {
 
         if self.inv() {
             if i >= self.entries.len() {
@@ -1042,10 +1058,13 @@ impl Directory {
     //     }
     // }
 
-    spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()> {
-        recommends(self.inv() && self.interp().accepted_resolve(vaddr));
+    spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()>
+        recommends
+            self.inv(),
+            self.interp().accepted_resolve(vaddr),
+        decreases self.arch.layers.len() - self.layer
+    {
         decreases_when(self.inv() && self.interp().accepted_resolve(vaddr));
-        decreases(self.arch.layers.len() - self.layer);
         recommends_by(Self::check_resolve);
 
         let entry = self.index_for_vaddr(vaddr);
@@ -1263,8 +1282,9 @@ impl Directory {
         }
     }
 
-    pub closed spec(checked) fn update(self, n: nat, e: NodeEntry) -> Self {
-        recommends(n < self.entries.len());
+    pub closed spec(checked) fn update(self, n: nat, e: NodeEntry) -> Self
+        recommends n < self.entries.len()
+    {
         Directory {
             entries: self.entries.update(n, e),
             ..self
@@ -1276,13 +1296,15 @@ impl Directory {
 
     // }
 
-    pub closed spec(checked) fn candidate_mapping_in_bounds(self, base: nat, frame: MemRegion) -> bool {
-        recommends(self.inv());
+    pub closed spec(checked) fn candidate_mapping_in_bounds(self, base: nat, frame: MemRegion) -> bool
+        recommends self.inv()
+    {
         self.base_vaddr <= base && base + frame.size <= self.upper_vaddr()
     }
 
-    pub closed spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
-        recommends(self.inv());
+    pub closed spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool
+        recommends self.inv()
+    {
         true
         && aligned(base, frame.size)
         && aligned(frame.base, frame.size)
@@ -1315,8 +1337,12 @@ impl Directory {
     }
 
     // Creates new empty directory to map to entry 'entry'
-    pub closed spec fn new_empty_dir(self, entry: nat) -> Self {
-        recommends(self.inv() && entry < self.num_entries() && self.layer + 1 < self.arch.layers.len());
+    pub closed spec fn new_empty_dir(self, entry: nat) -> Self
+        recommends
+            self.inv(),
+            entry < self.num_entries(),
+            self.layer + 1 < self.arch.layers.len(),
+    {
         Directory {
             entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
             layer:      self.layer + 1,
@@ -1344,9 +1370,9 @@ impl Directory {
         assert(new_dir.inv());
     }
 
-    pub closed spec fn map_frame(self, base: nat, frame: MemRegion) -> Result<Self,()> {
-        // recommends(self.inv());
-        decreases(self.arch.layers.len() - self.layer);
+    pub closed spec fn map_frame(self, base: nat, frame: MemRegion) -> Result<Self,()>
+        decreases self.arch.layers.len() - self.layer
+    {
         decreases_by(Self::check_map_frame);
 
         if self.inv() && self.accepted_mapping(base, frame) {
@@ -1790,15 +1816,19 @@ impl Directory {
         }
     }
 
-    pub closed spec(checked) fn accepted_unmap(self, base: nat) -> bool {
-        recommends(self.well_formed());
+    pub closed spec(checked) fn accepted_unmap(self, base: nat) -> bool
+        recommends self.well_formed()
+    {
         true
         && self.interp().accepted_unmap(base)
     }
 
-    pub closed spec fn unmap(self, base: nat) -> Result<Self,()> {
-        recommends(self.inv() && self.accepted_unmap(base));
-        decreases(self.arch.layers.len() - self.layer);
+    pub closed spec fn unmap(self, base: nat) -> Result<Self,()>
+        recommends
+            self.inv(),
+            self.accepted_unmap(base),
+        decreases self.arch.layers.len() - self.layer
+    {
         decreases_by(Self::check_unmap);
 
         if self.inv() && self.accepted_unmap(base) {
@@ -1976,8 +2006,8 @@ impl Directory {
             forall(|j: nat| i <= j && j < self.entries.len() >>= equal(self.entries.index(j), other.entries.index(j))),
         ensures
             equal(self.interp_aux(i), other.interp_aux(i)),
+        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
     {
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         if i >= self.entries.len() {
         } else {
             let rem1 = self.interp_aux(i + 1);
@@ -2624,9 +2654,10 @@ impl PageTable {
         }
     }
 
-    pub closed spec fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool {
+    pub closed spec fn directories_obey_invariant_at(&self, layer: nat, ptr: usize) -> bool
+        decreases (self.arch.layers.len() - layer, 0)
+    {
         decreases_when(self.well_formed() && self.layer_in_range(layer));
-        decreases((self.arch.layers.len() - layer, 0));
 
         forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
             let entry = #[trigger] self.view_at(layer, ptr, i);
@@ -2639,10 +2670,10 @@ impl PageTable {
         layer < self.arch.layers.len()
     }
 
-    pub closed spec fn inv_at(&self, layer: nat, ptr: usize) -> bool {
-        decreases(self.arch.layers.len() - layer);
-        recommends(self.well_formed());
-
+    pub closed spec fn inv_at(&self, layer: nat, ptr: usize) -> bool
+        recommends self.well_formed()
+        decreases self.arch.layers.len() - layer
+    {
         true
         && self.layer_in_range(layer)
         && self.directories_obey_invariant_at(layer, ptr)
@@ -2655,9 +2686,10 @@ impl PageTable {
         })
     }
 
-    pub closed spec fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry {
+    pub closed spec fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry
+        decreases (self.arch.layers.len() - layer, 0, 2)
+    {
         decreases_when(self.inv_at(layer, ptr));
-        decreases((self.arch.layers.len() - layer, 0, 2));
         match self.view_at(layer, ptr, 0) {
             GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =>
                 NodeEntry::Directory(
@@ -2670,9 +2702,10 @@ impl PageTable {
         }
     }
 
-    pub closed spec fn interp_at(self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory {
+    pub closed spec fn interp_at(self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory
+        decreases (self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries, 1)
+    {
         decreases_when(self.inv_at(layer, ptr));
-        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries, 1));
         Directory {
             entries: self.interp_at_aux(ptr, base_vaddr, layer, 0),
             layer: layer,
@@ -2681,9 +2714,10 @@ impl PageTable {
         }
     }
 
-    spec fn interp_at_aux(self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry> {
+    spec fn interp_at_aux(self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry>
+        decreases (self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries - i, 0)
+    {
         decreases_when(self.inv_at(layer, ptr));
-        decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries - i, 0));
         if i >= self.arch.layers.index(layer).num_entries {
             seq![]
         } else {
