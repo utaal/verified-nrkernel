@@ -18,26 +18,28 @@ verus! {
 
 proof fn ambient_lemmas1()
     ensures
-        forall(|d: Directory, i: nat| with_triggers!([d.inv(), d.entries.index(i)] => d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv())),
-        forall(|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()),
+        forall|d: Directory, i: nat|
+            #![trigger d.inv(), d.entries.index(i)]
+            d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory() >>= d.entries.index(i).get_Directory_0().inv(),
+        forall|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite(),
         forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a),
-        forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
-               (m1.dom().contains(n) && !m2.dom().contains(n))
-               >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
-        forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
-               (m2.dom().contains(n) && !m1.dom().contains(n))
-               >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
-        forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
-               (!m1.dom().contains(n) && !m2.dom().contains(n))
-               >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v))),
-        forall(|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
-               (!m1.dom().contains(n) && !m2.dom().contains(n))
-               >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v))),
+        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+            (m1.dom().contains(n) && !m2.dom().contains(n))
+            >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
+        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+            (m2.dom().contains(n) && !m1.dom().contains(n))
+            >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)),
+        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
+            (!m1.dom().contains(n) && !m2.dom().contains(n))
+            >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)),
+        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
+            (!m1.dom().contains(n) && !m2.dom().contains(n))
+            >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)),
         // forall(|d: Directory| d.inv() >>= (#[trigger] d.interp().upper == d.upper_vaddr())),
         // forall(|d: Directory| d.inv() >>= (#[trigger] d.interp().lower == d.base_vaddr)),
     {
     lemma_finite_map_union::<nat,MemRegion>();
-    assert_nonlinear_by({ ensures(forall(|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries()))); });
+    assert_nonlinear_by({ ensures(forall|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
     assert_forall_by(|d: Directory, i: nat| {
         requires(#[auto_trigger] d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory());
         ensures(#[auto_trigger] d.entries.index(i).get_Directory_0().inv());
@@ -51,8 +53,8 @@ proof fn ambient_lemmas1()
 // Proving these in ambient_lemmas1 would cause infinite recursion.
 proof fn ambient_lemmas2()
     ensures
-        forall(|d: Directory| d.inv() >>= (#[trigger] d.interp()).upper == d.upper_vaddr()),
-        forall(|d: Directory| d.inv() >>= (#[trigger] d.interp()).lower == d.base_vaddr),
+        forall|d: Directory| d.inv() >>= (#[trigger] d.interp()).upper == d.upper_vaddr(),
+        forall|d: Directory| d.inv() >>= (#[trigger] d.interp()).lower == d.base_vaddr,
 {
     assert_forall_by(|d: Directory| {
         requires(d.inv());
@@ -82,7 +84,7 @@ pub struct MemRegion { pub base: nat, pub size: nat }
 // TODO use VAddr, PAddr
 
 pub open spec fn strictly_decreasing(s: Seq<nat>) -> bool {
-    forall(|i: nat, j: nat| i < j && j < s.len() >>= s.index(i) > s.index(j))
+    forall|i: nat, j: nat| i < j && j < s.len() >>= s.index(i) > s.index(j)
 }
 
 pub open spec fn between(x: nat, a: nat, b: nat) -> bool {
@@ -125,11 +127,15 @@ pub ghost struct Arch {
 
 impl Arch {
     pub closed spec(checked) fn inv(&self) -> bool {
-        forall(|i:nat| with_triggers!([self.layers.index(i).entry_size], [self.layers.index(i).num_entries] => i < self.layers.len() >>= (
-            true
-            && self.layers.index(i).entry_size > 0
-            && self.layers.index(i).num_entries > 0
-            && self.entry_size_is_next_layer_size(i))))
+        forall|i:nat|
+            #![trigger self.layers.index(i).entry_size]
+            #![trigger self.layers.index(i).num_entries]
+            i < self.layers.len() >>= (
+                // FIXME: conversion, can't use &&& here for some reason?
+                true
+                && self.layers.index(i).entry_size > 0
+                && self.layers.index(i).num_entries > 0
+                && self.entry_size_is_next_layer_size(i))
     }
 
     pub closed spec(checked) fn entry_size_is_next_layer_size(self, i: nat) -> bool
@@ -140,7 +146,7 @@ impl Arch {
     }
 
     pub closed spec(checked) fn contains_entry_size_at_index_atleast(&self, entry_size: nat, min_idx: nat) -> bool {
-        exists(|i: nat| min_idx <= i && i < self.layers.len() && #[trigger] self.layers.index(i).entry_size == entry_size)
+        exists|i: nat| min_idx <= i && i < self.layers.len() && #[trigger] self.layers.index(i).entry_size == entry_size
     }
 
     pub closed spec(checked) fn contains_entry_size(&self, entry_size: nat) -> bool {
@@ -170,9 +176,9 @@ impl Arch {
 
     pub proof fn lemma_entry_sizes_aligned_auto(self)
         ensures
-            forall(|i: nat, j: nat|
-                   self.inv() && i <= j && j < self.layers.len() >>=
-                   aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size))
+            forall|i: nat, j: nat|
+                self.inv() && i <= j && j < self.layers.len() >>=
+                aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size)
     {
         assert_forall_by(|i: nat, j: nat| {
             requires(self.inv() && i <= j && j < self.layers.len());
@@ -245,25 +251,26 @@ impl PageTableContents {
     }
 
     pub closed spec(checked) fn mappings_are_of_valid_size(self) -> bool {
-        forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] =>
-                                        self.map.dom().contains(va) >>= self.arch.contains_entry_size(self.map.index(va).size)))
+        forall|va: nat|
+            #![trigger self.map.index(va).size] #![trigger self.map.index(va).base]
+            self.map.dom().contains(va) >>= self.arch.contains_entry_size(self.map.index(va).size)
     }
 
     pub closed spec(checked) fn mappings_are_aligned(self) -> bool {
-        forall(|va: nat| with_triggers!([self.map.index(va).size],[self.map.index(va).base] =>
-                                        self.map.dom().contains(va)
-                                        >>= (aligned(va, self.map.index(va).size)
-                                             && aligned(self.map.index(va).base, self.map.index(va).size))))
+        forall|va: nat|
+            #![trigger self.map.index(va).size] #![trigger self.map.index(va).base]
+            self.map.dom().contains(va) >>=
+            aligned(va, self.map.index(va).size) && aligned(self.map.index(va).base, self.map.index(va).size)
     }
 
     pub closed spec(checked) fn mappings_dont_overlap(self) -> bool {
-        forall(|b1: nat, b2: nat| // TODO verus the default triggers were bad
-               with_triggers!([self.map.index(b1), self.map.index(b2)],
-                              [self.map.dom().contains(b1), self.map.dom().contains(b2)] =>
-                              (self.map.dom().contains(b1) && self.map.dom().contains(b2))
-                              >>= ((b1 == b2) || !overlap(
-                                      MemRegion { base: b1, size: self.map.index(b1).size },
-                                      MemRegion { base: b2, size: self.map.index(b2).size }))))
+        forall|b1: nat, b2: nat|
+            // TODO verus the default triggers were bad
+            #![trigger self.map.index(b1), self.map.index(b2)] #![trigger self.map.dom().contains(b1), self.map.dom().contains(b2)]
+            self.map.dom().contains(b1) && self.map.dom().contains(b2) >>=
+            ((b1 == b2) || !overlap(
+                    MemRegion { base: b1, size: self.map.index(b1).size },
+                    MemRegion { base: b2, size: self.map.index(b2).size }))
     }
 
     pub closed spec(checked) fn candidate_mapping_in_bounds(self, base: nat, frame: MemRegion) -> bool {
@@ -271,9 +278,10 @@ impl PageTableContents {
     }
 
     pub closed spec(checked) fn mappings_in_bounds(self) -> bool {
-        forall(|b1: nat|
-               with_triggers!([self.map.index(b1)], [self.map.dom().contains(b1)], [self.candidate_mapping_in_bounds(b1, self.map.index(b1))] =>
-                              self.map.dom().contains(b1) >>= self.candidate_mapping_in_bounds(b1, self.map.index(b1))))
+        forall|b1: nat|
+            #![trigger self.map.index(b1)] #![trigger self.map.dom().contains(b1)]
+            #![trigger self.candidate_mapping_in_bounds(b1, self.map.index(b1))]
+            self.map.dom().contains(b1) >>= self.candidate_mapping_in_bounds(b1, self.map.index(b1))
     }
 
     pub closed spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
@@ -285,10 +293,10 @@ impl PageTableContents {
     }
 
     pub closed spec(checked) fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {
-        forall(|b: nat| #[auto_trigger] self.map.dom().contains(b) >>= !overlap(
+        forall|b: nat| #![auto]
+            self.map.dom().contains(b) >>= !overlap(
                 MemRegion { base: base, size: frame.size },
-                MemRegion { base: b, size: self.map.index(b).size }
-                ))
+                MemRegion { base: b, size: self.map.index(b).size })
     }
 
     /// Maps the given `frame` at `base` in the address space
@@ -338,9 +346,9 @@ impl PageTableContents {
     spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()>
         recommends self.accepted_resolve(vaddr)
     {
-        if exists(|base:nat|
-                  self.map.dom().contains(base) &&
-                  between(vaddr, base, base + (#[trigger] self.map.index(base)).size)) {
+        if exists|base:nat|
+            self.map.dom().contains(base) &&
+            between(vaddr, base, base + (#[trigger] self.map.index(base)).size) {
             let base = choose(|base:nat|
                            self.map.dom().contains(base) &&
                            between(vaddr, base, base + (#[trigger] self.map.index(base)).size));
@@ -359,10 +367,11 @@ impl PageTableContents {
     }
 
     spec(checked) fn accepted_unmap(self, base:nat) -> bool {
-        true
-        && between(base, self.lower, self.upper)
-        && exists(|size: nat| with_triggers!([self.arch.contains_entry_size(size)], [aligned(base, size)] =>
-            self.arch.contains_entry_size(size) && aligned(base, size)))
+        &&& between(base, self.lower, self.upper)
+        &&& exists|size: nat|
+            #![trigger self.arch.contains_entry_size(size)]
+            #![trigger aligned(base, size)]
+            self.arch.contains_entry_size(size) && aligned(base, size)
     }
 
     /// Removes the frame from the address space that contains `base`.
@@ -406,8 +415,8 @@ impl PageTableContents {
     }
 
     pub closed spec fn mappings_disjoint(self, other: Self) -> bool {
-        forall(|s: nat, o: nat| self.map.dom().contains(s) && other.map.dom().contains(o) >>=
-            !overlap(MemRegion { base: s, size: self.map.index(s).size }, MemRegion { base: o, size: other.map.index(o).size }))
+        forall|s: nat, o: nat| self.map.dom().contains(s) && other.map.dom().contains(o) >>=
+            !overlap(MemRegion { base: s, size: self.map.index(s).size }, MemRegion { base: o, size: other.map.index(o).size })
     }
 
     pub proof fn lemma_ranges_disjoint_implies_mappings_disjoint(self, other: Self)
@@ -422,8 +431,7 @@ impl PageTableContents {
         requires
             self.inv(),
         ensures
-            forall(|va: nat| #[trigger] self.map.dom().contains(va)
-                   >>= self.map.index(va).size > 0);
+            forall|va: nat| #[trigger] self.map.dom().contains(va) >>= self.map.index(va).size > 0;
 }
 
 
@@ -487,26 +495,25 @@ impl Directory {
     pub closed spec(checked) fn empty(&self) -> bool
         recommends self.well_formed()
     {
-        forall(|i: nat| i < self.num_entries() >>= self.entries.index(i).is_Empty())
+        forall|i: nat| i < self.num_entries() >>= self.entries.index(i).is_Empty()
     }
 
     pub closed spec(checked) fn pages_match_entry_size(&self) -> bool
         recommends self.well_formed()
     {
-        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
-               >>= (#[trigger] self.entries.index(i)).get_Page_0().size == self.entry_size())
+        forall|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
+            >>= (#[trigger] self.entries.index(i)).get_Page_0().size == self.entry_size()
     }
 
     pub closed spec(checked) fn directories_are_in_next_layer(&self) -> bool
         recommends self.well_formed()
     {
-        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-               >>= {
-                    let directory = (#[trigger] self.entries.index(i)).get_Directory_0();
-                    true
-                    && directory.layer == self.layer + 1
-                    && directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-                })
+        forall|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+            >>= {
+                let directory = (#[trigger] self.entries.index(i)).get_Directory_0();
+                &&& directory.layer == self.layer + 1
+                &&& directory.base_vaddr == self.base_vaddr + i * self.entry_size()
+            }
     }
 
     pub closed spec(checked) fn directories_obey_invariant(&self) -> bool
@@ -517,16 +524,16 @@ impl Directory {
         decreases (self.arch.layers.len() - self.layer, 0)
     {
         if self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch() {
-            forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-                   >>= (#[trigger] self.entries.index(i)).get_Directory_0().inv())
+            forall|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+                >>= (#[trigger] self.entries.index(i)).get_Directory_0().inv()
         } else {
             arbitrary()
         }
     }
 
     pub closed spec(checked) fn directories_match_arch(&self) -> bool {
-        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-               >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch))
+        forall|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
+            >>= equal((#[trigger] self.entries.index(i)).get_Directory_0().arch, self.arch)
     }
 
     pub closed spec fn directories_are_nonempty(&self) -> bool
@@ -535,16 +542,16 @@ impl Directory {
             self.directories_are_in_next_layer(),
             self.directories_match_arch(),
     {
-        forall(|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
-               >>= !(#[trigger] self.entries.index(i).get_Directory_0().empty()))
+        forall|i: nat| i < self.entries.len() && self.entries.index(i).is_Directory()
+            >>= !(#[trigger] self.entries.index(i).get_Directory_0().empty())
             // TODO: Maybe pick a more aggressive trigger?
     }
 
     pub closed spec(checked) fn frames_aligned(&self) -> bool
         recommends self.well_formed()
     {
-        forall(|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() >>=
-                  aligned((#[trigger] self.entries.index(i)).get_Page_0().base, self.entry_size()))
+        forall|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() >>=
+            aligned((#[trigger] self.entries.index(i)).get_Page_0().base, self.entry_size())
     }
 
     pub closed spec(checked) fn inv(&self) -> bool
@@ -604,8 +611,8 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall(|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)),
-            forall(|i: nat| #[auto_trigger] aligned(self.entry_base(i), self.entry_size())),
+            forall|i: nat, j: nat| i < j >>= #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j),
+            forall|i: nat| #![auto] aligned(self.entry_base(i), self.entry_size()),
             // forall(|i: nat| i < self.num_entries() && self.entries.index(i).is_Directory() >>= {
             //     let d = self.entries.index(i).get_Directory_0();
             //     d.upper_vaddr() == self.entry_base(i+1)
@@ -654,13 +661,13 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall(|i: nat| #[auto_trigger]
-                   i < self.num_entries() >>=
-                   self.interp_of_entry(i).inv() &&
-                   self.interp_of_entry(i).lower == self.entry_base(i) &&
-                   self.interp_of_entry(i).upper == self.entry_base(i+1) &&
-                   forall(|base: nat| self.interp_of_entry(i).map.dom().contains(base) >>= between(base, self.entry_base(i), self.entry_base(i+1))) &&
-                   forall(|base: nat, p: MemRegion| self.interp_of_entry(i).map.contains_pair(base, p) >>= between(base, self.entry_base(i), self.entry_base(i+1)))),
+            forall|i: nat| #![auto]
+                i < self.num_entries() >>=
+                self.interp_of_entry(i).inv() &&
+                self.interp_of_entry(i).lower == self.entry_base(i) &&
+                self.interp_of_entry(i).upper == self.entry_base(i+1) &&
+                forall(|base: nat| self.interp_of_entry(i).map.dom().contains(base) >>= between(base, self.entry_base(i), self.entry_base(i+1))) &&
+                forall(|base: nat, p: MemRegion| self.interp_of_entry(i).map.contains_pair(base, p) >>= between(base, self.entry_base(i), self.entry_base(i+1))),
     {
         assert_forall_by(|i: nat| {
             requires(i < self.num_entries());
@@ -729,9 +736,9 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall(|i: nat, j: nat|
-                   i < self.num_entries() && j < self.num_entries() && i != j
-                   >>= self.interp_of_entry(i).ranges_disjoint(self.interp_of_entry(j))),
+            forall|i: nat, j: nat|
+                i < self.num_entries() && j < self.num_entries() && i != j
+                >>= self.interp_of_entry(i).ranges_disjoint(self.interp_of_entry(j)),
     {
         assert_forall_by(|i: nat, j: nat| {
             requires(i < self.num_entries() && j < self.num_entries() && i != j);
@@ -969,9 +976,9 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall(|i: nat, j: nat|
-                   j < i && i < self.num_entries()
-                   >>= self.interp_aux(i).ranges_disjoint(self.interp_of_entry(j))),
+            forall|i: nat, j: nat|
+                j < i && i < self.num_entries()
+                >>= self.interp_aux(i).ranges_disjoint(self.interp_of_entry(j)),
     {
         assert_forall_by(|i: nat, j: nat| {
             requires(j < i && i < self.num_entries());
@@ -1000,11 +1007,11 @@ impl Directory {
              i <= j,
              j < self.entries.len(),
         ensures
-            forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp_aux(i).map.contains_pair(va, p)),
-            forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va)),
-            forall(|va: nat|
-                   between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
-                   >>= !self.interp_aux(i).map.dom().contains(va)),
+            forall|va: nat, p: MemRegion| #![auto] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp_aux(i).map.contains_pair(va, p),
+            forall|va: nat| #![auto] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp_aux(i).map.dom().contains(va),
+            forall|va: nat|
+                between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
+                >>= !self.interp_aux(i).map.dom().contains(va),
         decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
     {
         assume(false); // unstable
@@ -1036,11 +1043,11 @@ impl Directory {
              self.inv(),
              j < self.entries.len(),
         ensures
-            forall(|va: nat| #[auto_trigger] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp().map.dom().contains(va)),
-            forall(|va: nat, p: MemRegion| #[auto_trigger] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p)),
-            forall(|va: nat| #[auto_trigger]
-                   between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
-                   >>= !self.interp().map.dom().contains(va)),
+            forall|va: nat| #![auto] self.interp_of_entry(j).map.dom().contains(va) >>= self.interp().map.dom().contains(va),
+            forall|va: nat, p: MemRegion| #![auto] self.interp_of_entry(j).map.contains_pair(va, p) >>= self.interp().map.contains_pair(va, p),
+            forall|va: nat| #![auto]
+                between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
+                >>= !self.interp().map.dom().contains(va),
     {
         self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j);
     }
@@ -1111,7 +1118,7 @@ impl Directory {
             (false
             || self.interp().accepted_resolve(vaddr)
             || self.interp().accepted_unmap(vaddr)
-            || exists(|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame))) >>=
+            || exists|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame)) >>=
             {
                 let i = self.index_for_vaddr(vaddr);
                 true
@@ -1127,7 +1134,7 @@ impl Directory {
         if (false
             || self.interp().accepted_resolve(vaddr)
             || self.interp().accepted_unmap(vaddr)
-            || exists(|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame))) {
+            || exists|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame)) {
             assert(self.base_vaddr <= vaddr);
             if aligned(vaddr, self.entry_size()) {
                 assert(aligned(self.base_vaddr, self.entry_size() * self.num_entries()));
@@ -1150,12 +1157,12 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall(|base: nat, p: MemRegion|
-                   self.interp_aux(j).map.contains_pair(base, p) >>=
-                   exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p))),
-            forall(|base: nat|
-                   self.interp_aux(j).map.dom().contains(base) >>=
-                   exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)))
+            forall|base: nat, p: MemRegion|
+                self.interp_aux(j).map.contains_pair(base, p) >>=
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p),
+            forall|base: nat|
+                self.interp_aux(j).map.dom().contains(base) >>=
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)
         decreases (self.arch.layers.len() - self.layer, self.num_entries() - j)
     {
         if j >= self.entries.len() {
@@ -1164,12 +1171,12 @@ impl Directory {
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
             assert_forall_by(|base: nat, p: MemRegion| {
                 requires(self.interp_aux(j).map.contains_pair(base, p));
-                ensures(exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p)));
+                ensures(exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p));
                 if self.interp_aux(j+1).map.contains_pair(base, p) { } else { }
             });
             assert_forall_by(|base: nat| {
                 requires(self.interp_aux(j).map.dom().contains(base));
-                ensures(exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)));
+                ensures(exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base));
                 if self.interp_aux(j+1).map.dom().contains(base) { } else { }
             });
         }
@@ -1179,12 +1186,12 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall(|base: nat, p: MemRegion|
-                   self.interp().map.contains_pair(base, p) >>=
-                   exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p))),
-            forall(|base: nat|
-                   self.interp().map.dom().contains(base) >>=
-                   exists(|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base))),
+            forall|base: nat, p: MemRegion|
+                self.interp().map.contains_pair(base, p) >>=
+                exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p),
+            forall|base: nat|
+                self.interp().map.dom().contains(base) >>=
+                exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base),
     {
         self.lemma_interp_aux_contains_implies_interp_of_entry_contains(0);
     }
@@ -1194,21 +1201,21 @@ impl Directory {
             self.inv(),
             i < self.num_entries(),
             between(vaddr, self.interp_of_entry(i).lower, self.interp_of_entry(i).upper),
-            !exists(|base:nat|
-                    self.interp_of_entry(i).map.dom().contains(base) &&
-                    between(vaddr, base, base + (#[trigger] self.interp_of_entry(i).map.index(base)).size)),
+            !exists|base:nat|
+                self.interp_of_entry(i).map.dom().contains(base) &&
+                between(vaddr, base, base + (#[trigger] self.interp_of_entry(i).map.index(base)).size),
         ensures
-            !exists(|base:nat|
-                    self.interp().map.dom().contains(base) &&
-                    between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)),
+            !exists|base:nat|
+                self.interp().map.dom().contains(base) &&
+                between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size),
     {
         self.lemma_entry_base_auto();
         self.lemma_interp_of_entry();
         self.lemma_interp_contains_implies_interp_of_entry_contains();
 
-        if exists(|base:nat|
-                  self.interp().map.dom().contains(base) &&
-                  between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size)) {
+        if exists|base:nat|
+            self.interp().map.dom().contains(base) &&
+            between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size) {
             let base = choose(|base:nat|
                               self.interp().map.dom().contains(base) &&
                               between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
@@ -1249,9 +1256,9 @@ impl Directory {
 
                 if d.resolve(vaddr).is_Ok() {
                     assert(self.resolve(vaddr).is_Ok());
-                    assert(exists(|base: nat|
-                                  d.interp().map.dom().contains(base) &&
-                                  between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size)));
+                    assert(exists|base: nat|
+                           d.interp().map.dom().contains(base) &&
+                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size));
 
                     let base = choose(|base:nat|
                                     d.interp().map.dom().contains(base) &&
@@ -1267,9 +1274,9 @@ impl Directory {
                     assert(self.resolve(vaddr).is_Err());
 
                     assert(d.interp().resolve(vaddr).is_Err());
-                    assert(!exists(|base:nat|
-                                   d.interp().map.dom().contains(base) &&
-                                   between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size)));
+                    assert(!exists|base:nat|
+                           d.interp().map.dom().contains(base) &&
+                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size));
                     self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(vaddr, entry);
                 }
                 assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
@@ -1324,9 +1331,9 @@ impl Directory {
 
     proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_auto(self)
         ensures
-            forall(|base: nat, frame: MemRegion|
-                   self.inv() && #[trigger] self.accepted_mapping(base, frame) >>=
-                   self.interp().accepted_mapping(base, frame)),
+            forall|base: nat, frame: MemRegion|
+                self.inv() && #[trigger] self.accepted_mapping(base, frame) >>=
+                self.interp().accepted_mapping(base, frame),
     {
         assert_forall_by(|base: nat, frame: MemRegion| {
             requires(self.inv() && #[trigger] self.accepted_mapping(base, frame));
@@ -1359,7 +1366,7 @@ impl Directory {
         ensures
             self.new_empty_dir(entry).inv(),
             self.new_empty_dir(entry).entries.len() == self.arch.layers.index((self.layer + 1) as nat).num_entries,
-            forall(|j: nat| j < self.new_empty_dir(entry).num_entries() >>= equal(self.new_empty_dir(entry).entries.index(j), NodeEntry::Empty())),
+            forall|j: nat| j < self.new_empty_dir(entry).num_entries() >>= equal(self.new_empty_dir(entry).entries.index(j), NodeEntry::Empty()),
     {
         let new_dir = self.new_empty_dir(entry);
         let num_entries = self.arch.layers.index((self.layer + 1) as nat).num_entries;
@@ -1482,9 +1489,9 @@ impl Directory {
             equal(self.map_frame(base, frame).get_Ok_0().base_vaddr, self.base_vaddr),
             !self.map_frame(base, frame).get_Ok_0().empty(),
             self.map_frame(base, frame).get_Ok_0().inv(),
-            !exists(|b:nat| true
-                    && self.interp().map.dom().contains(b)
-                    && between(base, b, b + (#[trigger] self.interp().map.index(b)).size)),
+            !exists|b:nat| true
+                && self.interp().map.dom().contains(b)
+                && between(base, b, b + (#[trigger] self.interp().map.index(b)).size),
 
         decreases (self.arch.layers.len() - self.layer)
     {
@@ -1660,12 +1667,12 @@ impl Directory {
             self.inv(),
             !self.empty()
         ensures
-            exists(|b: nat| self.interp().map.dom().contains(b))
+            exists|b: nat| self.interp().map.dom().contains(b)
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();
 
-        assert(exists(|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty()));
+        assert(exists|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty());
         let i = choose(|i: nat| i < self.num_entries() && !self.entries.index(i).is_Empty());
         assert(i < self.num_entries());
         assert(!self.entries.index(i).is_Empty());
@@ -2003,7 +2010,7 @@ impl Directory {
             equal(self.layer, other.layer),
             equal(self.base_vaddr, other.base_vaddr),
             equal(self.num_entries(), other.num_entries()),
-            forall(|j: nat| i <= j && j < self.entries.len() >>= equal(self.entries.index(j), other.entries.index(j))),
+            forall|j: nat| i <= j && j < self.entries.len() >>= equal(self.entries.index(j), other.entries.index(j)),
         ensures
             equal(self.interp_aux(i), other.interp_aux(i)),
         decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
@@ -2130,7 +2137,7 @@ pub closed spec fn new_seq(i: nat) -> Seq<NodeEntry>
 pub proof fn lemma_new_seq(i: nat)
     ensures
         new_seq(i).len() == i,
-        forall(|j: nat| j < new_seq(i).len() >>= equal(new_seq(i).index(j), NodeEntry::Empty())),
+        forall|j: nat| j < new_seq(i).len() >>= equal(new_seq(i).index(j), NodeEntry::Empty()),
     decreases i
 {
     if i == 0 {
@@ -2141,12 +2148,12 @@ pub proof fn lemma_new_seq(i: nat)
 
 pub proof fn lemma_map_union_prefer_right_insert_commute<S,T>()
     ensures
-        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
-               (!m1.dom().contains(n) && !m2.dom().contains(n))
-               >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v))),
-        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
-               (!m1.dom().contains(n) && !m2.dom().contains(n))
-               >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v))),
+        forall|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
+            !m1.dom().contains(n) && !m2.dom().contains(n)
+            >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)),
+        forall|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
+            !m1.dom().contains(n) && !m2.dom().contains(n)
+            >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)),
 {
     assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T| {
         requires(!m1.dom().contains(n) && !m2.dom().contains(n));
@@ -2168,12 +2175,12 @@ pub proof fn lemma_map_union_prefer_right_insert_commute<S,T>()
 
 pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>()
     ensures
-        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
-               (m1.dom().contains(n) && !m2.dom().contains(n))
-               >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
-        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
-               (m2.dom().contains(n) && !m1.dom().contains(n))
-               >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
+        forall|m1: Map<S, T>, m2: Map<S, T>, n: S|
+            m1.dom().contains(n) && !m2.dom().contains(n)
+            >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
+        forall|m1: Map<S, T>, m2: Map<S, T>, n: S|
+            m2.dom().contains(n) && !m1.dom().contains(n)
+            >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)),
 {
     assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S| {
         requires(m1.dom().contains(n) && !m2.dom().contains(n));
@@ -2199,7 +2206,7 @@ pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>()
 
 pub proof fn lemma_finite_map_union<S,T>()
     ensures
-        forall(|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()),
+        forall|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite(),
 {
     assert_forall_by(|s1: Map<S,T>, s2: Map<S,T>| {
         requires(s1.dom().finite() && s2.dom().finite());
@@ -2210,8 +2217,8 @@ pub proof fn lemma_finite_map_union<S,T>()
         let union_dom = s1.union_prefer_right(s2).dom();
         let dom_union = s1.dom().union(s2.dom());
 
-        assert(forall(|s: S| union_dom.contains(s) >>= dom_union.contains(s)));
-        assert(forall(|s: S| dom_union.contains(s) >>= union_dom.contains(s)));
+        assert(forall|s: S| union_dom.contains(s) >>= dom_union.contains(s));
+        assert(forall|s: S| dom_union.contains(s) >>= union_dom.contains(s));
 
         assert_sets_equal!(union_dom, dom_union);
     });
@@ -2449,20 +2456,19 @@ impl PageDirectoryEntry {
             } else if layer == 2 {
                 address & MASK_L2_PG_ADDR == address
             } else { true }
+        ensures
+            ({ let e = address
+                | MASK_FLAG_P
+                | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+                | if is_writable           { MASK_FLAG_RW }        else { 0 }
+                | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
+                | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
+                | if disable_execute       { MASK_FLAG_XD }        else { 0 };
+                e & MASK_ADDR == address
+            }),
     {
-        // FIXME: conversion, what does this look like in new syntax?
-        ensures({
-                let e = address
-                    | MASK_FLAG_P
-                    | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
-                    | if is_writable           { MASK_FLAG_RW }        else { 0 }
-                    | if is_supervisor         { MASK_FLAG_US }        else { 0 }
-                    | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
-                    | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
-                    | if disable_execute       { MASK_FLAG_XD }        else { 0 };
-                    e & MASK_ADDR == address
-            });
-            assume(false);
+        assume(false);
     }
 
     pub fn new_entry(
@@ -2571,7 +2577,7 @@ impl PageTableMemory {
         requires
             ptr < old(self).view().len(),
         ensures
-            forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte),
+            forall|i: nat| i < self.view().len() >>= self.view().index(i) == byte,
     {
         unsafe {
             self.ptr.offset(ptr as isize).write(byte)
@@ -2659,11 +2665,11 @@ impl PageTable {
     {
         decreases_when(self.well_formed() && self.layer_in_range(layer));
 
-        forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+        forall|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
             let entry = #[trigger] self.view_at(layer, ptr, i);
             // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }.view();
             entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
-        })
+        }
     }
 
     pub closed spec fn layer_in_range(self, layer: nat) -> bool {
@@ -2677,13 +2683,10 @@ impl PageTable {
         true
         && self.layer_in_range(layer)
         && self.directories_obey_invariant_at(layer, ptr)
-        && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
+        && forall|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
             let entry = #[trigger] self.view_at(layer, ptr, i);
-            // let view = entry.view();
-            true
-            // && entry.inv()
-            && entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
-        })
+            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
+        }
     }
 
     pub closed spec fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry
