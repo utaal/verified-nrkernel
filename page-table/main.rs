@@ -2,6 +2,7 @@
 extern crate alloc;
 
 pub mod lib;
+pub mod lib_axiom;
 pub mod memory_types;
 pub mod pervasive;
 pub mod spec;

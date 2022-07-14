@@ -10,6 +10,8 @@ use map::*;
 #[allow(unused_imports)]
 use set::*;
 use set_lib::*;
+use vec::*;
+use crate::lib_axiom::*;
 
 #[allow(unused_imports)]
 use crate::lib::aligned;
@@ -2600,36 +2602,6 @@ impl PageDirectoryEntry {
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 }
             },
             layer: Ghost::exec(layer as nat),
-            // view: Ghost::exec(
-            //     if is_page {
-            //         arbitrary()
-            //         // GhostPageDirectoryEntry::Page {
-            //         //     addr:      nat,
-            //         //     flag_P:    true,
-            //         //     flag_RW:   is_writable,
-            //         //     flag_US:   is_supervisor,
-            //         //     flag_PWT:  is_writethrough,
-            //         //     flag_PCD:  disable_cache,
-            //         //     flag_A:    false,
-            //         //     flag_D:    false,
-            //         //     flag_PS:   if layer == 0 { None } else { Some(true) },
-            //         //     flag_G:    false,
-            //         //     flag_PAT:  false,
-            //         //     flag_XD:   disable_execute,
-            //         // }
-            //     } else {
-            //         arbitrary()
-            //         // GhostPageDirectoryEntry::Directory {
-            //         //     addr: nat,
-            //         //     flag_P: true,
-            //         //     flag_RW: is_writable,
-            //         //     flag_US: is_supervisor,
-            //         //     flag_PWT: is_writethrough,
-            //         //     flag_PCD: disable_cache,
-            //         //     flag_A: false,
-            //         //     flag_XD: disable_execute,
-            //         // }
-            //     }),
         };
 
         assert(e.layer() <= 3);
@@ -2700,6 +2672,14 @@ impl PageTableMemory {
             self.ptr.offset(ptr as isize).write(byte)
         }
     }
+
+    fn read_entry(self, offset: usize) -> Vec<u8> {
+        ensures(|r: Vec<u8>| r.len() == 8);
+        // unsafe { std::slice::from_raw_parts(self.ptr.offset(offset as isize), ENTRY_BYTES) }
+        assume(false);
+        Vec::empty() // FIXME: unimplemented
+    }
+
 }
 
 pub struct PageTable {
@@ -2731,12 +2711,6 @@ const ENTRY_BYTES: usize = 8;
 //     // }
 // }
 
-#[spec] pub fn u64_from_le_bytes(bytes: Seq<u8>) -> u64 {
-    recommends(bytes.len() == 8);
-    // u64::from_le_bytes(bytes)
-    arbitrary()
-}
-
 impl PageTable {
 
     #[spec]
@@ -2762,9 +2736,17 @@ impl PageTable {
     /// Get the view of the entry at address ptr + i * ENTRY_BYTES
     #[spec] pub fn view_at(self, layer: nat, ptr: usize, i: nat) -> GhostPageDirectoryEntry {
         PageDirectoryEntry {
-            entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)),
+            entry: u64_from_le_bytes_spec(self.get_entry_bytes(ptr, i)),
             layer: Ghost::new(layer),
         }.view()
+    }
+
+    /// Get the entry at address ptr + i * ENTRY_BYTES
+    fn entry_at(self, layer: Ghost<nat>, ptr: usize, i: usize) -> PageDirectoryEntry {
+        PageDirectoryEntry {
+            entry: u64_from_le_bytes(self.memory.read_entry(i * ENTRY_BYTES)),
+            layer,
+        }
     }
 
     #[spec]
@@ -2794,7 +2776,10 @@ impl PageTable {
         && self.directories_obey_invariant_at(layer, ptr)
         && forall(|i: nat| i < self.arch.layers.index(layer).num_entries >>= {
             let entry = #[trigger] self.view_at(layer, ptr, i);
-            entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
+            // let view = entry.view();
+            true
+            // && entry.inv()
+            && entry.is_Directory() >>= self.inv_at(layer + 1, entry.get_Directory_addr())
         })
     }
 
@@ -2815,7 +2800,7 @@ impl PageTable {
     }
 
     #[spec]
-    pub fn interp_at(&self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory {
+    pub fn interp_at(self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory {
         decreases_when(self.inv_at(layer, ptr));
         decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries, 1));
         Directory {
@@ -2827,7 +2812,7 @@ impl PageTable {
     }
 
     #[spec]
-    fn interp_at_aux(&self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry> {
+    fn interp_at_aux(self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) -> Seq<NodeEntry> {
         decreases_when(self.inv_at(layer, ptr));
         decreases((self.arch.layers.len() - layer, self.arch.layers.index(layer).num_entries - i, 0));
         if i >= self.arch.layers.index(layer).num_entries {
@@ -2840,4 +2825,57 @@ impl PageTable {
                 self.interp_at_aux(ptr, base_vaddr, layer, i + 1))
         }
     }
+
+    #[spec]
+    fn interp(self) -> Directory {
+        self.interp_at(self.memory.root(), 0, 0)
+    }
+
+    // #[proof]
+    // fn lemma_inv_implies_interp_inv(self) {
+    //     requires(self.inv());
+    //     ensures(self.interp().inv());
+    //     self.lemma_inv_implies_interp_at_inv(self.memory.root(), 0, 0);
+    // }
+
+    // #[proof]
+    // fn lemma_inv_implies_interp_at_inv(self, ptr: usize, base_vaddr: nat, layer: nat) {
+    //     requires([
+    //              self.well_formed(),
+    //              self.inv_at(layer, ptr),
+    //     ]);
+    //     ensures(self.interp_at(ptr, base_vaddr, layer).inv());
+    //     assume(self.interp_at(ptr, base_vaddr, layer).inv());
+    // }
+
+    // #[proof]
+    // fn lemma_inv_implies_interp_at_aux_inv(self, ptr: usize, base_vaddr: nat, layer: nat, i: nat) {
+    //     decreases(self.arch.layers.len() - i + 1);
+    //     requires([
+    //              self.well_formed(),
+    //              self.inv_at(layer, ptr),
+    //     ]);
+    //     ensures([
+    //             self.interp_at_aux(ptr, base_vaddr, layer, i).len() == self.arch.layers.index(layer).num_entries - i,
+    //             {
+    //                 let res = self.interp_at_aux(ptr, base_vaddr, layer, i);
+    //                 forall(|j: nat|
+    //                        j >= i && j < self.arch.layers.index(layer).num_entries && res.index(j).is_Directory()
+    //                        >>= res.index(j).get_Directory_0().inv())},
+    //     ]);
+    //     assume({
+    //         let res = self.interp_at_aux(ptr, base_vaddr, layer, i);
+    //         forall(|j: nat|
+    //                j >= i && j < self.arch.layers.index(layer).num_entries && res.index(j).is_Directory()
+    //                >>= res.index(j).get_Directory_0().inv())
+    //     });
+
+    //     let res = self.interp_at_aux(ptr, base_vaddr, layer, i);
+    //     let res_next = self.interp_at_aux(ptr, base_vaddr, layer, i + 1);
+    //     assert(res.len() == res_next.len() + 1);
+
+    //     self.lemma_inv_implies_interp_at_aux_inv(ptr, base_vaddr, layer, i + 1);
+
+    // }
+
 }
