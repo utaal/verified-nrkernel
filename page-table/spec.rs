@@ -1976,8 +1976,9 @@ impl Directory {
             forall(|j: nat| i <= j && j < self.entries.len() >>= equal(self.entries.index(j), other.entries.index(j))),
         ensures
             equal(self.interp_aux(i), other.interp_aux(i)),
+        decreases
+            (self.arch.layers.len() - self.layer, self.num_entries() - i),
     {
-        decreases((self.arch.layers.len() - self.layer, self.num_entries() - i));
         if i >= self.entries.len() {
         } else {
             let rem1 = self.interp_aux(i + 1);
