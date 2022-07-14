@@ -2097,27 +2097,27 @@ pub closed spec fn new_seq(i: nat) -> Seq<NodeEntry>
     }
 }
 
-pub proof fn lemma_new_seq(i: nat) {
-    decreases(i);
-    ensures([
-            new_seq(i).len() == i,
-            forall(|j: nat| j < new_seq(i).len() >>= equal(new_seq(i).index(j), NodeEntry::Empty()))
-    ]);
+pub proof fn lemma_new_seq(i: nat)
+    ensures
+        new_seq(i).len() == i,
+        forall(|j: nat| j < new_seq(i).len() >>= equal(new_seq(i).index(j), NodeEntry::Empty())),
+    decreases i
+{
     if i == 0 {
     } else {
         lemma_new_seq(i-1);
     }
 }
 
-pub proof fn lemma_map_union_prefer_right_insert_commute<S,T>() {
-    ensures([
-            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
-                   (!m1.dom().contains(n) && !m2.dom().contains(n))
-                   >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v))),
-            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
-                   (!m1.dom().contains(n) && !m2.dom().contains(n))
-                   >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v))),
-    ]);
+pub proof fn lemma_map_union_prefer_right_insert_commute<S,T>()
+    ensures
+        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
+               (!m1.dom().contains(n) && !m2.dom().contains(n))
+               >>= equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v))),
+        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
+               (!m1.dom().contains(n) && !m2.dom().contains(n))
+               >>= equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v))),
+{
     assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T| {
         requires(!m1.dom().contains(n) && !m2.dom().contains(n));
         ensures(equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)));
@@ -2136,15 +2136,15 @@ pub proof fn lemma_map_union_prefer_right_insert_commute<S,T>() {
     });
 }
 
-pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>() {
-    ensures([
-            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
-                   (m1.dom().contains(n) && !m2.dom().contains(n))
-                   >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
-            forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
-                   (m2.dom().contains(n) && !m1.dom().contains(n))
-                   >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
-    ]);
+pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>()
+    ensures
+        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
+               (m1.dom().contains(n) && !m2.dom().contains(n))
+               >>= equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n))),
+        forall(|m1: Map<S, T>, m2: Map<S, T>, n: S|
+               (m2.dom().contains(n) && !m1.dom().contains(n))
+               >>= equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n))),
+{
     assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S| {
         requires(m1.dom().contains(n) && !m2.dom().contains(n));
         ensures(equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)));
@@ -2167,8 +2167,10 @@ pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>() {
     });
 }
 
-pub proof fn lemma_finite_map_union<S,T>() {
-    ensures(forall(|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()));
+pub proof fn lemma_finite_map_union<S,T>()
+    ensures
+        forall(|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() >>= #[trigger] s1.union_prefer_right(s2).dom().finite()),
+{
     assert_forall_by(|s1: Map<S,T>, s2: Map<S,T>| {
         requires(s1.dom().finite() && s2.dom().finite());
         ensures(#[auto_trigger] s1.union_prefer_right(s2).dom().finite());
@@ -2185,13 +2187,13 @@ pub proof fn lemma_finite_map_union<S,T>() {
     });
 }
 
-pub proof fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T) {
-    requires([
-             s.finite(),
-             s.contains(a)
-    ]);
-    ensures(s.len() > 0);
-
+pub proof fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T)
+    requires
+        s.finite(),
+        s.contains(a),
+    ensures
+        s.len() > 0,
+{
     if s.len() == 0 {
         // contradiction
         assert(s.remove(a).len() + 1 == 0);
@@ -2313,21 +2315,19 @@ const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30,MAXPHYADDR);
 
 // TODO: can we get support for consts in bit vector reasoning?
 // #[verifier(bit_vector)]
-proof fn lemma_addr_masks_facts(address: u64) {
-    ensures([
-            (bitmask_inc!(21 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address),
-            (bitmask_inc!(30 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address)
-    ]);
+proof fn lemma_addr_masks_facts(address: u64)
+    ensures
+        (bitmask_inc!(21 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address),
+        (bitmask_inc!(30 as u64, 52 as u64) & address == address) >>= (bitmask_inc!(12 as u64, 52 as u64) & address == address),
+{
     assume(false); // TODO: unstable
 }
 
 #[verifier(bit_vector)]
-proof fn lemma_addr_masks_facts2(address: u64) {
-    ensures([
-            ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64)),
-            ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64)),
-    ]);
-}
+proof fn lemma_addr_masks_facts2(address: u64)
+    ensures
+        ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64)),
+        ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64));
 
 // // MASK_PD_* are flags valid for all entries pointing to another directory
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
@@ -2408,32 +2408,31 @@ impl PageDirectoryEntry {
         is_writethrough: bool,
         disable_cache: bool,
         disable_execute: bool,
-        ) {
-        requires([
-                 layer <= 3,
-                 is_page >>= layer < 3,
-                 if layer == 0 {
-                     address & MASK_L0_PG_ADDR == address
-                 } else if layer == 1 {
-                     address & MASK_L1_PG_ADDR == address
-                 } else if layer == 2 {
-                     address & MASK_L2_PG_ADDR == address
-                 } else { true }
-        ]);
-        ensures([
-                {
-                    let e = address
-                        | MASK_FLAG_P
-                        | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
-                        | if is_writable           { MASK_FLAG_RW }        else { 0 }
-                        | if is_supervisor         { MASK_FLAG_US }        else { 0 }
-                        | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
-                        | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
-                        | if disable_execute       { MASK_FLAG_XD }        else { 0 };
+        )
+        requires
+            layer <= 3,
+            is_page >>= layer < 3,
+            if layer == 0 {
+                address & MASK_L0_PG_ADDR == address
+            } else if layer == 1 {
+                address & MASK_L1_PG_ADDR == address
+            } else if layer == 2 {
+                address & MASK_L2_PG_ADDR == address
+            } else { true }
+    {
+        // FIXME: conversion, what does this look like in new syntax?
+        ensures({
+                let e = address
+                    | MASK_FLAG_P
+                    | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+                    | if is_writable           { MASK_FLAG_RW }        else { 0 }
+                    | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                    | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
+                    | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
+                    | if disable_execute       { MASK_FLAG_XD }        else { 0 };
                     e & MASK_ADDR == address
-                }
-        ]);
-        assume(false);
+            });
+            assume(false);
     }
 
     pub fn new_entry(
@@ -2445,21 +2444,20 @@ impl PageDirectoryEntry {
         is_writethrough: bool,
         disable_cache: bool,
         disable_execute: bool,
-        ) -> PageDirectoryEntry
+        ) -> (r: PageDirectoryEntry)
+        requires
+            layer <= 3,
+            is_page >>= layer < 3,
+            if layer == 0 {
+                address & MASK_L0_PG_ADDR == address
+            } else if layer == 1 {
+                address & MASK_L1_PG_ADDR == address
+            } else if layer == 2 {
+                address & MASK_L2_PG_ADDR == address
+            } else { true }
+        ensures
+            r.inv(),
     {
-        requires([
-                 layer <= 3,
-                 is_page >>= layer < 3,
-                 if layer == 0 {
-                     address & MASK_L0_PG_ADDR == address
-                 } else if layer == 1 {
-                     address & MASK_L1_PG_ADDR == address
-                 } else if layer == 2 {
-                     address & MASK_L2_PG_ADDR == address
-                 } else { true }
-        ]);
-        ensures(|r: Self| r.inv());
-
         let e =
         PageDirectoryEntry {
             entry: {
@@ -2492,28 +2490,32 @@ impl PageDirectoryEntry {
         self.entry & MASK_ADDR
     }
 
-    pub fn is_mapping(self) -> bool {
-        ensures(|r: bool| r == !self.view().is_Empty());
+    pub fn is_mapping(self) -> (r: bool)
+        ensures
+            r == !self.view().is_Empty(),
+    {
         assume(false);
         (self.entry & MASK_FLAG_P) == MASK_FLAG_P
     }
 
-    pub fn is_page(self, layer: usize) -> bool {
-        requires([
-                 !self.view().is_Empty(),
-                 layer as nat == self.layer
-        ]);
-        ensures(|r: bool| if r { self.view().is_Page() } else { self.view().is_Directory() });
+    pub fn is_page(self, layer: usize) -> (r: bool)
+        requires
+            !self.view().is_Empty(),
+            layer as nat == self.layer
+        ensures
+            if r { self.view().is_Page() } else { self.view().is_Directory() },
+    {
         assume(false);
         (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) == 0)
     }
 
-    pub fn is_dir(self, layer: usize) -> bool {
-        requires([
-                 !self.view().is_Empty(),
-                 layer as nat == self.layer
-        ]);
-        ensures(|r: bool| if r { self.view().is_Directory() } else { self.view().is_Page() });
+    pub fn is_dir(self, layer: usize) -> (r: bool)
+        requires
+            !self.view().is_Empty(),
+            layer as nat == self.layer,
+        ensures
+            if r { self.view().is_Directory() } else { self.view().is_Page() },
+    {
         !self.is_page(layer)
     }
 
@@ -2535,17 +2537,21 @@ impl PageTableMemory {
     spec fn view(&self) -> Seq<u8> { arbitrary() }
 
     #[verifier(external_body)]
-    fn write(&mut self, ptr: usize, byte: u8) {
-        requires(ptr < old(self).view().len());
-        ensures(forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte));
-
+    fn write(&mut self, ptr: usize, byte: u8)
+        requires
+            ptr < old(self).view().len(),
+        ensures
+            forall(|i: nat| i < self.view().len() >>= self.view().index(i) == byte),
+    {
         unsafe {
             self.ptr.offset(ptr as isize).write(byte)
         }
     }
 
-    fn read_entry(self, offset: usize) -> Vec<u8> {
-        ensures(|r: Vec<u8>| r.len() == 8);
+    fn read_entry(self, offset: usize) -> (r: Vec<u8>)
+        ensures
+            r.len() == 8,
+    {
         // unsafe { std::slice::from_raw_parts(self.ptr.offset(offset as isize), ENTRY_BYTES) }
         assume(false);
         Vec::empty() // FIXME: unimplemented
