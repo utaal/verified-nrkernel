@@ -68,10 +68,10 @@ pub proof fn subtract_mod_eq_zero(a: nat, b: nat, c: nat) {
 }
 
 #[verifier(nonlinear)]
-pub proof fn zero_mod_eq_zero(a: nat) {
-    requires(a != 0);
-    ensures(aligned(0, a));
-}
+pub proof fn aligned_zero()
+    ensures
+        forall|a:nat| a != 0 ==> aligned(0, a)
+{ }
 
 #[verifier(external_body)]
 pub proof fn multiple_offsed_mod_gt_0(a: nat, b: nat, c: nat) {
