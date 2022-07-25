@@ -365,7 +365,7 @@ impl PageTableContents {
                            self.map.dom().contains(base) &&
                            between(vaddr, base, base + (#[trigger] self.map.index(base)).size));
             let offset = vaddr - base;
-            Ok(self.map.index(base).base + offset)
+            Ok((self.map.index(base).base + offset) as nat)
         } else {
             Err(())
         }
@@ -533,7 +533,7 @@ impl Directory {
             self.well_formed(),
             self.directories_are_in_next_layer(),
             self.directories_match_arch(),
-        decreases (self.arch.layers.len() - self.layer, 0)
+        decreases (self.arch.layers.len() - self.layer, 0nat)
     {
         if self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch() {
             forall|i: nat| (i < self.entries.len() && self.entries.index(i).is_Directory())
@@ -590,7 +590,7 @@ impl Directory {
     }
 
     pub closed spec(checked) fn vaddr_offset(self, vaddr: nat) -> nat {
-        vaddr - self.base_vaddr
+        (vaddr - self.base_vaddr) as nat
     }
 
     pub closed spec fn index_for_vaddr(self, vaddr: nat) -> /*index: */ nat {
@@ -650,7 +650,7 @@ impl Directory {
     }
 
     pub closed spec fn interp_of_entry(self, entry: nat) -> PageTableContents
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - entry, 0)
+        decreases (self.arch.layers.len() - self.layer, self.num_entries() - entry, 0nat)
     {
         if self.inv() && entry < self.entries.len() {
             let (lower, upper) = self.entry_bounds(entry);
@@ -787,7 +787,7 @@ impl Directory {
     }
 
     pub closed spec(checked) fn interp_aux(self, i: nat) -> PageTableContents
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i, 1)
+        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i, 1nat)
     {
 
         if self.inv() {
@@ -1090,7 +1090,7 @@ impl Directory {
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
                 let offset = vaddr - self.entry_base(entry);
-                Ok(p.base + offset)
+                Ok((p.base + offset) as nat)
             },
             NodeEntry::Directory(d) => {
                 d.resolve(vaddr)
@@ -2143,7 +2143,7 @@ pub closed spec fn new_seq(i: nat) -> Seq<NodeEntry>
     if i == 0 {
         seq![]
     } else {
-        new_seq(i-1).add(seq![NodeEntry::Empty()])
+        new_seq((i-1) as nat).add(seq![NodeEntry::Empty()])
     }
 }
 
@@ -2155,7 +2155,7 @@ pub proof fn lemma_new_seq(i: nat)
 {
     if i == 0 {
     } else {
-        lemma_new_seq(i-1);
+        lemma_new_seq((i-1) as nat);
     }
 }
 
@@ -2675,7 +2675,7 @@ impl PageTable {
     }
 
     pub closed spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize) -> bool
-        decreases (self.arch.layers.len() - layer, 0)
+        decreases (self.arch.layers.len() - layer, 0nat)
     {
         decreases_when(self.well_formed() && self.layer_in_range(layer));
         forall|i: nat| i < self.arch.num_entries(layer) ==> {
@@ -2730,7 +2730,7 @@ impl PageTable {
     // }
 
     pub closed spec fn interp_at(self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory
-        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1)
+        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1nat)
     {
         decreases_when(self.inv_at(layer, ptr));
         Directory {
@@ -2742,7 +2742,7 @@ impl PageTable {
     }
 
     spec fn interp_at_aux(self, ptr: usize, base_vaddr: nat, layer: nat, init: Seq<NodeEntry>) -> Seq<NodeEntry>
-        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0)
+        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
         decreases_when(self.inv_at(layer, ptr));
         decreases_by(Self::termination_interp_at_aux);
@@ -2792,7 +2792,7 @@ impl PageTable {
             aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
         ensures
             self.interp_at(ptr, base_vaddr, layer).inv()
-        decreases (self.arch.num_entries(layer), 0)
+        decreases (self.arch.num_entries(layer), 0nat)
     {
         self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, seq![]);
         let res = self.interp_at(ptr, base_vaddr, layer);
@@ -2845,7 +2845,7 @@ impl PageTable {
                         &&& aligned(page.base, self.arch.entry_size(layer))
                     }
             }),
-        decreases (self.arch.num_entries(layer) - init.len(), 1)
+        decreases (self.arch.num_entries(layer) - init.len(), 1nat)
     {
         if init.len() >= self.arch.num_entries(layer) {
         } else {

@@ -44,7 +44,7 @@ pub proof fn mod_add_zero(a: nat, b: nat, c: nat) {
 #[verifier(external_body)]
 pub proof fn subtract_mod_aligned(a: nat, b: nat) {
     requires(0 < b);
-    ensures(aligned(a - (a % b), b));
+    ensures(aligned((a - (a % b)) as nat, b));
 }
 
 #[verifier(external_body)]
@@ -64,7 +64,7 @@ pub proof fn subtract_mod_eq_zero(a: nat, b: nat, c: nat) {
              aligned(b, c),
              a <= b,
     ]);
-    ensures(aligned(b - a, c));
+    ensures(aligned((b - a) as nat, c));
 }
 
 #[verifier(nonlinear)]
