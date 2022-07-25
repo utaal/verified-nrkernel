@@ -2364,20 +2364,23 @@ const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21,MAXPHYADDR);
 const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30,MAXPHYADDR);
 
 // TODO: can we get support for consts in bit vector reasoning?
-// #[verifier(bit_vector)]
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
         (bitmask_inc!(21 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address),
         (bitmask_inc!(30 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address),
 {
-    assume(false); // TODO: unstable
+    assert((bitmask_inc!(21 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address)) by (bit_vector);
+    assert((bitmask_inc!(30 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address)) by (bit_vector);
 }
 
-#[verifier(bit_vector)]
 proof fn lemma_addr_masks_facts2(address: u64)
     ensures
         ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64)),
-        ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64));
+        ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64))
+{
+    assert(((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64))) by (bit_vector);
+    assert(((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64))) by (bit_vector);
+}
 
 // // MASK_PD_* are flags valid for all entries pointing to another directory
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
