@@ -31,6 +31,12 @@ pub proof fn mod_less_eq(a: nat, b: nat) {
     ensures(a % b <= a);
 }
 
+// FIXME: only valid trigger causes trigger loop
+// #[verifier(external_body)]
+// pub proof fn mod_add_zero_auto() {
+//     ensures(forall(|a: nat, b: nat, c: nat| #[trigger] aligned(a, c) && #[trigger] aligned(b, c) && c > 0 ==> aligned(a + b, c)));
+// }
+
 #[verifier(external_body)]
 pub proof fn mod_add_zero(a: nat, b: nat, c: nat) {
     requires([
@@ -46,6 +52,12 @@ pub proof fn subtract_mod_aligned(a: nat, b: nat) {
     requires(0 < b);
     ensures(aligned((a - (a % b)) as nat, b));
 }
+
+// FIXME: no valid triggers for this?
+// #[verifier(external_body)]
+// pub proof fn mod_mult_zero_implies_mod_zero_auto() {
+//     ensures(forall(|a: nat, b: nat, c: nat| aligned(a, b * c) && c > 0 ==> aligned(a, b)));
+// }
 
 #[verifier(external_body)]
 pub proof fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat) {

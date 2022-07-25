@@ -2754,7 +2754,8 @@ impl PageTable {
         } else {
             let entry = match self.view_at(layer, ptr, init.len()) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =>
-                    NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)), // FIXME: is that base_vaddr right?
+                    // NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)), // FIXME: is that base_vaddr right?
+                    NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr + self.arch.entry_size(layer) * init.len(), layer + 1)),
                 GhostPageDirectoryEntry::Page { addr, .. } =>
                     NodeEntry::Page(MemRegion { base: addr, size: self.arch.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
@@ -2795,7 +2796,7 @@ impl PageTable {
             aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
         ensures
             self.interp_at(ptr, base_vaddr, layer).inv()
-        decreases (self.arch.num_entries(layer), 0nat)
+        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1nat)
     {
         self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, seq![]);
         let res = self.interp_at(ptr, base_vaddr, layer);
@@ -2819,6 +2820,7 @@ impl PageTable {
     proof fn lemma_inv_at_implies_interp_at_aux_inv(self, ptr: usize, base_vaddr: nat, layer: nat, init: Seq<NodeEntry>)
         requires
             self.inv_at(layer, ptr),
+            aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
         ensures
             self.interp_at_aux(ptr, base_vaddr, layer, init).len() == if init.len() > self.arch.num_entries(layer) { init.len() } else { self.arch.num_entries(layer) },
             forall|j: nat| j < init.len() ==> #[trigger] self.interp_at_aux(ptr, base_vaddr, layer, init).index(j) === init.index(j),
@@ -2848,27 +2850,27 @@ impl PageTable {
                         &&& aligned(page.base, self.arch.entry_size(layer))
                     }
             }),
-        decreases (self.arch.num_entries(layer) - init.len(), 1nat)
+        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
         if init.len() >= self.arch.num_entries(layer) {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr));
             let entry    = match self.view_at(layer, ptr, init.len()) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =>
-                    NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)),
+                    NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr + self.arch.entry_size(layer) * init.len(), layer + 1)),
                 GhostPageDirectoryEntry::Page { addr, .. } =>
                     NodeEntry::Page(MemRegion { base: addr, size: self.arch.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
                     NodeEntry::Empty(),
             };
-            let res      = self.interp_at_aux(ptr, base_vaddr, layer, init);
-            let res_next = self.interp_at_aux(ptr, base_vaddr, layer, init.add(seq![entry]));
             let init_next = init.add(seq![entry]);
+            let res      = self.interp_at_aux(ptr, base_vaddr, layer, init);
+            let res_next = self.interp_at_aux(ptr, base_vaddr, layer, init_next);
 
             self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, init_next);
 
+            assert(res === res_next);
             assert(res.len() == self.arch.num_entries(layer));
-            assert(res_next.len() == res.len());
             assert(res.index(init.len()) === entry);
 
             assert(forall|j: nat|
@@ -2904,7 +2906,21 @@ impl PageTable {
                 if init.len() == j {
                     match self.view_at(layer, ptr, init.len()) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-                            // self.lemma_inv_at_implies_interp_at_inv(dir_addr, base_vaddr, layer + 1);
+                            assert(self.inv_at(layer + 1, dir_addr));
+                            let new_base_vaddr = base_vaddr + self.arch.entry_size(layer) * init.len();
+                            // ambient_lemmas1();
+                            assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1))) by {
+                                assert(self.arch.entry_size(layer) == self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1));
+                                crate::lib::mod_mult_zero_implies_mod_zero(base_vaddr, self.arch.entry_size(layer), self.arch.num_entries(layer));
+                                assert(aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)));
+                                assert(aligned(base_vaddr, self.arch.entry_size(layer)));
+                                crate::lib::mod_of_mul_auto();
+                                // FIXME: Why does the assertion below succeed? init.len() could be zero
+                                assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                                crate::lib::mod_add_zero(base_vaddr, self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer));
+                                assert(aligned(base_vaddr + self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                            };
+                            self.lemma_inv_at_implies_interp_at_inv(dir_addr, new_base_vaddr, layer + 1);
                             assume(false); // FIXME: recursive lemma call here
                             assert(dir.inv());
                             assert(dir.layer == layer + 1);
@@ -2916,7 +2932,6 @@ impl PageTable {
                         GhostPageDirectoryEntry::Page { addr, .. } => assert(false),
                         GhostPageDirectoryEntry::Empty => assert(false),
                     };
-
                 } else {
                 }
             };
