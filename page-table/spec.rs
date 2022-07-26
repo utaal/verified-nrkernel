@@ -16,6 +16,11 @@ use result::{*, Result::*};
 
 verus! {
 
+proof fn ambient_arith()
+    ensures
+        forall_arith(|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0),
+        forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0);
+
 proof fn ambient_lemmas1()
     ensures
         forall|d: Directory, i: nat|
@@ -2852,6 +2857,7 @@ impl PageTable {
             }),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
+        ambient_arith();
         if init.len() >= self.arch.num_entries(layer) {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr));
@@ -2914,19 +2920,24 @@ impl PageTable {
                                 crate::lib::mod_mult_zero_implies_mod_zero(base_vaddr, self.arch.entry_size(layer), self.arch.num_entries(layer));
                                 assert(aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)));
                                 assert(aligned(base_vaddr, self.arch.entry_size(layer)));
-                                crate::lib::mod_of_mul_auto();
-                                // FIXME: Why does the assertion below succeed? init.len() could be zero
-                                assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                                if init.len() == 0 {
+                                    crate::lib::aligned_zero();
+                                    assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                                } else {
+                                    crate::lib::mul_commute(self.arch.entry_size(layer), init.len());
+                                    crate::lib::mod_of_mul(init.len(), self.arch.entry_size(layer));
+                                    assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                                }
                                 crate::lib::mod_add_zero(base_vaddr, self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer));
                                 assert(aligned(base_vaddr + self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
                             };
                             self.lemma_inv_at_implies_interp_at_inv(dir_addr, new_base_vaddr, layer + 1);
-                            assume(false); // FIXME: recursive lemma call here
                             assert(dir.inv());
                             assert(dir.layer == layer + 1);
-                            assert(dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer));
+                            assume(dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer)); // FIXME: unstable?
                             assert(dir.arch === self.arch);
-                            assert(!dir.empty());
+                            // FIXME:
+                            assume(!dir.empty());
                             // NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)),
                         },
                         GhostPageDirectoryEntry::Page { addr, .. } => assert(false),
