@@ -145,13 +145,13 @@ impl Arch {
 
     pub closed spec(checked) fn inv(&self) -> bool {
         forall|i:nat|
-            #![trigger self.layers.index(i).entry_size]
-            #![trigger self.layers.index(i).num_entries]
+            #![trigger self.entry_size(i)]
+            #![trigger self.num_entries(i)]
             i < self.layers.len() ==> (
                 // FIXME: conversion, can't use &&& in expressions?
                 true
-                && self.layers.index(i).entry_size > 0
-                && self.layers.index(i).num_entries > 0
+                && self.entry_size(i) > 0
+                && self.num_entries(i) > 0
                 && self.entry_size_is_next_layer_size(i))
     }
 
@@ -159,11 +159,11 @@ impl Arch {
         recommends i < self.layers.len()
     {
         i + 1 < self.layers.len() ==>
-            self.layers.index(i).entry_size == self.layers.index((i + 1) as nat).entry_size * self.layers.index((i + 1) as nat).num_entries
+            self.entry_size(i) == self.entry_size((i + 1) as nat) * self.num_entries((i + 1) as nat)
     }
 
     pub closed spec(checked) fn contains_entry_size_at_index_atleast(&self, entry_size: nat, min_idx: nat) -> bool {
-        exists|i: nat| min_idx <= i && i < self.layers.len() && #[trigger] self.layers.index(i).entry_size == entry_size
+        exists|i: nat| min_idx <= i && i < self.layers.len() && #[trigger] self.entry_size(i) == entry_size
     }
 
     pub closed spec(checked) fn contains_entry_size(&self, entry_size: nat) -> bool {
@@ -176,7 +176,7 @@ impl Arch {
             i <= j,
             j < self.layers.len(),
         ensures
-            aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size)
+            aligned(self.entry_size(i), self.entry_size(j))
         decreases (self.layers.len() - i)
     {
         ambient_lemmas1();
@@ -195,14 +195,84 @@ impl Arch {
         ensures
             forall|i: nat, j: nat|
                 self.inv() && i <= j && j < self.layers.len() ==>
-                aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size)
+                aligned(self.entry_size(i), self.entry_size(j))
     {
         assert_forall_by(|i: nat, j: nat| {
             requires(self.inv() && i <= j && j < self.layers.len());
-            ensures(aligned(self.layers.index(i).entry_size, self.layers.index(j).entry_size));
+            ensures(aligned(self.entry_size(i), self.entry_size(j)));
             self.lemma_entry_sizes_aligned(i, j);
         });
     }
+
+    pub closed spec(checked) fn entry_base(self, layer: nat, base: nat, idx: nat) -> nat
+        recommends
+            self.inv(),
+            layer < self.layers.len()
+    {
+        base + idx * self.entry_size(layer)
+    }
+
+    // #[verifier(nonlinear)]
+    // pub proof fn lemma_entry_base_manual(self, i: nat)
+    //     requires
+    //         self.inv(),
+    //     ensures
+    //         forall_arith(|j: nat| j < i ==> self.entry_base(j) < self.entry_base(i) && self.entry_base(#[trigger] (j+1)) <= self.entry_base(i)),
+    //         aligned(self.entry_base(i), self.entry_size()),
+    //         // forall(|i: nat| i < self.num_entries() && self.entries.index(i).is_Directory() ==> {
+    //         //     let d = self.entries.index(i).get_Directory_0();
+    //         //     d.upper_vaddr() == self.entry_base(i+1)
+    //         // })
+    // {
+    //     self.lemma_entry_base_auto();
+    // }
+
+    #[verifier(nonlinear)]
+    pub proof fn lemma_entry_base_auto(self)
+        requires
+            self.inv(),
+        ensures
+            forall|i: nat, j: nat, base: nat, layer: nat|
+                #![trigger self.entry_base(layer, base, i), self.entry_base(layer, base, j)]
+                i < j ==> self.entry_base(layer, base, i)     <  self.entry_base(layer, base, j)
+                       && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j),
+            // TODO: The line above can't be a separate postcondition because it doesn't have any valid triggers.
+            // The trigger for it is pretty bad.
+            // forall|i: nat, j: nat, base: nat, layer: nat| i < j
+            //     ==> self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j),
+            forall|i: nat, base: nat, layer: nat|
+                aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)),
+    {
+        // FIXME: prove this
+        assume(false);
+        assert forall|i: nat, j: nat, base: nat, layer: nat|
+            i < j implies
+                   #[trigger] self.entry_base(layer, base, i) < #[trigger] self.entry_base(layer, base, j)
+                && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j) by
+        {
+            assert(self.entry_base(layer, base, i) == base + i * self.entry_size(layer));
+            assert(self.entry_base(layer, base, j) == base + j * self.entry_size(layer));
+            assert(self.entry_size(layer) > 0);
+            assert(i * self.entry_size(layer) < j * self.entry_size(layer));
+            assume(false);
+            assert(self.entry_base(layer, base, i) < self.entry_base(layer, base, j));
+            assert(self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j));
+        };
+
+        assume(forall|i: nat, base: nat, layer: nat|
+               aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)));
+        // // Postcondition 2
+        // assert_forall_by(|i: nat| {
+        //     ensures(#[auto_trigger] aligned(self.entry_base(i), self.entry_size()));
+        //     crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+        //     assert(aligned(self.base_vaddr, self.entry_size()));
+        //     crate::lib::mod_of_mul(i, self.entry_size());
+        //     assert(aligned(i * self.entry_size(), self.entry_size()));
+        //     crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
+        //     assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
+        // });
+    }
+
 }
 
 proof fn arch_inv_test() {
@@ -215,7 +285,7 @@ proof fn arch_inv_test() {
         ],
     };
     // assert(x86.inv()); unstable
-    assert(x86.layers.index(3).entry_size == 4096);
+    assert(x86.entry_size(3) == 4096);
     assert(x86.contains_entry_size(4096));
 }
 
@@ -1369,7 +1439,7 @@ impl Directory {
             self.layer + 1 < self.arch.layers.len(),
     {
         Directory {
-            entries:    new_seq(self.arch.layers.index((self.layer + 1) as nat).num_entries),
+            entries:    new_seq(self.arch.num_entries((self.layer + 1) as nat)),
             layer:      self.layer + 1,
             base_vaddr: self.entry_base(entry),
             arch:       self.arch,
@@ -1383,11 +1453,11 @@ impl Directory {
             self.layer + 1 < self.arch.layers.len(),
         ensures
             self.new_empty_dir(entry).inv(),
-            self.new_empty_dir(entry).entries.len() == self.arch.layers.index((self.layer + 1) as nat).num_entries,
+            self.new_empty_dir(entry).entries.len() == self.arch.num_entries((self.layer + 1) as nat),
             forall|j: nat| j < self.new_empty_dir(entry).num_entries() ==> equal(self.new_empty_dir(entry).entries.index(j), NodeEntry::Empty()),
     {
         let new_dir = self.new_empty_dir(entry);
-        let num_entries = self.arch.layers.index((self.layer + 1) as nat).num_entries;
+        let num_entries = self.arch.num_entries((self.layer + 1) as nat);
         self.lemma_entry_base_auto();
         lemma_new_seq(num_entries);
 
@@ -2857,7 +2927,6 @@ impl PageTable {
             }),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
-        ambient_arith();
         if init.len() >= self.arch.num_entries(layer) {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr));
@@ -2916,6 +2985,7 @@ impl PageTable {
                             let new_base_vaddr = base_vaddr + self.arch.entry_size(layer) * init.len();
                             // ambient_lemmas1();
                             assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1))) by {
+                                ambient_arith();
                                 assert(self.arch.entry_size(layer) == self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1));
                                 crate::lib::mod_mult_zero_implies_mod_zero(base_vaddr, self.arch.entry_size(layer), self.arch.num_entries(layer));
                                 assert(aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)));
