@@ -240,6 +240,12 @@ impl Arch {
             // The trigger for it is pretty bad.
             // forall|i: nat, j: nat, base: nat, layer: nat| i < j
             //     ==> self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j),
+            // forall|a: nat, base: nat, layer: nat|
+            //     aligned(base, self.entry_size(layer) * a) ==> #[trigger] aligned(base, self.entry_size(layer)),
+            // TODO: Have to use a less general postcondition because the one above doesn't have
+            // any valid triggers
+            forall|base: nat, layer: nat| // Used to infer lhs of next postcondition's implication
+                aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
             forall|i: nat, base: nat, layer: nat|
                 aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)),
     {
@@ -672,6 +678,7 @@ impl Directory {
          self.vaddr_offset(vaddr) / self.entry_size()
     }
 
+    // FIXME: probably replace this with the entry_base on arch
     pub closed spec(checked) fn entry_base(self, entry: nat) -> nat
         recommends self.inv()
     {
@@ -2828,9 +2835,10 @@ impl PageTable {
             init
         } else {
             let entry = match self.view_at(layer, ptr, init.len()) {
-                GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =>
-                    // NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)), // FIXME: is that base_vaddr right?
-                    NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr + self.arch.entry_size(layer) * init.len(), layer + 1)),
+                GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                    let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
+                    NodeEntry::Directory(self.interp_at(dir_addr, new_base_vaddr, layer + 1))
+                },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
                     NodeEntry::Page(MemRegion { base: addr, size: self.arch.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
@@ -2870,7 +2878,8 @@ impl PageTable {
             self.inv_at(layer, ptr),
             aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
         ensures
-            self.interp_at(ptr, base_vaddr, layer).inv()
+            self.interp_at(ptr, base_vaddr, layer).inv(),
+            // !self.empty_at(layer, ptr) ==> !self.interp_at(ptr, base_vaddr, layer).empty(),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1nat)
     {
         self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, seq![]);
@@ -2925,6 +2934,12 @@ impl PageTable {
                         &&& aligned(page.base, self.arch.entry_size(layer))
                     }
             }),
+            // ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
+            //     forall|j: nat|
+            //         init.len() <= j && j < res.len() && res.index(j).is_Empty()
+            //         ==> (#[trigger] self.view_at(layer, ptr, j)).is_Empty()
+            // }),
+            // forall|i: nat| self.interp_at_aux(ptr, base_vaddr, layer, init).empty() ==> self.empty_at(layer, ptr),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
         if init.len() >= self.arch.num_entries(layer) {
@@ -2982,32 +2997,35 @@ impl PageTable {
                     match self.view_at(layer, ptr, init.len()) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                             assert(self.inv_at(layer + 1, dir_addr));
-                            let new_base_vaddr = base_vaddr + self.arch.entry_size(layer) * init.len();
-                            // ambient_lemmas1();
-                            assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1))) by {
-                                ambient_arith();
-                                assert(self.arch.entry_size(layer) == self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1));
-                                crate::lib::mod_mult_zero_implies_mod_zero(base_vaddr, self.arch.entry_size(layer), self.arch.num_entries(layer));
-                                assert(aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)));
-                                assert(aligned(base_vaddr, self.arch.entry_size(layer)));
-                                if init.len() == 0 {
-                                    crate::lib::aligned_zero();
-                                    assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
-                                } else {
-                                    crate::lib::mul_commute(self.arch.entry_size(layer), init.len());
-                                    crate::lib::mod_of_mul(init.len(), self.arch.entry_size(layer));
-                                    assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
-                                }
-                                crate::lib::mod_add_zero(base_vaddr, self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer));
-                                assert(aligned(base_vaddr + self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
-                            };
+                            let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
+                            self.arch.lemma_entry_base_auto();
+                            assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1)));
+                            // assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1))) by {
+                            //     ambient_arith();
+                            //     assert(self.arch.entry_size(layer) == self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1));
+                            //     crate::lib::mod_mult_zero_implies_mod_zero(base_vaddr, self.arch.entry_size(layer), self.arch.num_entries(layer));
+                            //     assert(aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)));
+                            //     assert(aligned(base_vaddr, self.arch.entry_size(layer)));
+                            //     if init.len() == 0 {
+                            //         crate::lib::aligned_zero();
+                            //         assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                            //     } else {
+                            //         crate::lib::mul_commute(self.arch.entry_size(layer), init.len());
+                            //         crate::lib::mod_of_mul(init.len(), self.arch.entry_size(layer));
+                            //         assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                            //     }
+                            //     crate::lib::mod_add_zero(base_vaddr, self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer));
+                            //     assert(aligned(base_vaddr + self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
+                            // };
                             self.lemma_inv_at_implies_interp_at_inv(dir_addr, new_base_vaddr, layer + 1);
                             assert(dir.inv());
                             assert(dir.layer == layer + 1);
-                            assume(dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer)); // FIXME: unstable?
+                            assert(dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer));
                             assert(dir.arch === self.arch);
+                            assert(self.directories_are_nonempty_at(layer, ptr));
+                            assert(!self.empty_at(layer + 1, dir_addr));
                             // FIXME:
-                            assume(!dir.empty());
+                            assert(!dir.empty());
                             // NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)),
                         },
                         GhostPageDirectoryEntry::Page { addr, .. } => assert(false),
