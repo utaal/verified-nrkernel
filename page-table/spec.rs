@@ -2879,7 +2879,7 @@ impl PageTable {
             aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
         ensures
             self.interp_at(ptr, base_vaddr, layer).inv(),
-            // !self.empty_at(layer, ptr) ==> !self.interp_at(ptr, base_vaddr, layer).empty(),
+            !self.empty_at(layer, ptr) ==> !self.interp_at(ptr, base_vaddr, layer).empty(),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1nat)
     {
         self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, seq![]);
@@ -2934,11 +2934,11 @@ impl PageTable {
                         &&& aligned(page.base, self.arch.entry_size(layer))
                     }
             }),
-            // ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
-            //     forall|j: nat|
-            //         init.len() <= j && j < res.len() && res.index(j).is_Empty()
-            //         ==> (#[trigger] self.view_at(layer, ptr, j)).is_Empty()
-            // }),
+            ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
+                forall|j: nat|
+                    init.len() <= j && j < res.len() && res.index(j).is_Empty()
+                    ==> (#[trigger] self.view_at(layer, ptr, j)).is_Empty()
+            }),
             // forall|i: nat| self.interp_at_aux(ptr, base_vaddr, layer, init).empty() ==> self.empty_at(layer, ptr),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
