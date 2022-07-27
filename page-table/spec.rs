@@ -212,6 +212,14 @@ impl Arch {
         base + idx * self.entry_size(layer)
     }
 
+    pub closed spec(checked) fn next_entry_base(self, layer: nat, base: nat, idx: nat) -> nat
+        recommends
+            self.inv(),
+            layer < self.layers.len()
+    {
+        base + (idx + 1) * self.entry_size(layer)
+    }
+
     // #[verifier(nonlinear)]
     // pub proof fn lemma_entry_base_manual(self, i: nat)
     //     requires
@@ -227,46 +235,61 @@ impl Arch {
     //     self.lemma_entry_base_auto();
     // }
 
-    #[verifier(nonlinear)]
+    // #[verifier(nonlinear)]
     pub proof fn lemma_entry_base_auto(self)
         requires
             self.inv(),
         ensures
             forall|i: nat, j: nat, base: nat, layer: nat|
                 #![trigger self.entry_base(layer, base, i), self.entry_base(layer, base, j)]
-                i < j ==> self.entry_base(layer, base, i)     <  self.entry_base(layer, base, j)
-                       && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j),
+                layer < self.layers.len() && i < j ==>
+                          self.entry_base(layer, base, i) <  self.entry_base(layer, base, j),
+                       // && self.next_entry_base(layer, base, i) <= self.entry_base(layer, base, j),
             // TODO: The line above can't be a separate postcondition because it doesn't have any valid triggers.
             // The trigger for it is pretty bad.
-            // forall|i: nat, j: nat, base: nat, layer: nat| i < j
-            //     ==> self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j),
+            forall|i: nat, j: nat, base: nat, layer: nat| i < j
+                ==> self.next_entry_base(layer, base, i) <= self.entry_base(layer, base, j),
             // forall|a: nat, base: nat, layer: nat|
             //     aligned(base, self.entry_size(layer) * a) ==> #[trigger] aligned(base, self.entry_size(layer)),
             // TODO: Have to use a less general postcondition because the one above doesn't have
             // any valid triggers
             forall|base: nat, layer: nat| // Used to infer lhs of next postcondition's implication
-                aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
+                layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
             forall|i: nat, base: nat, layer: nat|
-                aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)),
+                layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)),
     {
-        // FIXME: prove this
         assume(false);
-        assert forall|i: nat, j: nat, base: nat, layer: nat|
-            i < j implies
-                   #[trigger] self.entry_base(layer, base, i) < #[trigger] self.entry_base(layer, base, j)
-                && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j) by
+        // FIXME: prove this
+        assert(forall|i: nat, j: nat, base: nat, layer: nat|
+                #![trigger self.entry_base(layer, base, i), self.entry_base(layer, base, j)]
+                layer < self.layers.len() && i < j ==> self.entry_base(layer, base, i)     <  self.entry_base(layer, base, j)
+                       && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j)) by(nonlinear_arith)
+            requires
+                self.inv(),
         {
-            assert(self.entry_base(layer, base, i) == base + i * self.entry_size(layer));
-            assert(self.entry_base(layer, base, j) == base + j * self.entry_size(layer));
-            assert(self.entry_size(layer) > 0);
-            assert(i * self.entry_size(layer) < j * self.entry_size(layer));
+            assert forall|i: nat, j: nat, base: nat, layer: nat|
+                layer < self.layers.len() && i < j implies
+                       #[trigger] self.entry_base(layer, base, i) < #[trigger] self.entry_base(layer, base, j)
+                    && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j) by
+            {
+                assume(false);
+                assert(self.entry_base(layer, base, i) == base + i * self.entry_size(layer));
+                assert(self.entry_base(layer, base, j) == base + j * self.entry_size(layer));
+                assert(self.entry_size(layer) > 0);
+                assert(i * self.entry_size(layer) > 0);
+                assert(j * self.entry_size(layer) > 0);
+                assert(i * self.entry_size(layer) < j * self.entry_size(layer));
+                assume(false);
+                assert(self.entry_base(layer, base, i) < self.entry_base(layer, base, j));
+                assert(self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j));
+            }
             assume(false);
-            assert(self.entry_base(layer, base, i) < self.entry_base(layer, base, j));
-            assert(self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j));
         };
 
+        assume(forall|base: nat, layer: nat|
+               layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)));
         assume(forall|i: nat, base: nat, layer: nat|
-               aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)));
+               layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)));
         // // Postcondition 2
         // assert_forall_by(|i: nat| {
         //     ensures(#[auto_trigger] aligned(self.entry_base(i), self.entry_size()));
@@ -2939,15 +2962,16 @@ impl PageTable {
                     init.len() <= j && j < res.len() && res.index(j).is_Empty()
                     ==> (#[trigger] self.view_at(layer, ptr, j)).is_Empty()
             }),
-            // forall|i: nat| self.interp_at_aux(ptr, base_vaddr, layer, init).empty() ==> self.empty_at(layer, ptr),
         decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
     {
         if init.len() >= self.arch.num_entries(layer) {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr));
-            let entry    = match self.view_at(layer, ptr, init.len()) {
-                GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =>
-                    NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr + self.arch.entry_size(layer) * init.len(), layer + 1)),
+            let entry = match self.view_at(layer, ptr, init.len()) {
+                GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                    let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
+                    NodeEntry::Directory(self.interp_at(dir_addr, new_base_vaddr, layer + 1))
+                },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
                     NodeEntry::Page(MemRegion { base: addr, size: self.arch.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
@@ -2963,20 +2987,6 @@ impl PageTable {
             assert(res.len() == self.arch.num_entries(layer));
             assert(res.index(init.len()) === entry);
 
-            assert(forall|j: nat|
-                   init_next.len() <= j && j < res_next.len() && res_next.index(j).is_Directory()
-                   ==> {
-                       let dir = #[trigger] res_next.index(j).get_Directory_0();
-                       // directories_obey_invariant
-                       &&& dir.inv()
-                       // directories_are_in_next_layer
-                       &&& dir.layer == layer + 1
-                       &&& dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer)
-                       // directories_match_arch
-                       &&& dir.arch === self.arch
-                       // directories_are_nonempty
-                       &&& !dir.empty()
-            });
             assert forall|j: nat|
                 init.len() <= j && j < res.len() && res.index(j).is_Directory()
                 implies {
@@ -3000,23 +3010,6 @@ impl PageTable {
                             let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
                             self.arch.lemma_entry_base_auto();
                             assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1)));
-                            // assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1))) by {
-                            //     ambient_arith();
-                            //     assert(self.arch.entry_size(layer) == self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1));
-                            //     crate::lib::mod_mult_zero_implies_mod_zero(base_vaddr, self.arch.entry_size(layer), self.arch.num_entries(layer));
-                            //     assert(aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)));
-                            //     assert(aligned(base_vaddr, self.arch.entry_size(layer)));
-                            //     if init.len() == 0 {
-                            //         crate::lib::aligned_zero();
-                            //         assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
-                            //     } else {
-                            //         crate::lib::mul_commute(self.arch.entry_size(layer), init.len());
-                            //         crate::lib::mod_of_mul(init.len(), self.arch.entry_size(layer));
-                            //         assert(aligned(self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
-                            //     }
-                            //     crate::lib::mod_add_zero(base_vaddr, self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer));
-                            //     assert(aligned(base_vaddr + self.arch.entry_size(layer) * init.len(), self.arch.entry_size(layer)));
-                            // };
                             self.lemma_inv_at_implies_interp_at_inv(dir_addr, new_base_vaddr, layer + 1);
                             assert(dir.inv());
                             assert(dir.layer == layer + 1);
@@ -3024,52 +3017,14 @@ impl PageTable {
                             assert(dir.arch === self.arch);
                             assert(self.directories_are_nonempty_at(layer, ptr));
                             assert(!self.empty_at(layer + 1, dir_addr));
-                            // FIXME:
                             assert(!dir.empty());
-                            // NodeEntry::Directory(self.interp_at(dir_addr, base_vaddr, layer + 1)),
                         },
-                        GhostPageDirectoryEntry::Page { addr, .. } => assert(false),
-                        GhostPageDirectoryEntry::Empty => assert(false),
+                        GhostPageDirectoryEntry::Page { addr, .. } => (),
+                        GhostPageDirectoryEntry::Empty => (),
                     };
                 } else {
                 }
             };
-            assume(({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
-                forall|j: nat|
-                    init.len() <= j && j < res.len() && res.index(j).is_Page()
-                    ==> {
-                        let page = res.index(j).get_Page_0();
-                        // pages_match_entry_size
-                        &&& page.size == self.arch.entry_size(layer)
-                        // frames_aligned
-                        &&& aligned(page.base, self.arch.entry_size(layer))
-                    }
-            }));
-
-            // assert(res_next.len() == self.arch.num_entries(layer) - i - 1);
-            // assume(false);
-
-            // assert(res.len() == res_next.len() + 1);
-            // assert(res.len() == self.arch.num_entries(layer) - i);
-            // assert(
-            //     // directories_obey_invariant
-            //     { let res = self.interp_at_aux(ptr, base_vaddr, layer, i);
-            //         forall|j: nat|
-            //             j < res.len() && res.index(j).is_Directory()
-            //             ==> (#[trigger] res.index(j).get_Directory_0()).inv() });
-            // assert(
-            //     // pages_match_entry_size
-            //     { let res = self.interp_at_aux(ptr, base_vaddr, layer, i);
-            //         forall|j: nat|
-            //             j < res.len() && res.index(j).is_Page()
-            //             ==> (#[trigger] res.index(j).get_Page_0()).size == self.arch.entry_size(layer) });
-            // // assume({
-            // //     let res = self.interp_at_aux(ptr, base_vaddr, layer, i);
-            // //     forall|j: nat|
-            // //         j < res.len() && res.index(j).is_Directory()
-            // //         ==> (#[trigger] res.index(j).get_Directory_0()).inv()
-            // // });
-            // // assume(self.interp_at_aux(ptr, base_vaddr, layer, i).len() == self.arch.num_entries(layer) - i);
         }
     }
 
