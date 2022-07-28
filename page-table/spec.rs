@@ -2479,24 +2479,20 @@ const MASK_L0_PG_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
 const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21,MAXPHYADDR);
 const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30,MAXPHYADDR);
 
-// TODO: can we get support for consts in bit vector reasoning?
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
-        // MASK_L1_PG_ADDR                                             MASK_L0_PG_ADDR
-        (bitmask_inc!(21 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address),
-        // MASK_L2_PG_ADDR                                             MASK_L0_PG_ADDR
-        (bitmask_inc!(30 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address),
+        MASK_L1_PG_ADDR & address == address ==> MASK_L0_PG_ADDR & address == address,
+        MASK_L2_PG_ADDR & address == address ==> MASK_L0_PG_ADDR & address == address,
 {
+    // TODO: can we get support for consts in bit vector reasoning?
     assert((bitmask_inc!(21 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address)) by (bit_vector);
     assert((bitmask_inc!(30 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address)) by (bit_vector);
 }
 
 proof fn lemma_addr_masks_facts2(address: u64)
     ensures
-        //          MASK_L0_PG_ADDR                       MASK_L1_PG_ADDR                                   MASK_L1_PG_ADDR
-        ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64)),
-        //          MASK_L0_PG_ADDR                       MASK_L2_PG_ADDR                                   MASK_L2_PG_ADDR
-        ((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64))
+        (address & MASK_L0_PG_ADDR) & MASK_L1_PG_ADDR == address & MASK_L1_PG_ADDR,
+        (address & MASK_L0_PG_ADDR) & MASK_L2_PG_ADDR == address & MASK_L2_PG_ADDR,
 {
     assert(((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64))) by (bit_vector);
     assert(((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64))) by (bit_vector);
