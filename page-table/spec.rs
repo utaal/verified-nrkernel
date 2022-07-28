@@ -2440,13 +2440,13 @@ const MAXPHYADDR: u64 = 52;
 // FIXME: these macros probably already exist somewhere?
 macro_rules! bit {
     ($v:expr) => {
-        1 << $v
+        1u64 << $v
     }
 }
 // Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
 macro_rules! bitmask_inc {
     ($low:expr,$high:expr) => {
-        (!(!0 << (($high+1)-$low))) << $low
+        (!(!0u64 << (($high+1u64)-$low))) << $low
     }
 }
 // macro_rules! bitmask {
@@ -2463,38 +2463,38 @@ macro_rules! bitmask_inc {
 
 
 // MASK_FLAG_* are flags valid for all entries.
-const MASK_FLAG_P:    u64 = bit!(0);
-const MASK_FLAG_RW:   u64 = bit!(1);
-const MASK_FLAG_US:   u64 = bit!(2);
-const MASK_FLAG_PWT:  u64 = bit!(3);
-const MASK_FLAG_PCD:  u64 = bit!(4);
-const MASK_FLAG_A:    u64 = bit!(5);
-const MASK_FLAG_XD:   u64 = bit!(63);
+const MASK_FLAG_P:    u64 = bit!(0u64);
+const MASK_FLAG_RW:   u64 = bit!(1u64);
+const MASK_FLAG_US:   u64 = bit!(2u64);
+const MASK_FLAG_PWT:  u64 = bit!(3u64);
+const MASK_FLAG_PCD:  u64 = bit!(4u64);
+const MASK_FLAG_A:    u64 = bit!(5u64);
+const MASK_FLAG_XD:   u64 = bit!(63u64);
 // We can use the same address mask for all layers as long as we preserve the invariant that the
 // lower bits that *should* be masked off are already zero.
-const MASK_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
+const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
 // const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 0 MASK_L0_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
-const MASK_PG_FLAG_D:    u64 = bit!(6);
-const MASK_PG_FLAG_G:    u64 = bit!(8);
-const MASK_PG_FLAG_PAT:  u64 = bit!(12);
+const MASK_PG_FLAG_D:    u64 = bit!(6u64);
+const MASK_PG_FLAG_G:    u64 = bit!(8u64);
+const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
 
-const MASK_L1_PG_FLAG_PS:   u64 = bit!(7);
-const MASK_L2_PG_FLAG_PS:   u64 = bit!(7);
-const MASK_L0_PG_FLAG_PAT:  u64 = bit!(7);
+const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
+const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
+const MASK_L0_PG_FLAG_PAT:  u64 = bit!(7u64);
 
-const MASK_DIR_REFC:           u64 = bitmask_inc!(52,62); // Ignored bits for storing refcount in L3 and L2
-const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8,12); // Ignored bits for storing refcount in L1
-const MASK_DIR_REFC_SHIFT:     u64 = 52;
-const MASK_DIR_L1_REFC_SHIFT:  u64 = 8;
+const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
+const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
+const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
+const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
 
 // We should be able to always use the 12:52 mask and have the invariant state that in the
 // other cases, the lower bits are already zero anyway.
-const MASK_L0_PG_ADDR:      u64 = bitmask_inc!(12,MAXPHYADDR);
-const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21,MAXPHYADDR);
-const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30,MAXPHYADDR);
+const MASK_L0_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
+const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR);
+const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR);
 
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
@@ -2502,8 +2502,8 @@ proof fn lemma_addr_masks_facts(address: u64)
         MASK_L2_PG_ADDR & address == address ==> MASK_L0_PG_ADDR & address == address,
 {
     // TODO: can we get support for consts in bit vector reasoning?
-    assert((bitmask_inc!(21 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address)) by (bit_vector);
-    assert((bitmask_inc!(30 as u64, 52 as u64) & address == address) ==> (bitmask_inc!(12 as u64, 52 as u64) & address == address)) by (bit_vector);
+    assert((bitmask_inc!(21u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
+    assert((bitmask_inc!(30u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
 }
 
 proof fn lemma_addr_masks_facts2(address: u64)
@@ -2511,8 +2511,8 @@ proof fn lemma_addr_masks_facts2(address: u64)
         (address & MASK_L0_PG_ADDR) & MASK_L1_PG_ADDR == address & MASK_L1_PG_ADDR,
         (address & MASK_L0_PG_ADDR) & MASK_L2_PG_ADDR == address & MASK_L2_PG_ADDR,
 {
-    assert(((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(21 as u64, 52 as u64)) == (address & bitmask_inc!(21 as u64, 52 as u64))) by (bit_vector);
-    assert(((address & bitmask_inc!(12 as u64, 52 as u64)) & bitmask_inc!(30 as u64, 52 as u64)) == (address & bitmask_inc!(30 as u64, 52 as u64))) by (bit_vector);
+    assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(21u64, 52u64)) == (address & bitmask_inc!(21u64, 52u64))) by (bit_vector);
+    assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(30u64, 52u64)) == (address & bitmask_inc!(30u64, 52u64))) by (bit_vector);
 }
 
 // // MASK_PD_* are flags valid for all entries pointing to another directory
