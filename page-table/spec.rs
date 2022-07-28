@@ -767,12 +767,10 @@ impl Directory {
         self.base_vaddr + self.num_entries() * self.entry_size()
     }
 
-    pub closed spec(checked) fn vaddr_offset(self, vaddr: nat) -> nat {
-        (vaddr - self.base_vaddr) as nat
-    }
-
-    pub closed spec fn index_for_vaddr(self, vaddr: nat) -> /*index: */ nat {
-         self.vaddr_offset(vaddr) / self.entry_size()
+    pub closed spec fn index_for_vaddr(self, vaddr: nat) -> /*index: */ nat
+        recommends vaddr >= self.base_vaddr
+    {
+         ((vaddr - self.base_vaddr) as nat) / self.entry_size()
     }
 
     // FIXME: probably replace this with the entry_base on arch
@@ -1280,7 +1278,7 @@ impl Directory {
         }
     }
 
-    #[verifier(decreases_by)]
+    #[verifier(recommends_by)]
     proof fn check_resolve(self, vaddr: nat) {
         assert(self.inv());
 
@@ -1333,10 +1331,10 @@ impl Directory {
                 crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
                 assert(aligned(self.base_vaddr, self.entry_size()));
                 crate::lib::subtract_mod_eq_zero(self.base_vaddr, vaddr, self.entry_size());
-                assert(aligned(self.vaddr_offset(vaddr), self.entry_size()));
-                crate::lib::div_mul_cancel(self.vaddr_offset(vaddr), self.entry_size());
-                assert(self.vaddr_offset(vaddr) / self.entry_size() * self.entry_size() == self.vaddr_offset(vaddr));
-                assert(self.base_vaddr + self.vaddr_offset(vaddr) == self.base_vaddr + i * self.entry_size());
+                assert(aligned(((vaddr - self.base_vaddr) as nat), self.entry_size()));
+                crate::lib::div_mul_cancel(((vaddr - self.base_vaddr) as nat), self.entry_size());
+                assert(((vaddr - self.base_vaddr) as nat) / self.entry_size() * self.entry_size() == ((vaddr - self.base_vaddr) as nat));
+                assert(self.base_vaddr + ((vaddr - self.base_vaddr) as nat) == self.base_vaddr + i * self.entry_size());
                 assert(vaddr == self.base_vaddr + i * self.entry_size());
                 // assert(vaddr == self.base_vaddr + i * self.entry_size());
             }
@@ -2811,6 +2809,8 @@ impl PageTableMemory {
         0 // FIXME: unimplemented
     }
 
+    // FIXME: is a spec_read function like this the wrong approach? Should we instead have a view
+    // that isn't just a sequence but a struct with its own functions?
     pub open spec fn spec_read(self, offset: nat) -> (res: u64) {
         arbitrary()
     }
