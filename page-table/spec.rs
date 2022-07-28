@@ -124,8 +124,25 @@ pub struct ArchLayerExec {
     pub num_entries: usize,
 }
 
+impl ArchLayerExec {
+    pub open spec fn view(self) -> ArchLayer {
+        ArchLayer {
+            entry_size: self.entry_size,
+            num_entries: self.num_entries,
+        }
+    }
+}
+
 pub struct ArchExec {
     pub layers: Vec<ArchLayerExec>,
+}
+
+impl ArchExec {
+    pub open spec fn view(self) -> Arch {
+        Arch {
+            layers: self.layers.view().map(|i: int, l: ArchLayerExec| l.view()),
+        }
+    }
 }
 
 pub ghost struct ArchLayer {
@@ -2751,8 +2768,7 @@ impl PageTableMemory {
 
 pub struct PageTable {
     pub memory: PageTableMemory,
-    pub arch_exec: ArchExec,
-    pub ghost arch: Arch,
+    pub arch: ArchExec,
 }
 
 const ENTRY_BYTES: usize = 8;
@@ -2788,7 +2804,7 @@ impl PageTable {
     }
 
     pub closed spec(checked) fn well_formed(&self) -> bool {
-        self.arch.inv()
+        self.arch.view().inv()
     }
 
     pub closed spec(checked) fn inv(&self) -> bool {
@@ -2815,10 +2831,10 @@ impl PageTable {
     }
 
     pub closed spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize) -> bool
-        decreases (self.arch.layers.len() - layer, 0nat)
+        decreases (self.arch.view().layers.len() - layer, 0nat)
     {
         decreases_when(self.well_formed() && self.layer_in_range(layer));
-        forall|i: nat| i < self.arch.num_entries(layer) ==> {
+        forall|i: nat| i < self.arch.view().num_entries(layer) ==> {
             let entry = #[trigger] self.view_at(layer, ptr, i);
             // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }.view();
             entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr())
@@ -2828,13 +2844,13 @@ impl PageTable {
     pub closed spec fn empty_at(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed()
     {
-        forall|i: nat| i < self.arch.num_entries(layer) ==> self.view_at(layer, ptr, i).is_Empty()
+        forall|i: nat| i < self.arch.view().num_entries(layer) ==> self.view_at(layer, ptr, i).is_Empty()
     }
 
     pub closed spec fn directories_are_nonempty_at(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed()
     {
-        forall|i: nat| i < self.arch.num_entries(layer) ==> {
+        forall|i: nat| i < self.arch.view().num_entries(layer) ==> {
             let entry = #[trigger] self.view_at(layer, ptr, i);
             entry.is_Directory() ==> !self.empty_at(layer + 1, entry.get_Directory_addr())
         }
@@ -2843,68 +2859,62 @@ impl PageTable {
     pub closed spec(checked) fn frames_aligned(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed() && self.layer_in_range(layer)
     {
-        forall|i: nat| i < self.arch.num_entries(layer) ==> {
+        forall|i: nat| i < self.arch.view().num_entries(layer) ==> {
             let entry = #[trigger] self.view_at(layer, ptr, i);
-            entry.is_Page() ==> aligned(entry.get_Page_addr(), self.arch.entry_size(layer))
+            entry.is_Page() ==> aligned(entry.get_Page_addr(), self.arch.view().entry_size(layer))
         }
     }
 
     pub closed spec(checked) fn layer_in_range(self, layer: nat) -> bool {
-        layer < self.arch.layers.len()
+        layer < self.arch.view().layers.len()
     }
 
-    pub closed spec(checked) fn arch_exec_is_arch(self) -> bool {
-        &&& self.arch_exec.layers.len() == self.arch.layers.len()
-        &&& forall|i: nat| #![auto]
-                i < self.arch.layers.len()
-                    ==> self.arch_exec.layers.index(i).entry_size  == self.arch_exec.layers.index(i).entry_size
-                     && self.arch_exec.layers.index(i).num_entries == self.arch_exec.layers.index(i).num_entries
-    }
+    // pub closed spec(checked) fn arch_exec_is_arch(self) -> bool {
+    //     &&& self.arch_exec.layers.len() == self.arch.layers.len()
+    //     &&& forall|i: nat| #![auto]
+    //             i < self.arch.layers.len()
+    //                 ==> self.arch_exec.layers.index(i).entry_size  == self.arch_exec.layers.index(i).entry_size
+    //                  && self.arch_exec.layers.index(i).num_entries == self.arch_exec.layers.index(i).num_entries
+    // }
 
     pub closed spec(checked) fn inv_at(&self, layer: nat, ptr: usize) -> bool
-        decreases self.arch.layers.len() - layer
+        decreases self.arch.view().layers.len() - layer
     {
         &&& self.well_formed()
         &&& self.layer_in_range(layer)
         &&& self.directories_obey_invariant_at(layer, ptr)
         &&& self.directories_are_nonempty_at(layer, ptr)
         &&& self.frames_aligned(layer, ptr)
-        &&& self.arch_exec_is_arch()
+        // &&& self.arch_exec_is_arch()
     }
 
-    // pub closed spec(checked) fn interp_entry_bytes_as_node_entry(&self, ptr: usize, base_vaddr: nat, layer: nat) -> NodeEntry
-    //     decreases (self.arch.layers.len() - layer, 0, 2)
-    // {
-    //     decreases_when(self.inv_at(layer, ptr));
-    // }
-
     pub closed spec fn interp_at(self, ptr: usize, base_vaddr: nat, layer: nat) -> Directory
-        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1nat)
+        decreases (self.arch.view().layers.len() - layer, self.arch.view().num_entries(layer), 1nat)
     {
         decreases_when(self.inv_at(layer, ptr));
         Directory {
             entries: self.interp_at_aux(ptr, base_vaddr, layer, seq![]),
             layer: layer,
             base_vaddr,
-            arch: self.arch,
+            arch: self.arch.view(),
         }
     }
 
     spec fn interp_at_aux(self, ptr: usize, base_vaddr: nat, layer: nat, init: Seq<NodeEntry>) -> Seq<NodeEntry>
-        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
+        decreases (self.arch.view().layers.len() - layer, self.arch.view().num_entries(layer) - init.len(), 0nat)
     {
         decreases_when(self.inv_at(layer, ptr));
         decreases_by(Self::termination_interp_at_aux);
-        if init.len() >= self.arch.num_entries(layer) {
+        if init.len() >= self.arch.view().num_entries(layer) {
             init
         } else {
             let entry = match self.view_at(layer, ptr, init.len()) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-                    let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
+                    let new_base_vaddr = self.arch.view().entry_base(layer, base_vaddr, init.len());
                     NodeEntry::Directory(self.interp_at(dir_addr, new_base_vaddr, layer + 1))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
-                    NodeEntry::Page(MemRegion { base: addr, size: self.arch.entry_size(layer) }),
+                    NodeEntry::Page(MemRegion { base: addr, size: self.arch.view().entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
                     NodeEntry::Empty(),
             };
@@ -2915,7 +2925,7 @@ impl PageTable {
     #[proof] #[verifier(decreases_by)]
     spec fn termination_interp_at_aux(self, ptr: usize, base_vaddr: nat, layer: nat, init: Seq<NodeEntry>) {
         assert(self.directories_obey_invariant_at(layer, ptr));
-        assert(self.arch.layers.len() - (layer + 1) < self.arch.layers.len() - layer);
+        assert(self.arch.view().layers.len() - (layer + 1) < self.arch.view().layers.len() - layer);
         // FIXME: why isn't this going through?
         // Can I somehow assert the decreases here or assert an inequality between tuples?
         assume(false);
@@ -2932,19 +2942,19 @@ impl PageTable {
     {
         crate::lib::aligned_zero();
         assert(forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0)) by(nonlinear_arith);
-        assert(self.arch.entry_size(0) * self.arch.num_entries(0) > 0);
-        assert(aligned(0, self.arch.entry_size(0) * self.arch.num_entries(0)));
+        assert(self.arch.view().entry_size(0) * self.arch.view().num_entries(0) > 0);
+        assert(aligned(0, self.arch.view().entry_size(0) * self.arch.view().num_entries(0)));
         self.lemma_inv_at_implies_interp_at_inv(self.memory.root(), 0, 0);
     }
 
     proof fn lemma_inv_at_implies_interp_at_inv(self, ptr: usize, base_vaddr: nat, layer: nat)
         requires
             self.inv_at(layer, ptr),
-            aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
+            aligned(base_vaddr, self.arch.view().entry_size(layer) * self.arch.view().num_entries(layer)),
         ensures
             self.interp_at(ptr, base_vaddr, layer).inv(),
             !self.empty_at(layer, ptr) ==> !self.interp_at(ptr, base_vaddr, layer).empty(),
-        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer), 1nat)
+        decreases (self.arch.view().layers.len() - layer, self.arch.view().num_entries(layer), 1nat)
     {
         self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, seq![]);
         let res = self.interp_at(ptr, base_vaddr, layer);
@@ -2959,9 +2969,9 @@ impl PageTable {
     proof fn lemma_inv_at_implies_interp_at_aux_inv(self, ptr: usize, base_vaddr: nat, layer: nat, init: Seq<NodeEntry>)
         requires
             self.inv_at(layer, ptr),
-            aligned(base_vaddr, self.arch.entry_size(layer) * self.arch.num_entries(layer)),
+            aligned(base_vaddr, self.arch.view().entry_size(layer) * self.arch.view().num_entries(layer)),
         ensures
-            self.interp_at_aux(ptr, base_vaddr, layer, init).len() == if init.len() > self.arch.num_entries(layer) { init.len() } else { self.arch.num_entries(layer) },
+            self.interp_at_aux(ptr, base_vaddr, layer, init).len() == if init.len() > self.arch.view().num_entries(layer) { init.len() } else { self.arch.view().num_entries(layer) },
             forall|j: nat| j < init.len() ==> #[trigger] self.interp_at_aux(ptr, base_vaddr, layer, init).index(j) === init.index(j),
             ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
                 forall|j: nat|
@@ -2972,9 +2982,9 @@ impl PageTable {
                         &&& dir.inv()
                         // directories_are_in_next_layer
                         &&& dir.layer == layer + 1
-                        &&& dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer)
-                        // directories_match_arch
-                        &&& dir.arch === self.arch
+                        &&& dir.base_vaddr == base_vaddr + j * self.arch.view().entry_size(layer)
+                        // directories_match_arch.view()
+                        &&& dir.arch === self.arch.view()
                         // directories_are_nonempty
                         &&& !dir.empty()
             }}),
@@ -2984,9 +2994,9 @@ impl PageTable {
                     ==> {
                         let page = res.index(j).get_Page_0();
                         // pages_match_entry_size
-                        &&& page.size == self.arch.entry_size(layer)
+                        &&& page.size == self.arch.view().entry_size(layer)
                         // frames_aligned
-                        &&& aligned(page.base, self.arch.entry_size(layer))
+                        &&& aligned(page.base, self.arch.view().entry_size(layer))
                     }
             }),
             ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
@@ -2994,18 +3004,18 @@ impl PageTable {
                     init.len() <= j && j < res.len() && res.index(j).is_Empty()
                     ==> (#[trigger] self.view_at(layer, ptr, j)).is_Empty()
             }),
-        decreases (self.arch.layers.len() - layer, self.arch.num_entries(layer) - init.len(), 0nat)
+        decreases (self.arch.view().layers.len() - layer, self.arch.view().num_entries(layer) - init.len(), 0nat)
     {
-        if init.len() >= self.arch.num_entries(layer) {
+        if init.len() >= self.arch.view().num_entries(layer) {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr));
             let entry = match self.view_at(layer, ptr, init.len()) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-                    let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
+                    let new_base_vaddr = self.arch.view().entry_base(layer, base_vaddr, init.len());
                     NodeEntry::Directory(self.interp_at(dir_addr, new_base_vaddr, layer + 1))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
-                    NodeEntry::Page(MemRegion { base: addr, size: self.arch.entry_size(layer) }),
+                    NodeEntry::Page(MemRegion { base: addr, size: self.arch.view().entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
                     NodeEntry::Empty(),
             };
@@ -3016,7 +3026,7 @@ impl PageTable {
             self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, init_next);
 
             assert(res === res_next);
-            assert(res.len() == self.arch.num_entries(layer));
+            assert(res.len() == self.arch.view().num_entries(layer));
             assert(res.index(init.len()) === entry);
 
             assert forall|j: nat|
@@ -3027,9 +3037,9 @@ impl PageTable {
                     &&& dir.inv()
                     // directories_are_in_next_layer
                     &&& dir.layer == layer + 1
-                    &&& dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer)
-                    // directories_match_arch
-                    &&& dir.arch === self.arch
+                    &&& dir.base_vaddr == base_vaddr + j * self.arch.view().entry_size(layer)
+                    // directories_match_arch.view()
+                    &&& dir.arch === self.arch.view()
                     // directories_are_nonempty
                     &&& !dir.empty()
                 }
@@ -3039,14 +3049,14 @@ impl PageTable {
                     match self.view_at(layer, ptr, init.len()) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                             assert(self.inv_at(layer + 1, dir_addr));
-                            let new_base_vaddr = self.arch.entry_base(layer, base_vaddr, init.len());
-                            self.arch.lemma_entry_base_auto();
-                            assert(aligned(new_base_vaddr, self.arch.entry_size(layer + 1) * self.arch.num_entries(layer + 1)));
+                            let new_base_vaddr = self.arch.view().entry_base(layer, base_vaddr, init.len());
+                            self.arch.view().lemma_entry_base_auto();
+                            assert(aligned(new_base_vaddr, self.arch.view().entry_size(layer + 1) * self.arch.view().num_entries(layer + 1)));
                             self.lemma_inv_at_implies_interp_at_inv(dir_addr, new_base_vaddr, layer + 1);
                             assert(dir.inv());
                             assert(dir.layer == layer + 1);
-                            assert(dir.base_vaddr == base_vaddr + j * self.arch.entry_size(layer));
-                            assert(dir.arch === self.arch);
+                            assert(dir.base_vaddr == base_vaddr + j * self.arch.view().entry_size(layer));
+                            assert(dir.arch === self.arch.view());
                             assert(self.directories_are_nonempty_at(layer, ptr));
                             assert(!self.empty_at(layer + 1, dir_addr));
                             assert(!dir.empty());
@@ -3060,47 +3070,24 @@ impl PageTable {
         }
     }
 
-    // spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()>
-    //     recommends
-    //         self.inv(),
-    //         self.interp().accepted_resolve(vaddr),
-    //     decreases self.arch.layers.len() - self.layer
-    // {
-    //     decreases_when(self.inv() && self.interp().accepted_resolve(vaddr));
-    //     recommends_by(Self::check_resolve);
-
-    //     let entry = self.index_for_vaddr(vaddr);
-    //     match self.entries.index(entry) {
-    //         NodeEntry::Page(p) => {
-    //             let offset = vaddr - self.entry_base(entry);
-    //             Ok((p.base + offset) as nat)
-    //         },
-    //         NodeEntry::Directory(d) => {
-    //             d.resolve(vaddr)
-    //         },
-    //         NodeEntry::Empty() => {
-    //             Err(())
-    //         },
-    //     }
-    // }
-
-    fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> /*index: */ usize {
-        // (vaddr - base) / self.arch.entry_size(layer)
-        // FIXME: arch struct for exec mode?
-        0
+    fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> usize
+        requires
+            layer < self.arch.view().layers.len()
+    {
+        (vaddr - base) / self.arch.layers.index(layer).entry_size
     }
 
     fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize) -> Result<usize, ()>
         requires
             self.inv_at(layer, ptr),
             self.interp().interp().accepted_resolve(vaddr),
-        decreases self.arch.layers.len() - layer
+        decreases self.arch.view().layers.len() - layer
     {
         let idx: usize = self.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx);
         // TODO: entry_base for exec mode?
         assert(self.layer_in_range(layer));
-        let entry_base: usize = base + idx * self.arch_exec.layers.index(layer).entry_size;
+        let entry_base: usize = base + idx * self.arch.layers.index(layer).entry_size;
         if entry.is_mapping() {
             if entry.is_dir(layer) {
                 let dir_addr = entry.address();
@@ -3111,7 +3098,7 @@ impl PageTable {
                     //     let entry = #[trigger] self.view_at(layer, ptr, i);
                     //     // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }.view();
                     //     entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr())
-                    assume(idx < self.arch.num_entries(layer));
+                    assume(idx < self.arch.view().num_entries(layer));
                     let ghost_entry = self.view_at(layer, ptr, idx);
                     assume(ghost_entry.is_Directory());
                     assert(self.inv_at((layer + 1) as nat, ghost_entry.get_Directory_addr()));
