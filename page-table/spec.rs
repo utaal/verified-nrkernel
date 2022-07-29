@@ -160,7 +160,9 @@ impl ArchExec {
     }
 
     fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> usize
-        requires layer < self@.layers.len()
+        requires
+            self@.inv(),
+            layer < self@.layers.len(),
     {
         (vaddr - base) / self.entry_size(layer)
     }
