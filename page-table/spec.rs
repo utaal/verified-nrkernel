@@ -176,14 +176,21 @@ impl ArchExec {
         ensures
             res == self@.entry_base(layer, base, idx)
     {
-        assume(base < 10);
-        assume(idx < 10);
-        assume(self.entry_size < 10);
-        let res = base + idx * self.entry_size(layer);
+        assume(base <= 10);
+        assume(idx <= 10);
+        assume(self@.entry_size(layer) <= 10);
+        let es = self.entry_size(layer);
+        assume(idx * es < 0x10000000000000000);
+        let offset = idx * es;
+        let res = base + offset;
+
+        // assume(offset == idx * self@.entry_size(layer));
+        // assert(idx <= 10 && self@.entry_size(layer) <= 10 ==> idx * self@.entry_size(layer) <= 100) by(nonlinear_arith);
         // FIXME: need to add some kind of no-overflow condition to the invariant. could just add concrete bounds but that's a bit ugly.
-        assume(res == base + idx * self@.entry_size(layer));
+        // assume(res == base + idx * self@.entry_size(layer));
         // Not sure if overflow is the only issue here
-        assume(false);
+        // assume(false);
+        assume(res == self@.entry_base(layer, base, idx));
         res
     }
 
@@ -317,7 +324,7 @@ impl Arch {
     // }
 
     // #[verifier(nonlinear)]
-    pub proof fn lemma_entry_base_auto(self)
+    pub proof fn lemma_entry_base(self)
         requires
             self.inv(),
         ensures
@@ -3095,7 +3102,7 @@ impl PageTable {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                             assert(self.inv_at(layer + 1, dir_addr));
                             let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                            self.arch@.lemma_entry_base_auto();
+                            self.arch@.lemma_entry_base();
                             assert(aligned(new_base_vaddr, self.arch@.entry_size(layer + 1) * self.arch@.num_entries(layer + 1)));
                             self.lemma_inv_at_implies_interp_at_inv(dir_addr, new_base_vaddr, layer + 1);
                             assert(dir.inv());
@@ -3126,12 +3133,12 @@ impl PageTable {
         let entry      = self.entry_at(layer, ptr, idx);
         if entry.is_mapping() {
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
+            // FIXME: this should probably be part of lemma_entry_base
+            assume(entry_base <= vaddr);
+            // self.arch@.lemma_entry_base();
             if entry.is_dir(layer) {
                 let dir_addr = entry.address();
                 proof {
-                    // self.arch@.lemma_entry_base_auto();
-                    // FIXME:
-                    assume(entry_base <= vaddr);
                     assert(self.directories_obey_invariant_at(layer, ptr));
                     assume(idx < self.arch@.num_entries(layer));
                     let ghost_entry = self.view_at(layer, ptr, idx);
