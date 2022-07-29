@@ -176,6 +176,9 @@ impl ArchExec {
         ensures
             res == self@.entry_base(layer, base, idx)
     {
+        assume(base < 10);
+        assume(idx < 10);
+        assume(self.entry_size < 10);
         let res = base + idx * self.entry_size(layer);
         // FIXME: need to add some kind of no-overflow condition to the invariant. could just add concrete bounds but that's a bit ugly.
         assume(res == base + idx * self@.entry_size(layer));
