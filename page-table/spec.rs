@@ -163,6 +163,8 @@ impl ArchExec {
         requires
             self@.inv(),
             layer < self@.layers.len(),
+            // FIXME: weird error reporting here
+            vaddr >= base,
     {
         (vaddr - base) / self.entry_size(layer)
     }
@@ -3114,6 +3116,7 @@ impl PageTable {
         requires
             self.inv_at(layer, ptr),
             self.interp().interp().accepted_resolve(vaddr),
+            vaddr >= base,
         decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
@@ -3123,6 +3126,9 @@ impl PageTable {
             if entry.is_dir(layer) {
                 let dir_addr = entry.address();
                 proof {
+                    // self.arch@.lemma_entry_base_auto();
+                    // FIXME:
+                    assume(entry_base <= vaddr);
                     assert(self.directories_obey_invariant_at(layer, ptr));
                     assume(idx < self.arch@.num_entries(layer));
                     let ghost_entry = self.view_at(layer, ptr, idx);
