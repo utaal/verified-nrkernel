@@ -179,9 +179,11 @@ impl ArchExec {
         assume(base <= 10);
         assume(idx <= 10);
         assume(self@.entry_size(layer) <= 10);
-        let es = self.entry_size(layer);
-        assume(idx * es < 0x10000000000000000);
-        let offset = idx * es;
+        // let es = self.entry_size(layer);
+        assert(0 <= idx * self@.entry_size(layer) < 0x1000_0000) by (nonlinear_arith)
+            requires self@.entry_size(layer) <= 10, base <= 10, idx <= 10
+        {}
+        let offset = idx * self.entry_size(layer);
         let res = base + offset;
 
         // assume(offset == idx * self@.entry_size(layer));
