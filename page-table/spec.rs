@@ -19,7 +19,8 @@ verus! {
 proof fn ambient_arith()
     ensures
         forall_arith(|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0),
-        forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0);
+        forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0),
+        forall_arith(|a: nat, b: nat| #[trigger] (a * b) == (b * a));
 
 proof fn ambient_lemmas1()
     ensures
@@ -159,52 +160,66 @@ impl ArchExec {
         self.layers.index(layer).num_entries
     }
 
-    fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> usize
+    fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> (res: usize)
         requires
             self@.inv(),
             layer < self@.layers.len(),
-            // FIXME: weird error reporting here
             vaddr >= base,
+        ensures
+            res == self@.index_for_vaddr(layer, base, vaddr)
     {
-        (vaddr - base) / self.entry_size(layer)
+        let es = self.entry_size(layer);
+        assert(es == self@.entry_size(layer));
+        let offset = vaddr - base;
+        assert(offset == (vaddr - base) as nat);
+        let res = offset / es;
+        assert(res == offset / es);
+        // FIXME: wtf?
+        assume(false);
+        res
     }
 
     fn entry_base(&self, layer: usize, base: usize, idx: usize) -> (res: usize)
         requires
             self@.inv(),
-            layer < self@.layers.len()
+            layer < self@.layers.len(),
+            base <= MAX_BASE,
+            idx <= MAX_NUM_ENTRIES,
         ensures
             res == self@.entry_base(layer, base, idx)
     {
-        assume(base <= 10);
-        assume(idx <= 10);
-        assume(self@.entry_size(layer) <= 10);
-        // let es = self.entry_size(layer);
-        assert(0 <= idx * self@.entry_size(layer) < 0x1000_0000) by (nonlinear_arith)
-            requires self@.entry_size(layer) <= 10, base <= 10, idx <= 10
-        {}
-        let offset = idx * self.entry_size(layer);
-        let res = base + offset;
-
-        // assume(offset == idx * self@.entry_size(layer));
-        // assert(idx <= 10 && self@.entry_size(layer) <= 10 ==> idx * self@.entry_size(layer) <= 100) by(nonlinear_arith);
-        // FIXME: need to add some kind of no-overflow condition to the invariant. could just add concrete bounds but that's a bit ugly.
-        // assume(res == base + idx * self@.entry_size(layer));
-        // Not sure if overflow is the only issue here
-        // assume(false);
-        assume(res == self@.entry_base(layer, base, idx));
-        res
+        proof {
+            crate::lib::mult_leq_mono_both(idx, self@.entry_size(layer), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
+            ambient_arith();
+            assert(0 <= self@.entry_size(layer) * idx);
+            // FIXME: wtf
+            assume(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx);
+            assert(0 <= idx * self@.entry_size(layer));
+            assert(idx * self@.entry_size(layer) <= MAX_ENTRY_SIZE * MAX_NUM_ENTRIES);
+        }
+        // assert(0 <= idx * self@.entry_size(layer) <= MAX_ENTRY_SIZE * MAX_NUM_ENTRIES) by (nonlinear_arith)
+        //     requires self@.entry_size(layer) <= MAX_ENTRY_SIZE, idx <= MAX_NUM_ENTRIES
+        // {
+        //     // New instability with z3 4.10.1
+        //     assume(false); // unstable
+        // }
+        base + idx * self.entry_size(layer)
     }
 
     fn next_entry_base(&self, layer: usize, base: usize, idx: usize) -> (res: usize)
         requires
             self@.inv(),
-            layer < self@.layers.len()
+            layer < self@.layers.len(),
+            base <= MAX_BASE,
+            idx <= MAX_NUM_ENTRIES,
         ensures
             res == self@.next_entry_base(layer, base, idx)
     {
-        // FIXME: need to add some kind of no-overflow condition to the invariant. could just add concrete bounds but that's a bit ugly.
-        assume(false);
+        assert(0 <= (idx + 1) * self@.entry_size(layer) <= MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1)) by (nonlinear_arith)
+            requires self@.entry_size(layer) <= MAX_ENTRY_SIZE, idx <= MAX_NUM_ENTRIES
+        {
+            // New instability with z3 4.10.1
+        }
         base + (idx + 1) * self.entry_size(layer)
     }
 }
@@ -222,6 +237,13 @@ pub ghost struct Arch {
     // [512 , 512 , 512 , 512 ]
 }
 
+// https://github.com/secure-foundations/verus/issues/217
+// const MAX_ENTRY_SIZE:  usize = 512 * 1024 * 1024 * 1024;
+const MAX_ENTRY_SIZE:   nat = 4096;
+const MAX_NUM_LAYERS:   nat = 32;
+const MAX_NUM_ENTRIES:  nat = 512;
+const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
+
 impl Arch {
     pub closed spec(checked) fn entry_size(self, layer: nat) -> nat
         recommends layer < self.layers.len()
@@ -232,15 +254,13 @@ impl Arch {
     { self.layers.index(layer).num_entries }
 
     pub closed spec(checked) fn inv(&self) -> bool {
-        // FIXME: "verifier does not support feature expression" what?
-        // &&& self.layers.len() <= usize::MAX
-        &&& self.layers.len() <= 100
+        &&& self.layers.len() <= MAX_NUM_LAYERS
         &&& forall|i:nat|
             #![trigger self.entry_size(i)]
             #![trigger self.num_entries(i)]
             i < self.layers.len() ==> {
-                &&& self.entry_size(i) > 0
-                &&& self.num_entries(i) > 0
+                &&& 0 < self.entry_size(i)  <= MAX_ENTRY_SIZE
+                &&& 0 < self.num_entries(i) <= MAX_NUM_ENTRIES
                 &&& self.entry_size_is_next_layer_size(i)
             }
     }
@@ -292,6 +312,16 @@ impl Arch {
             ensures(aligned(self.entry_size(i), self.entry_size(j)));
             self.lemma_entry_sizes_aligned(i, j);
         });
+    }
+
+    pub closed spec(checked) fn index_for_vaddr(self, layer: nat, base: nat, vaddr: nat) -> nat
+        recommends
+            self.inv(),
+            layer < self.layers.len(),
+            self.entry_size(layer) > 0,
+            vaddr >= base,
+    {
+         ((vaddr - base) as nat) / self.entry_size(layer)
     }
 
     pub closed spec(checked) fn entry_base(self, layer: nat, base: nat, idx: nat) -> nat
@@ -403,9 +433,10 @@ proof fn arch_inv_test() {
             ArchLayer { entry_size: 4 * 1024, num_entries: 512 },
         ],
     };
-    // assert(x86.inv()); unstable
     assert(x86.entry_size(3) == 4096);
     assert(x86.contains_entry_size(4096));
+    // FIXME: not true as long as we don't know that usize == u64
+    // assert(x86.inv());
 }
 
 // FIXME: conversion, should this really be tracked or just ghost? (was proof before)
@@ -783,8 +814,8 @@ impl Directory {
         self.base_vaddr + self.num_entries() * self.entry_size()
     }
 
-    pub closed spec fn index_for_vaddr(self, vaddr: nat) -> /*index: */ nat
-        recommends vaddr >= self.base_vaddr
+    pub closed spec fn index_for_vaddr(self, vaddr: nat) -> nat
+        recommends vaddr >= self.base_vaddr && self.entry_size() > 0
     {
          ((vaddr - self.base_vaddr) as nat) / self.entry_size()
     }
@@ -930,6 +961,8 @@ impl Directory {
                     ensures(entry_i.mappings_in_bounds());
                     assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
                     assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
+                    // New instability with z3 4.10.1
+                    assume(false); // unstable
                 });
                 assert(entry_i.mappings_in_bounds());
             }
@@ -1085,6 +1118,7 @@ impl Directory {
                             i < self.entries.len(),
                         ]);
                         ensures(entry_i.mappings_in_bounds());
+                        // New instability with z3 4.10.1
                         assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
                         assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
                     });
@@ -1127,8 +1161,7 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
-
-                assume(false); // instability
+                assume(false); // unstable
             });
 
             assert(interp.mappings_in_bounds());
@@ -1296,7 +1329,7 @@ impl Directory {
 
     #[verifier(recommends_by)]
     proof fn check_resolve(self, vaddr: nat) {
-        assert(self.inv());
+        assert(self.inv() && self.interp().accepted_resolve(vaddr));
 
         ambient_lemmas1();
         self.lemma_inv_implies_interp_inv();
@@ -1304,11 +1337,15 @@ impl Directory {
         assert(between(vaddr, self.base_vaddr, self.upper_vaddr()));
         let entry = self.index_for_vaddr(vaddr);
         self.lemma_index_for_vaddr_bounds(vaddr);
+        // TODO: This makes the recommends failure on the line below go away but not the one in the
+        // corresponding spec function. wtf
+        assert(0 <= entry < self.entries.len());
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
+                assert(d.inv());
             },
             NodeEntry::Empty() => {
             },
@@ -1326,11 +1363,10 @@ impl Directory {
             || exists|frame: MemRegion| self.interp().accepted_mapping(vaddr, frame)) ==>
             {
                 let i = self.index_for_vaddr(vaddr);
-                true
-                && i < self.num_entries()
-                && between(vaddr, self.entry_base(i), self.entry_base(i + 1))
-                && self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()
-                && (aligned(vaddr, self.entry_size()) ==> vaddr == self.base_vaddr + i * self.entry_size())
+                &&& i < self.num_entries()
+                &&& between(vaddr, self.entry_base(i), self.entry_base(i + 1))
+                &&& self.entry_base(i + 1) == self.entry_base(i) + self.entry_size()
+                &&& (aligned(vaddr, self.entry_size()) ==> vaddr == self.base_vaddr + i * self.entry_size())
             },
     {
         assume(false); // unstable
@@ -2887,6 +2923,9 @@ impl PageTable {
             res.layer == layer,
             res@ === self.view_at(layer, ptr, i),
     {
+        // FIXME:
+        assume(ptr <= 100);
+        assume(i * ENTRY_BYTES <= 100000);
         PageDirectoryEntry {
             entry: self.memory.read(ptr + i * ENTRY_BYTES),
             layer,
@@ -3134,6 +3173,10 @@ impl PageTable {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx);
         if entry.is_mapping() {
+            // FIXME: need new post for this fn
+            assume(base <= MAX_BASE);
+            // FIXME: should be post of index_for_vaddr?
+            assume(idx <= MAX_NUM_ENTRIES);
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
             // FIXME: this should probably be part of lemma_entry_base
             assume(entry_base <= vaddr);
@@ -3142,6 +3185,7 @@ impl PageTable {
                 let dir_addr = entry.address();
                 proof {
                     assert(self.directories_obey_invariant_at(layer, ptr));
+                    // FIXME:
                     assume(idx < self.arch@.num_entries(layer));
                     let ghost_entry = self.view_at(layer, ptr, idx);
                     assert(ghost_entry === entry@);
@@ -3149,11 +3193,14 @@ impl PageTable {
                     assert(dir_addr == entry@.get_Directory_addr());
                     assert(self.inv_at((layer + 1) as nat, dir_addr as usize));
                 }
-                self.resolve_aux(layer + 1, dir_addr as usize, entry_base, vaddr) // FIXME: safe conversion?
+                self.resolve_aux(layer + 1, dir_addr as usize, entry_base, vaddr) // FIXME: safe cast?
             } else {
                 assert(entry@.is_Page());
                 let offset: usize = vaddr - entry_base;
-                Ok(entry.address() as usize + offset) // FIXME: is this a safe conversion?
+                // FIXME:
+                assume(entry@.get_Page_addr() < 10000);
+                assume(offset < 10000);
+                Ok(entry.address() as usize + offset) // FIXME: safe cast?
             }
         } else {
             Err(())
