@@ -247,11 +247,23 @@ const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
 impl Arch {
     pub closed spec(checked) fn entry_size(self, layer: nat) -> nat
         recommends layer < self.layers.len()
-    { self.layers.index(layer).entry_size }
+    {
+        self.layers.index(layer).entry_size
+    }
 
     pub closed spec(checked) fn num_entries(self, layer: nat) -> nat
         recommends layer < self.layers.len()
-    { self.layers.index(layer).num_entries }
+    {
+        self.layers.index(layer).num_entries
+    }
+
+    pub closed spec(checked) fn upper_vaddr(self, layer: nat, base: nat) -> nat
+        recommends
+            self.inv(),
+            layer < self.layers.len(),
+    {
+        base + self.num_entries(layer) * self.entry_size(layer)
+    }
 
     pub closed spec(checked) fn inv(&self) -> bool {
         &&& self.layers.len() <= MAX_NUM_LAYERS
@@ -318,10 +330,76 @@ impl Arch {
         recommends
             self.inv(),
             layer < self.layers.len(),
-            self.entry_size(layer) > 0,
-            vaddr >= base,
+            base <= vaddr,
     {
          ((vaddr - base) as nat) / self.entry_size(layer)
+    }
+
+    pub proof fn lemma_index_for_vaddr(self, layer: nat, base: nat, vaddr: nat)
+        requires
+            self.inv(),
+            layer < self.layers.len(),
+            base <= vaddr,
+            vaddr < self.upper_vaddr(layer, base),
+        ensures
+            ({
+                let idx = self.index_for_vaddr(layer, base, vaddr);
+                &&& idx < self.num_entries(layer)
+                &&& between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))
+                &&& aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)
+                &&& idx < MAX_NUM_ENTRIES
+            }),
+    {
+        // FIXME: prove all this stuff
+        let idx = self.index_for_vaddr(layer, base, vaddr);
+        assert(idx < self.num_entries(layer)) by(nonlinear_arith)
+            requires
+                self.inv(),
+                layer < self.layers.len(),
+                between(vaddr, base, self.upper_vaddr(layer, base)),
+                idx == self.index_for_vaddr(layer, base, vaddr),
+        {
+            // let euc_div_diff = (((vaddr - base) as nat) / self.entry_size(layer));
+            assert(self.entry_size(layer) > 0);
+            let offset: nat = (vaddr - base) as nat;
+            assert(vaddr < base + self.num_entries(layer) * self.entry_size(layer));
+            assert(offset < self.num_entries(layer) * self.entry_size(layer));
+            assert(self.entry_size(layer) <= self.num_entries(layer) * self.entry_size(layer));
+            assert(idx == offset / self.entry_size(layer));
+            // assert(idx * self.entry_size(layer) >= offset / self.entry_size(layer) * self.entry_size(layer));
+
+            // let div_diff = idx * self.entry_size(layer) - offset;
+            // assert(div_diff < self.entry_size(layer));
+            // assert(idx == offset / self.entry_size(layer) * self.entry_size(layer) + div_diff);
+            // assert(idx < (self.num_entries(layer) * self.entry_size(layer)) / self.entry_size(layer));
+            assume(false);
+        };
+        assert(between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))) by(nonlinear_arith)
+            requires
+                self.inv(),
+                layer < self.layers.len(),
+                between(vaddr, base, self.upper_vaddr(layer, base)),
+                idx == self.index_for_vaddr(layer, base, vaddr),
+                idx < self.num_entries(layer),
+        {
+            assume(false); // unstable
+            self.lemma_entry_base();
+            assert(vaddr >= base);
+            assert(self.entry_size(layer) > 0);
+            // FIXME: trivial step fails
+            assume(idx * self.entry_size(layer) < self.num_entries(layer) * self.entry_size(layer));
+            // assert(base + idx * self.entry_size(layer) < base + self.num_entries(layer) * self.entry_size(layer));
+            // assert(self.entry_base(layer, base, idx) <= vaddr);
+            let offset: nat = (vaddr - base) as nat;
+            assert(idx == offset / self.entry_size(layer));
+
+            assume(base + idx * self.entry_size(layer) <= vaddr);
+
+            assert(self.entry_base(layer, base, idx) < self.upper_vaddr(layer, base));
+            assert(vaddr < self.next_entry_base(layer, base, idx));
+        };
+        assume(aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx));
+        assert(idx < MAX_NUM_ENTRIES);
     }
 
     pub closed spec(checked) fn entry_base(self, layer: nat, base: nat, idx: nat) -> nat
@@ -360,48 +438,63 @@ impl Arch {
         requires
             self.inv(),
         ensures
-            forall|i: nat, j: nat, base: nat, layer: nat|
-                #![trigger self.entry_base(layer, base, i), self.entry_base(layer, base, j)]
-                layer < self.layers.len() && i < j ==>
-                          self.entry_base(layer, base, i) <  self.entry_base(layer, base, j),
-                       // && self.next_entry_base(layer, base, i) <= self.entry_base(layer, base, j),
+            forall|idx: nat, j: nat, base: nat, layer: nat|
+                #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
+                layer < self.layers.len() && idx < j ==>
+                          self.entry_base(layer, base, idx) <  self.entry_base(layer, base, j),
+                       // && self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j),
             // TODO: The line above can't be a separate postcondition because it doesn't have any valid triggers.
             // The trigger for it is pretty bad.
-            forall|i: nat, j: nat, base: nat, layer: nat| i < j
-                ==> self.next_entry_base(layer, base, i) <= self.entry_base(layer, base, j),
+            forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
+                ==> self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j),
             // forall|a: nat, base: nat, layer: nat|
             //     aligned(base, self.entry_size(layer) * a) ==> #[trigger] aligned(base, self.entry_size(layer)),
             // TODO: Have to use a less general postcondition because the one above doesn't have
             // any valid triggers
+            forall|idx: nat, base: nat, layer: nat| #![trigger self.next_entry_base(layer, base, idx)]
+                layer < self.layers.len() ==>
+            {
+                &&& self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)
+                &&& self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)
+            },
+            forall|idx: nat, base: nat, layer: nat|
+                layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, idx), self.entry_size(layer)),
+            forall|idx: nat, base: nat, layer: nat|
+                layer < self.layers.len() ==> base <= self.entry_base(layer, base, idx),
+            forall|idx: nat, base: nat, layer: nat|
+                layer < self.layers.len() && idx < self.num_entries(layer) ==> self.entry_base(layer, base, idx) < self.upper_vaddr(layer, base),
+            forall|idx: nat, base: nat, layer: nat|
+                layer < self.layers.len() && idx <= self.num_entries(layer) ==> self.entry_base(layer, base, idx) <= self.upper_vaddr(layer, base),
+            forall|idx: nat, base: nat, layer: nat|
+                layer + 1 < self.layers.len() ==> #[trigger] self.next_entry_base(layer, base, idx) == self.upper_vaddr(layer + 1, self.entry_base(layer, base, idx)),
+            // Support postconditions:
             forall|base: nat, layer: nat| // Used to infer lhs of next postcondition's implication
                 layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
-            forall|i: nat, base: nat, layer: nat|
-                layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)),
     {
         assume(false);
         // FIXME: prove this
-        assert(forall|i: nat, j: nat, base: nat, layer: nat|
-                #![trigger self.entry_base(layer, base, i), self.entry_base(layer, base, j)]
-                layer < self.layers.len() && i < j ==> self.entry_base(layer, base, i)     <  self.entry_base(layer, base, j)
-                       && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j)) by(nonlinear_arith)
+        assert(forall|idx: nat, j: nat, base: nat, layer: nat|
+                #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
+                layer < self.layers.len() && idx < j ==> self.entry_base(layer, base, idx)     <  self.entry_base(layer, base, j)
+                       && self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j)) by(nonlinear_arith)
             requires
                 self.inv(),
         {
-            assert forall|i: nat, j: nat, base: nat, layer: nat|
-                layer < self.layers.len() && i < j implies
-                       #[trigger] self.entry_base(layer, base, i) < #[trigger] self.entry_base(layer, base, j)
-                    && self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j) by
+            assert forall|idx: nat, j: nat, base: nat, layer: nat|
+                layer < self.layers.len() && idx < j implies
+                       #[trigger] self.entry_base(layer, base, idx) < #[trigger] self.entry_base(layer, base, j)
+                    && self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j) by
             {
                 assume(false);
-                assert(self.entry_base(layer, base, i) == base + i * self.entry_size(layer));
+                assert(self.entry_base(layer, base, idx) == base + idx * self.entry_size(layer));
                 assert(self.entry_base(layer, base, j) == base + j * self.entry_size(layer));
                 assert(self.entry_size(layer) > 0);
-                assert(i * self.entry_size(layer) > 0);
+                assert(idx * self.entry_size(layer) > 0);
                 assert(j * self.entry_size(layer) > 0);
-                assert(i * self.entry_size(layer) < j * self.entry_size(layer));
+                assert(idx * self.entry_size(layer) < j * self.entry_size(layer));
                 assume(false);
-                assert(self.entry_base(layer, base, i) < self.entry_base(layer, base, j));
-                assert(self.entry_base(layer, base, i + 1) <= self.entry_base(layer, base, j));
+                assert(self.entry_base(layer, base, idx) < self.entry_base(layer, base, j));
+                assert(self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j));
             }
             assume(false);
         };
@@ -3172,21 +3265,25 @@ impl PageTable {
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx);
+        proof {
+            // FIXME: should be derivable from accepted_resolve
+            assume(vaddr < self.arch@.upper_vaddr(layer, base));
+            self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+        }
         if entry.is_mapping() {
-            // FIXME: need new post for this fn
+            // FIXME: should be derivable from vaddr >= base and vaddr < upper_vaddr
             assume(base <= MAX_BASE);
-            // FIXME: should be post of index_for_vaddr?
-            assume(idx <= MAX_NUM_ENTRIES);
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
-            // FIXME: this should probably be part of lemma_entry_base
-            assume(entry_base <= vaddr);
-            // self.arch@.lemma_entry_base();
+            proof {
+                self.arch@.lemma_entry_base();
+                assert(entry_base <= vaddr);
+            }
             if entry.is_dir(layer) {
                 let dir_addr = entry.address();
                 proof {
                     assert(self.directories_obey_invariant_at(layer, ptr));
                     // FIXME:
-                    assume(idx < self.arch@.num_entries(layer));
+                    // assume(idx < self.arch@.num_entries(layer));
                     let ghost_entry = self.view_at(layer, ptr, idx);
                     assert(ghost_entry === entry@);
                     assert(self.inv_at((layer + 1) as nat, ghost_entry.get_Directory_addr()));
