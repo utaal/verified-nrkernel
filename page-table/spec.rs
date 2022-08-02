@@ -20,7 +20,13 @@ proof fn ambient_arith()
     ensures
         forall_arith(|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0),
         forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0),
-        forall_arith(|a: nat, b: nat| #[trigger] (a * b) == (b * a));
+        forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0),
+        forall_arith(|a: nat, b: nat| #[trigger] (a * b) == (b * a)),
+        forall|a:nat| a != 0 ==> aligned(0, a)
+{
+    assert(forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0)) by(nonlinear_arith) { };
+    crate::lib::aligned_zero();
+}
 
 proof fn ambient_lemmas1()
     ensures
@@ -237,7 +243,6 @@ pub ghost struct Arch {
     // [512 , 512 , 512 , 512 ]
 }
 
-// https://github.com/secure-foundations/verus/issues/217
 // const MAX_ENTRY_SIZE:  usize = 512 * 1024 * 1024 * 1024;
 const MAX_ENTRY_SIZE:   nat = 4096;
 const MAX_NUM_LAYERS:   nat = 32;
@@ -3139,6 +3144,9 @@ impl PageTable {
             aligned(base_vaddr, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         ensures
             self.interp_at(ptr, base_vaddr, layer).inv(),
+            self.interp_at(ptr, base_vaddr, layer).interp().inv(),
+            self.interp_at(ptr, base_vaddr, layer).interp().upper == self.arch@.upper_vaddr(layer, base_vaddr),
+            self.interp_at(ptr, base_vaddr, layer).interp().lower == base_vaddr,
             !self.empty_at(layer, ptr) ==> !self.interp_at(ptr, base_vaddr, layer).empty(),
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 1nat)
     {
@@ -3150,6 +3158,7 @@ impl PageTable {
         assert(res.directories_obey_invariant());
         assert(res.directories_are_nonempty());
         assert(res.frames_aligned());
+        res.lemma_inv_implies_interp_inv();
     }
 
     proof fn lemma_inv_at_implies_interp_at_aux_inv(self, ptr: usize, base_vaddr: nat, layer: nat, init: Seq<NodeEntry>)
@@ -3259,15 +3268,22 @@ impl PageTable {
     fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize) -> Result<usize, ()>
         requires
             self.inv_at(layer, ptr),
-            self.interp().interp().accepted_resolve(vaddr),
+            self.interp_at(ptr, base, layer).interp().accepted_resolve(vaddr),
             vaddr >= base,
+            aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx);
         proof {
-            // FIXME: should be derivable from accepted_resolve
-            assume(vaddr < self.arch@.upper_vaddr(layer, base));
+            let interp = self.interp_at(ptr, base, layer);
+            assert(aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)));
+            self.lemma_inv_at_implies_interp_at_inv(ptr, base, layer);
+            assert(interp.inv());
+            assert(interp.interp().inv());
+            assert(interp.interp().upper == self.arch@.upper_vaddr(layer, base));
+            assert(interp.interp().lower == base);
+            assert(vaddr < self.arch@.upper_vaddr(layer, base));
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
         }
         if entry.is_mapping() {
@@ -3282,13 +3298,13 @@ impl PageTable {
                 let dir_addr = entry.address();
                 proof {
                     assert(self.directories_obey_invariant_at(layer, ptr));
-                    // FIXME:
-                    // assume(idx < self.arch@.num_entries(layer));
                     let ghost_entry = self.view_at(layer, ptr, idx);
                     assert(ghost_entry === entry@);
                     assert(self.inv_at((layer + 1) as nat, ghost_entry.get_Directory_addr()));
                     assert(dir_addr == entry@.get_Directory_addr());
                     assert(self.inv_at((layer + 1) as nat, dir_addr as usize));
+                    // FIXME:
+                    assume(self.interp_at(dir_addr as usize, entry_base, (layer + 1) as nat).interp().accepted_resolve(vaddr));
                 }
                 self.resolve_aux(layer + 1, dir_addr as usize, entry_base, vaddr) // FIXME: safe cast?
             } else {
@@ -3309,6 +3325,7 @@ impl PageTable {
             self.inv(),
             self.interp().interp().accepted_resolve(vaddr),
     {
+        proof { ambient_arith(); }
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
     }
 
