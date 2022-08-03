@@ -243,7 +243,7 @@ pub ghost struct Arch {
     // [512 , 512 , 512 , 512 ]
 }
 
-// const MAX_ENTRY_SIZE:  usize = 512 * 1024 * 1024 * 1024;
+// const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
 const MAX_ENTRY_SIZE:   nat = 4096;
 const MAX_NUM_LAYERS:   nat = 32;
 const MAX_NUM_ENTRIES:  nat = 512;
@@ -364,6 +364,7 @@ impl Arch {
                 between(vaddr, base, self.upper_vaddr(layer, base)),
                 idx == self.index_for_vaddr(layer, base, vaddr),
         {
+            assume(false);
             // let euc_div_diff = (((vaddr - base) as nat) / self.entry_size(layer));
             assert(self.entry_size(layer) > 0);
             let offset: nat = (vaddr - base) as nat;
@@ -3270,7 +3271,7 @@ impl PageTable {
         requires
             self.inv_at(layer, ptr),
             self.interp_at(ptr, base, layer).interp().accepted_resolve(vaddr),
-            vaddr >= base,
+            base <= vaddr < MAX_BASE,
             aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         decreases self.arch@.layers.len() - layer
     {
@@ -3288,33 +3289,34 @@ impl PageTable {
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
         }
         if entry.is_mapping() {
-            // FIXME: should be derivable from vaddr >= base and vaddr < upper_vaddr
-            assume(base <= MAX_BASE);
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
             proof {
                 self.arch@.lemma_entry_base();
                 assert(entry_base <= vaddr);
             }
             if entry.is_dir(layer) {
-                let dir_addr = entry.address();
+                let dir_addr = entry.address() as usize;
                 proof {
                     assert(self.directories_obey_invariant_at(layer, ptr));
-                    let ghost_entry = self.view_at(layer, ptr, idx);
-                    assert(ghost_entry === entry@);
-                    assert(self.inv_at((layer + 1) as nat, ghost_entry.get_Directory_addr()));
+                    // let ghost_entry = self.view_at(layer, ptr, idx);
+                    let dir_interp = self.interp_at(dir_addr, entry_base, (layer + 1) as nat);
+                    // assert(ghost_entry === entry@);
+                    // assert(self.inv_at((layer + 1) as nat, ghost_entry.get_Directory_addr()));
                     assert(dir_addr == entry@.get_Directory_addr());
-                    assert(self.inv_at((layer + 1) as nat, dir_addr as usize));
-                    // FIXME:
-                    assume(self.interp_at(dir_addr as usize, entry_base, (layer + 1) as nat).interp().accepted_resolve(vaddr));
+                    assert(self.inv_at((layer + 1) as nat, dir_addr));
+                    self.lemma_inv_at_implies_interp_at_inv(dir_addr, entry_base, (layer + 1) as nat);
+                    assert(dir_interp.interp().lower == entry_base);
+                    assert(dir_interp.interp().upper == entry_base + self.arch@.entry_size(layer));
+                    assert(dir_interp.interp().accepted_resolve(vaddr));
                 }
-                self.resolve_aux(layer + 1, dir_addr as usize, entry_base, vaddr) // FIXME: safe cast?
+                self.resolve_aux(layer + 1, dir_addr, entry_base, vaddr)
             } else {
                 assert(entry@.is_Page());
                 let offset: usize = vaddr - entry_base;
-                // FIXME:
+                // FIXME: need to assume a maximum for physical addresses
                 assume(entry@.get_Page_addr() < 10000);
-                assume(offset < 10000);
-                Ok(entry.address() as usize + offset) // FIXME: safe cast?
+                assert(offset < self.arch@.entry_size(layer));
+                Ok(entry.address() as usize + offset)
             }
         } else {
             Err(())
@@ -3325,6 +3327,7 @@ impl PageTable {
         requires
             self.inv(),
             self.interp().interp().accepted_resolve(vaddr),
+            vaddr < MAX_BASE,
     {
         proof { ambient_arith(); }
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
