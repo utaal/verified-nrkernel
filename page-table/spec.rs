@@ -1401,14 +1401,15 @@ impl Directory {
     //     }
     // }
 
-    spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()>
+    // TODO restore spec(checked) when recommends_by is fixed
+    spec fn resolve(self, vaddr: nat) -> Result<nat,()>
         recommends
             self.inv(),
             self.interp().accepted_resolve(vaddr),
         decreases self.arch.layers.len() - self.layer
     {
         decreases_when(self.inv() && self.interp().accepted_resolve(vaddr));
-        recommends_by(Self::check_resolve);
+        decreases_by(Self::check_resolve);
 
         let entry = self.index_for_vaddr(vaddr);
         match self.entries.index(entry) {
@@ -1425,7 +1426,7 @@ impl Directory {
         }
     }
 
-    #[verifier(recommends_by)]
+    #[verifier(decreases_by)]
     proof fn check_resolve(self, vaddr: nat) {
         assert(self.inv() && self.interp().accepted_resolve(vaddr));
 
