@@ -3278,14 +3278,7 @@ impl PageTable {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx);
         proof {
-            let interp = self.interp_at(ptr, base, layer);
-            assert(aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)));
             self.lemma_inv_at_implies_interp_at_inv(ptr, base, layer);
-            assert(interp.inv());
-            assert(interp.interp().inv());
-            assert(interp.interp().upper == self.arch@.upper_vaddr(layer, base));
-            assert(interp.interp().lower == base);
-            assert(vaddr < self.arch@.upper_vaddr(layer, base));
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
         }
         if entry.is_mapping() {
@@ -3298,16 +3291,9 @@ impl PageTable {
                 let dir_addr = entry.address() as usize;
                 proof {
                     assert(self.directories_obey_invariant_at(layer, ptr));
-                    // let ghost_entry = self.view_at(layer, ptr, idx);
-                    let dir_interp = self.interp_at(dir_addr, entry_base, (layer + 1) as nat);
-                    // assert(ghost_entry === entry@);
-                    // assert(self.inv_at((layer + 1) as nat, ghost_entry.get_Directory_addr()));
-                    assert(dir_addr == entry@.get_Directory_addr());
                     assert(self.inv_at((layer + 1) as nat, dir_addr));
                     self.lemma_inv_at_implies_interp_at_inv(dir_addr, entry_base, (layer + 1) as nat);
-                    assert(dir_interp.interp().lower == entry_base);
-                    assert(dir_interp.interp().upper == entry_base + self.arch@.entry_size(layer));
-                    assert(dir_interp.interp().accepted_resolve(vaddr));
+                    assert(self.interp_at(dir_addr, entry_base, (layer + 1) as nat).interp().accepted_resolve(vaddr));
                 }
                 self.resolve_aux(layer + 1, dir_addr, entry_base, vaddr)
             } else {
