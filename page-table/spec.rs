@@ -93,6 +93,18 @@ proof fn ambient_lemmas2()
 #[derive(PartialEq, Eq, Structural)]
 pub struct MemRegion { pub base: nat, pub size: nat }
 
+#[derive(PartialEq, Eq, Structural)]
+pub struct MemRegionExec { pub base: usize, pub size: usize }
+
+impl MemRegionExec {
+    pub open spec fn view(self) -> MemRegion {
+        MemRegion {
+            base: self.base as nat,
+            size: self.size as nat,
+        }
+    }
+}
+
 // TODO use VAddr, PAddr
 
 pub open spec fn strictly_decreasing(s: Seq<nat>) -> bool {
@@ -3319,6 +3331,40 @@ impl PageTable {
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
     }
 
+    // fn map_frame(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> Result<(),()>
+    //     requires
+    //         old(self).inv_at(layer, ptr),
+    //         old(self).interp_at(ptr, base, layer).interp().accepted_mapping(vaddr, frame@),
+    //         base <= vaddr < MAX_BASE,
+    //         aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
+    //     decreases self.arch@.layers.len() - layer
+    // {
+    //     let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
+    //     let entry      = self.entry_at(layer, ptr, idx);
+    //     proof {
+    //         self.lemma_inv_at_implies_interp_at_inv(ptr, base, layer);
+    //         self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+    //     }
+    //     if entry.is_mapping() {
+    //         let entry_base: usize = self.arch.entry_base(layer, base, idx);
+    //         proof {
+    //             self.arch@.lemma_entry_base();
+    //             assert(entry_base <= vaddr);
+    //         }
+    //         if entry.is_dir(layer) {
+    //             if self.arch.entry_size(layer) == frame.size {
+    //                 Err(())
+    //             } else {
+    //                 let dir_addr = entry.address() as usize;
+    //                 self.map_frame(layer + 1, dir_addr, entry_base, vaddr, frame)
+    //             }
+    //         } else {
+    //             Err(())
+    //         }
+    //     } else {
+    //         Ok(()) // FIXME: create new dir, insert it and recurse
+    //     }
+    // }
 }
 
 }
