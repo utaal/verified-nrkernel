@@ -3180,6 +3180,19 @@ impl PageTable {
             self.interp_at(ptr, base_vaddr, layer).interp().upper == self.arch@.upper_vaddr(layer, base_vaddr),
             self.interp_at(ptr, base_vaddr, layer).interp().lower == base_vaddr,
             !self.empty_at(layer, ptr) ==> !self.interp_at(ptr, base_vaddr, layer).empty(),
+            ({ let res = self.interp_at(ptr, base_vaddr, layer);
+                forall|j: nat|
+                    #![trigger res.entries.index(j)]
+                    j < res.entries.len() ==>
+                    match self.view_at(layer, ptr, j) {
+                        GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                            &&& res.entries.index(j).is_Directory()
+                            &&& res.entries.index(j).get_Directory_0() === self.interp_at(dir_addr, self.arch@.entry_base(layer, base_vaddr, j), (layer + 1) as nat)
+                        },
+                        GhostPageDirectoryEntry::Page { addr, .. }             => res.entries.index(j).is_Page() && res.entries.index(j).get_Page_0().base == addr,
+                        GhostPageDirectoryEntry::Empty                         => res.entries.index(j).is_Empty(),
+                    }
+            }),
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 1nat)
     {
         self.lemma_inv_at_implies_interp_at_aux_inv(ptr, base_vaddr, layer, seq![]);
@@ -3214,6 +3227,7 @@ impl PageTable {
                         &&& dir.arch === self.arch@
                         // directories_are_nonempty
                         &&& !dir.empty()
+                        &&& self.view_at(layer, ptr, j).is_Directory()
             }}),
             ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
                 forall|j: nat|
@@ -3224,12 +3238,28 @@ impl PageTable {
                         &&& page.size == self.arch@.entry_size(layer)
                         // frames_aligned
                         &&& aligned(page.base, self.arch@.entry_size(layer))
+                        &&& self.view_at(layer, ptr, j).is_Page()
+                        &&& self.view_at(layer, ptr, j).get_Page_addr() == page.base
                     }
             }),
             ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
                 forall|j: nat|
                     init.len() <= j && j < res.len() && res.index(j).is_Empty()
                     ==> (#[trigger] self.view_at(layer, ptr, j)).is_Empty()
+            }),
+            // This could be merged with some of the above stuff by writing it as an iff instead
+            ({ let res = self.interp_at_aux(ptr, base_vaddr, layer, init);
+                forall|j: nat|
+                    #![trigger res.index(j)]
+                    init.len() <= j && j < res.len() ==>
+                    match self.view_at(layer, ptr, j) {
+                        GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                            &&& res.index(j).is_Directory()
+                            &&& res.index(j).get_Directory_0() === self.interp_at(dir_addr, self.arch@.entry_base(layer, base_vaddr, j), (layer + 1) as nat)
+                        },
+                        GhostPageDirectoryEntry::Page { addr, .. } => res.index(j).is_Page() && res.index(j).get_Page_0().base == addr,
+                        GhostPageDirectoryEntry::Empty             => res.index(j).is_Empty(),
+                    }
             }),
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
     {
@@ -3297,12 +3327,20 @@ impl PageTable {
         }
     }
 
-    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize) -> Result<usize, ()>
+    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize) -> (res: (Result<usize, ()>))
         requires
             self.inv_at(layer, ptr),
             self.interp_at(ptr, base, layer).interp().accepted_resolve(vaddr),
             base <= vaddr < MAX_BASE,
             aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
+        ensures
+            // TODO: is there a nicer way to write this?
+            // Refinement
+            match res {
+                Ok(res) => Ok(res as nat) === self.interp_at(ptr, base, layer).resolve(vaddr),
+                Err(e)  => Err(e)         === self.interp_at(ptr, base, layer).resolve(vaddr),
+            },
         decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
@@ -3310,6 +3348,11 @@ impl PageTable {
         proof {
             self.lemma_inv_at_implies_interp_at_inv(ptr, base, layer);
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+        }
+        let interp:     Ghost<Directory>      = ghost(self.interp_at(ptr, base, layer));
+        let interp_res: Ghost<Result<nat,()>> = ghost(interp.resolve(vaddr));
+        proof {
+            assert(*interp_res === self.interp_at(ptr, base, layer).resolve(vaddr));
         }
         if entry.is_mapping() {
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
