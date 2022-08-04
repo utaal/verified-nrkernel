@@ -275,7 +275,8 @@ pub ghost struct Arch {
 
 // const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
 const MAX_ENTRY_SIZE:   nat = 4096;
-const MAX_NUM_LAYERS:   nat = 32;
+const MAX_NUM_LAYERS:   nat = 4; // FIXME: is this limitation okay? Extending to 5-level paging
+                                 // would require some other changes anyway
 const MAX_NUM_ENTRIES:  nat = 512;
 const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
 
@@ -2755,11 +2756,10 @@ struct PageDirectoryEntry {
 impl PageDirectoryEntry {
 
     pub closed spec fn view(self) -> GhostPageDirectoryEntry {
-        // *self.view
         if self.layer() <= 3 {
             let v = self.entry;
             if v & MASK_FLAG_P == MASK_FLAG_P {
-                let addr     = (v & MASK_ADDR) as usize; // FIXME: is this safe?
+                let addr     = (v & MASK_ADDR) as usize;
                 let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
                 let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
                 let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
@@ -2767,7 +2767,7 @@ impl PageDirectoryEntry {
                 let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
                 let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
                 let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
-                if (self.layer() == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) == 0) {
+                if (self.layer() == 0) || (v & MASK_L1_PG_FLAG_PS == 0) {
                     let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
                     let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
                     let flag_PAT = if self.layer() == 0 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L0_PG_FLAG_PAT == MASK_L0_PG_FLAG_PAT };
@@ -2899,6 +2899,7 @@ impl PageDirectoryEntry {
     pub fn address(&self) -> (res: u64)
         requires
             // self.inv(), // TODO: need to add this to the pagetable invariant
+            self.layer() <= 3,
             !self@.is_Empty(),
         ensures
             res == match self@ {
@@ -2907,16 +2908,20 @@ impl PageDirectoryEntry {
                 GhostPageDirectoryEntry::Empty                  => arbitrary(),
             }
     {
-        // FIXME:
-        assume(false);
+        if self.entry & MASK_FLAG_P == MASK_FLAG_P {
+            reveal_with_fuel(Self::view, 20);
+            assert(self@.is_Empty());
+        }
+        assert(self.entry & MASK_FLAG_P != MASK_FLAG_P);
         self.entry & MASK_ADDR
     }
 
     pub fn is_mapping(&self) -> (r: bool)
+        requires
+            self.layer() <= 3
         ensures
             r == !self@.is_Empty(),
     {
-        assume(false);
         (self.entry & MASK_FLAG_P) == MASK_FLAG_P
     }
 
