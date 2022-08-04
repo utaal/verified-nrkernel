@@ -2898,21 +2898,15 @@ impl PageDirectoryEntry {
 
     pub fn address(&self) -> (res: u64)
         requires
-            // self.inv(), // TODO: need to add this to the pagetable invariant
             self.layer() <= 3,
             !self@.is_Empty(),
         ensures
-            res == match self@ {
+            res as usize == match self@ {
                 GhostPageDirectoryEntry::Page { addr, .. }      => addr,
                 GhostPageDirectoryEntry::Directory { addr, .. } => addr,
                 GhostPageDirectoryEntry::Empty                  => arbitrary(),
             }
     {
-        if self.entry & MASK_FLAG_P == MASK_FLAG_P {
-            reveal_with_fuel(Self::view, 20);
-            assert(self@.is_Empty());
-        }
-        assert(self.entry & MASK_FLAG_P != MASK_FLAG_P);
         self.entry & MASK_ADDR
     }
 
@@ -2928,11 +2922,11 @@ impl PageDirectoryEntry {
     pub fn is_page(&self, layer: usize) -> (r: bool)
         requires
             !self@.is_Empty(),
-            layer as nat == self.layer
+            layer as nat == self.layer,
+            layer <= 3,
         ensures
             if r { self@.is_Page() } else { self@.is_Directory() },
     {
-        assume(false);
         (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) == 0)
     }
 
@@ -2940,13 +2934,12 @@ impl PageDirectoryEntry {
         requires
             !self@.is_Empty(),
             layer as nat == self.layer,
+            layer <= 3,
         ensures
             if r { self@.is_Directory() } else { self@.is_Page() },
     {
         !self.is_page(layer)
     }
-
-    // ....
 }
 
 
