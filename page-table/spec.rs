@@ -22,6 +22,7 @@ proof fn ambient_arith()
         forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0),
         forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0),
         forall_arith(|a: nat, b: nat| #[trigger] (a * b) == (b * a)),
+        forall_arith(|a: int, b: int| #[trigger] (a * b) == (b * a)),
         forall|a:nat| a != 0 ==> aligned(0, a)
 {
     assert(forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0)) by(nonlinear_arith) { };
@@ -228,8 +229,9 @@ impl ArchExec {
             crate::lib::mult_leq_mono_both(idx, self@.entry_size(layer), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
             ambient_arith();
             assert(0 <= self@.entry_size(layer) * idx);
-            // FIXME: wtf
+            // FIXME: nonlinear for andrea
             assume(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx);
+            // assert(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx) by(nonlinear_arith);
             assert(0 <= idx * self@.entry_size(layer));
             assert(idx * self@.entry_size(layer) <= MAX_ENTRY_SIZE * MAX_NUM_ENTRIES);
         }
@@ -273,10 +275,10 @@ pub ghost struct Arch {
     // [512 , 512 , 512 , 512 ]
 }
 
+// FIXME:
 // const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
 const MAX_ENTRY_SIZE:   nat = 4096;
-const MAX_NUM_LAYERS:   nat = 4; // FIXME: is this limitation okay? Extending to 5-level paging
-                                 // would require some other changes anyway
+const MAX_NUM_LAYERS:   nat = 4;
 const MAX_NUM_ENTRIES:  nat = 512;
 const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
 
@@ -419,12 +421,13 @@ impl Arch {
                 idx == self.index_for_vaddr(layer, base, vaddr),
                 idx < self.num_entries(layer),
         {
-            assume(false); // unstable
             self.lemma_entry_base();
             assert(vaddr >= base);
             assert(self.entry_size(layer) > 0);
+            assert(self.num_entries(layer) > 0);
             // FIXME: trivial step fails
-            assume(idx * self.entry_size(layer) < self.num_entries(layer) * self.entry_size(layer));
+            assert(idx * self.entry_size(layer) < self.num_entries(layer) * self.entry_size(layer));
+            assume(false);
             // assert(base + idx * self.entry_size(layer) < base + self.num_entries(layer) * self.entry_size(layer));
             // assert(self.entry_base(layer, base, idx) <= vaddr);
             let offset: nat = (vaddr - base) as nat;
@@ -569,8 +572,7 @@ proof fn arch_inv_test() {
     // assert(x86.inv());
 }
 
-// FIXME: conversion, should this really be tracked or just ghost? (was proof before)
-pub tracked struct PageTableContents {
+pub ghost struct PageTableContents {
     pub map: Map<nat /* VAddr */, MemRegion>,
     pub arch: Arch,
     pub lower: nat,
@@ -804,7 +806,6 @@ impl PageTableContents {
 
 // Second refinement layer
 
-// FIXME: conversion, should this be tracked or ghost?
 #[is_variant]
 pub tracked enum NodeEntry {
     Directory(Directory),
@@ -812,7 +813,6 @@ pub tracked enum NodeEntry {
     Empty(),
 }
 
-// FIXME: conversion, should this be tracked or ghost?
 pub tracked struct Directory {
     pub entries: Seq<NodeEntry>,
     pub layer: nat,       // index into layer_sizes
@@ -2977,13 +2977,11 @@ impl PageTableMemory {
         unreached()
     }
 
-    spec fn view(&self) -> Seq<u8> { arbitrary() }
-
     /// Allocates one page and returns a pointer to it as the offset from self.root()
     #[verifier(external_body)]
     fn alloc_page(&self) -> (res: usize)
-        ensures
-            res + 4096 <= self@.len(),
+        // ensures
+        //     res + 4096 <= self@.len(),
             // FIXME: reconsider the view for the memory, maybe it should be a struct with spec
             // read and write for u64 instead
             // mixed trigger
