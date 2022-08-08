@@ -253,12 +253,22 @@ impl ArchExec {
         ensures
             res == self@.next_entry_base(layer, base, idx)
     {
-        assert(0 <= (idx + 1) * self@.entry_size(layer) <= MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1)) by (nonlinear_arith)
-            requires self@.entry_size(layer) <= MAX_ENTRY_SIZE, idx <= MAX_NUM_ENTRIES
-        {
-            // New instability with z3 4.10.1
+        proof {
+            overflow_bounds();
+            let es = self@.entry_size(layer);
+            assert(0 <= (idx + 1) * es <= MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1)) by (nonlinear_arith)
+                requires es <= MAX_ENTRY_SIZE, idx <= MAX_NUM_ENTRIES
+                { /* New instability with z3 4.10.1 */ };
         }
-        base + (idx + 1) * self.entry_size(layer)
+        let offset = (idx + 1) * self.entry_size(layer);
+        proof {
+            assert(base + offset <= MAX_BASE + MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1)) by (nonlinear_arith)
+                requires
+                    0 <= offset <= MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1),
+                    0 <= base <= MAX_BASE,
+                {};
+        }
+        base + offset
     }
 }
 
@@ -275,12 +285,20 @@ pub ghost struct Arch {
     // [512 , 512 , 512 , 512 ]
 }
 
-// FIXME:
-// const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
-const MAX_ENTRY_SIZE:   nat = 4096;
+const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
 const MAX_NUM_LAYERS:   nat = 4;
 const MAX_NUM_ENTRIES:  nat = 512;
 const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
+
+// Sometimes z3 needs these concrete bounds to prove the no-overflow VC
+proof fn overflow_bounds()
+    ensures
+        MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000,
+        MAX_BASE + MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000,
+{
+    assert(MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000) by (nonlinear_arith);
+    assert(MAX_BASE + MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000) by (nonlinear_arith);
+}
 
 impl Arch {
     pub closed spec(checked) fn entry_size(self, layer: nat) -> nat
@@ -568,8 +586,7 @@ proof fn arch_inv_test() {
     };
     assert(x86.entry_size(3) == 4096);
     assert(x86.contains_entry_size(4096));
-    // FIXME: not true as long as we don't know that usize == u64
-    // assert(x86.inv());
+    assert(x86.inv());
 }
 
 pub ghost struct PageTableContents {
@@ -2664,7 +2681,6 @@ pub ghost enum GhostPageDirectoryEntry {
 
 const MAXPHYADDR: u64 = 52;
 
-// FIXME: these macros probably already exist somewhere?
 macro_rules! bit {
     ($v:expr) => {
         1u64 << $v
