@@ -227,20 +227,15 @@ impl ArchExec {
     {
         proof {
             crate::lib::mult_leq_mono_both(idx, self@.entry_size(layer), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
-            ambient_arith();
-            assert(0 <= self@.entry_size(layer) * idx);
-            // FIXME: nonlinear for andrea
-            assume(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx);
-            // assert(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx) by(nonlinear_arith);
-            assert(0 <= idx * self@.entry_size(layer));
+
+            // TODO (andrea): bad user experience with
+            // ambient_arith
+            // assert(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx);
+
+            assert(0 <= idx as int * self@.entry_size(layer) as int) by (nonlinear_arith)
+                requires 0 <= idx as int, 0 <= self@.entry_size(layer) as int, {}
             assert(idx * self@.entry_size(layer) <= MAX_ENTRY_SIZE * MAX_NUM_ENTRIES);
         }
-        // assert(0 <= idx * self@.entry_size(layer) <= MAX_ENTRY_SIZE * MAX_NUM_ENTRIES) by (nonlinear_arith)
-        //     requires self@.entry_size(layer) <= MAX_ENTRY_SIZE, idx <= MAX_NUM_ENTRIES
-        // {
-        //     // New instability with z3 4.10.1
-        //     assume(false); // unstable
-        // }
         base + idx * self.entry_size(layer)
     }
 
