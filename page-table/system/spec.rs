@@ -78,8 +78,8 @@ spec fn init(s: SystemVariables) -> bool {
 }
 
 spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp) -> bool {
-    if exists|base: nat, pte: PageTableEntry| #[auto_trigger] s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.region.size {
-        let (base, pte) = choose|p:(nat, PageTableEntry)| #[auto_trigger] s1.tlb.contains_pair(p.0,p.1) && p.0 <= vaddr && vaddr < p.0 + p.1.region.size;
+    if exists|base: nat, pte: PageTableEntry| #![auto] s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.region.size {
+        let (base, pte) = choose|p:(nat, PageTableEntry)| #![auto] s1.tlb.contains_pair(p.0,p.1) && p.0 <= vaddr && vaddr < p.0 + p.1.region.size;
         &&& paddr === (pte.region.base + (vaddr - base)) as nat
         &&& s2.tlb === s1.tlb
         &&& s2.pt_mem === s1.pt_mem
@@ -111,8 +111,6 @@ spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: n
             },
         }
     } else {
-        &&& !(exists|base: nat, pte: PageTableEntry| #[auto_trigger]
-              s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.region.size)
         &&& s2.tlb === s1.tlb
         &&& s2.pt_mem === s1.pt_mem
         &&& s2.mem === s1.mem
