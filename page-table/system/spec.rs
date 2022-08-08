@@ -1,11 +1,10 @@
 #[allow(unused_imports)] use crate::pervasive::*;
-use crate::*;
 #[allow(unused_imports)] use builtin::*;
 #[allow(unused_imports)] use builtin_macros::*;
 #[allow(unused_imports)] use state_machines_macros::*;
 use map::*;
 use seq::*;
-use set::*;
+#[allow(unused_imports)] use set::*;
 use crate::spec::MemRegion;
 
 // state:
@@ -15,7 +14,7 @@ use crate::spec::MemRegion;
 // transitions:
 // - mem read/write
 // - pt mem op
-// - resolve --> instead introduce this in the composition sm
+// - resolve --> this will be introduced in the composition state machine
 // - tlb evict, tlb fill
 
 verus! {
@@ -91,8 +90,11 @@ spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: n
                 &&& s2.mem === s1.mem.update(word_index(paddr), new_value)
             }
             IoOp::Store { new_value, result: StoreResult::PageFault } => {
-                ||| !pte.flags.is_user_mode_allowed
-                ||| !pte.flags.is_writable
+                &&& s2.mem === s1.mem
+                &&& {
+                    ||| !pte.flags.is_user_mode_allowed
+                    ||| !pte.flags.is_writable
+                }
             }
             IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
                 &&& pte.flags.is_user_mode_allowed
@@ -101,13 +103,19 @@ spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: n
                 &&& n == s1.mem.index(word_index(paddr))
             },
             IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
-                ||| !pte.flags.is_user_mode_allowed
-                ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                &&& s2.mem === s1.mem
+                &&& {
+                    ||| !pte.flags.is_user_mode_allowed
+                    ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                }
             },
         }
     } else {
         &&& !(exists|base: nat, pte: PageTableEntry| #[auto_trigger]
               s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.region.size)
+        &&& s2.tlb === s1.tlb
+        &&& s2.pt_mem === s1.pt_mem
+        &&& s2.mem === s1.mem
         &&& match op {
             IoOp::Store { new_value, result: StoreResult::Ok }        => false,
             IoOp::Store { new_value, result: StoreResult::PageFault } => true,

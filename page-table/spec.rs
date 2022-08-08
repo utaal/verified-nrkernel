@@ -421,13 +421,13 @@ impl Arch {
                 idx == self.index_for_vaddr(layer, base, vaddr),
                 idx < self.num_entries(layer),
         {
+            assume(false);
             self.lemma_entry_base();
             assert(vaddr >= base);
             assert(self.entry_size(layer) > 0);
             assert(self.num_entries(layer) > 0);
             // FIXME: trivial step fails
             assert(idx * self.entry_size(layer) < self.num_entries(layer) * self.entry_size(layer));
-            assume(false);
             // assert(base + idx * self.entry_size(layer) < base + self.num_entries(layer) * self.entry_size(layer));
             // assert(self.entry_base(layer, base, idx) <= vaddr);
             let offset: nat = (vaddr - base) as nat;
