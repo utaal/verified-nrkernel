@@ -128,7 +128,7 @@ impl PAddr {
 
     /// Split `PAddr` into lower and higher 32-bits.
     pub fn split(&self) -> (u32, u32) {
-        (self.0 as u32, (self.0 >> 32) as u32)
+        (self.0 as u32, (self.0 >> 32u64) as u32)
     }
 
     fn align_up(self, align: u64) -> Self {
@@ -309,7 +309,7 @@ impl VAddr {
 
     /// Split `VAddr` into lower and higher 32-bits.
     pub fn split(&self) -> (u32, u32) {
-        (self.0 as u32, (self.0 >> 32) as u32)
+        (self.0 as u32, (self.0 >> 32u64) as u32)
     }
 
     fn align_up(self, align: u64) -> Self {
@@ -414,12 +414,16 @@ impl Into<u64> for VAddr {
     }
 }
 
+// NOTE(Matthias): There was some change in the bitvector stuff which requires that literal
+// arguments to shifts need a type annotation. I added annotations where necessary in this file and
+// changed the (already present) annotations in the code below from usize to u64. Verus currently
+// seems unable to allow shifting with usize types.
 /// Given virtual address calculate corresponding entry in PML4.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub fn pml4_index(addr: VAddr) -> usize {
     //TODO: ensures(|res: usize| res < 512);
-    ((addr.0 >> 39usize) & 0b111111111) as usize
+    ((addr.0 >> 39u64) & 0b111111111) as usize
 }
 
 /// Given virtual address calculate corresponding entry in PML5.
@@ -428,28 +432,28 @@ pub fn pml4_index(addr: VAddr) -> usize {
 pub fn pml5_index(addr: VAddr) -> usize {
     //TODO(question): if we make addr.0 `pub` we should prob. require addr.inv() here too, no?
     //TODO(verus+bitstuff): ensures(|res: usize| res < 512);
-    ((addr.0 >> 48usize) & 0b111111111) as usize
+    ((addr.0 >> 48u64) & 0b111111111) as usize
 }
 
 /// Given virtual address calculate corresponding entry in PDPT.
 #[inline]
 pub fn pdpt_index(addr: VAddr) -> usize {
     //TODO(verus+bitstuff): ensures(|res: usize| res < 512);
-    ((addr.0 >> 30usize) & 0b111111111) as usize
+    ((addr.0 >> 30u64) & 0b111111111) as usize
 }
 
 /// Given virtual address calculate corresponding entry in PD.
 #[inline]
 pub fn pd_index(addr: VAddr) -> usize {
     //TODO(verus+bitstuff): ensures(|res: usize| res < 512);
-    ((addr.0 >> 21usize) & 0b111111111) as usize
+    ((addr.0 >> 21u64) & 0b111111111) as usize
 }
 
 /// Given virtual address calculate corresponding entry in PT.
 #[inline]
 pub fn pt_index(addr: VAddr) -> usize {
     //TODO(verus+bitstuff): ensures(|res: usize| res < 512);
-    ((addr.0 >> 12usize) & 0b111111111) as usize
+    ((addr.0 >> 12u64) & 0b111111111) as usize
 }
 
 /// PML4 configuration bit description.
@@ -467,36 +471,36 @@ impl Clone for PML4Flags {
 
 /// Present; must be 1 to reference a page-directory-pointer table
 #[spec] // TODO: not spec
-pub const PML4_P: u64 = 1 << 0;
+pub const PML4_P: u64 = 1u64 << 0u64;
 
 /// Read/write; if 0, writes may not be allowed to the 512-GByte region
 /// controlled by this entry (see Section 4.6)
 #[spec] // TODO: not spec
-pub const PML4_RW: u64 = 1 << 1;
+pub const PML4_RW: u64 = 1u64 << 1u64;
 
 /// User/supervisor; if 0, user-mode accesses are not allowed
 /// to the 512-GByte region controlled by this entry.
 #[spec] // TODO: not spec
-pub const PML4_US: u64 = 1 << 2;
+pub const PML4_US: u64 = 1u64 << 2u64;
 
 /// Page-level write-through; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PML4_PWT: u64 = 1 << 3;
+pub const PML4_PWT: u64 = 1u64 << 3u64;
 
 /// Page-level cache disable; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PML4_PCD: u64 = 1 << 4;
+pub const PML4_PCD: u64 = 1u64 << 4u64;
 
 /// Accessed; indicates whether this entry has been used for linear-address translation.
 #[spec] // TODO: not spec
-pub const PML4_A: u64 = 1 << 5;
+pub const PML4_A: u64 = 1u64 << 5u64;
 
 /// If IA32_EFER.NXE = 1, execute-disable
 /// If 1, instruction fetches are not allowed from the 512-GByte region.
 #[spec] // TODO: not spec
-pub const PML4_XD: u64 = 1 << 63;
+pub const PML4_XD: u64 = 1u64 << 63u64;
 
 impl PML4Flags {
     #[inline]
@@ -508,7 +512,7 @@ impl PML4Flags {
     #[inline]
     pub const fn all() -> Self {
         PML4Flags {
-            bits: (1 << 63) | 0b111111,
+            bits: (1u64 << 63u64) | 0b111111,
         }
     }
 }
@@ -577,36 +581,36 @@ impl<T: Clone+Copy> Directory<T> {
 
 /// Present; must be 1 to reference a page-directory-pointer table
 #[spec] // TODO: not spec
-pub const PDPT_P: u64 = 1 << 0;
+pub const PDPT_P: u64 = 1u64 << 0u64;
 
 /// Read/write; if 0, writes may not be allowed to the 512-GByte region
 /// controlled by this entry (see Section 4.6)
 #[spec] // TODO: not spec
-pub const PDPT_RW: u64 = 1 << 1;
+pub const PDPT_RW: u64 = 1u64 << 1u64;
 
 /// User/supervisor; if 0, user-mode accesses are not allowed
 /// to the 512-GByte region controlled by this entry.
 #[spec] // TODO: not spec
-pub const PDPT_US: u64 = 1 << 2;
+pub const PDPT_US: u64 = 1u64 << 2u64;
 
 /// Page-level write-through; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PDPT_PWT: u64 = 1 << 3;
+pub const PDPT_PWT: u64 = 1u64 << 3u64;
 
 /// Page-level cache disable; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PDPT_PCD: u64 = 1 << 4;
+pub const PDPT_PCD: u64 = 1u64 << 4u64;
 
 /// Accessed; indicates whether this entry has been used for linear-address translation.
 #[spec] // TODO: not spec
-pub const PDPT_A: u64 = 1 << 5;
+pub const PDPT_A: u64 = 1u64 << 5u64;
 
 /// If IA32_EFER.NXE = 1, execute-disable
 /// If 1, instruction fetches are not allowed from the 512-GByte region.
 #[spec] // TODO: not spec
-pub const PDPT_XD: u64 = 1 << 63;
+pub const PDPT_XD: u64 = 1u64 << 63u64;
 
 #[derive(Copy, Eq, PartialEq)]
 #[repr(transparent)]
@@ -643,36 +647,36 @@ impl PDPTEntry {
 
 /// Present; must be 1 to reference a page-directory-pointer table
 #[spec] // TODO: not spec
-pub const PD_P: u64 = 1 << 0;
+pub const PD_P: u64 = 1u64 << 0u64;
 
 /// Read/write; if 0, writes may not be allowed to the 512-GByte region
 /// controlled by this entry (see Section 4.6)
 #[spec] // TODO: not spec
-pub const PD_RW: u64 = 1 << 1;
+pub const PD_RW: u64 = 1u64 << 1u64;
 
 /// User/supervisor; if 0, user-mode accesses are not allowed
 /// to the 512-GByte region controlled by this entry.
 #[spec] // TODO: not spec
-pub const PD_US: u64 = 1 << 2;
+pub const PD_US: u64 = 1u64 << 2u64;
 
 /// Page-level write-through; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PD_PWT: u64 = 1 << 3;
+pub const PD_PWT: u64 = 1u64 << 3u64;
 
 /// Page-level cache disable; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PD_PCD: u64 = 1 << 4;
+pub const PD_PCD: u64 = 1u64 << 4u64;
 
 /// Accessed; indicates whether this entry has been used for linear-address translation.
 #[spec] // TODO: not spec
-pub const PD_A: u64 = 1 << 5;
+pub const PD_A: u64 = 1u64 << 5u64;
 
 /// If IA32_EFER.NXE = 1, execute-disable
 /// If 1, instruction fetches are not allowed from the 512-GByte region.
 #[spec] // TODO: not spec
-pub const PD_XD: u64 = 1 << 63;
+pub const PD_XD: u64 = 1u64 << 63u64;
 
 #[derive(Copy, Eq, PartialEq)]
 #[repr(transparent)]
@@ -709,36 +713,36 @@ impl PDEntry {
 
 /// Present; must be 1 to reference a page-directory-pointer table
 #[spec] // TODO: not spec
-pub const PT_P: u64 = 1 << 0;
+pub const PT_P: u64 = 1u64 << 0u64;
 
 /// Read/write; if 0, writes may not be allowed to the 512-GByte region
 /// controlled by this entry (see Section 4.6)
 #[spec] // TODO: not spec
-pub const PT_RW: u64 = 1 << 1;
+pub const PT_RW: u64 = 1u64 << 1u64;
 
 /// User/supervisor; if 0, user-mode accesses are not allowed
 /// to the 512-GByte region controlled by this entry.
 #[spec] // TODO: not spec
-pub const PT_US: u64 = 1 << 2;
+pub const PT_US: u64 = 1u64 << 2u64;
 
 /// Page-level write-through; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PT_PWT: u64 = 1 << 3;
+pub const PT_PWT: u64 = 1u64 << 3u64;
 
 /// Page-level cache disable; indirectly determines the memory type used to
 /// access the page-directory-pointer table referenced by this entry.
 #[spec] // TODO: not spec
-pub const PT_PCD: u64 = 1 << 4;
+pub const PT_PCD: u64 = 1u64 << 4u64;
 
 /// Accessed; indicates whether this entry has been used for linear-address translation.
 #[spec] // TODO: not spec
-pub const PT_A: u64 = 1 << 5;
+pub const PT_A: u64 = 1u64 << 5u64;
 
 /// If IA32_EFER.NXE = 1, execute-disable
 /// If 1, instruction fetches are not allowed from the 512-GByte region.
 #[spec] // TODO: not spec
-pub const PT_XD: u64 = 1 << 63;
+pub const PT_XD: u64 = 1u64 << 63u64;
 
 #[derive(Copy, Eq, PartialEq)]
 #[repr(transparent)]

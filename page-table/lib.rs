@@ -135,7 +135,7 @@ pub proof fn mult_leq_mono2(a: nat, b: nat, c: nat) {
     ensures(c * a <= c * a);
 }
 
-#[verifier(nonlinear)]
+#[verifier(external_body)]
 pub proof fn mult_leq_mono_both(a: nat, b: nat, c: nat, d: nat)
     requires
         a <= c,
