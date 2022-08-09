@@ -10,6 +10,7 @@ use crate::spec::MemRegion;
 verus! {
 pub struct PageTableVariables {
     pub map: Map<nat /* VAddr */, MemRegion>,
+    pub pt_mem: PageTableMemory,
 }
 
 pub enum PageTableStep {
@@ -17,7 +18,9 @@ pub enum PageTableStep {
     Noop,
 }
 
-pub open spec fn step_Op(s1: PageTableVariables, s2: PageTableVariables) -> bool {
+pub open spec fn step_Op(s1: PageTableVariables, s2: PageTableVariables, pt_mem1: Seq<nat>, pt_mem2: Seq<nat>) -> bool {
+    &&& s1.pt_mem@ === pt_mem1
+    &&& s2.pt_mem@ === pt_mem2
     &&& arbitrary()
 }
 

@@ -2988,6 +2988,8 @@ impl PageTableMemory {
         unreached()
     }
 
+    pub open spec fn view(&self) -> Seq<nat> { arbitrary() }
+
     /// Allocates one page and returns a pointer to it as the offset from self.root()
     #[verifier(external_body)]
     fn alloc_page(&self) -> (res: usize)

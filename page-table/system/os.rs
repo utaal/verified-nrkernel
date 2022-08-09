@@ -25,8 +25,8 @@ pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: syst
 
 pub open spec fn step_PT(s1: OSVariables, s2: OSVariables) -> bool {
     &&& system::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Op(s1.pt, s2.pt)
-    &&& arbitrary() // TODO: tie the state of pt and system
+    &&& pt::step_Op(s1.pt, s2.pt, s1.system.pt_mem, s2.system.pt_mem)
+    // &&& arbitrary() // TODO: tie the state of pt and system
 }
 
 pub enum OSStep {
