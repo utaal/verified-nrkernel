@@ -20,9 +20,9 @@ use crate::spec::MemRegion;
 verus! {
 
 pub struct SystemVariables {
-    mem:    Seq<nat>,
-    pt_mem: Seq<nat>,
-    tlb:    Map<nat,PageTableEntry>,
+    pub mem:    Seq<nat>,
+    pub pt_mem: Seq<nat>,
+    pub tlb:    Map<nat,PageTableEntry>,
 }
 
 #[derive(PartialEq, Eq, Structural)]
@@ -57,7 +57,8 @@ pub enum IoOp {
     Load { is_exec: bool, result: LoadResult },
 }
 
-enum SystemStep {
+#[is_variant]
+pub enum SystemStep {
     IoOp { vaddr: nat, paddr: nat, op: IoOp },
     PTMemOp,
     TLBFill { base: nat, pte: PageTableEntry },
@@ -67,17 +68,17 @@ enum SystemStep {
 // Unaligned accesses are a bit funky with this index function and the word sequences but unaligned
 // accesses can be thought of as two aligned accesses so it's probably fine at least until we
 // consider concurrency.
-spec fn word_index(idx: nat) -> nat {
+pub open spec fn word_index(idx: nat) -> nat {
     idx / 8
 }
 
-spec fn interp_pt_mem(pt_mem: Seq<nat>) -> Map<nat, PageTableEntry>;
+pub open spec fn interp_pt_mem(pt_mem: Seq<nat>) -> Map<nat, PageTableEntry>;
 
-spec fn init(s: SystemVariables) -> bool {
+pub open spec fn init(s: SystemVariables) -> bool {
     s.tlb.dom() === Set::empty()
 }
 
-spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp) -> bool {
+pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp) -> bool {
     if exists|base: nat, pte: PageTableEntry| #![auto] s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.region.size {
         let (base, pte) = choose|p:(nat, PageTableEntry)| #![auto] s1.tlb.contains_pair(p.0,p.1) && p.0 <= vaddr && vaddr < p.0 + p.1.region.size;
         &&& paddr === (pte.region.base + (vaddr - base)) as nat
@@ -123,26 +124,26 @@ spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: n
     }
 }
 
-spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool {
+pub open spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool {
     &&& s2.mem === s1.mem
     &&& s2.tlb === s1.tlb
 }
 
-spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {
     &&& interp_pt_mem(s1.pt_mem).contains_pair(base, pte)
     &&& s2.tlb === s1.tlb.insert(base, pte)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
 }
 
-spec fn step_TLBEvict(s1: SystemVariables, s2: SystemVariables, base: nat) -> bool {
+pub open spec fn step_TLBEvict(s1: SystemVariables, s2: SystemVariables, base: nat) -> bool {
     &&& s1.tlb.dom().contains(base)
     &&& s2.tlb === s1.tlb.remove(base)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
 }
 
-spec fn next_step(s1: SystemVariables, s2: SystemVariables, step: SystemStep) -> bool {
+pub open spec fn next_step(s1: SystemVariables, s2: SystemVariables, step: SystemStep) -> bool {
     match step {
         SystemStep::IoOp { vaddr, paddr, op } => step_IoOp(s1, s2, vaddr, paddr, op),
         SystemStep::PTMemOp => step_PTMemOp(s1, s2),
@@ -151,11 +152,11 @@ spec fn next_step(s1: SystemVariables, s2: SystemVariables, step: SystemStep) ->
     }
 }
 
-spec fn next(s1: SystemVariables, s2: SystemVariables) -> bool {
+pub open spec fn next(s1: SystemVariables, s2: SystemVariables) -> bool {
     exists|step: SystemStep| next_step(s1, s2, step)
 }
 
-spec fn inv(s: SystemVariables) -> bool {
+pub closed spec fn inv(s: SystemVariables) -> bool {
     true
 }
 
