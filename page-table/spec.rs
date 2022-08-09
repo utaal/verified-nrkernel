@@ -1474,6 +1474,7 @@ impl Directory {
         }
     }
 
+    #[verifier(spinoff_prover)]
     proof fn lemma_index_for_vaddr_bounds(self, vaddr: nat)
         requires
             self.inv(),
@@ -1557,6 +1558,7 @@ impl Directory {
         self.lemma_interp_aux_contains_implies_interp_of_entry_contains(0);
     }
 
+    #[verifier(spinoff_prover)]
     proof fn lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(self, vaddr: nat, i: nat)
         requires
             self.inv(),
