@@ -3,11 +3,11 @@
 #[allow(unused_imports)] use builtin_macros::*;
 
 use map::*;
-use seq::*;
-#[allow(unused_imports)] use set::*;
-use crate::spec::MemRegion;
+#[allow(unused_imports)] use seq::*;
+use crate::spec::{MemRegion, PageTableMemory};
 
 verus! {
+
 pub struct PageTableVariables {
     pub map: Map<nat /* VAddr */, MemRegion>,
     pub pt_mem: PageTableMemory,
@@ -30,7 +30,7 @@ pub open spec fn step_Noop(s1: PageTableVariables, s2: PageTableVariables) -> bo
 
 pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {
     match step {
-        PageTableStep::Op { undefined: _ } => step_Op(s1, s2),
+        PageTableStep::Op { undefined: _ } => step_Op(s1, s2, s1.pt_mem@, s2.pt_mem@),
         PageTableStep::Noop => step_Noop(s1, s2),
     }
 }

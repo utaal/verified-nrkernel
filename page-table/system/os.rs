@@ -2,11 +2,6 @@
 #[allow(unused_imports)] use builtin::*;
 #[allow(unused_imports)] use builtin_macros::*;
 
-use map::*;
-use seq::*;
-#[allow(unused_imports)] use set::*;
-use crate::spec::MemRegion;
-
 use crate::system::spec as system;
 use crate::pt;
 
@@ -20,7 +15,7 @@ pub struct OSVariables {
 pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: system::SystemStep) -> bool {
     &&& !system_step.is_PTMemOp()
     &&& system::next_step(s1.system, s2.system, system_step)
-    &&& pt:step_Noop(s1.pt, s2.pt)
+    &&& pt::step_Noop(s1.pt, s2.pt)
 }
 
 pub open spec fn step_PT(s1: OSVariables, s2: OSVariables) -> bool {
