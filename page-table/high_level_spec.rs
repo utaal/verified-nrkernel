@@ -15,7 +15,7 @@
 // - resolve
 
 // TODO:
-// - should the high-level spec support flags? e.g. let a process map read-only
+// - should Map be able to set is_user_mode_allowed?
 
 verus! {
 
@@ -62,6 +62,7 @@ enum AbstractStep {
     IoOp  { vaddr: nat, op: IoOp },
     Map   { base: nat, pte: PageTableEntry },
     Unmap { base: nat },
+    // Resolve { vaddr: nat }, // How do we specify this?
 }
 
 // Unaligned accesses are a bit funky with this index function and the word sequences but unaligned
@@ -136,6 +137,7 @@ spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: P
 spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat) -> bool {
     &&& true // TODO: anything else?
     &&& s1.mappings.dom().contains(base)
+    &&& s1.mappings.index(base).flags.is_user_mode_allowed
     &&& s2.mem === s1.mem
     &&& s2.mappings === s1.mappings.remove(base)
 }
