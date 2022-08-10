@@ -127,6 +127,7 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
 pub open spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool {
     &&& s2.mem === s1.mem
     &&& s2.tlb === s1.tlb
+    // only pt_mem may change, but arbitrarily
 }
 
 pub open spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {
