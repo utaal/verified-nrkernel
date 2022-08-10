@@ -5,7 +5,7 @@
 #[allow(unused_imports)] use builtin_macros::*;
 #[allow(unused_imports)] use state_machines_macros::*;
 #[allow(unused_imports)] use map::*;
-#[allow(unused_imports)] use crate::spec::{overlap, MemRegion};
+#[allow(unused_imports)] use crate::pt_impl::high_level_pt::{overlap, MemRegion};
 
 // state:
 // - memory

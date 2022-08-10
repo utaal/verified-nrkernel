@@ -5,7 +5,7 @@
 use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
-use crate::spec::MemRegion;
+use crate::pt_impl::high_level_pt::MemRegion;
 
 // state:
 // - memory

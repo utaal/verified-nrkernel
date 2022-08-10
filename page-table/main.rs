@@ -5,7 +5,7 @@ pub mod lib;
 pub mod lib_axiom;
 pub mod memory_types;
 pub mod pervasive;
-pub mod spec;
+pub mod pt_impl;
 pub mod system;
 pub mod pt;
 pub mod x86impl;
