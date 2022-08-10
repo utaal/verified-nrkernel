@@ -3,12 +3,12 @@
 #[allow(unused_imports)] use builtin_macros::*;
 
 #[allow(unused_imports)] use seq::*;
-use crate::pt_impl::high_level_pt;
+use crate::pt_impl::l0;
 
 verus! {
 
 pub struct PageTableVariables {
-    pub pt: high_level_pt::PageTableContents,
+    pub pt: l0::PageTableContents,
     // pub pt_mem: PageTableMemory,
 }
 

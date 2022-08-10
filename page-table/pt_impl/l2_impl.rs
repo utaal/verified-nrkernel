@@ -14,9 +14,9 @@ use crate::lib_axiom::*;
 use crate::lib::aligned;
 use result::{*, Result::*};
 
-use crate::pt_impl::high_level_pt;
-use crate::pt_impl::high_level_pt::{ArchExec,Arch,MemRegion,MemRegionExec,ambient_arith};
-use crate::pt_impl::high_level_pt::{MAX_BASE,MAX_NUM_ENTRIES,MAX_NUM_LAYERS,MAX_ENTRY_SIZE};
+use crate::pt_impl::l1;
+use crate::pt_impl::l0::{ArchExec,Arch,MemRegion,MemRegionExec,ambient_arith};
+use crate::pt_impl::l0::{MAX_BASE,MAX_NUM_ENTRIES,MAX_NUM_LAYERS,MAX_ENTRY_SIZE};
 
 verus! {
 
@@ -529,11 +529,11 @@ impl PageTable {
         &&& self.frames_aligned(layer, ptr)
     }
 
-    pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat) -> high_level_pt::Directory
+    pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat) -> l1::Directory
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 1nat)
     {
         decreases_when(self.inv_at(layer, ptr));
-        high_level_pt::Directory {
+        l1::Directory {
             entries: self.interp_at_aux(layer, ptr, base_vaddr, seq![]),
             layer: layer,
             base_vaddr,
@@ -541,7 +541,7 @@ impl PageTable {
         }
     }
 
-    pub open spec fn interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<high_level_pt::NodeEntry>) -> Seq<high_level_pt::NodeEntry>
+    pub open spec fn interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>) -> Seq<l1::NodeEntry>
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
     {
         decreases_when(self.inv_at(layer, ptr));
@@ -552,19 +552,19 @@ impl PageTable {
             let entry = match self.view_at(layer, ptr, init.len()) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                     let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                    high_level_pt::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr))
+                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
-                    high_level_pt::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
+                    l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
-                    high_level_pt::NodeEntry::Empty(),
+                    l1::NodeEntry::Empty(),
             };
             self.interp_at_aux(layer, ptr, base_vaddr, init.add(seq![entry]))
         }
     }
 
     #[proof] #[verifier(decreases_by)]
-    spec fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<high_level_pt::NodeEntry>) {
+    spec fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>) {
         assert(self.directories_obey_invariant_at(layer, ptr));
         assert(self.arch@.layers.len() - (layer + 1) < self.arch@.layers.len() - layer);
         // FIXME: why isn't this going through?
@@ -572,7 +572,7 @@ impl PageTable {
         assume(false);
     }
 
-    spec fn interp(self) -> high_level_pt::Directory {
+    spec fn interp(self) -> l1::Directory {
         self.interp_at(0, self.memory.root(), 0)
     }
 
@@ -624,7 +624,7 @@ impl PageTable {
         res.lemma_inv_implies_interp_inv();
     }
 
-    proof fn lemma_inv_at_implies_interp_at_aux_inv(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<high_level_pt::NodeEntry>)
+    proof fn lemma_inv_at_implies_interp_at_aux_inv(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
         requires
             self.inv_at(layer, ptr),
             aligned(base_vaddr, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
@@ -687,12 +687,12 @@ impl PageTable {
             let entry = match self.view_at(layer, ptr, init.len()) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                     let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                    high_level_pt::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr))
+                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
-                    high_level_pt::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
+                    l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
-                    high_level_pt::NodeEntry::Empty(),
+                    l1::NodeEntry::Empty(),
             };
             let init_next = init.add(seq![entry]);
             let res      = self.interp_at_aux(layer, ptr, base_vaddr, init);
@@ -767,7 +767,7 @@ impl PageTable {
             self.lemma_inv_at_implies_interp_at_inv(layer, ptr, base);
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
         }
-        let interp:     Ghost<high_level_pt::Directory> = ghost(self.interp_at(layer, ptr, base));
+        let interp:     Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base));
         let interp_res: Ghost<Result<nat,()>> = ghost(interp@.resolve(vaddr));
         proof {
             assert(interp_res@ === self.interp_at(layer, ptr, base).resolve(vaddr));
