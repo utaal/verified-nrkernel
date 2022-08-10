@@ -16,16 +16,15 @@ use result::{*, Result::*};
 
 verus! {
 
+#[verifier(nonlinear)]
 proof fn ambient_arith()
     ensures
         forall_arith(|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0),
         forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0),
         forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0),
-        forall_arith(|a: nat, b: nat| #[trigger] (a * b) == (b * a)),
         forall_arith(|a: int, b: int| #[trigger] (a * b) == (b * a)),
         forall|a:nat| a != 0 ==> aligned(0, a)
 {
-    assert(forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0)) by(nonlinear_arith) { };
     crate::lib::aligned_zero();
 }
 
@@ -60,6 +59,7 @@ proof fn ambient_lemmas1()
     });
     lemma_map_union_prefer_right_remove_commute::<nat,MemRegion>();
     lemma_map_union_prefer_right_insert_commute::<nat,MemRegion>();
+    assert(forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a)) by (nonlinear_arith) { };
 }
 
 // This contains postconditions for which we need to call lemmas that depend on ambient_lemmas1.
@@ -216,6 +216,7 @@ impl ArchExec {
         res
     }
 
+    #[verifier(nonlinear)]
     fn entry_base(&self, layer: usize, base: usize, idx: usize) -> (res: usize)
         requires
             self@.inv(),
@@ -227,14 +228,6 @@ impl ArchExec {
     {
         proof {
             crate::lib::mult_leq_mono_both(idx, self@.entry_size(layer), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
-
-            // TODO (andrea): bad user experience with
-            // ambient_arith
-            // assert(idx * self@.entry_size(layer) == self@.entry_size(layer) * idx);
-
-            assert(0 <= idx as int * self@.entry_size(layer) as int) by (nonlinear_arith)
-                requires 0 <= idx as int, 0 <= self@.entry_size(layer) as int, {}
-            assert(idx * self@.entry_size(layer) <= MAX_ENTRY_SIZE * MAX_NUM_ENTRIES);
         }
         base + idx * self.entry_size(layer)
     }
@@ -354,14 +347,15 @@ impl Arch {
     {
         ambient_lemmas1();
         if i == j {
+            assert(aligned(self.entry_size(i), self.entry_size(j))) by (nonlinear_arith)
+                requires i == j, self.entry_size(i) > 0,
+            { };
         } else {
             self.lemma_entry_sizes_aligned(i+1,j);
             crate::lib::mod_of_mul_auto();
             crate::lib::aligned_transitive_auto();
+            assert(aligned(self.entry_size(i), self.entry_size(j)));
         }
-        // NOTE: This is the only non-nonlinear lemma that became unstable when
-        // switching to z3 4.8.17.
-        assume(false); // unstable
     }
 
     pub proof fn lemma_entry_sizes_aligned_auto(self)
@@ -409,23 +403,7 @@ impl Arch {
                 layer < self.layers.len(),
                 between(vaddr, base, self.upper_vaddr(layer, base)),
                 idx == self.index_for_vaddr(layer, base, vaddr),
-        {
-            assume(false);
-            // let euc_div_diff = (((vaddr - base) as nat) / self.entry_size(layer));
-            assert(self.entry_size(layer) > 0);
-            let offset: nat = (vaddr - base) as nat;
-            assert(vaddr < base + self.num_entries(layer) * self.entry_size(layer));
-            assert(offset < self.num_entries(layer) * self.entry_size(layer));
-            assert(self.entry_size(layer) <= self.num_entries(layer) * self.entry_size(layer));
-            assert(idx == offset / self.entry_size(layer));
-            // assert(idx * self.entry_size(layer) >= offset / self.entry_size(layer) * self.entry_size(layer));
-
-            // let div_diff = idx * self.entry_size(layer) - offset;
-            // assert(div_diff < self.entry_size(layer));
-            // assert(idx == offset / self.entry_size(layer) * self.entry_size(layer) + div_diff);
-            // assert(idx < (self.num_entries(layer) * self.entry_size(layer)) / self.entry_size(layer));
-            assume(false);
-        };
+        { };
         assert(between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))) by(nonlinear_arith)
             requires
                 self.inv(),
@@ -433,25 +411,19 @@ impl Arch {
                 between(vaddr, base, self.upper_vaddr(layer, base)),
                 idx == self.index_for_vaddr(layer, base, vaddr),
                 idx < self.num_entries(layer),
+        { };
+        assert(aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)) by (nonlinear_arith)
+            requires
+                self.inv(),
+                layer < self.layers.len(),
+                base <= vaddr,
+                vaddr < self.upper_vaddr(layer, base),
+                idx == self.index_for_vaddr(layer, base, vaddr),
+                idx < self.num_entries(layer),
+                between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx)),
         {
             assume(false);
-            self.lemma_entry_base();
-            assert(vaddr >= base);
-            assert(self.entry_size(layer) > 0);
-            assert(self.num_entries(layer) > 0);
-            // FIXME: trivial step fails
-            assert(idx * self.entry_size(layer) < self.num_entries(layer) * self.entry_size(layer));
-            // assert(base + idx * self.entry_size(layer) < base + self.num_entries(layer) * self.entry_size(layer));
-            // assert(self.entry_base(layer, base, idx) <= vaddr);
-            let offset: nat = (vaddr - base) as nat;
-            assert(idx == offset / self.entry_size(layer));
-
-            assume(base + idx * self.entry_size(layer) <= vaddr);
-
-            assert(self.entry_base(layer, base, idx) < self.upper_vaddr(layer, base));
-            assert(vaddr < self.next_entry_base(layer, base, idx));
         };
-        assume(aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx));
         assert(idx < MAX_NUM_ENTRIES);
     }
 
@@ -524,7 +496,6 @@ impl Arch {
             forall|base: nat, layer: nat| // Used to infer lhs of next postcondition's implication
                 layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
     {
-        assume(false);
         // FIXME: prove this
         assert(forall|idx: nat, j: nat, base: nat, layer: nat|
                 #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
@@ -532,44 +503,47 @@ impl Arch {
                        && self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j)) by(nonlinear_arith)
             requires
                 self.inv(),
-        {
-            assert forall|idx: nat, j: nat, base: nat, layer: nat|
-                layer < self.layers.len() && idx < j implies
-                       #[trigger] self.entry_base(layer, base, idx) < #[trigger] self.entry_base(layer, base, j)
-                    && self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j) by
+        { };
+
+
+        assert(forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
+                ==> self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j)) by (nonlinear_arith)
+            requires self.inv(),
+        { }
+
+        assert forall|idx: nat, base: nat, layer: nat|
+                layer < self.layers.len() implies
+            {
+                &&& #[trigger] self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)
+                &&& self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)
+            } by {
+
+            assert(
+                #[trigger] self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)) by (nonlinear_arith)
+                requires self.inv(), layer < self.layers.len(),
+            { };
+
+            assert(
+                self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)) by (nonlinear_arith)
+                requires self.inv(), layer < self.layers.len(),
+            { };
+        }
+
+        assert forall|idx: nat, base: nat, layer: nat|
+                layer < self.layers.len() && aligned(base, self.entry_size(layer)) implies #[trigger] aligned(self.entry_base(layer, base, idx), self.entry_size(layer)) by {
+
+            assert(aligned(self.entry_base(layer, base, idx), self.entry_size(layer))) by (nonlinear_arith)
+                requires self.inv(), layer < self.layers.len(), aligned(base, self.entry_size(layer)),
             {
                 assume(false);
-                assert(self.entry_base(layer, base, idx) == base + idx * self.entry_size(layer));
-                assert(self.entry_base(layer, base, j) == base + j * self.entry_size(layer));
-                assert(self.entry_size(layer) > 0);
-                assert(idx * self.entry_size(layer) > 0);
-                assert(j * self.entry_size(layer) > 0);
-                assert(idx * self.entry_size(layer) < j * self.entry_size(layer));
-                assume(false);
-                assert(self.entry_base(layer, base, idx) < self.entry_base(layer, base, j));
-                assert(self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j));
             }
-            assume(false);
-        };
-
-        assume(forall|base: nat, layer: nat|
-               layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)));
-        assume(forall|i: nat, base: nat, layer: nat|
-               layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, i), self.entry_size(layer)));
-        // // Postcondition 2
-        // assert_forall_by(|i: nat| {
-        //     ensures(#[auto_trigger] aligned(self.entry_base(i), self.entry_size()));
-        //     crate::lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
-        //     assert(aligned(self.base_vaddr, self.entry_size()));
-        //     crate::lib::mod_of_mul(i, self.entry_size());
-        //     assert(aligned(i * self.entry_size(), self.entry_size()));
-        //     crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
-        //     assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
-        // });
+        }
+        assume(false);
     }
 
 }
 
+#[verifier(nonlinear)]
 proof fn arch_inv_test() {
     let x86 = Arch {
         layers: seq![
@@ -581,6 +555,16 @@ proof fn arch_inv_test() {
     };
     assert(x86.entry_size(3) == 4096);
     assert(x86.contains_entry_size(4096));
+    assert(x86.layers.len() <= MAX_NUM_LAYERS);
+    assert forall|i:nat| i < x86.layers.len() implies {
+            &&& 0 < #[trigger] x86.entry_size(i)  <= MAX_ENTRY_SIZE
+            &&& 0 < #[trigger] x86.num_entries(i) <= MAX_NUM_ENTRIES
+            &&& x86.entry_size_is_next_layer_size(i)
+        } by {
+        assert(0 < #[trigger] x86.entry_size(i)  <= MAX_ENTRY_SIZE);
+        assert(0 < #[trigger] x86.num_entries(i) <= MAX_NUM_ENTRIES);
+        assert(x86.entry_size_is_next_layer_size(i));
+    }
     assert(x86.inv());
 }
 
@@ -984,7 +968,6 @@ impl Directory {
         self.lemma_entry_base_auto();
     }
 
-    #[verifier(nonlinear)]
     pub proof fn lemma_entry_base_auto(self)
         requires
             self.inv(),
@@ -996,6 +979,12 @@ impl Directory {
             //     d.upper_vaddr() == self.entry_base(i+1)
             // })
     {
+        assert forall|i: nat, j: nat| i < j implies #[trigger] self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j) by {
+            assume(false);
+            assert(self.entry_base(i) < #[trigger] self.entry_base(j) && self.entry_base(i+1) <= self.entry_base(j)) by (nonlinear_arith)
+                requires i < j, self.inv(),
+            { };
+        };
 
         // Postcondition 2
         assert_forall_by(|i: nat| {
@@ -1007,8 +996,6 @@ impl Directory {
             crate::lib::mod_add_zero(self.base_vaddr, i * self.entry_size(), self.entry_size());
             assert(aligned(self.base_vaddr + i * self.entry_size(), self.entry_size()));
         });
-
-        assume(false); // unstable
     }
 
     pub closed spec fn entry_bounds(self, entry: nat) -> (nat, nat) {
@@ -1104,7 +1091,6 @@ impl Directory {
                     assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
                     assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
                     // New instability with z3 4.10.1
-                    assume(false); // unstable
                 });
                 assert(entry_i.mappings_in_bounds());
             }
@@ -1135,7 +1121,6 @@ impl Directory {
                             self.base_vaddr + i * self.entry_size() <= self.base_vaddr + j * self.entry_size(),
                             self.base_vaddr + (i+1) * self.entry_size() <= self.base_vaddr + j * self.entry_size()
                     ]);
-                    assume(false); // unstable
                 });
             } else {
                 assert_nonlinear_by({
@@ -1148,7 +1133,6 @@ impl Directory {
                             self.base_vaddr + j * self.entry_size() < self.base_vaddr + i * self.entry_size(),
                             self.base_vaddr + (j+1) * self.entry_size() <= self.base_vaddr + i * self.entry_size()
                     ]);
-                    assume(false); // unstable
                 });
             }
         });
@@ -1282,7 +1266,6 @@ impl Directory {
                     self.interp_aux(i + 1).lower == self.entry_base(i + 1)
                 ]);
                 ensures(rem.ranges_disjoint(entry_i));
-                assume(false); // unstable
             });
             rem.lemma_ranges_disjoint_implies_mappings_disjoint(entry_i);
 
@@ -1303,7 +1286,6 @@ impl Directory {
                     interp.lower <= self.interp_aux(i + 1).lower,
                     interp.upper >= self.interp_aux(i + 1).upper,
                 ]);
-                assume(false); // unstable
             });
 
             assert(interp.mappings_in_bounds());
@@ -1376,7 +1358,6 @@ impl Directory {
                 ensures(
                     entry_j.upper <= interp.lower &&
                     interp.lower > entry_j.lower);
-                assume(false); // unstable
             });
         });
     }
@@ -1394,8 +1375,6 @@ impl Directory {
                 ==> !self.interp_aux(i).map.dom().contains(va),
         decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
     {
-        assume(false); // unstable
-
         self.lemma_inv_implies_interp_aux_inv(i+1);
         self.lemma_inv_implies_interp_of_entry_inv(i);
         self.lemma_inv_implies_interp_of_entry_inv(j);
@@ -1495,7 +1474,7 @@ impl Directory {
         }
     }
 
-    #[verifier(nonlinear)]
+    #[verifier(spinoff_prover)]
     proof fn lemma_index_for_vaddr_bounds(self, vaddr: nat)
         requires
             self.inv(),
@@ -1512,7 +1491,6 @@ impl Directory {
                 &&& (aligned(vaddr, self.entry_size()) ==> vaddr == self.base_vaddr + i * self.entry_size())
             },
     {
-        assume(false); // unstable
         self.lemma_inv_implies_interp_inv();
         let i = self.index_for_vaddr(vaddr);
         if (false
@@ -1580,6 +1558,7 @@ impl Directory {
         self.lemma_interp_aux_contains_implies_interp_of_entry_contains(0);
     }
 
+    #[verifier(spinoff_prover)]
     proof fn lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(self, vaddr: nat, i: nat)
         requires
             self.inv(),
@@ -1593,7 +1572,6 @@ impl Directory {
                 self.interp().map.dom().contains(base) &&
                 between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size),
     {
-        assume(false); // unstable (slow but not failing)
         self.lemma_entry_base_auto();
         self.lemma_interp_of_entry();
         self.lemma_interp_contains_implies_interp_of_entry_contains();
@@ -2083,7 +2061,6 @@ impl Directory {
             equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)),
         decreases (self.arch.layers.len() - self.layer)
     {
-        assume(false); // unstable (slow but not failing)
         ambient_lemmas1();
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
@@ -3067,6 +3044,7 @@ impl PageTable {
     }
 
     /// Get the entry at address ptr + i * ENTRY_BYTES
+    #[verifier(nonlinear)]
     fn entry_at(&self, layer: usize, ptr: usize, i: usize) -> (res: PageDirectoryEntry)
         ensures
             res.layer == layer,
@@ -3411,6 +3389,7 @@ impl PageTable {
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
     }
 
+    #[verifier(nonlinear)]
     fn map_frame(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> Result<(),()>
         requires
             old(self).inv_at(layer, ptr),
