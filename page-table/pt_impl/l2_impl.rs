@@ -125,6 +125,7 @@ const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits 
 const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
 const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
 const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
+const MASK_DIR_ADDR:           u64 = MASK_ADDR;
 
 // We should be able to always use the 12:52 mask and have the invariant state that in the
 // other cases, the lower bits are already zero anyway.
@@ -232,7 +233,7 @@ impl PageDirectoryEntry {
         )
         requires
             layer <= 3,
-            is_page ==> layer < 3,
+            is_page ==> layer <= 2,
             if layer == 0 {
                 address & MASK_L0_PG_ADDR == address
             } else if layer == 1 {
@@ -255,9 +256,9 @@ impl PageDirectoryEntry {
         assume(false);
     }
 
-    pub fn new_empty_dir(layer: usize, address: u64) -> (r: Self)
+    pub fn new_page_entry(layer: usize, address: u64) -> (r: Self)
         requires
-            layer <= 3,
+            layer <= 2,
             if layer == 0 {
                 address & MASK_L0_PG_ADDR == address
             } else if layer == 1 {
@@ -267,7 +268,30 @@ impl PageDirectoryEntry {
             } else { true }
         ensures
             r.inv(),
+            // r@.is_Page(),
     {
+        // FIXME: check what flags we want here
+        Self::new_entry(layer, address, true, true, true, false, false, false)
+    }
+
+    pub fn new_dir_entry(layer: usize, address: u64) -> (r: Self)
+        requires
+            layer <= 3,
+            address & MASK_DIR_ADDR == address
+        ensures
+            r.inv(),
+            // r@.is_Directory(),
+    {
+        // FIXME: fix condition on new_entry
+        assume(
+            if layer == 0 {
+                address & MASK_L0_PG_ADDR == address
+            } else if layer == 1 {
+                address & MASK_L1_PG_ADDR == address
+            } else if layer == 2 {
+                address & MASK_L2_PG_ADDR == address
+            } else { true }
+            );
         // FIXME: check what flags we want here
         Self::new_entry(layer, address, false, true, true, false, false, false)
     }
@@ -277,7 +301,7 @@ impl PageDirectoryEntry {
         address: u64,
         is_page: bool,
         is_writable: bool,
-        is_supervisor: bool, // FIXME: think this is inverted, 0 is user-mode-access allowed, 1 is disallowed
+        is_supervisor: bool, // TODO: is this inverted, 0 is user-mode-access allowed, 1 is disallowed
         is_writethrough: bool,
         disable_cache: bool,
         disable_execute: bool,
@@ -285,7 +309,7 @@ impl PageDirectoryEntry {
         requires
             layer <= 3,
             is_page ==> layer < 3,
-            if layer == 0 {
+            if layer == 0 { // FIXME: this condition needs to take is_page into account
                 address & MASK_L0_PG_ADDR == address
             } else if layer == 1 {
                 address & MASK_L1_PG_ADDR == address
@@ -294,6 +318,7 @@ impl PageDirectoryEntry {
             } else { true }
         ensures
             r.inv(),
+            // if is_page { r@.is_Page() } else { r@.is_Directory() }
     {
         let e =
         PageDirectoryEntry {
@@ -753,11 +778,17 @@ impl PageTable {
             base <= vaddr < MAX_BASE,
             aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         ensures
-            // TODO: is there a nicer way to write this?
-            // Refinement
+            // TODO: With map we could write this more concisely:
+            // res.map(|x: usize| x as nat) === self.interp_at(layer, ptr, base).resolve(vaddr),
+            // Refinement of l1
             match res {
                 Ok(res) => Ok(res as nat) === self.interp_at(layer, ptr, base).resolve(vaddr),
                 Err(e)  => Err(e)         === self.interp_at(layer, ptr, base).resolve(vaddr),
+            },
+            // Refinement of l0
+            match res {
+                Ok(res) => Ok(res as nat) === self.interp_at(layer, ptr, base).interp().resolve(vaddr),
+                Err(e)  => Err(e)         === self.interp_at(layer, ptr, base).interp().resolve(vaddr),
             },
         // decreases self.arch@.layers.len() - layer
     {
@@ -771,6 +802,7 @@ impl PageTable {
         let interp_res: Ghost<Result<nat,()>> = ghost(interp@.resolve(vaddr));
         proof {
             assert(interp_res@ === self.interp_at(layer, ptr, base).resolve(vaddr));
+            interp@.lemma_resolve_refines(vaddr);
         }
         if entry.is_mapping() {
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
@@ -800,23 +832,50 @@ impl PageTable {
         }
     }
 
-    fn resolve(&self, vaddr: usize) -> Result<usize, ()>
+    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    fn resolve(&self, vaddr: usize) -> (res: (Result<usize,()>))
         requires
             self.inv(),
             self.interp().interp().accepted_resolve(vaddr),
             vaddr < MAX_BASE,
+        ensures
+            // Refinement of l1
+            match res {
+                Ok(res) => Ok(res as nat) === self.interp().resolve(vaddr),
+                Err(e)  => Err(e)         === self.interp().resolve(vaddr),
+            },
+            // Refinement of l0
+            match res {
+                Ok(res) => Ok(res as nat) === self.interp().interp().resolve(vaddr),
+                Err(e)  => Err(e)         === self.interp().interp().resolve(vaddr),
+            },
     {
         proof { ambient_arith(); }
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
     }
 
-    #[verifier(nonlinear)]
-    fn map_frame(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> Result<(),()>
+    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
         requires
             old(self).inv_at(layer, ptr),
             old(self).interp_at(layer, ptr, base).interp().accepted_mapping(vaddr, frame@),
             base <= vaddr < MAX_BASE,
             aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
+        // ensures
+        //     self.inv(),
+        //     // Refinement of l1
+        //     match res {
+        //         Ok(res) =>
+        //             Ok(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
+        //         Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
+        //     },
+        //     // Refinement of l0
+        //     match res {
+        //         Ok(res) =>
+        //             Ok(self.interp_at(layer, ptr, base).interp())
+        //                 === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
+        //         Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
+        //     }
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
@@ -825,12 +884,12 @@ impl PageTable {
             self.lemma_inv_at_implies_interp_at_inv(layer, ptr, base);
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
         }
+        let entry_base: usize = self.arch.entry_base(layer, base, idx);
+        proof {
+            self.arch@.lemma_entry_base();
+            assert(entry_base <= vaddr);
+        }
         if entry.is_mapping() {
-            let entry_base: usize = self.arch.entry_base(layer, base, idx);
-            proof {
-                self.arch@.lemma_entry_base();
-                assert(entry_base <= vaddr);
-            }
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == frame.size {
                     Err(())
@@ -838,35 +897,54 @@ impl PageTable {
                     let dir_addr = entry.address() as usize;
                     assume(self.inv_at((layer + 1) as nat, dir_addr));
                     assume(self.interp_at((layer + 1) as nat, dir_addr, entry_base).interp().accepted_mapping(vaddr, frame@));
-                    self.map_frame(layer + 1, dir_addr, entry_base, vaddr, frame)
+                    self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame)
                 }
             } else {
                 Err(())
             }
         } else {
             if self.arch.entry_size(layer) == frame.size {
-                // FIXME: map the frame
-                Err(())
+                proof {
+                    let frame_base = frame.base as u64;
+                    // FIXME: this isn't currently true, the upper levels accept mappings at any layer
+                    assume(layer <= 2);
+                    assume(
+                        if layer == 0 {
+                            frame_base & MASK_L0_PG_ADDR == frame_base
+                        } else if layer == 1 {
+                            frame_base & MASK_L1_PG_ADDR == frame_base
+                        } else if layer == 2 {
+                            frame_base & MASK_L2_PG_ADDR == frame_base
+                        } else { true });
+                }
+                let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
+                assume(ptr < 100); assume(idx < 100);
+                self.memory.write(ptr + idx * ENTRY_BYTES, new_page_entry.entry);
+                Ok(())
             } else {
                 let new_dir_ptr     = self.memory.alloc_page();
                 let new_dir_ptr_u64 = new_dir_ptr as u64;
-                assume(
-                    if layer == 0 {
-                        new_dir_ptr_u64 & MASK_L0_PG_ADDR == new_dir_ptr_u64
-                    } else if layer == 1 {
-                        new_dir_ptr_u64 & MASK_L1_PG_ADDR == new_dir_ptr_u64
-                    } else if layer == 2 {
-                        new_dir_ptr_u64 & MASK_L2_PG_ADDR == new_dir_ptr_u64
-                    } else { true }
-                    );
-                let empty_dir = PageDirectoryEntry::new_empty_dir(layer, new_dir_ptr_u64);
-                // FIXME:
+                assume(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
+                let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
+                assume(self.empty_at(layer, new_dir_ptr));
                 assume(ptr < 100); assume(idx < 100);
-                self.memory.write(ptr + idx * ENTRY_BYTES, empty_dir.entry);
-
-                Ok(()) // FIXME: create new dir, insert it and recurse
+                self.memory.write(ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
+                assume(self.inv_at((layer + 1) as nat, new_dir_ptr));
+                assume(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base).interp().accepted_mapping(vaddr, frame@));
+                self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame)
             }
         }
+    }
+
+    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    fn map_frame(&mut self, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
+        requires
+            old(self).inv(),
+            old(self).interp().interp().accepted_mapping(vaddr, frame@),
+            vaddr < MAX_BASE,
+    {
+        proof { ambient_arith(); }
+        self.map_frame_aux(0, self.memory.root_exec(), 0, vaddr, frame)
     }
 }
 

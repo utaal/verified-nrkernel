@@ -666,9 +666,7 @@ impl Directory {
         decreases self.arch.layers.len() - self.layer
     {
         decreases_when(self.inv() && self.interp().accepted_resolve(vaddr));
-        // FIXME: https://github.com/secure-foundations/verus/issues/249
-        // Ignore termination failure for now.
-        // decreases_by(Self::check_resolve);
+        decreases_by(Self::check_resolve);
 
         let entry = self.index_for_vaddr(vaddr);
         match self.entries.index(entry) {
@@ -685,30 +683,31 @@ impl Directory {
         }
     }
 
-    // #[verifier(decreases_by)]
-    // proof fn check_resolve(self, vaddr: nat) {
-    //     assert(self.inv() && self.interp().accepted_resolve(vaddr));
+    #[verifier(decreases_by)]
+    proof fn check_resolve(self, vaddr: nat) {
+        assert(self.inv() && self.interp().accepted_resolve(vaddr));
 
-    //     ambient_lemmas1();
-    //     self.lemma_inv_implies_interp_inv();
+        ambient_lemmas1();
+        ambient_lemmas2();
+        self.lemma_inv_implies_interp_inv();
 
-    //     assert(between(vaddr, self.base_vaddr, self.upper_vaddr()));
-    //     let entry = self.index_for_vaddr(vaddr);
-    //     self.lemma_index_for_vaddr_bounds(vaddr);
-    //     // TODO: This makes the recommends failure on the line below go away but not the one in the
-    //     // corresponding spec function. wtf
-    //     assert(0 <= entry < self.entries.len());
-    //     match self.entries.index(entry) {
-    //         NodeEntry::Page(p) => {
-    //         },
-    //         NodeEntry::Directory(d) => {
-    //             d.lemma_inv_implies_interp_inv();
-    //             assert(d.inv());
-    //         },
-    //         NodeEntry::Empty() => {
-    //         },
-    //     }
-    // }
+        assert(between(vaddr, self.base_vaddr, self.upper_vaddr()));
+        let entry = self.index_for_vaddr(vaddr);
+        self.lemma_index_for_vaddr_bounds(vaddr);
+        // TODO: This makes the recommends failure on the line below go away but not the one in the
+        // corresponding spec function. wtf
+        assert(0 <= entry < self.entries.len());
+        match self.entries.index(entry) {
+            NodeEntry::Page(p) => {
+            },
+            NodeEntry::Directory(d) => {
+                d.lemma_inv_implies_interp_inv();
+                assert(d.inv());
+            },
+            NodeEntry::Empty() => {
+            },
+        }
+    }
 
     #[verifier(spinoff_prover)]
     proof fn lemma_index_for_vaddr_bounds(self, vaddr: nat)
@@ -825,7 +824,7 @@ impl Directory {
     }
 
     #[verifier(spinoff_prover)]
-    proof fn resolve_refines(self, vaddr: nat)
+    pub proof fn lemma_resolve_refines(self, vaddr: nat)
         requires
             self.inv(),
             self.interp().accepted_resolve(vaddr),
@@ -850,7 +849,7 @@ impl Directory {
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
-                d.resolve_refines(vaddr);
+                d.lemma_resolve_refines(vaddr);
 
                 assert(equal(self.interp_of_entry(entry), d.interp()));
 
