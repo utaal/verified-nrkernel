@@ -464,25 +464,20 @@ impl PageTableMemory {
         // }
     }
 
+    // byte offset or word offset?
     #[verifier(external_body)]
     fn read(&self, offset: usize) -> (res: u64)
         // FIXME: probably need precondition here and extend the invariant
         // requires
         //     offset < self@.len(),
         ensures
-            // FIXME: instead of axiomatizing spec_read like this, should probably implement it somehow
             res == self.spec_read(offset)
     {
         // unsafe { std::slice::from_raw_parts(self.ptr.offset(offset as isize), ENTRY_BYTES) }
         0 // FIXME: unimplemented
     }
 
-    // FIXME: is a spec_read function like this the wrong approach? Should we instead have a view
-    // that isn't just a sequence but a struct with its own functions?
-    pub open spec fn spec_read(self, offset: nat) -> (res: u64) {
-        arbitrary()
-    }
-
+    pub open spec fn spec_read(self, offset: nat) -> (res: u64);
 }
 
 pub struct PageTable {
@@ -800,18 +795,10 @@ impl PageTable {
             base <= vaddr < MAX_BASE,
             aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         ensures
-            // TODO: With map we could write this more concisely:
-            // res.map(|x: usize| x as nat) === self.interp_at(layer, ptr, base).resolve(vaddr),
             // Refinement of l1
-            match res {
-                Ok(res) => Ok(res as nat) === self.interp_at(layer, ptr, base).resolve(vaddr),
-                Err(e)  => Err(e)         === self.interp_at(layer, ptr, base).resolve(vaddr),
-            },
+            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).resolve(vaddr),
             // Refinement of l0
-            match res {
-                Ok(res) => Ok(res as nat) === self.interp_at(layer, ptr, base).interp().resolve(vaddr),
-                Err(e)  => Err(e)         === self.interp_at(layer, ptr, base).interp().resolve(vaddr),
-            },
+            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).interp().resolve(vaddr),
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
@@ -862,15 +849,9 @@ impl PageTable {
             vaddr < MAX_BASE,
         ensures
             // Refinement of l1
-            match res {
-                Ok(res) => Ok(res as nat) === self.interp().resolve(vaddr),
-                Err(e)  => Err(e)         === self.interp().resolve(vaddr),
-            },
+            res.map_ok(|v: usize| v as nat) === self.interp().resolve(vaddr),
             // Refinement of l0
-            match res {
-                Ok(res) => Ok(res as nat) === self.interp().interp().resolve(vaddr),
-                Err(e)  => Err(e)         === self.interp().interp().resolve(vaddr),
-            },
+            res.map_ok(|v: usize| v as nat) === self.interp().interp().resolve(vaddr),
     {
         proof { ambient_arith(); }
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
@@ -888,14 +869,15 @@ impl PageTable {
             old(self).accepted_mapping(layer, ptr, base, vaddr, frame@),
             base <= vaddr < MAX_BASE,
             aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
-        // ensures
-        //     self.inv(),
-        //     // Refinement of l1
-        //     match res {
-        //         Ok(res) =>
-        //             Ok(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
-        //         Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
-        //     },
+        ensures
+            old(self).empty_at(layer, ptr) ==> res.is_Ok(),
+            // self.inv_at(layer, ptr),
+            // // Refinement of l1
+            // match res {
+            //     Ok(res) =>
+            //         Ok(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
+            //     Err(e)  => Err(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
+            // },
         //     // Refinement of l0
         //     match res {
         //         Ok(res) =>
@@ -916,7 +898,7 @@ impl PageTable {
             self.arch@.lemma_entry_base();
             assert(entry_base <= vaddr);
         }
-        if entry.is_mapping() {
+        let res = if entry.is_mapping() {
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == frame.size {
                     Err(())
@@ -926,6 +908,7 @@ impl PageTable {
                         assert(self.directories_obey_invariant_at(layer, ptr));
                         assert(self.inv_at((layer + 1) as nat, dir_addr));
                         self.lemma_inv_at_implies_interp_at_inv((layer + 1) as nat, dir_addr, entry_base);
+
                         let dir_interp_l1 = self.interp_at((layer + 1) as nat, dir_addr, entry_base);
                         self.interp_at(layer, ptr, base).lemma_accepted_mapping_implies_directory_accepted_mapping(vaddr, frame@, dir_interp_l1);
                         assert(dir_interp_l1.interp().accepted_mapping(vaddr, frame@));
@@ -952,14 +935,22 @@ impl PageTable {
                 // FIXME: this should be a postcondition of alloc_page
                 assume(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
-                assume(self.empty_at(layer, new_dir_ptr));
+                // assume(forall|i:nat| i < 512 ==> self.memory.spec_read
                 assume(ptr < 100); assume(idx < 100);
                 self.memory.write(ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
+                assume(self.empty_at((layer + 1) as nat, new_dir_ptr));
                 assume(self.inv_at((layer + 1) as nat, new_dir_ptr));
                 assume(self.accepted_mapping((layer + 1) as nat, new_dir_ptr, entry_base, vaddr, frame@));
-                self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame)
+                let ghostself: Ghost<PageTable> = ghost(*self);
+                let res = self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame);
+                assert(ghostself@.empty_at((layer + 1) as nat, new_dir_ptr) ==> res.is_Ok());
+                assert(res.is_Ok());
+                res
+                    // self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame) === self.interp_at(layer + 1, ...).map_frame(vaddr, frame@)
+                    // self.map_frame_aux(layer, ptr, base, vaddr, frame) === self.interp_at(layer, ...).map_frame(vaddr, frame@)
             }
-        }
+        };
+        res
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230

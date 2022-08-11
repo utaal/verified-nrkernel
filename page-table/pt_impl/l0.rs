@@ -633,11 +633,10 @@ impl PageTableContents {
     }
 
     pub open spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
-        true
-        && aligned(base, frame.size)
-        && aligned(frame.base, frame.size)
-        && self.candidate_mapping_in_bounds(base, frame)
-        && self.arch.contains_entry_size(frame.size)
+        &&& aligned(base, frame.size)
+        &&& aligned(frame.base, frame.size)
+        &&& self.candidate_mapping_in_bounds(base, frame)
+        &&& self.arch.contains_entry_size(frame.size)
     }
 
     pub open spec(checked) fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {

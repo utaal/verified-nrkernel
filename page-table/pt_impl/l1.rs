@@ -153,14 +153,13 @@ impl Directory {
     pub open spec(checked) fn inv(&self) -> bool
         decreases self.arch.layers.len() - self.layer
     {
-        true
-        && self.well_formed()
-        && self.pages_match_entry_size()
-        && self.directories_are_in_next_layer()
-        && self.directories_match_arch()
-        && self.directories_obey_invariant()
-        && self.directories_are_nonempty()
-        && self.frames_aligned()
+        &&& self.well_formed()
+        &&& self.pages_match_entry_size()
+        &&& self.directories_are_in_next_layer()
+        &&& self.directories_match_arch()
+        &&& self.directories_obey_invariant()
+        &&& self.directories_are_nonempty()
+        &&& self.frames_aligned()
     }
 
     pub open spec(checked) fn interp(self) -> l0::PageTableContents {
@@ -1077,6 +1076,7 @@ impl Directory {
             self.entries.index(self.index_for_vaddr(base)).is_Empty(),
         ensures
             self.map_frame(base, frame).is_Ok(),
+            // self.new_empty_dir(self.index_for_vaddr(base)).map_frame(base, frame).is_Ok()
         decreases self.arch.layers.len() - self.layer;
 
     proof fn lemma_map_frame_preserves_inv(self, base: nat, frame: MemRegion)
@@ -1168,6 +1168,7 @@ impl Directory {
                     assert(equal(res.layer, self.layer));
                     assert(res.entries.index(entry).is_Directory());
                     assert(!res.empty());
+                    assert(new_dir.map_frame(base, frame).is_Ok());
                 }
             },
         }
