@@ -91,6 +91,8 @@ macro_rules! bitmask_inc {
 //     }
 // }
 
+// FIXME: I messed up the layers, deeper layers are bigger numbers but I wrote predicates
+// assuming 0 is the lowest layer
 // layer:
 // 0 -> Page Table
 // 1 -> Page Directory
@@ -854,11 +856,16 @@ impl PageTable {
         self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
     }
 
+    spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, frame: MemRegion) -> bool {
+        &&& layer > 0 // Can't map pages on the uppermost level on x86
+        &&& self.interp_at(layer, ptr, base).accepted_mapping(vaddr, frame)
+    }
+
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
     fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
         requires
             old(self).inv_at(layer, ptr),
-            old(self).interp_at(layer, ptr, base).interp().accepted_mapping(vaddr, frame@),
+            old(self).accepted_mapping(layer, ptr, base, vaddr, frame@),
             base <= vaddr < MAX_BASE,
             aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
         // ensures
@@ -895,8 +902,14 @@ impl PageTable {
                     Err(())
                 } else {
                     let dir_addr = entry.address() as usize;
-                    assume(self.inv_at((layer + 1) as nat, dir_addr));
-                    assume(self.interp_at((layer + 1) as nat, dir_addr, entry_base).interp().accepted_mapping(vaddr, frame@));
+                    proof {
+                        assert(self.directories_obey_invariant_at(layer, ptr));
+                        assert(self.inv_at((layer + 1) as nat, dir_addr));
+                        self.lemma_inv_at_implies_interp_at_inv((layer + 1) as nat, dir_addr, entry_base);
+                        let dir_interp = self.interp_at((layer + 1) as nat, dir_addr, entry_base).interp();
+                        self.interp_at(layer, ptr, base).lemma_accepted_mapping_implies_directory_accepted_mapping(vaddr, frame@, self.interp_at((layer + 1) as nat, dir_addr, entry_base));
+                        assert(dir_interp.accepted_mapping(vaddr, frame@));
+                    }
                     self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame)
                 }
             } else {
@@ -907,6 +920,7 @@ impl PageTable {
                 proof {
                     let frame_base = frame.base as u64;
                     // FIXME: this isn't currently true, the upper levels accept mappings at any layer
+                    // (add to accepted_mapping)
                     assume(layer <= 2);
                     assume(
                         if layer == 0 {
@@ -930,7 +944,7 @@ impl PageTable {
                 assume(ptr < 100); assume(idx < 100);
                 self.memory.write(ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
                 assume(self.inv_at((layer + 1) as nat, new_dir_ptr));
-                assume(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base).interp().accepted_mapping(vaddr, frame@));
+                assume(self.accepted_mapping((layer + 1) as nat, new_dir_ptr, entry_base, vaddr, frame@));
                 self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame)
             }
         }
@@ -940,7 +954,7 @@ impl PageTable {
     fn map_frame(&mut self, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
         requires
             old(self).inv(),
-            old(self).interp().interp().accepted_mapping(vaddr, frame@),
+            old(self).accepted_mapping(0, old(self).memory.root(), 0, vaddr, frame@),
             vaddr < MAX_BASE,
     {
         proof { ambient_arith(); }

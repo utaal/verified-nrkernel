@@ -913,14 +913,13 @@ impl Directory {
     pub open spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool
         recommends self.inv()
     {
-        true
-        && aligned(base, frame.size)
-        && aligned(frame.base, frame.size)
-        && self.candidate_mapping_in_bounds(base, frame)
-        && self.arch.contains_entry_size_at_index_atleast(frame.size, self.layer)
+        &&& aligned(base, frame.size)
+        &&& aligned(frame.base, frame.size)
+        &&& self.candidate_mapping_in_bounds(base, frame)
+        &&& self.arch.contains_entry_size_at_index_atleast(frame.size, self.layer)
     }
 
-    proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, frame: MemRegion)
+    pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, frame: MemRegion)
         requires
             self.inv(),
             self.accepted_mapping(base, frame)
@@ -930,7 +929,7 @@ impl Directory {
         self.lemma_inv_implies_interp_inv();
     }
 
-    proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_auto(self)
+    pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_auto(self)
         ensures
             forall|base: nat, frame: MemRegion|
                 self.inv() && #[trigger] self.accepted_mapping(base, frame) ==>
@@ -1027,7 +1026,7 @@ impl Directory {
         }
     }
 
-    proof fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, frame: MemRegion, d: Directory)
+    pub proof fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, frame: MemRegion, d: Directory)
         requires
             self.inv(),
             self.accepted_mapping(base, frame),
