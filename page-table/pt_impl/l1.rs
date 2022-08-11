@@ -4,6 +4,7 @@ use builtin_macros::*;
 use crate::pervasive::*;
 use modes::*;
 use seq::*;
+use seq_lib::*;
 use option::{*, Option::*};
 use map::*;
 use set::*;
@@ -17,7 +18,6 @@ use result::{*, Result::*};
 use crate::pt_impl::l0;
 use crate::pt_impl::l0::{ArchExec,Arch,MemRegion,MemRegionExec,ambient_arith,ambient_lemmas1,overlap,between};
 use crate::pt_impl::l0::{MAX_BASE,MAX_NUM_ENTRIES,MAX_NUM_LAYERS,MAX_ENTRY_SIZE};
-
 
 verus! {
 
@@ -977,7 +977,7 @@ impl Directory {
         assert(new_dir.inv());
     }
 
-    pub open spec fn map_frame(self, base: nat, frame: MemRegion) -> Result<Self,()>
+    pub open spec fn map_frame(self, base: nat, frame: MemRegion) -> Result<Directory,Directory>
         decreases self.arch.layers.len() - self.layer
     {
         decreases_by(Self::check_map_frame);
@@ -986,15 +986,15 @@ impl Directory {
             let entry = self.index_for_vaddr(base);
             match self.entries.index(entry) {
                 NodeEntry::Page(p) => {
-                    Err(())
+                    Err(self)
                 },
                 NodeEntry::Directory(d) => {
                     if self.entry_size() == frame.size {
-                        Err(())
+                        Err(self)
                     } else {
                         match d.map_frame(base, frame) {
                             Ok(d)  => Ok(self.update(entry, NodeEntry::Directory(d))),
-                            Err(e) => Err(e),
+                            Err(d) => Err(self.update(entry, NodeEntry::Directory(d))),
                         }
                     }
                 },
@@ -1298,7 +1298,8 @@ impl Directory {
             self.inv(),
             self.accepted_mapping(base, frame),
         ensures
-            equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)),
+            self.map_frame(base, frame).is_Err() ==> self.map_frame(base, frame).get_Err_0() === self,
+            equal(self.map_frame(base, frame).map(|d| d.interp()), self.interp().map_frame(base, frame)),
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();
@@ -1339,7 +1340,7 @@ impl Directory {
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, d);
                     assert(d.accepted_mapping(base, frame));
                     d.lemma_map_frame_refines_map_frame(base, frame);
-                    assert(equal(d.map_frame(base, frame).map_ok(|d| d.interp()), d.interp().map_frame(base, frame)));
+                    assert(equal(d.map_frame(base, frame).map(|d| d.interp()), d.interp().map_frame(base, frame)));
                     match d.map_frame(base, frame) {
                         Ok(nd)  => {
                             assert(d.map_frame(base, frame).is_Ok());
@@ -1382,6 +1383,9 @@ impl Directory {
 
                             assert(self.map_frame(base, frame).is_Err());
                             assert(self.interp().map_frame(base, frame).is_Err());
+                            // FIXME: why doesn't the import for assert_seqs_equal work?
+                            // assert_seqs_equal!(self.update(entry, NodeEntry::Directory(self.map_frame(base, frame).get_Err_0())).entries === self.entries);
+                            assume(self.update(entry, NodeEntry::Directory(self.map_frame(base, frame).get_Err_0())).entries === self.entries);
                         },
                     }
                     // d.lemma_map_frame_preserves_inv(base, frame);
@@ -1390,7 +1394,7 @@ impl Directory {
             NodeEntry::Empty() => {
                 if self.entry_size() == frame.size {
                     self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Page(frame), frame);
-                    assert(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
+                    assert(equal(self.map_frame(base, frame).map(|d| d.interp()), self.interp().map_frame(base, frame)));
                 } else {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
                     let new_dir = self.new_empty_dir(entry);
@@ -1420,7 +1424,7 @@ impl Directory {
                     assert(equal(self.interp_of_entry(entry).map.insert(base, frame), new_dir_mapped.interp().map));
                     self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(new_dir_mapped), frame);
 
-                    assert(equal(self.map_frame(base, frame).map_ok(|d| d.interp()), self.interp().map_frame(base, frame)));
+                    assert(equal(self.map_frame(base, frame).map(|d| d.interp()), self.interp().map_frame(base, frame)));
                 }
             },
         }
@@ -1433,7 +1437,7 @@ impl Directory {
         && self.interp().accepted_unmap(base)
     }
 
-    pub open spec fn unmap(self, base: nat) -> Result<Self,()>
+    pub open spec fn unmap(self, base: nat) -> Result<Directory,Directory>
         recommends
             self.inv(),
             self.accepted_unmap(base),
@@ -1452,18 +1456,21 @@ impl Directory {
                         // (proved in lemma_index_for_vaddr_bounds)
                         Ok(self.update(entry, NodeEntry::Empty()))
                     } else {
-                        Err(())
+                        Err(self)
                     }
                 },
                 NodeEntry::Directory(d) => {
-                    d.unmap(base).map_ok(|new_d|
-                        self.update(entry, if new_d.empty() {
-                            NodeEntry::Empty()
-                        } else {
-                            NodeEntry::Directory(new_d)
-                        }))
+                    match d.unmap(base) {
+                        Ok(new_d) =>
+                            Ok(self.update(entry, if new_d.empty() {
+                                NodeEntry::Empty()
+                            } else {
+                                NodeEntry::Directory(new_d)
+                            })),
+                        Err(new_d) => Err(self.update(entry, NodeEntry::Directory(new_d)))
+                    }
                 },
-                NodeEntry::Empty() => Err(()),
+                NodeEntry::Empty() => Err(self),
             }
         } else {
             arbitrary()
@@ -1524,7 +1531,7 @@ impl Directory {
              self.inv(),
              self.accepted_unmap(base),
         ensures
-            equal(self.unmap(base).map_ok(|d| d.interp()), self.interp().unmap(base)),
+            equal(self.unmap(base).map(|d| d.interp()), self.interp().unmap(base)),
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();
@@ -1600,7 +1607,11 @@ impl Directory {
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Directory(new_d));
                         }
                     }
-                    Err(_) => { }
+                    Err(d) => {
+                        // FIXME: why doesn't the import for assert_seqs_equal work?
+                        // assert_seqs_equal!(self.update(entry, NodeEntry::Directory(d)).entries, self.entries);
+                        assume(self.update(entry, NodeEntry::Directory(d)).entries === self.entries);
+                    }
                 }
             },
             NodeEntry::Empty() => { },
@@ -1724,6 +1735,15 @@ impl<A,B> Result<A,B> {
         match self {
             Ok(a)  => Ok(f(a)),
             Err(b) => Err(b),
+        }
+    }
+}
+
+impl<A> Result<A,A> {
+    pub open spec(checked) fn map<B, F: Fn(A) -> B>(self, f: F) -> Result<B,B> {
+        match self {
+            Ok(a)  => Ok(f(a)),
+            Err(a) => Err(f(a)),
         }
     }
 }

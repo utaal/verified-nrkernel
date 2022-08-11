@@ -648,7 +648,7 @@ impl PageTableContents {
     }
 
     /// Maps the given `frame` at `base` in the address space
-    pub open spec(checked) fn map_frame(self, base: nat, frame: MemRegion) -> Result<PageTableContents,()> {
+    pub open spec(checked) fn map_frame(self, base: nat, frame: MemRegion) -> Result<PageTableContents,PageTableContents> {
         if self.accepted_mapping(base, frame) {
             if self.valid_mapping(base, frame) {
                 Ok(PageTableContents {
@@ -656,7 +656,7 @@ impl PageTableContents {
                     ..self
                 })
             } else {
-                Err(())
+                Err(self)
             }
         } else {
             arbitrary()
@@ -676,12 +676,15 @@ impl PageTableContents {
         requires
             self.inv(),
             self.accepted_mapping(base, frame),
-            self.map_frame(base, frame).is_Ok(),
+            // self.map_frame(base, frame).is_Ok(),
         ensures
-            self.map_frame(base, frame).get_Ok_0().inv(),
+            self.map_frame(base, frame).is_Ok()  ==> self.map_frame(base, frame).get_Ok_0().inv(),
+            self.map_frame(base, frame).is_Err() ==> self.map_frame(base, frame).get_Err_0() === self,
     {
-        let nself = self.map_frame(base, frame).get_Ok_0();
-        assert(nself.mappings_in_bounds());
+        if self.map_frame(base, frame).is_Ok() {
+            let nself = self.map_frame(base, frame).get_Ok_0();
+            assert(nself.mappings_in_bounds());
+        }
     }
 
     pub open spec(checked) fn accepted_resolve(self, vaddr: nat) -> bool {
@@ -723,22 +726,22 @@ impl PageTableContents {
     }
 
     /// Removes the frame from the address space that contains `base`.
-    pub open spec(checked) fn unmap(self, base: nat) -> Result<PageTableContents,()>
+    pub open spec(checked) fn unmap(self, base: nat) -> Result<PageTableContents,PageTableContents>
         recommends self.accepted_unmap(base)
     {
         if self.map.dom().contains(base) {
             Ok(self.remove(base))
         } else {
-            Err(())
+            Err(self)
         }
     }
 
     proof fn lemma_unmap_preserves_inv(self, base: nat)
         requires
             self.inv(),
-            self.unmap(base).is_Ok(),
         ensures
-            self.unmap(base).get_Ok_0().inv();
+            self.unmap(base).is_Ok() ==> self.unmap(base).get_Ok_0().inv(),
+            self.unmap(base).is_Err() ==> self.unmap(base).get_Err_0() === self;
 
     pub proof fn lemma_unmap_decrements_len(self, base: nat)
         requires

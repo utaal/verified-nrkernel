@@ -94,10 +94,10 @@ macro_rules! bitmask_inc {
 // FIXME: I messed up the layers, deeper layers are bigger numbers but I wrote predicates
 // assuming 0 is the lowest layer
 // layer:
-// 0 -> Page Table
-// 1 -> Page Directory
-// 2 -> Page Directory Pointer Table
-// 3 -> PML4
+// 0 -> PML4
+// 1 -> PDPT, Page Directory Pointer Table
+// 2 -> PD, Page Directory
+// 3 -> PT, Page Table
 
 
 // MASK_FLAG_* are flags valid for all entries.
@@ -114,31 +114,32 @@ const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
 // const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
-// layer exists, e.g. for layer 0 MASK_L0_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
+// layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
 const MASK_PG_FLAG_D:    u64 = bit!(6u64);
 const MASK_PG_FLAG_G:    u64 = bit!(8u64);
 const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
 
 const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
 const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
-const MASK_L0_PG_FLAG_PAT:  u64 = bit!(7u64);
 
-const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
-const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
-const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
-const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
+const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
+
+// const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
+// const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
+// const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
+// const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
 const MASK_DIR_ADDR:           u64 = MASK_ADDR;
 
 // We should be able to always use the 12:52 mask and have the invariant state that in the
 // other cases, the lower bits are already zero anyway.
-const MASK_L0_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
-const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR);
-const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR);
+const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR);
+const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR);
+const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
 
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
-        MASK_L1_PG_ADDR & address == address ==> MASK_L0_PG_ADDR & address == address,
-        MASK_L2_PG_ADDR & address == address ==> MASK_L0_PG_ADDR & address == address,
+        MASK_L2_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
+        MASK_L1_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
 {
     // TODO: can we get support for consts in bit vector reasoning?
     assert((bitmask_inc!(21u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
@@ -147,8 +148,8 @@ proof fn lemma_addr_masks_facts(address: u64)
 
 proof fn lemma_addr_masks_facts2(address: u64)
     ensures
-        (address & MASK_L0_PG_ADDR) & MASK_L1_PG_ADDR == address & MASK_L1_PG_ADDR,
-        (address & MASK_L0_PG_ADDR) & MASK_L2_PG_ADDR == address & MASK_L2_PG_ADDR,
+        (address & MASK_L3_PG_ADDR) & MASK_L2_PG_ADDR == address & MASK_L2_PG_ADDR,
+        (address & MASK_L3_PG_ADDR) & MASK_L1_PG_ADDR == address & MASK_L1_PG_ADDR,
 {
     assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(21u64, 52u64)) == (address & bitmask_inc!(21u64, 52u64))) by (bit_vector);
     assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(30u64, 52u64)) == (address & bitmask_inc!(30u64, 52u64))) by (bit_vector);
@@ -157,17 +158,32 @@ proof fn lemma_addr_masks_facts2(address: u64)
 // // MASK_PD_* are flags valid for all entries pointing to another directory
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
 
+pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bool {
+    is_page ==> {
+        if layer == 1 {
+            addr & MASK_ADDR == addr & MASK_L1_PG_ADDR
+        } else if layer == 2 {
+            addr & MASK_ADDR == addr & MASK_L2_PG_ADDR
+        } else if layer == 3 {
+            addr & MASK_ADDR == addr & MASK_L3_PG_ADDR
+        } else {
+            true
+        }
+    }
+}
+
+
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
 #[repr(transparent)]
-struct PageDirectoryEntry {
-    entry: u64,
+pub struct PageDirectoryEntry {
+    pub entry: u64,
     // pub view: Ghost<GhostPageDirectoryEntry>,
     pub ghost layer: nat,
 }
 
 impl PageDirectoryEntry {
 
-    pub closed spec fn view(self) -> GhostPageDirectoryEntry {
+    pub open spec fn view(self) -> GhostPageDirectoryEntry {
         if self.layer() <= 3 {
             let v = self.entry;
             if v & MASK_FLAG_P == MASK_FLAG_P {
@@ -179,10 +195,10 @@ impl PageDirectoryEntry {
                 let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
                 let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
                 let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
-                if (self.layer() == 0) || (v & MASK_L1_PG_FLAG_PS == 0) {
+                if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
                     let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
                     let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
-                    let flag_PAT = if self.layer() == 0 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L0_PG_FLAG_PAT == MASK_L0_PG_FLAG_PAT };
+                    let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
                     GhostPageDirectoryEntry::Page {
                         addr,
                         flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
@@ -201,25 +217,16 @@ impl PageDirectoryEntry {
         }
     }
 
-    pub closed spec fn inv(self) -> bool {
-        true
-        && self.layer() <= 3
-        && self.addr_is_zero_padded()
+    pub open spec fn addr_is_zero_padded(self) -> bool {
+        addr_is_zero_padded(self.layer, self.entry, self@.is_Page())
     }
 
-    pub closed spec fn addr_is_zero_padded(self) -> bool {
-        if self.layer() == 0 {
-            self.entry & MASK_ADDR == self.entry & MASK_L0_PG_ADDR
-        } else if self.layer() == 1 {
-            self.entry & MASK_ADDR == self.entry & MASK_L1_PG_ADDR
-        } else if self.layer() == 2 {
-            self.entry & MASK_ADDR == self.entry & MASK_L2_PG_ADDR
-        } else {
-            true
-        }
+    pub open spec fn inv(self) -> bool {
+        &&& self.layer() <= 3
+        &&& self.addr_is_zero_padded()
     }
 
-    pub closed spec fn layer(self) -> nat {
+    pub open spec fn layer(self) -> nat {
         self.layer
     }
 
@@ -235,18 +242,12 @@ impl PageDirectoryEntry {
         )
         requires
             layer <= 3,
-            is_page ==> layer <= 2,
-            if layer == 0 {
-                address & MASK_L0_PG_ADDR == address
-            } else if layer == 1 {
-                address & MASK_L1_PG_ADDR == address
-            } else if layer == 2 {
-                address & MASK_L2_PG_ADDR == address
-            } else { true }
+            if is_page { 0 < layer } else { layer < 3 },
+            addr_is_zero_padded(layer, address, is_page),
         ensures
             ({ let e = address
                 | MASK_FLAG_P
-                | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+                | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 }
                 | if is_writable           { MASK_FLAG_RW }        else { 0 }
                 | if is_supervisor         { MASK_FLAG_US }        else { 0 }
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
@@ -260,17 +261,12 @@ impl PageDirectoryEntry {
 
     pub fn new_page_entry(layer: usize, address: u64) -> (r: Self)
         requires
-            layer <= 2,
-            if layer == 0 {
-                address & MASK_L0_PG_ADDR == address
-            } else if layer == 1 {
-                address & MASK_L1_PG_ADDR == address
-            } else if layer == 2 {
-                address & MASK_L2_PG_ADDR == address
-            } else { true }
+            0 < layer <= 3,
+            addr_is_zero_padded(layer, address, true),
         ensures
             r.inv(),
-            // r@.is_Page(),
+            r@.is_Page(),
+            // r@.get_Page_addr() == address,
     {
         // FIXME: check what flags we want here
         Self::new_entry(layer, address, true, true, true, false, false, false)
@@ -278,22 +274,13 @@ impl PageDirectoryEntry {
 
     pub fn new_dir_entry(layer: usize, address: u64) -> (r: Self)
         requires
-            layer <= 3,
+            layer < 3,
             address & MASK_DIR_ADDR == address
         ensures
             r.inv(),
-            // r@.is_Directory(),
+            r@.is_Directory(),
+            // r@.get_Directory_addr() == address,
     {
-        // FIXME: fix condition on new_entry
-        assume(
-            if layer == 0 {
-                address & MASK_L0_PG_ADDR == address
-            } else if layer == 1 {
-                address & MASK_L1_PG_ADDR == address
-            } else if layer == 2 {
-                address & MASK_L2_PG_ADDR == address
-            } else { true }
-            );
         // FIXME: check what flags we want here
         Self::new_entry(layer, address, false, true, true, false, false, false)
     }
@@ -310,24 +297,18 @@ impl PageDirectoryEntry {
         ) -> (r: PageDirectoryEntry)
         requires
             layer <= 3,
-            is_page ==> layer < 3,
-            if layer == 0 { // FIXME: this condition needs to take is_page into account
-                address & MASK_L0_PG_ADDR == address
-            } else if layer == 1 {
-                address & MASK_L1_PG_ADDR == address
-            } else if layer == 2 {
-                address & MASK_L2_PG_ADDR == address
-            } else { true }
+            if is_page { 0 < layer } else { layer < 3 },
+            addr_is_zero_padded(layer, address, is_page),
         ensures
+            if is_page { r@.is_Page() } else { r@.is_Directory() },
             r.inv(),
-            // if is_page { r@.is_Page() } else { r@.is_Directory() }
     {
         let e =
         PageDirectoryEntry {
             entry: {
                 address
                 | MASK_FLAG_P
-                | if is_page && layer != 0 { MASK_L1_PG_FLAG_PS }  else { 0 }
+                | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 }
                 | if is_writable           { MASK_FLAG_RW }        else { 0 }
                 | if is_supervisor         { MASK_FLAG_US }        else { 0 }
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
@@ -338,11 +319,48 @@ impl PageDirectoryEntry {
         };
 
         proof {
-            assert_by(e.addr_is_zero_padded(), {
-                lemma_addr_masks_facts(address);
-                lemma_addr_masks_facts2(e.entry);
-                Self::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
-            });
+            assert(e.layer() <= 3);
+            if e.layer() <= 3 {
+                if e.entry & MASK_FLAG_P == MASK_FLAG_P {
+                    if e.layer() == 3 {
+                        assert(is_page);
+                        assert(e@.is_Page());
+                    } else if e.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
+                        // FIXME: bitvector
+                        assume(is_page);
+                        assert(e@.is_Page());
+                    } else {
+                        // FIXME: bitvector
+                        assume(!is_page);
+                        assert(e@.is_Directory());
+                    }
+                } else {
+                    // FIXME: bitvector
+                    assume(false);
+                }
+            }
+            assert(if is_page { e@.is_Page() } else { e@.is_Directory() });
+
+            if is_page {
+                assert_by(e.addr_is_zero_padded(), {
+                    // lemma_addr_masks_facts(address);
+                    // lemma_addr_masks_facts2(e.entry);
+                    // Self::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+                    // assert(addr_is_zero_padded(layer, address, true));
+                    // FIXME: bitvector
+                    // Need to show that we aren't setting any of the bits that are masked off by
+                    // the L1/L2 masks but not masked off by MASK_ADDR
+                    if e.layer() == 1 {
+                        assume(e.entry & MASK_ADDR == e.entry & MASK_L1_PG_ADDR);
+                    } else if e.layer() == 2 {
+                        assume(e.entry & MASK_ADDR == e.entry & MASK_L2_PG_ADDR);
+                    } else if e.layer() == 3 {
+                        assert(e.entry & MASK_ADDR == e.entry & MASK_L3_PG_ADDR);
+                    }
+                });
+            } else {
+                assert(e.addr_is_zero_padded());
+            }
         }
         e
     }
@@ -378,7 +396,7 @@ impl PageDirectoryEntry {
         ensures
             if r { self@.is_Page() } else { self@.is_Directory() },
     {
-        (layer == 0) || ((self.entry & MASK_L1_PG_FLAG_PS) == 0)
+        (layer == 3) || ((self.entry & MASK_L1_PG_FLAG_PS) == MASK_L1_PG_FLAG_PS)
     }
 
     pub fn is_dir(&self, layer: usize) -> (r: bool)
@@ -403,7 +421,7 @@ pub struct PageTableMemory {
 }
 
 impl PageTableMemory {
-    spec fn root(&self) -> usize { arbitrary() }
+    pub open spec fn root(&self) -> usize { arbitrary() }
 
     #[verifier(external_body)]
     fn root_exec(&self) -> (res: usize)
@@ -415,6 +433,8 @@ impl PageTableMemory {
 
     pub open spec fn view(&self) -> Seq<nat> { arbitrary() }
 
+    // We assume that alloc_page never fails. In practice we can just keep a buffer of 3+ pages
+    // that are allocated before we use map_frame.
     /// Allocates one page and returns a pointer to it as the offset from self.root()
     #[verifier(external_body)]
     fn alloc_page(&self) -> (res: usize)
@@ -475,16 +495,16 @@ const ENTRY_BYTES: usize = 8;
 impl PageTable {
 
 
-    pub closed spec(checked) fn well_formed(self, layer: nat) -> bool {
+    pub open spec(checked) fn well_formed(self, layer: nat) -> bool {
         &&& self.arch@.inv()
     }
 
-    pub closed spec(checked) fn inv(&self) -> bool {
+    pub open spec(checked) fn inv(&self) -> bool {
         self.inv_at(0, self.memory.root())
     }
 
     /// Get the view of the entry at address ptr + i * ENTRY_BYTES
-    pub closed spec fn view_at(self, layer: nat, ptr: usize, i: nat) -> GhostPageDirectoryEntry {
+    pub open spec fn view_at(self, layer: nat, ptr: usize, i: nat) -> GhostPageDirectoryEntry {
         PageDirectoryEntry {
             entry: self.memory.spec_read(ptr as nat + i * ENTRY_BYTES),
             layer,
@@ -507,7 +527,7 @@ impl PageTable {
         }
     }
 
-    pub closed spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize) -> bool
+    pub open spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize) -> bool
         decreases (self.arch@.layers.len() - layer, 0nat)
     {
         decreases_when(self.well_formed(layer) && self.layer_in_range(layer));
@@ -518,13 +538,13 @@ impl PageTable {
         }
     }
 
-    pub closed spec fn empty_at(self, layer: nat, ptr: usize) -> bool
+    pub open spec fn empty_at(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed(layer)
     {
         forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i).is_Empty()
     }
 
-    pub closed spec fn directories_are_nonempty_at(self, layer: nat, ptr: usize) -> bool
+    pub open spec fn directories_are_nonempty_at(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed(layer)
     {
         forall|i: nat| i < self.arch@.num_entries(layer) ==> {
@@ -533,7 +553,7 @@ impl PageTable {
         }
     }
 
-    pub closed spec(checked) fn frames_aligned(self, layer: nat, ptr: usize) -> bool
+    pub open spec(checked) fn frames_aligned(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed(layer) && self.layer_in_range(layer)
     {
         forall|i: nat| i < self.arch@.num_entries(layer) ==> {
@@ -542,11 +562,11 @@ impl PageTable {
         }
     }
 
-    pub closed spec(checked) fn layer_in_range(self, layer: nat) -> bool {
+    pub open spec(checked) fn layer_in_range(self, layer: nat) -> bool {
         layer < self.arch@.layers.len()
     }
 
-    pub closed spec(checked) fn inv_at(&self, layer: nat, ptr: usize) -> bool
+    pub open spec(checked) fn inv_at(&self, layer: nat, ptr: usize) -> bool
         decreases self.arch@.layers.len() - layer
     {
         &&& self.well_formed(layer)
@@ -857,7 +877,7 @@ impl PageTable {
     }
 
     spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, frame: MemRegion) -> bool {
-        &&& layer > 0 // Can't map pages on the uppermost level on x86
+        &&& 0 < layer // Can't map pages in PML4
         &&& self.interp_at(layer, ptr, base).accepted_mapping(vaddr, frame)
     }
 
@@ -906,9 +926,9 @@ impl PageTable {
                         assert(self.directories_obey_invariant_at(layer, ptr));
                         assert(self.inv_at((layer + 1) as nat, dir_addr));
                         self.lemma_inv_at_implies_interp_at_inv((layer + 1) as nat, dir_addr, entry_base);
-                        let dir_interp = self.interp_at((layer + 1) as nat, dir_addr, entry_base).interp();
-                        self.interp_at(layer, ptr, base).lemma_accepted_mapping_implies_directory_accepted_mapping(vaddr, frame@, self.interp_at((layer + 1) as nat, dir_addr, entry_base));
-                        assert(dir_interp.accepted_mapping(vaddr, frame@));
+                        let dir_interp_l1 = self.interp_at((layer + 1) as nat, dir_addr, entry_base);
+                        self.interp_at(layer, ptr, base).lemma_accepted_mapping_implies_directory_accepted_mapping(vaddr, frame@, dir_interp_l1);
+                        assert(dir_interp_l1.interp().accepted_mapping(vaddr, frame@));
                     }
                     self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame)
                 }
@@ -919,17 +939,8 @@ impl PageTable {
             if self.arch.entry_size(layer) == frame.size {
                 proof {
                     let frame_base = frame.base as u64;
-                    // FIXME: this isn't currently true, the upper levels accept mappings at any layer
-                    // (add to accepted_mapping)
-                    assume(layer <= 2);
-                    assume(
-                        if layer == 0 {
-                            frame_base & MASK_L0_PG_ADDR == frame_base
-                        } else if layer == 1 {
-                            frame_base & MASK_L1_PG_ADDR == frame_base
-                        } else if layer == 2 {
-                            frame_base & MASK_L2_PG_ADDR == frame_base
-                        } else { true });
+                    // FIXME: this may have to be part of accepted_mapping?
+                    assume(addr_is_zero_padded(layer, frame_base, true));
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
                 assume(ptr < 100); assume(idx < 100);
@@ -938,6 +949,7 @@ impl PageTable {
             } else {
                 let new_dir_ptr     = self.memory.alloc_page();
                 let new_dir_ptr_u64 = new_dir_ptr as u64;
+                // FIXME: this should be a postcondition of alloc_page
                 assume(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 assume(self.empty_at(layer, new_dir_ptr));
