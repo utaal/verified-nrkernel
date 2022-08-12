@@ -1384,9 +1384,13 @@ impl Directory {
 
                             assert(self.map_frame(base, frame).is_Err());
                             assert(self.interp().map_frame(base, frame).is_Err());
-                            // FIXME: why doesn't the import for assert_seqs_equal work?
-                            // assert_seqs_equal!(self.update(entry, NodeEntry::Directory(self.map_frame(base, frame).get_Err_0())).entries === self.entries);
-                            assume(self.update(entry, NodeEntry::Directory(self.map_frame(base, frame).get_Err_0())).entries === self.entries);
+
+                            assert(self.entries.index(entry) === NodeEntry::Directory(d));
+                            assert(self.entries.index(entry) === NodeEntry::Directory(e));
+                            let res = self.update(entry, NodeEntry::Directory(e)).entries;
+                            assert(res.index(entry) === self.entries.index(entry));
+
+                            assert_seqs_equal!(res, self.entries);
                         },
                     }
                     // d.lemma_map_frame_preserves_inv(base, frame);
