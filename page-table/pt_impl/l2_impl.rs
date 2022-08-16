@@ -416,65 +416,86 @@ impl PageDirectoryEntry {
 // Or maybe we just specify reads to return those bits as arbitrary?
 #[verifier(external_body)]
 pub struct PageTableMemory {
-    // how is the memory range for this represented?
-    ptr: *mut u8,
+    /// `ptr` is the starting address of the physical memory linear mapping
+    ptr: *mut u64,
+}
+
+/// We view the memory as a sequence of u64s but have to use byte offsets in the page table
+/// entries. This function converts a word-aligned byte offset to a word index.
+pub fn word_index(idx: usize) -> (res: usize)
+    requires
+        aligned(idx, 8),
+    ensures
+        res == word_index_spec(idx)
+{
+    idx / 8
+}
+
+pub open spec fn word_index_spec(idx: nat) -> nat
+    recommends aligned(idx, 8)
+{
+    if aligned(idx, 8) {
+        idx / 8
+    } else {
+        arbitrary()
+    }
 }
 
 impl PageTableMemory {
-    pub open spec fn root(&self) -> usize { arbitrary() }
+    pub open spec fn view(&self) -> Seq<nat>;
 
+    /// `cr3` returns the physical address at which the layer 0 page directory is mapped
     #[verifier(external_body)]
-    fn root_exec(&self) -> (res: usize)
+    fn cr3(&self) -> (res: usize)
         ensures
-            res == self.root()
+            res == self.cr3_spec()
     {
+        // FIXME:
         unreached()
     }
 
-    pub open spec fn view(&self) -> Seq<nat> { arbitrary() }
+    pub open spec fn cr3_spec(&self) -> usize;
 
     // We assume that alloc_page never fails. In practice we can just keep a buffer of 3+ pages
     // that are allocated before we use map_frame.
-    /// Allocates one page and returns a pointer to it as the offset from self.root()
+    // FIXME: need to ensure we use disjoint memory when allocating a page. Can we somehow use
+    // linearity for that?
+    /// Allocates one page and returns its address as an offset from `self.ptr`
     #[verifier(external_body)]
-    fn alloc_page(&self) -> (res: usize)
-        // ensures
-        //     res + 4096 <= self@.len(),
-            // FIXME: reconsider the view for the memory, maybe it should be a struct with spec
-            // read and write for u64 instead
-            // mixed trigger
-            // forall|i: nat| i < 4096 ==> #[trigger] self@.index(res + i) == 0,
+    fn alloc_page(&self) -> (offset: usize)
+        ensures
+            aligned(offset, PAGE_SIZE),
+            forall_arith(|i: nat| i < 512nat ==> word_index_spec((offset + #[trigger] (i * 8)) as nat) < self@.len()),
+            forall_arith(|i: nat| i < 512nat ==> self.spec_read((offset + #[trigger] (i * 8)) as nat) == 0)
+            // TODO: should probably introduce some function for the indexing and trigger on that
+            // forall|i: nat| i < 512nat ==> word_index_spec((offset + i * ENTRY_BYTES) as nat) < self@.len(),
+            // forall|i: nat| i < 512nat ==> self.spec_read((offset + i * ENTRY_BYTES) as nat) == 0
     {
         // FIXME:
         unreached()
     }
 
     #[verifier(external_body)]
-    fn write(&mut self, ptr: usize, value: u64)
+    fn write(&mut self, offset: usize, value: u64)
         // FIXME: reconsider view and this pre-/postcondition
-        // requires
-        //     ptr < old(self)@.len(),
-        // ensures
-        //     forall|i: nat| i < self@.len() ==> self@.index(i) == value,
+        requires
+            aligned(offset, 8),
+            word_index_spec(offset) < old(self)@.len(),
+        ensures
+            self@ === old(self)@.update(word_index_spec(offset), value)
     {
-        // FIXME:
-        unreached()
-        // unsafe {
-        //     self.ptr.offset(ptr as isize).write(value)
-        // }
+        unsafe { self.ptr.offset(offset as isize).write(value) }
     }
 
-    // byte offset or word offset?
     #[verifier(external_body)]
     fn read(&self, offset: usize) -> (res: u64)
-        // FIXME: probably need precondition here and extend the invariant
-        // requires
-        //     offset < self@.len(),
+        requires
+            aligned(offset, 8),
+            word_index_spec(offset) < self@.len(),
         ensures
             res == self.spec_read(offset)
     {
-        // unsafe { std::slice::from_raw_parts(self.ptr.offset(offset as isize), ENTRY_BYTES) }
-        0 // FIXME: unimplemented
+        unsafe { self.ptr.offset(word_index(offset) as isize).read() }
     }
 
     pub open spec fn spec_read(self, offset: nat) -> (res: u64);
@@ -486,16 +507,18 @@ pub struct PageTable {
 }
 
 const ENTRY_BYTES: usize = 8;
+const PAGE_SIZE: usize = 4096;
 
 impl PageTable {
 
 
-    pub open spec(checked) fn well_formed(self, layer: nat) -> bool {
+    pub open spec(checked) fn well_formed(self, layer: nat, ptr: usize) -> bool {
         &&& self.arch@.inv()
+        &&& aligned(ptr, PAGE_SIZE)
     }
 
     pub open spec(checked) fn inv(&self) -> bool {
-        self.inv_at(0, self.memory.root())
+        self.inv_at(0, self.memory.cr3_spec())
     }
 
     /// Get the view of the entry at address ptr + i * ENTRY_BYTES
@@ -516,6 +539,8 @@ impl PageTable {
         // FIXME:
         assume(ptr <= 100);
         assume(i * ENTRY_BYTES <= 100000);
+        assume(aligned((ptr + i * ENTRY_BYTES) as nat, 8));
+        assume(word_index_spec((ptr + i * ENTRY_BYTES) as nat) < self.memory@.len());
         PageDirectoryEntry {
             entry: self.memory.read(ptr + i * ENTRY_BYTES),
             layer,
@@ -525,7 +550,7 @@ impl PageTable {
     pub open spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize) -> bool
         decreases (self.arch@.layers.len() - layer, 0nat)
     {
-        decreases_when(self.well_formed(layer) && self.layer_in_range(layer));
+        decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer));
         forall|i: nat| i < self.arch@.num_entries(layer) ==> {
             let entry = #[trigger] self.view_at(layer, ptr, i);
             // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }@;
@@ -534,26 +559,22 @@ impl PageTable {
     }
 
     pub open spec fn empty_at(self, layer: nat, ptr: usize) -> bool
-        recommends self.well_formed(layer)
+        recommends self.well_formed(layer, ptr)
     {
         forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i).is_Empty()
     }
 
-    pub open spec fn directories_are_nonempty_at(self, layer: nat, ptr: usize) -> bool
-        recommends self.well_formed(layer)
+    pub open spec(checked) fn directories_are_aligned(self, layer: nat, ptr: usize) -> bool
+        recommends self.well_formed(layer, ptr) && self.layer_in_range(layer)
     {
         forall|i: nat| i < self.arch@.num_entries(layer) ==> {
             let entry = #[trigger] self.view_at(layer, ptr, i);
-            entry.is_Directory() ==> !self.empty_at(layer + 1, entry.get_Directory_addr())
-        }
-    }
-
-    pub open spec(checked) fn frames_aligned(self, layer: nat, ptr: usize) -> bool
-        recommends self.well_formed(layer) && self.layer_in_range(layer)
-    {
-        forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-            let entry = #[trigger] self.view_at(layer, ptr, i);
-            entry.is_Page() ==> aligned(entry.get_Page_addr(), self.arch@.entry_size(layer))
+            match entry {
+                GhostPageDirectoryEntry::Directory { addr: addr, .. } => aligned(addr, PAGE_SIZE),
+                // GhostPageDirectoryEntry::Page      { addr: addr, .. } => aligned(addr, PAGE_SIZE),
+                // GhostPageDirectoryEntry::Empty => true,
+                _ => true,
+            }
         }
     }
 
@@ -564,11 +585,10 @@ impl PageTable {
     pub open spec(checked) fn inv_at(&self, layer: nat, ptr: usize) -> bool
         decreases self.arch@.layers.len() - layer
     {
-        &&& self.well_formed(layer)
+        &&& self.well_formed(layer, ptr)
         &&& self.layer_in_range(layer)
         &&& self.directories_obey_invariant_at(layer, ptr)
-        // &&& self.directories_are_nonempty_at(layer, ptr)
-        // &&& self.frames_aligned(layer, ptr)
+        // &&& self.directories_are_aligned(layer, ptr)
     }
 
     pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat) -> l1::Directory
@@ -615,7 +635,7 @@ impl PageTable {
     }
 
     spec fn interp(self) -> l1::Directory {
-        self.interp_at(0, self.memory.root(), 0)
+        self.interp_at(0, self.memory.cr3_spec(), 0)
     }
 
     proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat)
@@ -766,7 +786,7 @@ impl PageTable {
             // res.map_ok(|v: usize| v as nat) === self.interp().interp().resolve(vaddr),
     {
         proof { ambient_arith(); }
-        self.resolve_aux(0, self.memory.root_exec(), 0, vaddr)
+        self.resolve_aux(0, self.memory.cr3(), 0, vaddr)
     }
 
     spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, frame: MemRegion) -> bool {
@@ -830,10 +850,15 @@ impl PageTable {
                 proof {
                     let frame_base = frame.base as u64;
                     // FIXME: this may have to be part of accepted_mapping?
+                    // probably also want to phrase it as entry-size alignment instead
                     assume(addr_is_zero_padded(layer, frame_base, true));
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
-                assume(ptr < 100); assume(idx < 100);
+                assume(ptr < 100);
+                // TODO: this assertion goes through "by accident" due to lemma_entry_base. Maybe
+                // we should rename entry_base and use it for all index calculations?
+                assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
+                assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
                 self.memory.write(ptr + idx * ENTRY_BYTES, new_page_entry.entry);
                 Ok(())
             } else {
@@ -843,7 +868,9 @@ impl PageTable {
                 assume(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 // assume(forall|i:nat| i < 512 ==> self.memory.spec_read
-                assume(ptr < 100); assume(idx < 100);
+                assume(ptr < 100);
+                assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
+                assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
                 self.memory.write(ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
 
                 assume(self.empty_at((layer + 1) as nat, new_dir_ptr));
@@ -861,11 +888,11 @@ impl PageTable {
     fn map_frame(&mut self, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
         requires
             old(self).inv(),
-            old(self).accepted_mapping(0, old(self).memory.root(), 0, vaddr, frame@),
+            old(self).accepted_mapping(0, old(self).memory.cr3_spec(), 0, vaddr, frame@),
             vaddr < MAX_BASE,
     {
         proof { ambient_arith(); }
-        self.map_frame_aux(0, self.memory.root_exec(), 0, vaddr, frame)
+        self.map_frame_aux(0, self.memory.cr3(), 0, vaddr, frame)
     }
 }
 
