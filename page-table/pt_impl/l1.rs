@@ -1546,6 +1546,50 @@ impl Directory {
         }
     }
 
+    pub proof fn lemma_unmap_structure_assertions(self, base: nat, idx: nat)
+        requires
+            self.inv(),
+            self.accepted_unmap(base),
+            idx == self.index_for_vaddr(base),
+        ensures
+            match self.entries.index(idx) {
+                NodeEntry::Page(p)      => {
+                    if aligned(base, self.entry_size()) {
+                        base == self.base_vaddr + idx * self.entry_size()
+                    } else {
+                        true
+                    }
+                },
+                NodeEntry::Directory(d) => {
+                    &&& d.inv()
+                    &&& d.accepted_unmap(base)
+                },
+                NodeEntry::Empty()      => true,
+            }
+        decreases (self.arch.layers.len() - self.layer)
+    {
+        ambient_lemmas1();
+        ambient_lemmas2();
+        self.lemma_inv_implies_interp_inv();
+
+        self.arch.lemma_entry_base();
+        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+
+        match self.entries.index(self.index_for_vaddr(base)) {
+            NodeEntry::Page(p) => {
+                if aligned(base, self.entry_size()) {
+                } else {
+                }
+            },
+            NodeEntry::Directory(d) => {
+                assert(d.inv());
+                assert(d.accepted_unmap(base));
+                d.lemma_unmap_refines_unmap(base);
+            },
+            NodeEntry::Empty() => { },
+        }
+   }
+
     proof fn lemma_unmap_refines_unmap(self, base: nat)
         requires
              self.inv(),
