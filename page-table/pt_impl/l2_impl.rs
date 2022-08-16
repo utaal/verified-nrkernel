@@ -20,57 +20,22 @@ use crate::pt_impl::l0::{MAX_BASE,MAX_NUM_ENTRIES,MAX_NUM_LAYERS,MAX_ENTRY_SIZE}
 
 verus! {
 
-// FIXME: We can probably remove bits from here that we don't use, e.g. accessed, dirty, PAT. (And
-// set them to zero when we create a new entry.)
-#[is_variant]
-pub ghost enum GhostPageDirectoryEntry {
-    Directory {
-        addr: usize,
-        /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
-        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
-        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
-        /// Page-level write-through
-        flag_PWT: bool,
-        /// Page-level cache disable
-        flag_PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
-        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-        /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
-    },
-    Page {
-        addr: usize,
-        /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
-        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
-        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
-        /// Page-level write-through
-        flag_PWT: bool,
-        /// Page-level cache disable
-        flag_PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
-        /// Dirty; indicates whether software has written to the page referenced by this entry
-        flag_D: bool,
-        // /// Page size; must be 1 (otherwise, this entry references a directory)
-        // flag_PS: Option<bool>,
-        // PS is entirely determined by the Page variant and the layer
-        /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
-        flag_G: bool,
-        /// Indirectly determines the memory type used to access the page referenced by this entry
-        flag_PAT: bool,
-        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-        /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
-    },
-    Empty,
+macro_rules! bit {
+    ($v:expr) => {
+        1u64 << $v
+    }
 }
+// Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
+macro_rules! bitmask_inc {
+    ($low:expr,$high:expr) => {
+        (!(!0u64 << (($high+1u64)-$low))) << $low
+    }
+}
+// macro_rules! bitmask {
+//     ($low:expr,$high:expr) => {
+//         (!(!0 << ($high-$low))) << $low
+//     }
+// }
 
 const MAXPHYADDR_BITS: u64 = 52;
 // FIXME: is this correct?
@@ -89,30 +54,10 @@ proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
         implies
         addr & MASK_DIR_ADDR == addr
     by {
-        // FIXME: bit vector proof
-        assert(1u64 << 1u64 == 2u64) by(bit_vector);
-        assume(false);
+        assert(addr <= 0xFFFFFFFFFFFFFu64 && addr % 4096u64 == 0 ==> addr & bitmask_inc!(12u64,52u64) == addr) by(bit_vector);
     };
 }
-macro_rules! bit {
-    ($v:expr) => {
-        1u64 << $v
-    }
-}
-// Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
-macro_rules! bitmask_inc {
-    ($low:expr,$high:expr) => {
-        (!(!0u64 << (($high+1u64)-$low))) << $low
-    }
-}
-// macro_rules! bitmask {
-//     ($low:expr,$high:expr) => {
-//         (!(!0 << ($high-$low))) << $low
-//     }
-// }
 
-// FIXME: I messed up the layers, deeper layers are bigger numbers but I wrote predicates
-// assuming 0 is the lowest layer
 // layer:
 // 0 -> PML4
 // 1 -> PDPT, Page Directory Pointer Table
@@ -190,6 +135,59 @@ pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bo
             true
         }
     }
+}
+
+
+// FIXME: We can probably remove bits from here that we don't use, e.g. accessed, dirty, PAT. (And
+// set them to zero when we create a new entry.)
+#[is_variant]
+pub ghost enum GhostPageDirectoryEntry {
+    Directory {
+        addr: usize,
+        /// Present; must be 1 to map a page or reference a directory
+        flag_P: bool,
+        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+        flag_RW: bool,
+        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+        flag_US: bool,
+        /// Page-level write-through
+        flag_PWT: bool,
+        /// Page-level cache disable
+        flag_PCD: bool,
+        /// Accessed; indicates whether software has accessed the page referenced by this entry
+        flag_A: bool,
+        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+        /// the page controlled by this entry); otherwise, reserved (must be 0)
+        flag_XD: bool,
+    },
+    Page {
+        addr: usize,
+        /// Present; must be 1 to map a page or reference a directory
+        flag_P: bool,
+        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+        flag_RW: bool,
+        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+        flag_US: bool,
+        /// Page-level write-through
+        flag_PWT: bool,
+        /// Page-level cache disable
+        flag_PCD: bool,
+        /// Accessed; indicates whether software has accessed the page referenced by this entry
+        flag_A: bool,
+        /// Dirty; indicates whether software has written to the page referenced by this entry
+        flag_D: bool,
+        // /// Page size; must be 1 (otherwise, this entry references a directory)
+        // flag_PS: Option<bool>,
+        // PS is entirely determined by the Page variant and the layer
+        /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
+        flag_G: bool,
+        /// Indirectly determines the memory type used to access the page referenced by this entry
+        flag_PAT: bool,
+        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+        /// the page controlled by this entry); otherwise, reserved (must be 0)
+        flag_XD: bool,
+    },
+    Empty,
 }
 
 
