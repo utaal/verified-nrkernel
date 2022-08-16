@@ -72,8 +72,28 @@ pub ghost enum GhostPageDirectoryEntry {
     Empty,
 }
 
-const MAXPHYADDR: u64 = 52;
+const MAXPHYADDR_BITS: u64 = 52;
+// FIXME: is this correct?
+// spec const MAXPHYADDR: nat      = ((1u64 << 52u64) - 1u64) as nat;
+// TODO: Probably easier to use computed constant because verus can't deal with the shift except in
+// bitvector assertions.
+const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
 
+
+proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
+    ensures forall|addr: u64| addr <= MAXPHYADDR ==> #[trigger] aligned(addr, PAGE_SIZE) ==> addr & MASK_DIR_ADDR == addr,
+{
+    assert forall|addr: u64|
+        addr <= MAXPHYADDR &&
+        #[trigger] aligned(addr, PAGE_SIZE)
+        implies
+        addr & MASK_DIR_ADDR == addr
+    by {
+        // FIXME: bit vector proof
+        assert(1u64 << 1u64 == 2u64) by(bit_vector);
+        assume(false);
+    };
+}
 macro_rules! bit {
     ($v:expr) => {
         1u64 << $v
@@ -110,7 +130,7 @@ const MASK_FLAG_A:    u64 = bit!(5u64);
 const MASK_FLAG_XD:   u64 = bit!(63u64);
 // We can use the same address mask for all layers as long as we preserve the invariant that the
 // lower bits that *should* be masked off are already zero.
-const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
+const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
 // const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
@@ -132,9 +152,9 @@ const MASK_DIR_ADDR:           u64 = MASK_ADDR;
 
 // We should be able to always use the 12:52 mask and have the invariant state that in the
 // other cases, the lower bits are already zero anyway.
-const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR);
-const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR);
-const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR);
+const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
+const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
+const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
 
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
@@ -464,9 +484,10 @@ impl PageTableMemory {
     #[verifier(external_body)]
     fn alloc_page(&self) -> (offset: usize)
         ensures
+            offset <= MAXPHYADDR,
             aligned(offset, PAGE_SIZE),
             forall_arith(|i: nat| i < 512nat ==> word_index_spec((offset + #[trigger] (i * 8)) as nat) < self@.len()),
-            forall_arith(|i: nat| i < 512nat ==> self.spec_read((offset + #[trigger] (i * 8)) as nat) == 0)
+            forall_arith(|i: nat| i < 512nat ==> self.spec_read((offset + #[trigger] (i * 8)) as nat) == 0),
             // TODO: should probably introduce some function for the indexing and trigger on that
             // forall|i: nat| i < 512nat ==> word_index_spec((offset + i * ENTRY_BYTES) as nat) < self@.len(),
             // forall|i: nat| i < 512nat ==> self.spec_read((offset + i * ENTRY_BYTES) as nat) == 0
@@ -791,7 +812,6 @@ impl PageTable {
 
     spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, frame: MemRegion) -> bool {
         &&& 0 < layer // Can't map pages in PML4
-        &&& self.interp_at(layer, ptr, base).accepted_mapping(vaddr, frame)
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
@@ -800,6 +820,7 @@ impl PageTable {
             old(self).inv_at(layer, ptr),
             old(self).interp_at(layer, ptr, base).inv(),
             old(self).accepted_mapping(layer, ptr, base, vaddr, frame@),
+            old(self).interp_at(layer, ptr, base).accepted_mapping(vaddr, frame@),
             base <= vaddr < MAX_BASE,
             // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
         // ensures
@@ -849,8 +870,7 @@ impl PageTable {
             if self.arch.entry_size(layer) == frame.size {
                 proof {
                     let frame_base = frame.base as u64;
-                    // FIXME: this may have to be part of accepted_mapping?
-                    // probably also want to phrase it as entry-size alignment instead
+                    // FIXME: this should be derivable from alignment property in accepted_mapping
                     assume(addr_is_zero_padded(layer, frame_base, true));
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
@@ -864,8 +884,10 @@ impl PageTable {
             } else {
                 let new_dir_ptr     = self.memory.alloc_page();
                 let new_dir_ptr_u64 = new_dir_ptr as u64;
-                // FIXME: this should be a postcondition of alloc_page
-                assume(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
+                proof {
+                    lemma_page_aligned_implies_mask_dir_addr_is_identity();
+                    assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
+                }
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 // assume(forall|i:nat| i < 512 ==> self.memory.spec_read
                 assume(ptr < 100);
@@ -873,6 +895,12 @@ impl PageTable {
                 assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
                 self.memory.write(ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
 
+                // Gerd:
+                // Proof sketch:
+                // 1. new_dir_ptr is from alloc_page, which has a postcondition that the page is zeroed out
+                // 2. Prove that view_at of a 0u64 entry is GhostPageDirectoryEntry::Empty
+                // 3. Prove that thus empty_at is true for a page of zeros
+                // 4. Also use step 2 to prove inv_at is true for a page of zeros
                 assume(self.empty_at((layer + 1) as nat, new_dir_ptr));
                 assume(self.inv_at((layer + 1) as nat, new_dir_ptr));
                 let new_dir_interp: Ghost<l1::Directory> = ghost(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base));
@@ -889,6 +917,7 @@ impl PageTable {
         requires
             old(self).inv(),
             old(self).accepted_mapping(0, old(self).memory.cr3_spec(), 0, vaddr, frame@),
+            old(self).interp_at(0, old(self).memory.cr3_spec(), 0).accepted_mapping(vaddr, frame@),
             vaddr < MAX_BASE,
     {
         proof { ambient_arith(); }
