@@ -11,13 +11,13 @@ use set::*;
 use set_lib::*;
 use vec::*;
 use crate::lib_axiom::*;
+use crate::aux_defs;
 
-use crate::lib::aligned;
 use result::{*, Result::*};
 
-use crate::pt_impl::l0;
-use crate::pt_impl::l0::{ArchExec,Arch,MemRegion,MemRegionExec,ambient_arith,ambient_lemmas1,overlap,between};
-use crate::pt_impl::l0::{MAX_BASE,MAX_NUM_ENTRIES,MAX_NUM_LAYERS,MAX_ENTRY_SIZE};
+use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE };
+use crate::aux_defs::{ MemRegion, overlap, Arch, between, aligned };
+use crate::pt_impl::l0::{ self, ambient_arith, ambient_lemmas1 };
 
 verus! {
 
@@ -892,7 +892,7 @@ impl Directory {
             self.layer + 1 < self.arch.layers.len(),
     {
         Directory {
-            entries:    new_seq(self.arch.num_entries((self.layer + 1) as nat)),
+            entries:    aux_defs::new_seq(self.arch.num_entries((self.layer + 1) as nat), NodeEntry::Empty()),
             layer:      self.layer + 1,
             base_vaddr: self.entry_base(entry),
             arch:       self.arch,
@@ -912,7 +912,7 @@ impl Directory {
         let new_dir = self.new_empty_dir(entry);
         let num_entries = self.arch.num_entries((self.layer + 1) as nat);
         self.arch.lemma_entry_base();
-        lemma_new_seq(num_entries);
+        aux_defs::lemma_new_seq::<NodeEntry>(num_entries, NodeEntry::Empty());
 
         assert(new_dir.directories_obey_invariant());
         assert(new_dir.inv());
@@ -1807,28 +1807,5 @@ impl<A> Result<A,A> {
         }
     }
 }
-
-pub open spec fn new_seq(i: nat) -> Seq<NodeEntry>
-    decreases i
-{
-    if i == 0 {
-        seq![]
-    } else {
-        new_seq((i-1) as nat).add(seq![NodeEntry::Empty()])
-    }
-}
-
-pub proof fn lemma_new_seq(i: nat)
-    ensures
-        new_seq(i).len() == i,
-        forall|j: nat| j < new_seq(i).len() ==> equal(new_seq(i).index(j), NodeEntry::Empty()),
-    decreases i
-{
-    if i == 0 {
-    } else {
-        lemma_new_seq((i-1) as nat);
-    }
-}
-
 
 }

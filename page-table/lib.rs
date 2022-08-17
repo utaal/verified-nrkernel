@@ -5,14 +5,12 @@ use builtin_macros::*;
 #[macro_use]
 #[allow(unused_imports)]
 use crate::pervasive::*;
+#[allow(unused_imports)]
+use crate::aux_defs::aligned;
 
 // mod
 
 verus! {
-
-pub open spec(checked) fn aligned(addr: nat, size: nat) -> bool {
-    addr % size == 0
-}
 
 #[verifier(external_body)]
 pub proof fn mod_of_mul_auto() {
