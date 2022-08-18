@@ -437,159 +437,145 @@ impl PageTable {
     }
 
     pub open spec(checked) fn inv(&self) -> bool {
-        self.inv_at(0, self.memory.cr3_spec())
+        self.inv_at(0, self.memory.cr3_spec(), self.memory.regions())
     }
 
     /// Get the view of the entry at address ptr + i * ENTRY_BYTES
-    pub open spec fn view_at(self, layer: nat, ptr: usize, i: nat) -> GhostPageDirectoryEntry {
+    pub open spec fn view_at(self, layer: nat, ptr: usize, i: nat, r: MemRegion) -> GhostPageDirectoryEntry {
         PageDirectoryEntry {
-            // XXX
-            entry: self.memory.spec_read(ptr as nat + i * ENTRY_BYTES, arbitrary()),
+            entry: self.memory.spec_read(ptr as nat + i * ENTRY_BYTES, r),
             layer,
         }@
     }
 
     /// Get the entry at address ptr + i * ENTRY_BYTES
     #[verifier(nonlinear)]
-    fn entry_at(&self, layer: usize, ptr: usize, i: usize) -> (res: PageDirectoryEntry)
+    fn entry_at(&self, layer: usize, ptr: usize, i: usize, regions: Ghost<Set<MemRegion>>) -> (res: PageDirectoryEntry)
         requires
-            self.inv_at(layer, ptr)
+            self.inv_at(layer, ptr, regions@)
         ensures
             res.layer == layer,
-            res@ === self.view_at(layer, ptr, i),
+            res@ === self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr)),
     {
         // FIXME:
         assume(ptr <= 100);
         assume(i * ENTRY_BYTES <= 100000);
         assume(aligned((ptr + i * ENTRY_BYTES) as nat, 8));
-        // assume(word_index_spec((ptr + i * ENTRY_BYTES) as nat) < self.memory@.len());
         // FIXME:
-        // assume(slice@.contains_addr((ptr + i * ENTRY_BYTES) as nat));
-        // assert(self.memory.contains_slice(ptr, self.arch@.entry_size(layer)));
-        // XXX
-        assume(false);
+        let r: Ghost<MemRegion> = ghost(self.obtain_dir_region(layer, ptr));
+        assume(r@.contains((ptr + i * ENTRY_BYTES) as nat));
         PageDirectoryEntry {
-            entry: unreached(), //self.memory.read(slice, ptr + i * ENTRY_BYTES),
+            entry: self.memory.read(ptr + i * ENTRY_BYTES, r),
             layer,
         }
     }
 
-    pub open spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize) -> bool
+    pub open spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool
         decreases (self.arch@.layers.len() - layer, 0nat)
     {
-        decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer));
-        // exists|mem_partitions: Seq<Set<mem::MemorySlice>>| {
-        //     &&& mem_partitions.len() == self.arch@.num_entries(layer)
-        //     // Union of the partitions is the whole set:
-        //     &&& seq_union(mem_partitions) === slices
-        //     // No duplicates:
-        //     &&& (forall|i: nat, j: nat, slice: mem::MemorySlice|
-        //             i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(slice)
-        //                 ==> !(#[trigger] mem_partitions[j].contains(slice)))
+        decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer) && self.exists_dir_region_in_memory(layer, ptr));
+        exists|mem_partitions: Seq<Set<MemRegion>>| {
+            &&& mem_partitions.len() == self.arch@.num_entries(layer)
+            // Union of the partitions is the whole set:
+            &&& seq_union(mem_partitions) === regions
+            // No duplicates:
+            &&& (forall|i: nat, j: nat, r: MemRegion|
+                    i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(r)
+                        ==> !(#[trigger] mem_partitions[j].contains(r)))
             &&& forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-                let entry = #[trigger] self.view_at(layer, ptr, i);
-                // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }@;
-                entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr())
+                let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr));
+                entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i])
             }
-        // }
+        }
     }
 
-    // pub open spec fn obtain_mem_partitions(self, layer: nat, ptr: usize) -> Seq<Set<mem::MemorySlice>>
-    //     recommends self.directories_obey_invariant_at(layer, ptr)
-    // {
-    //     choose|mem_partitions: Seq<Set<mem::MemorySlice>>| {
-    //         &&& mem_partitions.len() == self.arch@.num_entries(layer)
-    //         // Union of the partitions is the whole set:
-    //         &&& seq_union(mem_partitions) === slices
-    //         // No duplicates:
-    //         &&& (forall|i: nat, j: nat, slice: mem::MemorySlice|
-    //                 i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(slice)
-    //                     ==> !(#[trigger] mem_partitions[j].contains(slice)))
-    //         &&& forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-    //             let entry = #[trigger] self.view_at(layer, ptr, i);
-    //             // #[trigger] PageDirectoryEntry { entry: u64_from_le_bytes(self.get_entry_bytes(ptr, i)), layer: Ghost::new(layer) }@;
-    //             entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i])
-    //         }
-    //     }
-    // }
+    pub open spec fn obtain_mem_partitions(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> Seq<Set<MemRegion>>
+        recommends self.directories_obey_invariant_at(layer, ptr, regions)
+    {
+        choose|mem_partitions: Seq<Set<MemRegion>>| {
+            &&& mem_partitions.len() == self.arch@.num_entries(layer)
+            // Union of the partitions is the whole set:
+            &&& seq_union(mem_partitions) === regions
+            // No duplicates:
+            &&& (forall|i: nat, j: nat, r: MemRegion|
+                    i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(r)
+                        ==> !(#[trigger] mem_partitions[j].contains(r)))
+            &&& forall|i: nat| i < self.arch@.num_entries(layer) ==> {
+                let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr));
+                entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i])
+            }
+        }
+    }
 
     pub open spec fn empty_at(self, layer: nat, ptr: usize) -> bool
         recommends self.well_formed(layer, ptr)
     {
-        forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i).is_Empty()
-    }
-
-    pub open spec(checked) fn directories_are_aligned(self, layer: nat, ptr: usize) -> bool
-        recommends self.well_formed(layer, ptr) && self.layer_in_range(layer)
-    {
-        forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-            let entry = #[trigger] self.view_at(layer, ptr, i);
-            match entry {
-                GhostPageDirectoryEntry::Directory { addr: addr, .. } => aligned(addr, PAGE_SIZE),
-                // GhostPageDirectoryEntry::Page      { addr: addr, .. } => aligned(addr, PAGE_SIZE),
-                // GhostPageDirectoryEntry::Empty => true,
-                _ => true,
-            }
-        }
+        forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr)).is_Empty()
     }
 
     pub open spec(checked) fn layer_in_range(self, layer: nat) -> bool {
         layer < self.arch@.layers.len()
     }
 
-    pub open spec(checked) fn inv_at(&self, layer: nat, ptr: usize) -> bool
+    pub open spec fn exists_dir_region_in_memory(self, layer: nat, ptr: usize) -> bool {
+        exists|r: MemRegion| self.memory.regions().contains(r) && #[trigger] r.contains(ptr) && r.size == self.arch@.entry_size(layer)
+    }
+
+    pub open spec fn obtain_dir_region(self, layer: nat, ptr: usize) -> MemRegion
+        recommends self.exists_dir_region_in_memory(layer, ptr)
+    {
+        choose|r: MemRegion| self.memory.regions().contains(r) && #[trigger] r.contains(ptr) && r.size == self.arch@.entry_size(layer)
+    }
+
+
+    pub open spec(checked) fn inv_at(&self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool
         decreases self.arch@.layers.len() - layer
     {
+        &&& aligned(ptr, PAGE_SIZE)
         &&& self.well_formed(layer, ptr)
         &&& self.layer_in_range(layer)
-        // &&& self.memory.contains_slice(ptr, self.arch@.entry_size(layer))
-        &&& self.directories_obey_invariant_at(layer, ptr)
-        // &&& self.directories_are_aligned(layer, ptr)
+        &&& self.exists_dir_region_in_memory(layer, ptr)
+        &&& self.directories_obey_invariant_at(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)))
     }
     
-    // pub open spec fn obtain_dir_slice(self, layer: nat, ptr: usize) -> mem::MemorySlice
-    //     recommends self.memory.contains_slice(ptr, self.arch@.entry_size(layer))
-    // {
-    //     self.memory.obtain_slice(ptr, self.arch@.entry_size(layer))
-    // }
-
-    pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat) -> l1::Directory
+    pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat, regions: Set<MemRegion>) -> l1::Directory
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 1nat)
     {
-        decreases_when(self.inv_at(layer, ptr));
+        decreases_when(self.inv_at(layer, ptr, regions));
         l1::Directory {
-            entries: self.interp_at_aux(layer, ptr, base_vaddr, seq![]),
+            entries: self.interp_at_aux(layer, ptr, base_vaddr, seq![], regions),
             layer: layer,
             base_vaddr,
             arch: self.arch@,
         }
     }
 
-    pub open spec fn interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>) -> Seq<l1::NodeEntry>
+    pub open spec fn interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, regions: Set<MemRegion>) -> Seq<l1::NodeEntry>
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
     {
-        decreases_when(self.inv_at(layer, ptr));
+        decreases_when(self.inv_at(layer, ptr, regions));
         decreases_by(Self::termination_interp_at_aux);
         if init.len() >= self.arch@.num_entries(layer) {
             init
         } else {
-            let entry = match self.view_at(layer, ptr, init.len()) {
+            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr)) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                     let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr))
+                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
+                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
                     l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
                 GhostPageDirectoryEntry::Empty =>
                     l1::NodeEntry::Empty(),
             };
-            self.interp_at_aux(layer, ptr, base_vaddr, init.add(seq![entry]))
+            self.interp_at_aux(layer, ptr, base_vaddr, init.add(seq![entry]), regions)
         }
     }
 
     #[proof] #[verifier(decreases_by)]
-    spec fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>) {
-        assert(self.directories_obey_invariant_at(layer, ptr));
+    spec fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, regions: Set<MemRegion>) {
+        assert(self.directories_obey_invariant_at(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr))));
         assert(self.arch@.layers.len() - (layer + 1) < self.arch@.layers.len() - layer);
         // FIXME: why isn't this going through?
         // Can I somehow assert the decreases here or assert an inequality between tuples?
@@ -597,34 +583,35 @@ impl PageTable {
     }
 
     spec fn interp(self) -> l1::Directory {
-        self.interp_at(0, self.memory.cr3_spec(), 0)
+        self.interp_at(0, self.memory.cr3_spec(), 0, self.memory.regions())
     }
 
-    proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat)
+    proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat, regions: Set<MemRegion>)
         requires
-            self.inv_at(layer, ptr),
-            self.interp_at(layer, ptr, base_vaddr).inv(),
+            self.inv_at(layer, ptr, regions),
+            self.interp_at(layer, ptr, base_vaddr, regions).inv(),
         ensures
-            self.interp_at(layer, ptr, base_vaddr).base_vaddr     == base_vaddr,
-            self.interp_at(layer, ptr, base_vaddr).upper_vaddr()  == self.arch@.upper_vaddr(layer, base_vaddr),
-            self.interp_at(layer, ptr, base_vaddr).interp().lower == base_vaddr,
-            self.interp_at(layer, ptr, base_vaddr).interp().upper == self.arch@.upper_vaddr(layer, base_vaddr),
-            ({ let res = self.interp_at(layer, ptr, base_vaddr);
+            self.interp_at(layer, ptr, base_vaddr, regions).base_vaddr     == base_vaddr,
+            self.interp_at(layer, ptr, base_vaddr, regions).upper_vaddr()  == self.arch@.upper_vaddr(layer, base_vaddr),
+            self.interp_at(layer, ptr, base_vaddr, regions).interp().lower == base_vaddr,
+            self.interp_at(layer, ptr, base_vaddr, regions).interp().upper == self.arch@.upper_vaddr(layer, base_vaddr),
+            ({ let res = self.interp_at(layer, ptr, base_vaddr, regions);
                 forall|j: nat|
                     #![trigger res.entries.index(j)]
                     j < res.entries.len() ==>
-                    match self.view_at(layer, ptr, j) {
+                    match self.view_at(layer, ptr, j, self.obtain_dir_region(layer, ptr)) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                            let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
                             &&& res.entries.index(j).is_Directory()
-                            &&& res.entries.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j))
+                            &&& res.entries.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j), mem_partitions[j])
                         },
                         GhostPageDirectoryEntry::Page { addr, .. } => res.entries.index(j).is_Page() && res.entries.index(j).get_Page_0().base == addr,
                         GhostPageDirectoryEntry::Empty             => res.entries.index(j).is_Empty(),
                     }
             }),
     {
-        self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![]);
-        let res = self.interp_at(layer, ptr, base_vaddr);
+        self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![], regions);
+        let res = self.interp_at(layer, ptr, base_vaddr, regions);
         assert(res.pages_match_entry_size());
         assert(res.directories_are_in_next_layer());
         assert(res.directories_match_arch());
@@ -634,21 +621,22 @@ impl PageTable {
         res.lemma_inv_implies_interp_inv();
     }
 
-    proof fn lemma_interp_at_aux_facts(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
+    proof fn lemma_interp_at_aux_facts(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, regions: Set<MemRegion>)
         requires
-            self.inv_at(layer, ptr),
+            self.inv_at(layer, ptr, regions),
             // aligned(base_vaddr, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         ensures
-            self.interp_at_aux(layer, ptr, base_vaddr, init).len() == if init.len() > self.arch@.num_entries(layer) { init.len() } else { self.arch@.num_entries(layer) },
-            forall|j: nat| j < init.len() ==> #[trigger] self.interp_at_aux(layer, ptr, base_vaddr, init).index(j) === init.index(j),
-            ({ let res = self.interp_at_aux(layer, ptr, base_vaddr, init);
+            self.interp_at_aux(layer, ptr, base_vaddr, init, regions).len() == if init.len() > self.arch@.num_entries(layer) { init.len() } else { self.arch@.num_entries(layer) },
+            forall|j: nat| j < init.len() ==> #[trigger] self.interp_at_aux(layer, ptr, base_vaddr, init, regions).index(j) === init.index(j),
+            ({ let res = self.interp_at_aux(layer, ptr, base_vaddr, init, regions);
                 forall|j: nat|
                     #![trigger res.index(j)]
                     init.len() <= j && j < res.len() ==>
-                    match self.view_at(layer, ptr, j) {
+                    match self.view_at(layer, ptr, j, self.obtain_dir_region(layer, ptr)) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                            let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
                             &&& res.index(j).is_Directory()
-                            &&& res.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j))
+                            &&& res.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j), mem_partitions[j])
                         },
                         GhostPageDirectoryEntry::Page { addr, .. } => res.index(j).is_Page() && res.index(j).get_Page_0().base == addr,
                         GhostPageDirectoryEntry::Empty             => res.index(j).is_Empty(),
@@ -658,11 +646,12 @@ impl PageTable {
     {
         if init.len() >= self.arch@.num_entries(layer) {
         } else {
-            assert(self.directories_obey_invariant_at(layer, ptr));
-            let entry = match self.view_at(layer, ptr, init.len()) {
+            assert(self.directories_obey_invariant_at(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr))));
+            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr)) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                     let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr))
+                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
+                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
                     l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
@@ -671,31 +660,31 @@ impl PageTable {
             };
             let init_next = init.add(seq![entry]);
 
-            self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, init_next);
+            self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, init_next, regions);
         }
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize) -> (res: (Result<usize, ()>))
+    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, regions: Ghost<Set<MemRegion>>) -> (res: (Result<usize, ()>))
         requires
-            self.inv_at(layer, ptr),
-            self.interp_at(layer, ptr, base).inv(),
-            self.interp_at(layer, ptr, base).interp().accepted_resolve(vaddr),
+            self.inv_at(layer, ptr, regions@),
+            self.interp_at(layer, ptr, base, regions@).inv(),
+            self.interp_at(layer, ptr, base, regions@).interp().accepted_resolve(vaddr),
             base <= vaddr < MAX_BASE,
             // aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         ensures
             // Refinement of l1
-            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).resolve(vaddr),
+            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base, regions@).resolve(vaddr),
             // Refinement of l0
-            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).interp().resolve(vaddr),
+            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base, regions@).interp().resolve(vaddr),
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
-        let entry      = self.entry_at(layer, ptr, idx);
-        let interp:     Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base));
+        let entry      = self.entry_at(layer, ptr, idx, regions);
+        let interp: Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base, regions@));
         proof {
             interp@.lemma_resolve_structure_assertions(vaddr, idx);
-            self.lemma_interp_at_facts(layer, ptr, base);
+            self.lemma_interp_at_facts(layer, ptr, base, regions@);
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
             interp@.lemma_resolve_refines(vaddr);
         }
@@ -708,17 +697,19 @@ impl PageTable {
             if entry.is_dir(layer) {
                 assert(entry@.is_Directory());
                 let dir_addr = entry.address() as usize;
-                assert(self.directories_obey_invariant_at(layer, ptr));
+                let mem_partitions: Ghost<Seq<Set<MemRegion>>> = ghost(self.obtain_mem_partitions(layer, ptr, regions@.remove(self.obtain_dir_region(layer, ptr))));
+                let dir_mem_regions: Ghost<Set<MemRegion>> = ghost(mem_partitions@[idx]);
+                assert(self.directories_obey_invariant_at(layer, ptr, regions@.remove(self.obtain_dir_region(layer, ptr))));
                 proof {
-                    assert(self.interp_at(layer, ptr, base).inv());
-                    assert(self.interp_at(layer, ptr, base).directories_obey_invariant());
-                    assert(self.interp_at(layer, ptr, base).entries[idx].is_Directory());
-                    assert(self.interp_at(layer, ptr, base).entries[idx].get_Directory_0().inv());
-                    assert(l1::NodeEntry::Directory(self.interp_at((layer + 1) as nat, dir_addr, entry_base)) === self.interp_at(layer, ptr, base).entries[idx]);
-                    assert(self.inv_at((layer + 1) as nat, dir_addr));
+                    assert(interp@.inv());
+                    assert(interp@.directories_obey_invariant());
+                    assert(interp@.entries[idx].is_Directory());
+                    assert(interp@.entries[idx].get_Directory_0().inv());
+                    assert(l1::NodeEntry::Directory(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_mem_regions@)) === interp@.entries[idx]);
+                    assert(self.inv_at((layer + 1) as nat, dir_addr, dir_mem_regions@));
                 }
-                let res = self.resolve_aux(layer + 1, dir_addr, entry_base, vaddr);
-                assert(res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).resolve(vaddr));
+                let res = self.resolve_aux(layer + 1, dir_addr, entry_base, vaddr, dir_mem_regions);
+                assert(res.map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
                 res
             } else {
                 assert(entry@.is_Page());
@@ -728,13 +719,13 @@ impl PageTable {
                 assume(entry@.get_Page_addr() < 10000);
                 assert(offset < self.arch@.entry_size(layer));
                 let res = Ok(entry.address() as usize + offset);
-                assert(res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).resolve(vaddr));
+                assert(res.map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
                 res
             }
         } else {
             assert(entry@.is_Empty());
             assert(interp@.entries.index(idx).is_Empty());
-            assert(Err(()).map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base).resolve(vaddr));
+            assert(Err(()).map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
             Err(())
         }
     }
@@ -753,144 +744,144 @@ impl PageTable {
             // res.map_ok(|v: usize| v as nat) === self.interp().interp().resolve(vaddr),
     {
         proof { ambient_arith(); }
-        self.resolve_aux(0, self.memory.cr3(), 0, vaddr)
+        self.resolve_aux(0, self.memory.cr3(), 0, vaddr, ghost(self.memory.regions()))
     }
 
     spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, frame: MemRegion) -> bool {
         &&& 0 < layer // Can't map pages in PML4
     }
 
-    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
-        requires
-            old(self).inv_at(layer, ptr),
-            old(self).interp_at(layer, ptr, base).inv(),
-            old(self).memory.inv(),
-            old(self).accepted_mapping(layer, ptr, base, vaddr, frame@),
-            old(self).interp_at(layer, ptr, base).accepted_mapping(vaddr, frame@),
-            base <= vaddr < MAX_BASE,
-            // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
-        // ensures
-        //     // map_frame_aux returns the set of newly allocated pages
-        //     match res {
-        //         Ok(new_slices) => {
-        //             &&& forall|s: mem::MemorySlice| #[trigger] new_slices@.contains(s) ==> !old(self).memory.slices().contains(s)
-        //             &&& self.memory.slices() === old(self).memory.slices().union(new_slices@)
-        //         },
-        //         Err(_) => {
-        //             self.memory.slices() === old(self).memory.slices()
-        //         }
-        //     }
-            // self.inv_at(layer, ptr),
-            // // Refinement of l1
-            // match res {
-            //     Ok(res) =>
-            //         Ok(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
-            //     Err(e)  => Err(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
-            // },
-        //     // Refinement of l0
-        //     match res {
-        //         Ok(res) =>
-        //             Ok(self.interp_at(layer, ptr, base).interp())
-        //                 === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
-        //         Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
-        //     }
-        // decreases self.arch@.layers.len() - layer
-    {
-        let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
-        let entry      = self.entry_at(layer, ptr, idx);
-        let interp: Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base));
-        proof {
-            interp@.lemma_map_frame_structure_assertions(vaddr, frame@, idx);
-            self.lemma_interp_at_facts(layer, ptr, base);
-            self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
-            interp@.lemma_map_frame_refines_map_frame(vaddr, frame@);
-        }
-        let entry_base: usize = self.arch.entry_base(layer, base, idx);
-        proof {
-            self.arch@.lemma_entry_base();
-            assert(entry_base <= vaddr);
-        }
-        if entry.is_mapping() {
-            if entry.is_dir(layer) {
-                if self.arch.entry_size(layer) == frame.size {
-                    Err(())
-                } else {
-                    let dir_addr = entry.address() as usize;
-                    assert(self.directories_obey_invariant_at(layer, ptr));
-                    self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame)
-                }
-            } else {
-                Err(())
-            }
-        } else {
-            if self.arch.entry_size(layer) == frame.size {
-                proof {
-                    let frame_base = frame.base as u64;
-                    // FIXME: this should be derivable from alignment property in accepted_mapping
-                    assume(addr_is_zero_padded(layer, frame_base, true));
-                }
-                let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
-                assume(ptr < 100);
-                // TODO: this assertion goes through "by accident" due to lemma_entry_base. Maybe
-                // we should rename entry_base and use it for all index calculations?
-                assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
-                // assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
-                // assume(dir_slice@.contains_addr((ptr + idx * ENTRY_BYTES) as nat));
-                // XXX
-                // self.memory.write(dir_slice, ptr + idx * ENTRY_BYTES, new_page_entry.entry);
-                Ok(())
-            } else {
-                assume(false);
-                // XXX
-                let new_dir_ptr = unreached();
-                // let (new_dir_ptr, new_dir_slice) = self.memory.alloc_page();
-                let new_dir_ptr_u64 = new_dir_ptr as u64;
-                proof {
-                    lemma_page_aligned_implies_mask_dir_addr_is_identity();
-                    assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
-                }
-                let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
-                // assume(forall|i:nat| i < 512 ==> self.memory.spec_read
-                assume(ptr < 100);
-                assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
-                // assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
-                // assume(dir_slice@.contains_addr((ptr + idx * ENTRY_BYTES) as nat));
-                // XXX
-                // self.memory.write(dir_slice, ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
+    // #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    // fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
+    //     requires
+    //         old(self).inv_at(layer, ptr),
+    //         old(self).interp_at(layer, ptr, base).inv(),
+    //         old(self).memory.inv(),
+    //         old(self).accepted_mapping(layer, ptr, base, vaddr, frame@),
+    //         old(self).interp_at(layer, ptr, base).accepted_mapping(vaddr, frame@),
+    //         base <= vaddr < MAX_BASE,
+    //         // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
+    //     // ensures
+    //     //     // map_frame_aux returns the set of newly allocated pages
+    //     //     match res {
+    //     //         Ok(new_slices) => {
+    //     //             &&& forall|s: mem::MemorySlice| #[trigger] new_slices@.contains(s) ==> !old(self).memory.slices().contains(s)
+    //     //             &&& self.memory.slices() === old(self).memory.slices().union(new_slices@)
+    //     //         },
+    //     //         Err(_) => {
+    //     //             self.memory.slices() === old(self).memory.slices()
+    //     //         }
+    //     //     }
+    //         // self.inv_at(layer, ptr),
+    //         // // Refinement of l1
+    //         // match res {
+    //         //     Ok(res) =>
+    //         //         Ok(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
+    //         //     Err(e)  => Err(self.interp_at(layer, ptr, base)) === old(self).interp_at(layer, ptr, base).map_frame(vaddr, frame@),
+    //         // },
+    //     //     // Refinement of l0
+    //     //     match res {
+    //     //         Ok(res) =>
+    //     //             Ok(self.interp_at(layer, ptr, base).interp())
+    //     //                 === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
+    //     //         Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
+    //     //     }
+    //     // decreases self.arch@.layers.len() - layer
+    // {
+    //     let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
+    //     let entry      = self.entry_at(layer, ptr, idx);
+    //     let interp: Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base));
+    //     proof {
+    //         interp@.lemma_map_frame_structure_assertions(vaddr, frame@, idx);
+    //         self.lemma_interp_at_facts(layer, ptr, base);
+    //         self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+    //         interp@.lemma_map_frame_refines_map_frame(vaddr, frame@);
+    //     }
+    //     let entry_base: usize = self.arch.entry_base(layer, base, idx);
+    //     proof {
+    //         self.arch@.lemma_entry_base();
+    //         assert(entry_base <= vaddr);
+    //     }
+    //     if entry.is_mapping() {
+    //         if entry.is_dir(layer) {
+    //             if self.arch.entry_size(layer) == frame.size {
+    //                 Err(())
+    //             } else {
+    //                 let dir_addr = entry.address() as usize;
+    //                 assert(self.directories_obey_invariant_at(layer, ptr));
+    //                 self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame)
+    //             }
+    //         } else {
+    //             Err(())
+    //         }
+    //     } else {
+    //         if self.arch.entry_size(layer) == frame.size {
+    //             proof {
+    //                 let frame_base = frame.base as u64;
+    //                 // FIXME: this should be derivable from alignment property in accepted_mapping
+    //                 assume(addr_is_zero_padded(layer, frame_base, true));
+    //             }
+    //             let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
+    //             assume(ptr < 100);
+    //             // TODO: this assertion goes through "by accident" due to lemma_entry_base. Maybe
+    //             // we should rename entry_base and use it for all index calculations?
+    //             assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
+    //             // assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
+    //             // assume(dir_slice@.contains_addr((ptr + idx * ENTRY_BYTES) as nat));
+    //             // XXX
+    //             // self.memory.write(dir_slice, ptr + idx * ENTRY_BYTES, new_page_entry.entry);
+    //             Ok(())
+    //         } else {
+    //             assume(false);
+    //             // XXX
+    //             let new_dir_ptr = unreached();
+    //             // let (new_dir_ptr, new_dir_slice) = self.memory.alloc_page();
+    //             let new_dir_ptr_u64 = new_dir_ptr as u64;
+    //             proof {
+    //                 lemma_page_aligned_implies_mask_dir_addr_is_identity();
+    //                 assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
+    //             }
+    //             let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
+    //             // assume(forall|i:nat| i < 512 ==> self.memory.spec_read
+    //             assume(ptr < 100);
+    //             assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
+    //             // assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
+    //             // assume(dir_slice@.contains_addr((ptr + idx * ENTRY_BYTES) as nat));
+    //             // XXX
+    //             // self.memory.write(dir_slice, ptr + idx * ENTRY_BYTES, new_dir_entry.entry);
 
-                // Gerd:
-                // Proof sketch:
-                // 1. new_dir_ptr is from alloc_page, which has a postcondition that the page is zeroed out
-                // 2. Prove that view_at of a 0u64 entry is GhostPageDirectoryEntry::Empty
-                // 3. Prove that thus empty_at is true for a page of zeros
-                // 4. Also use step 2 to prove inv_at is true for a page of zeros
-                assume(self.empty_at((layer + 1) as nat, new_dir_ptr));
-                assume(self.inv_at((layer + 1) as nat, new_dir_ptr));
-                let new_dir_interp: Ghost<l1::Directory> = ghost(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base));
-                assume(new_dir_interp@ === interp@.new_empty_dir(idx));
-                assert(new_dir_interp@.inv());
-                let res = self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame);
-                res
-            }
-        }
-    }
+    //             // Gerd:
+    //             // Proof sketch:
+    //             // 1. new_dir_ptr is from alloc_page, which has a postcondition that the page is zeroed out
+    //             // 2. Prove that view_at of a 0u64 entry is GhostPageDirectoryEntry::Empty
+    //             // 3. Prove that thus empty_at is true for a page of zeros
+    //             // 4. Also use step 2 to prove inv_at is true for a page of zeros
+    //             assume(self.empty_at((layer + 1) as nat, new_dir_ptr));
+    //             assume(self.inv_at((layer + 1) as nat, new_dir_ptr));
+    //             let new_dir_interp: Ghost<l1::Directory> = ghost(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base));
+    //             assume(new_dir_interp@ === interp@.new_empty_dir(idx));
+    //             assert(new_dir_interp@.inv());
+    //             let res = self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame);
+    //             res
+    //         }
+    //     }
+    // }
 
-    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn map_frame(&mut self, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
-        requires
-            old(self).inv(),
-            old(self).memory.inv(),
-            old(self).accepted_mapping(0, old(self).memory.cr3_spec(), 0, vaddr, frame@),
-            old(self).interp().accepted_mapping(vaddr, frame@),
-            vaddr < MAX_BASE,
-    {
-        proof { ambient_arith(); }
-        match self.map_frame_aux(0, self.memory.cr3(), 0, vaddr, frame) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
-        }
-    }
+    // #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    // fn map_frame(&mut self, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
+    //     requires
+    //         old(self).inv(),
+    //         old(self).memory.inv(),
+    //         old(self).accepted_mapping(0, old(self).memory.cr3_spec(), 0, vaddr, frame@),
+    //         old(self).interp().accepted_mapping(vaddr, frame@),
+    //         vaddr < MAX_BASE,
+    // {
+    //     proof { ambient_arith(); }
+    //     match self.map_frame_aux(0, self.memory.cr3(), 0, vaddr, frame) {
+    //         Ok(_) => Ok(()),
+    //         Err(e) => Err(e),
+    //     }
+    // }
 }
 
 }
