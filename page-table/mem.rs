@@ -13,58 +13,56 @@ use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned };
+use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq };
 use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, ENTRY_BYTES, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
 
 verus! {
 
-/// A contiguous part of the memory
-pub struct MemorySlice {
-    base: u64,
-    mem: Seq<nat>,
-}
+// /// A contiguous part of the memory
+// pub struct MemorySlice {
+//     base: usize,
+//     mem: Seq<nat>,
+// }
 
-impl MemorySlice {
-    /// Physical base address of the slice
-    pub closed spec fn base(self) -> nat {
-        self.base
-    }
+// impl MemorySlice {
+//     /// Physical base address of the slice
+//     pub closed spec fn base(self) -> nat {
+//         self.base
+//     }
 
-    /// Size of the slice in bytes
-    pub closed spec fn size(self) -> nat {
-        self.mem.len()
-    }
+//     /// Size of the slice in bytes
+//     pub closed spec fn size(self) -> nat {
+//         self.mem.len()
+//     }
 
-    /// Returns true if the slice contains the memory of the given address
-    pub closed spec fn contains_addr(self, addr: nat) -> bool {
-        between(addr, self.base, self.size())
-    }
+//     /// Check if this slice corresponds to the same memory region as `r`
+//     pub open spec fn equals_region(self, r: MemRegion) -> bool {
+//         &&& self.base() == r.base
+//         &&& self.size() == r.size
+//     }
 
-    // pub closed spec fn base(self) -> usize {
-    //     self.base as usize
-    // }
+//     /// Returns true if the slice contains the memory of the given address
+//     pub closed spec fn contains_addr(self, addr: nat) -> bool {
+//         between(addr, self.base, self.size())
+//     }
 
-    // pub closed spec fn base_u64(self) -> u64 {
-    //     self.base as u64
-    // }
+//     pub closed spec fn write(self, idx: nat, value: nat) -> MemorySlice {
+//         MemorySlice {
+//             base: self.base,
+//             mem:  self.mem.update(idx, value),
+//         }
+//     }
 
-    pub closed spec fn write(self, idx: nat, value: nat) -> MemorySlice {
-        MemorySlice {
-            base: self.base,
-            mem:  self.mem.update(idx, value),
-        }
-    }
-
-    pub closed spec fn overlap(self, other: MemorySlice) -> bool {
-        if self.base <= other.base {
-            other.base < self.base + self.size()
-        } else {
-            self.base < other.base + other.size()
-        }
-    }
-}
+//     pub closed spec fn overlap(self, other: MemorySlice) -> bool {
+//         if self.base <= other.base {
+//             other.base < self.base + self.size()
+//         } else {
+//             self.base < other.base + other.size()
+//         }
+//     }
+// }
 
 // FIXME: We need to allow the dirty and accessed bits to change in the memory.
 // Or maybe we just specify reads to return those bits as arbitrary?
@@ -72,6 +70,8 @@ impl MemorySlice {
 pub struct PageTableMemory {
     /// `ptr` is the starting address of the physical memory linear mapping
     ptr: *mut u64,
+    // owned: Set<MemorySlice>,
+    // domain: Set<MemRegion>,
 }
 
 /// We view the memory as a sequence of u64s but have to use byte offsets in the page table
@@ -98,24 +98,26 @@ pub open spec fn word_index_spec(idx: nat) -> nat
 impl PageTableMemory {
     // pub open spec fn view(&self) -> Seq<nat>;
 
-    pub closed spec fn slices(self) -> Set<MemorySlice>;
+    pub closed spec fn owned(self) -> Set<MemRegion>;
+    pub closed spec fn domain(self) -> Set<MemRegion>;
 
-    pub open spec fn obtain_slice(self, base: nat, size: nat) -> MemorySlice
-        recommends self.contains_slice(base, size)
-    {
-        if self.contains_slice(base, size) {
-            choose|slice: MemorySlice| self.slices().contains(slice) && slice.base() == base && slice.size() == size
-        } else {
-            arbitrary()
-        }
-    }
+    // pub open spec fn obtain_slice(self, base: nat, size: nat) -> MemorySlice
+    //     recommends self.contains_slice(base, size)
+    // {
+    //     if self.contains_slice(base, size) {
+    //         choose|slice: MemorySlice| #[trigger] self.slices().contains(slice) && slice.base() == base && slice.size() == size
+    //     } else {
+    //         arbitrary()
+    //     }
+    // }
 
-    pub open spec fn contains_slice(self, base: nat, size: nat) -> bool {
-        exists|slice: MemorySlice| self.slices().contains(slice) && slice.base() == base && slice.size() == size
-    }
+    // pub open spec fn contains_slice(self, base: nat, size: nat) -> bool {
+    //     exists|slice: MemorySlice| #[trigger] self.slices().contains(slice) && slice.base() == base && slice.size() == size
+    // }
 
     pub open spec fn inv(self) -> bool {
-        forall|s1: MemorySlice, s2: MemorySlice| s1 !== s2 ==> !s1.overlap(s2)
+        &&& true // owned is subset of domain
+        &&& forall|s1: MemRegion, s2: MemRegion| self.domain().contains(s1) && self.domain().contains(s2) && s1 !== s2 ==> !overlap(s1, s2)
     }
 
     /// `cr3` returns the physical address at which the layer 0 page directory is mapped
@@ -136,16 +138,18 @@ impl PageTableMemory {
     // linearity for that?
     /// Allocates one page and returns its physical address
     #[verifier(external_body)]
-    pub fn alloc_page(&mut self) -> (res: (usize, MemorySlice))
+    pub fn alloc_page(&mut self) -> (r: MemRegionExec)
         requires
             old(self).inv()
         ensures
-            res.1.base() == res.0,
-            res.1.size() == PAGE_SIZE,
-            res.1.base() + PAGE_SIZE <= MAXPHYADDR,
-            aligned(res.1.base(), PAGE_SIZE),
-            self.slices() === old(self).slices().insert(res.1),
-            self.inv()
+            r@.size == PAGE_SIZE,
+            r@.base + PAGE_SIZE <= MAXPHYADDR,
+            aligned(r@.base, PAGE_SIZE),
+            self.domain() === old(self).domain().insert(r@),
+            self.owned()  === old(self).owned().insert(r@),
+            forall|offset| r@.contains(offset) ==> #[trigger] self.spec_read(offset, r@) == 0,
+            forall|offset, r2| r2 !== r@ && r2.contains(offset) ==> #[trigger] self.spec_read(offset, r2) == old(self).spec_read(offset, r2),
+            self.inv() // TODO: derivable
         // ensures
         //     offset <= MAXPHYADDR,
         //     aligned(offset, PAGE_SIZE),
@@ -159,19 +163,18 @@ impl PageTableMemory {
         unreached()
     }
 
-    // TODO: Verus doesn't support mutable borrow args except self? just returning a new slice for
-    // now
     #[verifier(external_body)]
-    pub fn write(&mut self, slice: Ghost<MemorySlice>, offset: usize, value: u64) -> (new_slice: Ghost<MemorySlice>)
+    pub fn write(&mut self, offset: usize, region: Ghost<MemRegion>, value: u64)
         requires
             old(self).inv(),
             aligned(offset, 8),
-            old(self).slices().contains(slice@),
-            slice@.contains_addr(offset),
+            old(self).owned().contains(region@),
+            region@.contains(offset),
             // word_index_spec(offset) < old(self)@.len(),
         ensures
-            new_slice@ === slice@.write(word_index_spec(offset), value),
-            self.inv(),
+            self.spec_read(offset, region@) == value,
+            forall|x| x != offset ==> self.spec_read(x, region@) == old(self).spec_read(x, region@),
+            self.inv(), // TODO: derivable
             // self@ === old(self)@.update(word_index_spec(offset), value)
     {
         unsafe { self.ptr.offset(offset as isize).write(value); }
@@ -182,19 +185,60 @@ impl PageTableMemory {
     }
 
     #[verifier(external_body)]
-    pub fn read(&self, slice: Ghost<MemorySlice>, offset: usize) -> (res: u64)
+    pub fn read(&self, offset: usize, region: Ghost<MemRegion>) -> (res: u64)
         requires
             aligned(offset, 8),
-            self.slices().contains(slice@),
-            slice@.contains_addr(offset),
+            self.owned().contains(region@),
+            region@.contains(offset),
             // word_index_spec(offset) < self@.len(),
         ensures
-            res == self.spec_read(slice@, offset)
+            res == self.spec_read(offset, region@)
     {
         unsafe { self.ptr.offset(word_index(offset) as isize).read() }
     }
 
-    pub open spec fn spec_read(self, slice: MemorySlice, offset: nat) -> (res: u64);
+    pub open spec fn spec_read(self, offset: nat, region: MemRegion) -> (res: u64);
+
+    // FIXME: how do i make this use tracked? Need to ensure the args are consumed in union and split
+    pub spec fn union(mems: Seq<PageTableMemory>) -> PageTableMemory;
+
+    #[verifier(external_body)]
+    pub proof fn axiom_union(mems: Seq<PageTableMemory>)
+        requires
+            // Each memory satisfies the invariant:
+            forall|i: nat| i < mems.len() ==> #[trigger] mems[i].inv(),
+            // Any two memories may not have overlapping regions in their respective domains, unless the regions are equal:
+            forall|i: nat, j: nat, r1: MemRegion, r2: MemRegion|
+                i !== j && i < mems.len() && j < mems.len() && #[trigger] mems[i].domain().contains(r1) && #[trigger] mems[j].domain().contains(r2) && r1 !== r2 ==> !overlap(r1, r2),
+            // If one memory owns a region, no other memory may own that same region:
+            forall|i: nat, j: nat, r: MemRegion|
+                i !== j && i < mems.len() && j < mems.len() && #[trigger] mems[i].owned().contains(r) ==> !(#[trigger] mems[j].owned().contains(r)),
+        ensures
+            // The union's domain is the union of the memories' domains:
+            forall|i: nat, r: MemRegion|
+                i < mems.len() && mems[i].domain().contains(r) ==> Self::union(mems).domain().contains(r),
+            forall|r: MemRegion|
+                Self::union(mems).domain().contains(r) ==> exists|i: nat| i < mems.len() ==> #[trigger] mems[i].domain().contains(r),
+            // The union's owned regions are the union of the memories' owned regions:
+            forall|i: nat, r: MemRegion|
+                i < mems.len() && mems[i].owned().contains(r)  ==> Self::union(mems).owned().contains(r),
+            forall|r: MemRegion|
+                Self::union(mems).owned().contains(r)  ==> exists|i: nat| i < mems.len() ==> #[trigger] mems[i].owned().contains(r),
+            // The memory locations still have the same values
+            forall|i: nat, r: MemRegion, offset: nat|
+                i < mems.len() && mems[i].owned().contains(r) && r.contains(offset) ==> Self::union(mems).spec_read(offset, r) == mems[i].spec_read(offset, r);
+
+    pub spec fn split(self, mems: Seq<(Set<MemRegion>, Set<MemRegion>)>) -> Seq<PageTableMemory>;
+
+    #[verifier(external_body)]
+    pub proof fn axiom_split(self, mems: Seq<(Set<MemRegion>, Set<MemRegion>)>)
+        requires
+            self.inv(),
+            // bunch of preconditions
+        ensures
+            // Each memory satisfies the invariant:
+            forall|i: nat| i < mems.len() ==> #[trigger] self.split(mems)[i].inv();
+            // bunch of postconditions
 }
 
 }
