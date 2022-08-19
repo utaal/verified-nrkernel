@@ -53,6 +53,7 @@ impl PageTableMemory {
     // pub open spec fn view(&self) -> Seq<nat>;
 
     pub spec fn regions(self) -> Set<MemRegion>;
+    pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
 
     pub open spec fn inv(self) -> bool {
         &&& forall|s1: MemRegion, s2: MemRegion| self.regions().contains(s1) && self.regions().contains(s2) && s1 !== s2 ==> !overlap(s1, s2)
@@ -83,8 +84,9 @@ impl PageTableMemory {
             aligned(r@.base, PAGE_SIZE),
             !old(self).regions().contains(r@),
             self.regions() === old(self).regions().insert(r@),
-            forall|offset| r@.contains(offset) ==> #[trigger] self.spec_read(offset, r@) == 0,
-            forall|offset, r2| r2 !== r@ && r2.contains(offset) ==> #[trigger] self.spec_read(offset, r2) == old(self).spec_read(offset, r2),
+            self.region_view(r@) === new_seq(0u64, 512),
+            // forall|offset| r@.contains(offset) ==> #[trigger] self.spec_read(offset, r@) == 0,
+            forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.inv() // TODO: derivable
     {
         // FIXME:
@@ -100,9 +102,11 @@ impl PageTableMemory {
             region@.contains(offset),
             // word_index_spec(offset) < old(self)@.len(),
         ensures
-            self.spec_read(offset, region@) == value,
-            forall|offset2: nat| offset2 != offset ==> self.spec_read(offset2, region@) == old(self).spec_read(offset2, region@),
-            forall|offset2: nat, r: MemRegion| r !== region@ ==> self.spec_read(offset2, r) == old(self).spec_read(offset2, r),
+            self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(offset, region@.base)), value),
+            forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
+            // self.spec_read(offset, region@) == value,
+            // forall|offset2: nat| offset2 != offset ==> self.spec_read(offset2, region@) == old(self).spec_read(offset2, region@),
+            // forall|offset2: nat, r: MemRegion| r !== region@ ==> self.spec_read(offset2, r) == old(self).spec_read(offset2, r),
             self.inv(), // TODO: derivable
     {
         unsafe { self.ptr.offset(offset as isize).write(value); }
@@ -122,7 +126,9 @@ impl PageTableMemory {
         unsafe { self.ptr.offset(word_index(offset) as isize).read() }
     }
 
-    pub open spec fn spec_read(self, offset: nat, region: MemRegion) -> (res: u64);
+    pub open spec fn spec_read(self, offset: nat, region: MemRegion) -> (res: u64) {
+        self.region_view(region)[word_index_spec(sub(offset, region.base))]
+    }
 }
 
 }

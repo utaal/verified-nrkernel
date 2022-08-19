@@ -455,15 +455,16 @@ impl PageTable {
             self.inv_at(layer, ptr, regions@)
         ensures
             res.layer == layer,
-            res@ === self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr)),
+            res@ === self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr, regions@)),
     {
         // FIXME:
         assume(ptr <= 100);
         assume(i * ENTRY_BYTES <= 100000);
         assume(aligned((ptr + i * ENTRY_BYTES) as nat, 8));
         // FIXME:
-        let r: Ghost<MemRegion> = ghost(self.obtain_dir_region(layer, ptr));
+        let r: Ghost<MemRegion> = ghost(self.obtain_dir_region(layer, ptr, regions@));
         assume(r@.contains((ptr + i * ENTRY_BYTES) as nat));
+        assert(self.memory.inv());
         PageDirectoryEntry {
             entry: self.memory.read(ptr + i * ENTRY_BYTES, r),
             layer,
@@ -473,17 +474,17 @@ impl PageTable {
     pub open spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool
         decreases (self.arch@.layers.len() - layer, 0nat)
     {
-        decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer) && self.exists_dir_region_in_memory(layer, ptr));
+        decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer) && self.exists_dir_region_in_memory(layer, ptr, regions));
         exists|mem_partitions: Seq<Set<MemRegion>>| {
             &&& mem_partitions.len() == self.arch@.num_entries(layer)
-            // Union of the partitions is the whole set:
-            &&& seq_union(mem_partitions) === regions
+            // Union of the partitions is the whole set minus the current directory:
+            &&& seq_union(mem_partitions) === regions.remove(self.obtain_dir_region(layer, ptr, regions))
             // No duplicates:
             &&& (forall|i: nat, j: nat, r: MemRegion|
                     i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(r)
                         ==> !(#[trigger] mem_partitions[j].contains(r)))
             &&& forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-                let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr));
+                let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr, regions));
                 entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i])
             }
         }
@@ -494,48 +495,53 @@ impl PageTable {
     {
         choose|mem_partitions: Seq<Set<MemRegion>>| {
             &&& mem_partitions.len() == self.arch@.num_entries(layer)
-            // Union of the partitions is the whole set:
-            &&& seq_union(mem_partitions) === regions
+            // Union of the partitions is the whole set minus the current directory:
+            &&& seq_union(mem_partitions) === regions.remove(self.obtain_dir_region(layer, ptr, regions))
             // No duplicates:
             &&& (forall|i: nat, j: nat, r: MemRegion|
                     i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(r)
                         ==> !(#[trigger] mem_partitions[j].contains(r)))
             &&& forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-                let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr));
+                let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr, regions));
                 entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i])
             }
         }
     }
 
-    pub open spec fn empty_at(self, layer: nat, ptr: usize) -> bool
+    pub open spec fn empty_at(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool
         recommends self.well_formed(layer, ptr)
     {
-        forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr)).is_Empty()
+        forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr, regions)).is_Empty()
     }
 
     pub open spec(checked) fn layer_in_range(self, layer: nat) -> bool {
         layer < self.arch@.layers.len()
     }
 
-    pub open spec fn exists_dir_region_in_memory(self, layer: nat, ptr: usize) -> bool {
-        exists|r: MemRegion| self.memory.regions().contains(r) && #[trigger] r.contains(ptr) && r.size == self.arch@.entry_size(layer)
+    pub open spec fn exists_dir_region_in_memory(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool {
+        exists|r: MemRegion| regions.contains(r) && #[trigger] r.contains(ptr) && r.size == self.arch@.entry_size(layer)
     }
 
-    pub open spec fn obtain_dir_region(self, layer: nat, ptr: usize) -> MemRegion
-        recommends self.exists_dir_region_in_memory(layer, ptr)
+    pub open spec fn obtain_dir_region(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> MemRegion
+        recommends self.exists_dir_region_in_memory(layer, ptr, regions)
     {
-        choose|r: MemRegion| self.memory.regions().contains(r) && #[trigger] r.contains(ptr) && r.size == self.arch@.entry_size(layer)
+        choose|r: MemRegion| regions.contains(r) && #[trigger] r.contains(ptr) && r.size == self.arch@.entry_size(layer)
     }
 
+    pub open spec fn regions_are_in_memory(self, regions: Set<MemRegion>) -> bool {
+        forall|r: MemRegion| regions.contains(r) ==> #[trigger] self.memory.regions().contains(r)
+    }
 
-    pub open spec(checked) fn inv_at(&self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool
+    pub open spec(checked) fn inv_at(self, layer: nat, ptr: usize, regions: Set<MemRegion>) -> bool
         decreases self.arch@.layers.len() - layer
     {
         &&& aligned(ptr, PAGE_SIZE)
         &&& self.well_formed(layer, ptr)
+        &&& self.memory.inv()
         &&& self.layer_in_range(layer)
-        &&& self.exists_dir_region_in_memory(layer, ptr)
-        &&& self.directories_obey_invariant_at(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)))
+        &&& self.regions_are_in_memory(regions)
+        &&& self.exists_dir_region_in_memory(layer, ptr, regions)
+        &&& self.directories_obey_invariant_at(layer, ptr, regions)
     }
     
     pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat, regions: Set<MemRegion>) -> l1::Directory
@@ -558,10 +564,10 @@ impl PageTable {
         if init.len() >= self.arch@.num_entries(layer) {
             init
         } else {
-            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr)) {
+            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr, regions)) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                     let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
+                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions);
                     l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
@@ -575,7 +581,7 @@ impl PageTable {
 
     #[proof] #[verifier(decreases_by)]
     spec fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, regions: Set<MemRegion>) {
-        assert(self.directories_obey_invariant_at(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr))));
+        assert(self.directories_obey_invariant_at(layer, ptr, regions));
         assert(self.arch@.layers.len() - (layer + 1) < self.arch@.layers.len() - layer);
         // FIXME: why isn't this going through?
         // Can I somehow assert the decreases here or assert an inequality between tuples?
@@ -584,6 +590,112 @@ impl PageTable {
 
     spec fn interp(self) -> l1::Directory {
         self.interp_at(0, self.memory.cr3_spec(), 0, self.memory.regions())
+    }
+
+    proof fn lemma_inv_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, regions: Set<MemRegion>)
+        requires
+            self.inv_at(layer, ptr, regions),
+            other.memory.inv(),
+            self.arch@ === other.arch@,
+            forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.regions().contains(r) && other.memory.regions().contains(r),
+            forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.region_view(r) === other.memory.region_view(r),
+        ensures
+            other.inv_at(layer, ptr, regions),
+        decreases self.arch@.layers.len() - layer
+    {
+        assert(aligned(ptr, PAGE_SIZE));
+        assert(other.well_formed(layer, ptr));
+        assert(other.layer_in_range(layer));
+
+        let dir_region = self.obtain_dir_region(layer, ptr, regions);
+        assert(other.memory.regions().contains(dir_region));
+        assert(dir_region.contains(ptr));
+        assert(dir_region.size == other.arch@.entry_size(layer));
+        assert(other.exists_dir_region_in_memory(layer, ptr, regions));
+        assert(self.directories_obey_invariant_at(layer, ptr, regions));
+        let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions);
+        assert(mem_partitions.len() == other.arch@.num_entries(layer));
+
+        assert(self.obtain_dir_region(layer, ptr, regions) === other.obtain_dir_region(layer, ptr, regions));
+        assert(seq_union(mem_partitions) === regions.remove(other.obtain_dir_region(layer, ptr, regions)));
+        assert((forall|i: nat, j: nat, r: MemRegion|
+                i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(r)
+                    ==> !(#[trigger] mem_partitions[j].contains(r))));
+        assert(self.directories_obey_invariant_at(layer, ptr, regions));
+        assert forall|i: nat|
+            i < other.arch@.num_entries(layer) implies {
+            let entry = #[trigger] other.view_at(layer, ptr, i, other.obtain_dir_region(layer, ptr, regions));
+            entry.is_Directory() ==> other.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i])
+        } by {
+            let entry = other.view_at(layer, ptr, i, other.obtain_dir_region(layer, ptr, regions));
+            assert(self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr, regions)) === other.view_at(layer, ptr, i, other.obtain_dir_region(layer, ptr, regions)));
+            if entry.is_Directory() {
+                // FIXME: Property of seq_union
+                assume(forall|r: MemRegion| #[trigger] mem_partitions[i].contains(r) ==> regions.contains(r));
+                self.lemma_inv_at_different_memory(other, layer + 1, entry.get_Directory_addr(), mem_partitions[i]);
+                assert(other.inv_at(layer + 1, entry.get_Directory_addr(), mem_partitions[i]));
+            }
+        };
+
+        assert(other.directories_obey_invariant_at(layer, ptr, regions));
+    }
+
+    proof fn lemma_interp_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, base_vaddr: nat, regions: Set<MemRegion>)
+        requires
+            self.inv_at(layer, ptr, regions),
+            other.memory.inv(),
+            self.arch@ === other.arch@,
+            forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.regions().contains(r) && other.memory.regions().contains(r),
+            forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.region_view(r) === other.memory.region_view(r),
+        ensures
+            self.interp_at(layer, ptr, base_vaddr, regions) === other.interp_at(layer, ptr, base_vaddr, regions),
+    {
+        self.lemma_inv_at_different_memory(other, layer, ptr, regions);
+        assume(false);
+    }
+
+    proof fn lemma_interp_at_aux_different_memory(self, other: PageTable, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, regions: Set<MemRegion>)
+        requires
+            self.inv_at(layer, ptr, regions),
+            other.memory.inv(),
+            self.arch@ === other.arch@,
+            forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.regions().contains(r) && other.memory.regions().contains(r),
+            forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.region_view(r) === other.memory.region_view(r),
+        ensures
+            self.interp_at_aux(layer, ptr, base_vaddr, init, regions) === other.interp_at_aux(layer, ptr, base_vaddr, init, regions),
+        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
+    {
+        self.lemma_inv_at_different_memory(other, layer, ptr, regions);
+        self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, init, regions);
+        if init.len() >= self.arch@.num_entries(layer) {
+        } else {
+            assert(self.directories_obey_invariant_at(layer, ptr, regions));
+            assert(other.directories_obey_invariant_at(layer, ptr, regions));
+            assert(self.obtain_dir_region(layer, ptr, regions) === other.obtain_dir_region(layer, ptr, regions));
+            assert(self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr, regions)) === other.view_at(layer, ptr, init.len(), other.obtain_dir_region(layer, ptr, regions)));
+            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr, regions)) {
+                GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                    let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
+                    assert(new_base_vaddr === other.arch@.entry_base(layer, base_vaddr, init.len()));
+                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions);
+                    assert(mem_partitions === other.obtain_mem_partitions(layer, ptr, regions));
+                    // assume(forall|r: MemRegion| #[trigger] mem_partitions[init.len()].contains(r) ==> regions.contains(r));
+                    // self.lemma_interp_at_aux_different_memory(other, layer + 1, dir_addr, new_base_vaddr, seq![], mem_partitions[init.len()]);
+                    // assert(self.interp_at_aux(layer + 1, dir_addr, new_base_vaddr, seq![], mem_partitions[init.len()]) === other.interp_at_aux(layer + 1, dir_addr, new_base_vaddr, seq![], mem_partitions[init.len()]));
+                    assert(self.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]) === other.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]));
+                    self.lemma_interp_at_aux_facts(layer + 1, dir_addr, new_base_vaddr, seq![], mem_partitions[init.len()]);
+                    // assume(false);
+                    l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]))
+                },
+                GhostPageDirectoryEntry::Page { addr, .. } =>
+                    l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
+                GhostPageDirectoryEntry::Empty =>
+                    l1::NodeEntry::Empty(),
+            };
+            let init_next = init.add(seq![entry]);
+
+            self.lemma_interp_at_aux_different_memory(other, layer, ptr, base_vaddr, init_next, regions);
+        }
     }
 
     proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat, regions: Set<MemRegion>)
@@ -599,9 +711,9 @@ impl PageTable {
                 forall|j: nat|
                     #![trigger res.entries.index(j)]
                     j < res.entries.len() ==>
-                    match self.view_at(layer, ptr, j, self.obtain_dir_region(layer, ptr)) {
+                    match self.view_at(layer, ptr, j, self.obtain_dir_region(layer, ptr, regions)) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
-                            let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
+                            let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions);
                             &&& res.entries.index(j).is_Directory()
                             &&& res.entries.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j), mem_partitions[j])
                         },
@@ -632,9 +744,9 @@ impl PageTable {
                 forall|j: nat|
                     #![trigger res.index(j)]
                     init.len() <= j && j < res.len() ==>
-                    match self.view_at(layer, ptr, j, self.obtain_dir_region(layer, ptr)) {
+                    match self.view_at(layer, ptr, j, self.obtain_dir_region(layer, ptr, regions)) {
                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
-                            let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
+                            let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions);
                             &&& res.index(j).is_Directory()
                             &&& res.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j), mem_partitions[j])
                         },
@@ -646,11 +758,11 @@ impl PageTable {
     {
         if init.len() >= self.arch@.num_entries(layer) {
         } else {
-            assert(self.directories_obey_invariant_at(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr))));
-            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr)) {
+            assert(self.directories_obey_invariant_at(layer, ptr, regions));
+            let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr, regions)) {
                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                     let new_base_vaddr = self.arch@.entry_base(layer, base_vaddr, init.len());
-                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions.remove(self.obtain_dir_region(layer, ptr)));
+                    let mem_partitions = self.obtain_mem_partitions(layer, ptr, regions);
                     l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, new_base_vaddr, mem_partitions[init.len()]))
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } =>
@@ -697,9 +809,9 @@ impl PageTable {
             if entry.is_dir(layer) {
                 assert(entry@.is_Directory());
                 let dir_addr = entry.address() as usize;
-                let mem_partitions: Ghost<Seq<Set<MemRegion>>> = ghost(self.obtain_mem_partitions(layer, ptr, regions@.remove(self.obtain_dir_region(layer, ptr))));
+                let mem_partitions: Ghost<Seq<Set<MemRegion>>> = ghost(self.obtain_mem_partitions(layer, ptr, regions@));
                 let dir_mem_regions: Ghost<Set<MemRegion>> = ghost(mem_partitions@[idx]);
-                assert(self.directories_obey_invariant_at(layer, ptr, regions@.remove(self.obtain_dir_region(layer, ptr))));
+                assert(self.directories_obey_invariant_at(layer, ptr, regions@));
                 proof {
                     assert(interp@.inv());
                     assert(interp@.directories_obey_invariant());
