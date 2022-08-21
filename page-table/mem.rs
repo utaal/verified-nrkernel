@@ -107,6 +107,7 @@ impl PageTableMemory {
         ensures
             self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(offset, region@.base)), value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
+            self.regions() === old(self).regions(),
             // self.spec_read(offset, region@) == value,
             // forall|offset2: nat| offset2 != offset ==> self.spec_read(offset2, region@) == old(self).spec_read(offset2, region@),
             // forall|offset2: nat, r: MemRegion| r !== region@ ==> self.spec_read(offset2, r) == old(self).spec_read(offset2, r),
