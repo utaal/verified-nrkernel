@@ -429,6 +429,8 @@ impl PageDirectoryEntry {
 pub struct PTDir {
     pub region: MemRegion,
     pub entries: Seq<Option<PTDir>>,
+    /// reflexive-transitive closure of `region` over `entries`
+    pub used_regions: Set<MemRegion>,
 }
 
 pub struct PageTable {
@@ -482,10 +484,7 @@ impl PageTable {
         }
     }
 
-    pub open spec fn ghost_pt_matches_structure(self, layer: nat, ptr: usize, pt: PTDir) -> bool
-        decreases (self.arch@.layers.len() - layer, 0nat)
-    {
-        decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer));
+    pub open spec fn ghost_pt_matches_structure(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
         forall|i: nat| #![trigger pt.entries.index(i), self.view_at(layer, ptr, i, pt)]
         i < self.arch@.num_entries(layer) ==> {
             let entry = self.view_at(layer, ptr, i, pt);
@@ -555,10 +554,41 @@ impl PageTable {
         &&& pt.region.contains(ptr)
         &&& self.layer_in_range(layer)
         &&& pt.entries.len() == self.arch@.num_entries(layer)
-        &&& self.ghost_pt_matches_structure(layer, ptr, pt)
         &&& self.directories_obey_invariant_at(layer, ptr, pt)
+        &&& self.ghost_pt_matches_structure(layer, ptr, pt)
+        &&& self.ghost_pt_used_regions_rtrancl(layer, ptr, pt)
+        &&& self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt)
+        &&& self.ghost_pt_region_notin_used_regions(layer, ptr, pt)
+        &&& pt.used_regions.subset_of(self.memory.regions())
     }
     
+    pub open spec fn ghost_pt_used_regions_pairwise_disjoint(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+        forall|i: nat, j: nat, r: MemRegion|
+            i != j &&
+            i < pt.entries.len() && pt.entries[i].is_Some() &&
+            #[trigger] pt.entries[i].get_Some_0().used_regions.contains(r) &&
+            j < pt.entries.len() && pt.entries[j].is_Some()
+            ==> !(#[trigger] pt.entries[j].get_Some_0().used_regions.contains(r))
+    }
+
+    pub open spec fn ghost_pt_region_notin_used_regions(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+        forall|i: nat|
+            i < pt.entries.len() && pt.entries[i].is_Some()
+            ==> !(#[trigger] pt.entries[i].get_Some_0().used_regions.contains(pt.region))
+    }
+
+    pub open spec fn ghost_pt_used_regions_rtrancl(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+        // reflexive
+        &&& pt.used_regions.contains(pt.region)
+        // TODO: May not be necessary. Technically it's already implied by "memory contains pt.region" in the main invariant
+        // &&& (forall|r: MemRegion| pt.used_regions.contains(r) ==> #[trigger] self.memory.regions().contains(r))
+        // transitive
+        &&& forall|i: nat, r: MemRegion| #![trigger pt.entries.index(i).get_Some_0().used_regions.contains(r), pt.used_regions.contains(r)]
+                i < pt.entries.len() && pt.entries[i].is_Some() &&
+                pt.entries[i].get_Some_0().used_regions.contains(r)
+                ==> pt.used_regions.contains(r)
+    }
+
     pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir) -> l1::Directory
         decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 1nat)
     {
@@ -885,7 +915,8 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec, pt: Ghost<PTDir>) -> (res: (Result<Ghost<PTDir>,()>))
+    fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec, pt: Ghost<PTDir>)
+        -> (res: (Result<Ghost<(PTDir,Set<MemRegion>)>,()>))
         requires
             old(self).inv_at(layer, ptr, pt@),
             old(self).interp_at(layer, ptr, base, pt@).inv(),
@@ -895,16 +926,31 @@ impl PageTable {
             base <= vaddr < MAX_BASE,
             // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
         ensures
-            // We only add regions
-            forall|r: MemRegion| old(self).memory.regions().contains(r) ==> self.memory.regions().contains(r),
-            // If error, unchanged
-            res.is_Err() ==> self === old(self),
-            // Invariant preserved
-            res.is_Ok() ==> self.inv_at(layer, ptr, res.get_Ok_0()@),
+            match res {
+                Ok(resv) => {
+                    let (pt_res, new_regions) = resv@;
+                    // We return the regions that we added
+                    &&& self.memory.regions() === old(self).memory.regions().union(new_regions)
+                    &&& pt_res.used_regions === pt@.used_regions.union(new_regions)
+                    // only those we added
+                    &&& (forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)))
+                    &&& (forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)))
+                    // Invariant preserved
+                    &&& self.inv_at(layer, ptr, pt_res)
+                },
+                Err(e) => {
+                    // If error, unchanged
+                    &&& self === old(self)
+                },
+            },
+            // We only touch regions in pt.used_regions
+            forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r),
             // Refinement of l1
             match res {
-                Ok(res_pt) =>
-                    Ok(self.interp_at(layer, ptr, base, res_pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@),
+                Ok(resv) => {
+                    let (pt_res, new_regions) = resv@;
+                    Ok(self.interp_at(layer, ptr, base, pt_res)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@)
+                },
                 Err(e) =>
                     Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@),
             },
@@ -943,23 +989,34 @@ impl PageTable {
                     let dir_pt: Ghost<PTDir> = ghost(pt@.entries[idx].get_Some_0());
                     assert(self.directories_obey_invariant_at(layer, ptr, pt@));
                     match self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame, dir_pt) {
-                        Ok(dir_pt_res) => {
+                        Ok(rec_res) => {
+                            let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
+                            let new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
+                            assert(dir_pt_res@.used_regions === dir_pt@.used_regions.union(new_regions@));
+                            assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] dir_pt@.used_regions.contains(r)));
                             assert(self.inv_at((layer + 1) as nat, dir_addr, dir_pt_res@));
                             assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@))
                                    === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, frame@));
-                            let pt_res: Ghost<PTDir> = ghost(PTDir { region: pt@.region, entries: pt@.entries.update(idx, Some(dir_pt_res@)) });
+                            let pt_res: Ghost<PTDir> = ghost(
+                                PTDir {
+                                    region: pt@.region,
+                                    entries: pt@.entries.update(idx, Some(dir_pt_res@)),
+                                    used_regions: pt@.used_regions.union(new_regions@),
+                                });
 
+                            let ptrg: Ghost<usize> = ghost(ptr);
                             assert forall|i: nat| i < self.arch@.num_entries(layer)
                                 implies {
                                     let entry = self.view_at(layer, ptr, i, pt_res@);
                                     entry.is_Directory() == (#[trigger] pt_res@.entries.index(i)).is_Some()
                                 }
                             by {
+                                let byte_addr = (ptrg@ + i * ENTRY_BYTES) as nat;
+                                let word_addr = word_index_spec(sub(byte_addr, pt_res@.region.base));
                                 // FIXME:
-                                assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt_res@.region).len());
-                                // FIXME: Recursive call doesn't touch this region
-                                assume(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
-                                let entry = self.view_at(layer, ptr, i, pt_res@);
+                                assume(word_addr < self.memory.region_view(pt_res@.region).len());
+                                assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
+                                let entry = self.view_at(layer, ptrg@, i, pt_res@);
                                 if i == idxg@ {
                                     assert(i < pt_res@.entries.len());
                                     assert(pt_res@.entries[i].is_Some());
@@ -980,10 +1037,11 @@ impl PageTable {
                             }
                             by {
                                 let entry = #[trigger] self.view_at(layer, ptr, i, pt_res@);
+                                let byte_addr = (ptrg@ + i * ENTRY_BYTES) as nat;
+                                let word_addr = word_index_spec(sub(byte_addr, pt_res@.region.base));
                                 // FIXME:
-                                assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt_res@.region).len());
-                                // FIXME: Recursive call doesn't touch this region
-                                assume(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
+                                assume(word_addr < self.memory.region_view(pt_res@.region).len());
+                                assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
                                 if i == idxg@ {
                                     assert(pt_res@.entries[i].get_Some_0() === dir_pt_res@);
                                     assert(entry.get_Directory_addr() === dir_addr);
@@ -1003,11 +1061,24 @@ impl PageTable {
                             };
                             assert(self.directories_obey_invariant_at(layer, ptr, pt_res@));
 
+                            assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt_res@));
+                            assume(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
+                            assume(self.ghost_pt_region_notin_used_regions(layer, ptr, pt_res@));
+
                             assert(self.inv_at(layer, ptr, pt_res@));
 
                             assume(Ok(self.interp_at(layer, ptr, base, pt_res@))
                                    === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
-                            Ok(pt_res)
+                            assert(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
+
+                            // posts
+                            assert(self.memory.regions() === old(self).memory.regions().union(new_regions@));
+                            assert(pt_res@.used_regions === pt@.used_regions.union(new_regions@));
+                            assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
+                            assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+
+                            let res: Ghost<(PTDir,Set<MemRegion>)> = ghost((pt_res@,new_regions@));
+                            Ok(res)
                         },
                         Err(e) => {
                             assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
@@ -1038,17 +1109,19 @@ impl PageTable {
                 assume(pt@.region.contains(write_addr));
                 let pwmem: Ghost<mem::PageTableMemory> = ghost(self.memory);
                 self.memory.write(write_addr, ghost(pt@.region), new_page_entry.entry);
-                // FIXME: 
                 assert(self.memory.region_view(pt@.region) === pwmem@.region_view(pt@.region).update(word_addr@, new_page_entry.entry));
 
+                let ptrg: Ghost<usize> = ghost(ptr);
                 assert forall|i: nat| i < self.arch@.num_entries(layer)
                     implies {
                         let entry = #[trigger] self.view_at(layer, ptr, i, pt@);
                         entry.is_Directory() == pt@.entries[i].is_Some()
                     }
                 by {
+                    let byte_addr = (ptrg@ + i * ENTRY_BYTES) as nat;
+                    let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
                     // FIXME:
-                    assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt@.region).len());
+                    assume(word_addr < self.memory.region_view(pt@.region).len());
                     let entry = self.view_at(layer, ptr, i, pt@);
                     if i == idxg@ {
                         assert(entry === new_page_entry@);
@@ -1083,17 +1156,39 @@ impl PageTable {
                     }
                 };
                 assert(self.directories_obey_invariant_at(layer, ptr, pt@));
+
+                assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt@));
+                assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt@));
+
                 assert(self.inv_at(layer, ptr, pt@));
 
                 // FIXME: need lemma that shows interp of other (unchanged) entries is equal
                 assume(Ok(self.interp_at(layer, ptr, base, pt@))
                        === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
-                Ok(pt)
+
+                // posts
+                assert(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
+                proof {
+                    assert_sets_equal!(self.memory.regions(), old(self).memory.regions().union(set![]));
+                    assert(self.memory.regions() === old(self).memory.regions().union(set![]));
+                    // FIXME: this shouldn't be hard but it is
+                    // assert_sets_equal!(pt.view().used_regions, pt.view().used_regions.union(set![]));
+                    assume(pt@.used_regions === pt@.used_regions.union(set![]));
+                }
+                assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
+                assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+
+                Ok(ghost((pt@, set![])))
             } else {
                 let new_dir_region = self.memory.alloc_page();
                 let new_dir_ptr = new_dir_region.base;
                 let new_dir_ptr_u64 = new_dir_ptr as u64;
-                let new_dir_pt: Ghost<PTDir> = ghost(PTDir { region: new_dir_region@, entries: new_seq::<Option<PTDir>>(self.arch@.num_entries(layer), None) });
+                let new_dir_pt: Ghost<PTDir> = ghost(
+                    PTDir {
+                        region: new_dir_region@,
+                        entries: new_seq::<Option<PTDir>>(self.arch@.num_entries(layer), None),
+                        used_regions: set![new_dir_region@],
+                    });
                 proof {
                     lemma_page_aligned_implies_mask_dir_addr_is_identity();
                     assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
@@ -1120,13 +1215,29 @@ impl PageTable {
                 assume(new_dir_interp@ === interp@.new_empty_dir(idx));
                 assert(new_dir_interp@.inv());
                 match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame, new_dir_pt) {
-                    Ok(dir_pt_res) => {
-                        let pt_res: Ghost<PTDir> = ghost(PTDir { region: pt@.region, entries: pt@.entries.update(idx, Some(dir_pt_res@)) });
+                    Ok(rec_res) => {
+                        let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
+                        let dir_new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
+                        let pt_res: Ghost<PTDir> = ghost(
+                            PTDir {
+                                region: pt@.region,
+                                entries: pt@.entries.update(idx, Some(dir_pt_res@)),
+                                used_regions: pt@.used_regions.union(dir_new_regions@),
+                            });
                         // FIXME:
                         assume(self.inv_at(layer, ptr, pt_res@));
                         assume(Ok(self.interp_at(layer, ptr, base, pt_res@))
                                === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
-                        Ok(pt_res)
+
+
+                        let new_regions: Ghost<Set<MemRegion>> = ghost(dir_new_regions@.insert(new_dir_region@));
+                        // posts
+                        assume(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
+                        assume(self.memory.regions() === old(self).memory.regions().union(new_regions@));
+                        assume(pt_res@.used_regions === pt@.used_regions.union(new_regions@));
+                        assume(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
+                        assume(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+                        Ok(ghost((pt_res@, new_regions@)))
                     },
                     Err(e) => {
                         assert(false); // We always successfully insert into an empty directory
@@ -1149,8 +1260,10 @@ impl PageTable {
         proof { ambient_arith(); }
         let (cr3_region, cr3) = self.memory.cr3();
         match self.map_frame_aux(0, cr3, 0, vaddr, frame, self.ghost_pt) {
-            Ok(res_pt) => {
-                self.ghost_pt = res_pt;
+            Ok(res) => {
+                let pt_res: Ghost<PTDir> = ghost(res@.0);
+                let new_regions: Ghost<Set<MemRegion>> = ghost(res@.1);
+                self.ghost_pt = pt_res;
                 Ok(())
             },
             Err(e) => Err(e),
