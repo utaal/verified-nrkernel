@@ -637,60 +637,56 @@ impl PageTable {
         self.interp_at(0, cr3, 0, self.ghost_pt@)
     }
 
-    // proof fn lemma_inv_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, region: MemRegion)
-    //     requires
-    //         self.inv_at(layer, ptr, region),
-    //         other.memory.inv(),
-    //         self.arch@ === other.arch@,
-    //         // Memory structure of self and other matches for any regions in this region's
-    //         // transitive closure
-    //         forall|r: MemRegion| self.mem_rtrancl@[region].contains(r) ==> self.mem_rtrancl@[r] === #[trigger] other.mem_rtrancl@.index(r),
-    //         forall|r: MemRegion| self.mem_rtrancl@[region].contains(r) ==> self.mem_structure@[r] === #[trigger] other.mem_structure@.index(r),
-    //         // Memory is the same for all regions in this region's transitive closure
-    //         forall|r: MemRegion| #[trigger] self.mem_rtrancl@[region].contains(r) ==> self.memory.regions().contains(r) && other.memory.regions().contains(r),
-    //         forall|r: MemRegion| #[trigger] self.mem_rtrancl@[region].contains(r) ==> self.memory.region_view(r) === other.memory.region_view(r),
-    //         // The domain of self's memory is a subset of other's memory (TODO: this makes deallocation impossible)
-    //         forall|r: MemRegion| self.mem_structure@.dom().contains(r) ==> other.mem_structure@.dom().contains(r),
-    //         forall|r: MemRegion| self.mem_rtrancl@.dom().contains(r) ==> other.mem_rtrancl@.dom().contains(r),
-    //     ensures
-    //         other.inv_at(layer, ptr, region),
-    //     decreases self.arch@.layers.len() - layer
-    // {
-    //     assert(self.well_formed(layer, ptr));
-    //     assert(self.memory.inv());
-    //     assert(region.contains(ptr));
-    //     assert(self.memory.regions().contains(region));
-    //     assert(self.mem_structure@.dom().contains(region));
-    //     assert(self.mem_rtrancl_is_rtrancl(layer, ptr, region));
-    //     assert(self.layer_in_range(layer));
-    //     assert(self.directories_obey_invariant_at(layer, ptr, region));
+    proof fn lemma_inv_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            self.arch@ === other.arch@,
+            forall|r: MemRegion| pt.used_regions.contains(r)
+                ==> #[trigger] self.memory.region_view(r) === other.memory.region_view(r),
+            // Some parts of other's invariant that we should already know
+            other.memory.inv(),
+            other.memory.regions().contains(pt.region),
+            pt.used_regions.subset_of(other.memory.regions()),
+        ensures
+            other.inv_at(layer, ptr, pt),
+        decreases self.arch@.layers.len() - layer
+    {
+        assert(other.well_formed(layer, ptr));
+        assert(other.memory.inv());
+        assert(other.memory.regions().contains(pt.region));
+        assert(pt.region.contains(ptr));
+        assert(other.layer_in_range(layer));
+        assert(pt.entries.len() == other.arch@.num_entries(layer));
+        assert(other.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
+        assert(other.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
+        assert(other.ghost_pt_region_notin_used_regions(layer, ptr, pt));
+        assert(pt.used_regions.subset_of(other.memory.regions()));
 
-    //     assert(other.well_formed(layer, ptr));
-    //     assert(other.memory.inv());
-    //     assert(region.contains(ptr));
-    //     assert(other.memory.regions().contains(region));
-    //     assert(other.mem_structure@.dom().contains(region));
+        assert forall|i: nat|
+        i < other.arch@.num_entries(layer) implies {
+            let entry = #[trigger] other.view_at(layer, ptr, i, pt);
+            &&& entry.is_Directory() == pt.entries[i].is_Some()
+            &&& entry.is_Directory() ==> other.inv_at(layer + 1, entry.get_Directory_addr(), pt.entries[i].get_Some_0())
+        } by
+        {
+            let entry = other.view_at(layer, ptr, i, pt);
+            assert(entry === self.view_at(layer, ptr, i, pt));
+            assert(entry.is_Directory() == pt.entries[i].is_Some());
+            if entry.is_Directory() {
+                let entry_pt = pt.entries[i].get_Some_0();
+                assert(self.directories_obey_invariant_at(layer, ptr, pt));
+                assert(self.inv_at(layer + 1, entry.get_Directory_addr(), entry_pt));
+                assert(self.ghost_pt_used_regions_rtrancl(layer + 1, entry.get_Directory_addr(), entry_pt));
+                assert(pt.used_regions.contains(entry_pt.region));
+                assert(other.memory.regions().contains(entry_pt.region));
+                self.lemma_inv_at_different_memory(other, layer + 1, entry.get_Directory_addr(), entry_pt);
+                assert(other.inv_at(layer + 1, entry.get_Directory_addr(), entry_pt));
+            }
+        };
 
-    //     assert(other.mem_rtrancl@.dom().contains(region));
-    //     assert(other.mem_rtrancl@[region].contains(region));
-    //     assert forall|i: nat, r: MemRegion| i < other.arch@.num_entries(layer) implies {
-    //         let entry = #[trigger] other.view_at(layer, ptr, i, region);
-    //         let dir_region = other.mem_structure@[region][i];
-    //         entry.is_Directory() && other.mem_rtrancl@[dir_region].contains(r)
-    //             ==> #[trigger] other.mem_rtrancl@[region].contains(r)
-    //     } by {
-    //         let entry = other.view_at(layer, ptr, i, region);
-    //         let dir_region = other.mem_structure@[region][i];
-    //         if entry.is_Directory() && other.mem_rtrancl@[dir_region].contains(r) {
-    //             assert(self.mem_rtrancl@[dir_region].contains(r));
-    //             self.lemma_inv_at_different_memory(other, layer + 1, entry.get_Directory_addr(), dir_region);
-    //             assert(other.mem_rtrancl@[region].contains(r));
-    //         }
-    //     };
-    //     assert(other.mem_rtrancl_is_rtrancl(layer, ptr, region));
-    //     assert(other.layer_in_range(layer));
-    //     assert(other.directories_obey_invariant_at(layer, ptr, region));
-    // }
+        assert(other.ghost_pt_matches_structure(layer, ptr, pt));
+        assert(other.directories_obey_invariant_at(layer, ptr, pt));
+    }
 
     // proof fn lemma_interp_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, base_vaddr: nat)
     //     requires
@@ -1029,6 +1025,10 @@ impl PageTable {
                             };
                             assert(self.ghost_pt_matches_structure(layer, ptr, pt_res@));
 
+                            assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt_res@));
+                            assert(self.ghost_pt_region_notin_used_regions(layer, ptr, pt_res@));
+                            assume(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
+
                             assert forall|i: nat| i < self.arch@.num_entries(layer) implies {
                                 let entry = #[trigger] self.view_at(layer, ptr, i, pt_res@);
                                 entry.is_Directory() ==> {
@@ -1052,18 +1052,17 @@ impl PageTable {
                                     assert(entry === old(self).view_at(layer, ptr, i, pt@));
                                     assert(entry === old(self).view_at(layer, ptr, i, pt_res@));
                                     if entry.is_Directory() {
-                                        // assert(old(self).inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0()));
-                                        // FIXME: need lemma that re-establishes invariant when only another
-                                        // entry changed
-                                        assume(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0()));
+                                        assert(old(self).inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i].get_Some_0()));
+                                        assert(forall|r: MemRegion| pt_res@.entries[i].get_Some_0().used_regions.contains(r)
+                                               ==> #[trigger] self.memory.region_view(r) === old(self).memory.region_view(r));
+                                        assert(pt_res@.entries[i].is_Some());
+                                        assert(pt_res@.entries[i].get_Some_0().used_regions === pt@.entries[i].get_Some_0().used_regions);
+                                        old(self).lemma_inv_at_different_memory(*self, (layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i].get_Some_0());
+                                        assert(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0()));
                                     }
                                 }
                             };
                             assert(self.directories_obey_invariant_at(layer, ptr, pt_res@));
-
-                            assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt_res@));
-                            assume(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
-                            assume(self.ghost_pt_region_notin_used_regions(layer, ptr, pt_res@));
 
                             assert(self.inv_at(layer, ptr, pt_res@));
 
