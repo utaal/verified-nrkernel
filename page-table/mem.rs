@@ -103,7 +103,7 @@ impl PageTableMemory {
             old(self).inv(),
             old(self).regions().contains(region@),
             region@.contains(offset),
-            // word_index_spec(offset) < old(self)@.len(),
+            0 <= word_index_spec(sub(offset, region@.base)) < old(self).region_view(region@).len(),
         ensures
             self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(offset, region@.base)), value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),

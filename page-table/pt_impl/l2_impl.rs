@@ -486,8 +486,9 @@ impl PageTable {
         decreases (self.arch@.layers.len() - layer, 0nat)
     {
         decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer));
-        forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-            let entry = #[trigger] self.view_at(layer, ptr, i, pt);
+        forall|i: nat| #![trigger pt.entries.index(i), self.view_at(layer, ptr, i, pt)]
+        i < self.arch@.num_entries(layer) ==> {
+            let entry = self.view_at(layer, ptr, i, pt);
             entry.is_Directory() == pt.entries[i].is_Some()
         }
     }
@@ -550,9 +551,10 @@ impl PageTable {
     {
         &&& self.well_formed(layer, ptr)
         &&& self.memory.inv()
-        &&& pt.region.contains(ptr)
         &&& self.memory.regions().contains(pt.region)
+        &&& pt.region.contains(ptr)
         &&& self.layer_in_range(layer)
+        &&& pt.entries.len() == self.arch@.num_entries(layer)
         &&& self.ghost_pt_matches_structure(layer, ptr, pt)
         &&& self.directories_obey_invariant_at(layer, ptr, pt)
     }
@@ -893,6 +895,8 @@ impl PageTable {
             base <= vaddr < MAX_BASE,
             // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
         ensures
+            // We only add regions
+            forall|r: MemRegion| old(self).memory.regions().contains(r) ==> self.memory.regions().contains(r),
             // If error, unchanged
             res.is_Err() ==> self === old(self),
             // Invariant preserved
@@ -944,8 +948,63 @@ impl PageTable {
                             assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@))
                                    === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, frame@));
                             let pt_res: Ghost<PTDir> = ghost(PTDir { region: pt@.region, entries: pt@.entries.update(idx, Some(dir_pt_res@)) });
-                            // FIXME:
-                            assume(self.inv_at(layer, ptr, pt_res@));
+
+                            assert forall|i: nat| i < self.arch@.num_entries(layer)
+                                implies {
+                                    let entry = self.view_at(layer, ptr, i, pt_res@);
+                                    entry.is_Directory() == (#[trigger] pt_res@.entries.index(i)).is_Some()
+                                }
+                            by {
+                                // FIXME:
+                                assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt_res@.region).len());
+                                // FIXME: Recursive call doesn't touch this region
+                                assume(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
+                                let entry = self.view_at(layer, ptr, i, pt_res@);
+                                if i == idxg@ {
+                                    assert(i < pt_res@.entries.len());
+                                    assert(pt_res@.entries[i].is_Some());
+                                    assert(entry.is_Directory());
+                                } else {
+                                    assert(pt@.entries[i] === pt_res@.entries[i]);
+                                    assert(entry === old(self).view_at(layer, ptr, i, pt@));
+                                    assert(entry.is_Directory() == pt_res@.entries[i].is_Some());
+                                }
+                            };
+                            assert(self.ghost_pt_matches_structure(layer, ptr, pt_res@));
+
+                            assert forall|i: nat| i < self.arch@.num_entries(layer) implies {
+                                let entry = #[trigger] self.view_at(layer, ptr, i, pt_res@);
+                                entry.is_Directory() ==> {
+                                    &&& self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0())
+                                }
+                            }
+                            by {
+                                let entry = #[trigger] self.view_at(layer, ptr, i, pt_res@);
+                                // FIXME:
+                                assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt_res@.region).len());
+                                // FIXME: Recursive call doesn't touch this region
+                                assume(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
+                                if i == idxg@ {
+                                    assert(pt_res@.entries[i].get_Some_0() === dir_pt_res@);
+                                    assert(entry.get_Directory_addr() === dir_addr);
+                                    assert(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0()));
+                                } else {
+                                    assert(old(self).directories_obey_invariant_at(layer, ptr, pt@));
+                                    assert(pt@.entries[i] === pt_res@.entries[i]);
+                                    assert(entry === old(self).view_at(layer, ptr, i, pt@));
+                                    assert(entry === old(self).view_at(layer, ptr, i, pt_res@));
+                                    if entry.is_Directory() {
+                                        // assert(old(self).inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0()));
+                                        // FIXME: need lemma that re-establishes invariant when only another
+                                        // entry changed
+                                        assume(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_res@.entries[i].get_Some_0()));
+                                    }
+                                }
+                            };
+                            assert(self.directories_obey_invariant_at(layer, ptr, pt_res@));
+
+                            assert(self.inv_at(layer, ptr, pt_res@));
+
                             assume(Ok(self.interp_at(layer, ptr, base, pt_res@))
                                    === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
                             Ok(pt_res)
@@ -974,14 +1033,13 @@ impl PageTable {
                 assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
                 // assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
                 let write_addr = ptr + idx * ENTRY_BYTES;
+                let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
+                assume(word_addr@ < self.memory.region_view(pt@.region).len());
                 assume(pt@.region.contains(write_addr));
                 let pwmem: Ghost<mem::PageTableMemory> = ghost(self.memory);
                 self.memory.write(write_addr, ghost(pt@.region), new_page_entry.entry);
-                let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
+                // FIXME: 
                 assert(self.memory.region_view(pt@.region) === pwmem@.region_view(pt@.region).update(word_addr@, new_page_entry.entry));
-                // FIXME: these should trivially follow from update, how is that even axiomatized?
-                assume(self.memory.region_view(pt@.region)[word_addr@] === new_page_entry.entry);
-                assume(forall|addr| #![auto] addr != word_addr@ ==> self.memory.region_view(pt@.region)[addr] === pwmem@.region_view(pt@.region)[addr]);
 
                 assert forall|i: nat| i < self.arch@.num_entries(layer)
                     implies {
@@ -989,6 +1047,8 @@ impl PageTable {
                         entry.is_Directory() == pt@.entries[i].is_Some()
                     }
                 by {
+                    // FIXME:
+                    assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt@.region).len());
                     let entry = self.view_at(layer, ptr, i, pt@);
                     if i == idxg@ {
                         assert(entry === new_page_entry@);
@@ -1010,6 +1070,8 @@ impl PageTable {
                         assert(!entry.is_Directory());
                         // assert(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i].get_Some_0()));
                     } else {
+                        // FIXME:
+                        assume(((ptr + i * ENTRY_BYTES) as nat) < self.memory.region_view(pt@.region).len());
                         assert(old(self).directories_obey_invariant_at(layer, ptr, pt@));
                         assert(entry === old(self).view_at(layer, ptr, i, pt@));
                         if entry.is_Directory() {
@@ -1041,7 +1103,10 @@ impl PageTable {
                 assert(aligned((ptr + idx * ENTRY_BYTES) as nat, 8));
                 // assume(word_index_spec((ptr + idx * ENTRY_BYTES) as nat) < self.memory@.len());
                 assume(pt@.region.contains((ptr + idx * ENTRY_BYTES) as nat));
-                self.memory.write(ptr + idx * ENTRY_BYTES, ghost(pt@.region), new_dir_entry.entry);
+                let write_addr = ptr + idx * ENTRY_BYTES;
+                let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
+                assume(word_addr@ < self.memory.region_view(pt@.region).len());
+                self.memory.write(write_addr, ghost(pt@.region), new_dir_entry.entry);
 
                 // Gerd:
                 // Proof sketch:
