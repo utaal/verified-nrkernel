@@ -8,6 +8,7 @@ use option::{*, Option::*};
 use map::*;
 use set::*;
 use set_lib::*;
+use seq_lib::*;
 use vec::*;
 use crate::lib_axiom::*;
 
@@ -1070,6 +1071,7 @@ impl PageTable {
 
                             assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@)) by
                             {
+                                self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt_res@);
                                 assert(pt_res@.region === pt@.region);
                                 // recursive postcondition:
                                 assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@))
@@ -1081,17 +1083,28 @@ impl PageTable {
 
                                 assert(forall|i: nat| i < self.arch@.num_entries(layer) && i != idxg@ ==> pt@.entries[i] === pt_res@.entries[i]);
 
-                                self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt_res@);
+                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@]
+                                       === l1::NodeEntry::Directory(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@)));
+                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@]
+                                       === l1::NodeEntry::Directory(old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, frame@).get_Ok_0()));
+
+
                                 assert forall|i: nat|
                                     i < old(self).arch@.num_entries(layer) && i != idxg@
                                     implies
-                                    self.interp_at_aux(layer, ptr, base, seq![], pt_res@)[i] === old(self).interp_at_aux(layer, ptr, base, seq![], pt@)[i] by
+                                        self.interp_at(layer, ptr, base, pt_res@).entries.index(i)
+                                        === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries.index(i) by
                                 {
+                                    assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).is_Ok());
+                                    assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
                                     assert(self.interp_at(layer, ptr, base, pt_res@).entries.index(i) === self.interp_at_entry(layer, ptr, base, i, pt_res@));
                                     assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
-                                    assume(false);
+                                    assume(self.interp_at_entry(layer, ptr, base, i, pt_res@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                                 };
-                                assume(false);
+
+                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[idxg@]);
+                                assert_seqs_equal!(self.interp_at(layer, ptr, base, pt_res.view()).entries, old(self).interp_at(layer, ptr, base, pt.view()).map_frame(vaddr, frame.view()).get_Ok_0().entries);
+                                assert(self.interp_at(layer, ptr, base, pt_res@).entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries);
                                 assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
                             };
 
