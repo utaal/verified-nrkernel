@@ -727,10 +727,6 @@ impl PageTable {
                 assert forall|i: nat| i < self.arch@.num_entries(next_layer) implies
                     self.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt)
                         === other.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt)
-                    // && self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries[i]
-                    //     === self.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt)
-                    // && other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries[i]
-                    //     === other.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt) by
                     && #[trigger] self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries.index(i)
                         === other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries.index(i) by
                 {
@@ -1018,8 +1014,48 @@ impl PageTable {
 
                             assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt_res@));
                             assert(self.ghost_pt_region_notin_used_regions(layer, ptr, pt_res@));
-                            // FIXME:
-                            assume(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
+                            assert forall|i: nat, j: nat, r: MemRegion|
+                                i != j &&
+                                i < pt_res@.entries.len() && pt_res@.entries[i].is_Some() &&
+                                #[trigger] pt_res@.entries[i].get_Some_0().used_regions.contains(r) &&
+                                j < pt_res@.entries.len() && pt_res@.entries[j].is_Some()
+                                implies !(#[trigger] pt_res@.entries[j].get_Some_0().used_regions.contains(r)) by
+                            {
+                                assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt@));
+                                if j == idxg@ {
+                                    assert(pt_res@.entries[j].get_Some_0() === dir_pt_res@);
+                                    assert(pt_res@.entries[i] === pt@.entries[i]);
+                                    if new_regions@.contains(r) {
+                                        assert(!dir_pt@.used_regions.contains(r));
+                                        assert(!old(self).memory.regions().contains(r));
+                                        assert(!dir_pt_res@.used_regions.contains(r));
+                                    } else {
+                                        if dir_pt@.used_regions.contains(r) {
+                                            assert(pt@.used_regions.contains(r));
+                                            assert(old(self).memory.regions().contains(r));
+                                            assert(!dir_pt_res@.used_regions.contains(r));
+                                        }
+                                    }
+                                } else {
+                                    if i == idxg@ {
+                                        assert(pt_res@.entries[i].get_Some_0() === dir_pt_res@);
+                                        assert(pt_res@.entries[j] === pt@.entries[j]);
+                                        if new_regions@.contains(r) {
+                                            assert(dir_pt_res@.used_regions.contains(r));
+                                            assert(!dir_pt@.used_regions.contains(r));
+                                            assert(!old(self).memory.regions().contains(r));
+                                            assert(!pt@.entries[j].get_Some_0().used_regions.contains(r));
+                                        } else {
+                                            assert(dir_pt@.used_regions.contains(r));
+                                            assert(!pt@.entries[j].get_Some_0().used_regions.contains(r));
+                                        }
+                                    } else {
+                                        assert(pt_res@.entries[i] === pt@.entries[i]);
+                                        assert(pt_res@.entries[j] === pt@.entries[j]);
+                                    }
+                                }
+                            };
+                            assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
 
                             assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
                             assert forall|i: nat| i < self.arch@.num_entries(layer) implies {
@@ -1178,11 +1214,8 @@ impl PageTable {
                     } else {
                         assert(old(self).directories_obey_invariant_at(layer, ptr, pt@));
                         assert(entry === old(self).view_at(layer, ptr, i, pt@));
-                        assert(pt@.entries[i] === pt@.entries[i]);
                         if entry.is_Directory() {
                             assert(old(self).inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i].get_Some_0()));
-                            // FIXME: need lemma that re-establishes invariant when only another
-                            // entry changed
                             assert(pt@.entries[i].is_Some());
                             assert(forall|r: MemRegion| pt@.entries[i].get_Some_0().used_regions.contains(r)
                                    ==> #[trigger] self.memory.region_view(r) === old(self).memory.region_view(r));
@@ -1205,11 +1238,13 @@ impl PageTable {
                 // posts
                 assert(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
                 proof {
-                    assert_sets_equal!(self.memory.regions(), old(self).memory.regions().union(set![]));
-                    assert(self.memory.regions() === old(self).memory.regions().union(set![]));
-                    // FIXME: this shouldn't be hard but it is
+                    // assert_sets_equal!(self.memory.regions(), old(self).memory.regions().union(set![]));
+                    // assert(self.memory.regions() === old(self).memory.regions().union(set![]));
                     // assert_sets_equal!(pt.view().used_regions, pt.view().used_regions.union(set![]));
-                    assume(pt@.used_regions === pt@.used_regions.union(set![]));
+                    // assert(pt@.used_regions === pt@.used_regions.union(set![]));
+                    // Asserting this inline is slow for some reason
+                    lemma_set_union_empty_equals_set::<MemRegion>(self.memory.regions());
+                    lemma_set_union_empty_equals_set::<MemRegion>(pt.view().used_regions);
                 }
                 assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
                 assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
@@ -1305,6 +1340,13 @@ impl PageTable {
             Err(e) => Err(e),
         }
     }
+}
+
+pub proof fn lemma_set_union_empty_equals_set<T>(s: Set<T>)
+    ensures
+        s.union(set![]) === s
+{
+    assert_sets_equal!(s.union(set![]), s);
 }
 
 }
