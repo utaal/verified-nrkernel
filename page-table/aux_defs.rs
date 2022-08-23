@@ -44,11 +44,11 @@ pub proof fn lemma_new_seq<T>(i: nat, e: T)
     }
 }
 
-pub open spec fn seq_union<T>(seq: Seq<Set<T>>) -> Set<T>
-    decreases seq.len()
-{
-    seq[0].union(seq_union::<T>(seq.subrange(1,seq.len())))
-}
+// pub open spec fn seq_union<T>(seq: Seq<Set<T>>) -> Set<T>
+//     decreases seq.len()
+// {
+//     seq[0].union(seq_union::<T>(seq.subrange(1,seq.len())))
+// }
 
 #[derive(PartialEq, Eq, Structural)]
 pub struct MemRegion { pub base: nat, pub size: nat }
@@ -266,15 +266,15 @@ pub const MAXPHYADDR_BITS: u64 = 52;
 // spec const MAXPHYADDR: nat      = ((1u64 << 52u64) - 1u64) as nat;
 // TODO: Probably easier to use computed constant because verus can't deal with the shift except in
 // bitvector assertions.
-pub const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
+pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
 
 pub const ENTRY_BYTES: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
-pub const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
-pub const MAX_NUM_LAYERS:   nat = 4;
-pub const MAX_NUM_ENTRIES:  nat = 512;
-pub const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
+pub spec const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
+pub spec const MAX_NUM_LAYERS:   nat = 4;
+pub spec const MAX_NUM_ENTRIES:  nat = 512;
+pub spec const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
 
 // Sometimes z3 needs these concrete bounds to prove the no-overflow VC
 pub proof fn overflow_bounds()

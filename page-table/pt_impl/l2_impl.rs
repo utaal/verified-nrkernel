@@ -704,7 +704,7 @@ impl PageTable {
             self.inv_at(layer, ptr, pt1),
             other.inv_at(layer, ptr, pt2),
             self.arch@ === other.arch@,
-            self.memory.region_view(pt1.region) === other.memory.region_view(pt2.region),
+            self.memory.spec_read(ptr as nat + idx * ENTRY_BYTES, pt1.region) === other.memory.spec_read(ptr as nat + idx * ENTRY_BYTES, pt2.region),
             pt2.entries[idx].is_Some() ==> (forall|r: MemRegion| pt2.entries[idx].get_Some_0().used_regions.contains(r)
                 ==> #[trigger] self.memory.region_view(r) === other.memory.region_view(r)),
         ensures
@@ -1108,12 +1108,6 @@ impl PageTable {
 
                                 assert(forall|i: nat| i < self.arch@.num_entries(layer) && i != idxg@ ==> pt@.entries[i] === pt_res@.entries[i]);
 
-                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@]
-                                       === l1::NodeEntry::Directory(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@)));
-                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@]
-                                       === l1::NodeEntry::Directory(old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, frame@).get_Ok_0()));
-
-
                                 assert forall|i: nat|
                                     i < old(self).arch@.num_entries(layer) && i != idxg@
                                     implies
@@ -1185,7 +1179,7 @@ impl PageTable {
                 by {
                     let byte_addr = (ptrg@ + i * ENTRY_BYTES) as nat;
                     let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
-                    // FIXME:
+                    // FIXME: This is basically index_for_vaddr, should reuse those lemmas
                     assume(word_addr < self.memory.region_view(pt@.region).len());
                     let entry = self.view_at(layer, ptr, i, pt@);
                     if i == idxg@ {
@@ -1231,9 +1225,38 @@ impl PageTable {
 
                 assert(self.inv_at(layer, ptr, pt@));
 
-                // FIXME: need lemma that shows interp of other (unchanged) entries is equal
-                assume(Ok(self.interp_at(layer, ptr, base, pt@))
-                       === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                assert(Ok(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@)) by {
+                    self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt@);
+                    assert(self.inv_at(layer, ptr, pt@));
+                    assert(old(self).inv_at(layer, ptr, pt@));
+                    assert(pt@.entries[idxg@].is_None());
+
+
+                    assert forall|i: nat|
+                        i < old(self).arch@.num_entries(layer) && i != idxg@
+                        implies
+                            self.interp_at(layer, ptr, base, pt@).entries.index(i)
+                            === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries.index(i) by
+                    {
+                        let byte_addr = (ptrg@ + i * ENTRY_BYTES) as nat;
+                        let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
+                        assume(word_addr < self.memory.region_view(pt@.region).len());
+                        assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).is_Ok());
+                        assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
+                        assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
+                        // FIXME:
+                        assume(old(self).memory.spec_read((ptr + idx * ENTRY_BYTES) as nat, pt@.region) === self.memory.spec_read((ptr + idx * ENTRY_BYTES) as nat, pt@.region));
+                        old(self).lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt@, pt@);
+                        assert(self.interp_at_entry(layer, ptr, base, i, pt@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
+                    };
+
+                    // FIXME:
+                    assume(self.interp_at(layer, ptr, base, pt@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[idxg@]);
+                    assert_seqs_equal!(self.interp_at(layer, ptr, base, pt.view()).entries, old(self).interp_at(layer, ptr, base, pt.view()).map_frame(vaddr, frame.view()).get_Ok_0().entries);
+                    assert(self.interp_at(layer, ptr, base, pt@).entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries);
+                    assert(Ok(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                };
+
 
                 // posts
                 assert(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
