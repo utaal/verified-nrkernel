@@ -741,66 +741,7 @@ impl PageTable {
             },
             _ => (),
         }
-
     }
-
-    // proof fn lemma_interp_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, base_vaddr: nat)
-    //     requires
-    //         self.inv_at(layer, ptr),
-    //         other.memory.inv(),
-    //         self.arch@ === other.arch@,
-    //         forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.regions().contains(r) && other.memory.regions().contains(r),
-    //         forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.region_view(r) === other.memory.region_view(r),
-    //     ensures
-    //         self.interp_at(layer, ptr, base_vaddr) === other.interp_at(layer, ptr, base_vaddr, regions),
-    // {
-    //     self.lemma_inv_at_different_memory(other, layer, ptr);
-    //     assume(false);
-    // }
-
-    // proof fn lemma_interp_at_aux_different_memory(self, other: PageTable, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
-    //     requires
-    //         self.inv_at(layer, ptr),
-    //         other.memory.inv(),
-    //         self.arch@ === other.arch@,
-    //         forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.regions().contains(r) && other.memory.regions().contains(r),
-    //         forall|r: MemRegion| #[trigger] regions.contains(r) ==> self.memory.region_view(r) === other.memory.region_view(r),
-    //     ensures
-    //         self.interp_at_aux(layer, ptr, base_vaddr, init) === other.interp_at_aux(layer, ptr, base_vaddr, init, regions),
-    //     decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
-    // {
-    //     self.lemma_inv_at_different_memory(other, layer, ptr);
-    //     self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, init);
-    //     if init.len() >= self.arch@.num_entries(layer) {
-    //     } else {
-    //         assert(self.directories_obey_invariant_at(layer, ptr));
-    //         assert(other.directories_obey_invariant_at(layer, ptr));
-    //         assert(self.obtain_dir_region(layer, ptr) === other.obtain_dir_region(layer, ptr, regions));
-    //         assert(self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr)) === other.view_at(layer, ptr, init.len(), other.obtain_dir_region(layer, ptr, regions)));
-    //         let entry = match self.view_at(layer, ptr, init.len(), self.obtain_dir_region(layer, ptr)) {
-    //             GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-    //                 let entry_base = self.arch@.entry_base(layer, base_vaddr, init.len());
-    //                 assert(entry_base === other.arch@.entry_base(layer, base_vaddr, init.len()));
-    //                 let mem_partitions = self.obtain_mem_partitions(layer, ptr);
-    //                 assert(mem_partitions === other.obtain_mem_partitions(layer, ptr));
-    //                 // assume(forall|r: MemRegion| #[trigger] mem_partitions[init.len()].contains(r) ==> regions.contains(r));
-    //                 // self.lemma_interp_at_aux_different_memory(other, layer + 1, dir_addr, entry_base, seq![]);
-    //                 // assert(self.interp_at_aux(layer + 1, dir_addr, entry_base, seq![]) === other.interp_at_aux(layer + 1, dir_addr, entry_base, seq![], mem_partitions[init.len()]));
-    //                 assert(self.interp_at(layer + 1, dir_addr, entry_base) === other.interp_at(layer + 1, dir_addr, entry_base, mem_partitions[init.len()]));
-    //                 self.lemma_interp_at_aux_facts(layer + 1, dir_addr, entry_base, seq![]);
-    //                 // assume(false);
-    //                 l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, entry_base))
-    //             },
-    //             GhostPageDirectoryEntry::Page { addr, .. } =>
-    //                 l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
-    //             GhostPageDirectoryEntry::Empty =>
-    //                 l1::NodeEntry::Empty(),
-    //         };
-    //         let init_next = init.add(seq![entry]);
-
-    //         self.lemma_interp_at_aux_different_memory(other, layer, ptr, base_vaddr, init_next);
-    //     }
-    // }
 
     proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir)
         requires
