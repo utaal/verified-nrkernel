@@ -696,6 +696,54 @@ impl PageTable {
         assert(other.directories_obey_invariant_at(layer, ptr, pt));
     }
 
+    proof fn lemma_interp_at_entry_different_memory(self, other: PageTable, layer: nat, ptr: usize, base: nat, idx: nat, pt1: PTDir, pt2: PTDir)
+        requires
+            idx < self.arch@.num_entries(layer),
+            pt2.region === pt1.region,
+            pt2.entries[idx] === pt1.entries[idx],
+            self.inv_at(layer, ptr, pt1),
+            other.inv_at(layer, ptr, pt2),
+            self.arch@ === other.arch@,
+            self.memory.region_view(pt1.region) === other.memory.region_view(pt2.region),
+            pt2.entries[idx].is_Some() ==> (forall|r: MemRegion| pt2.entries[idx].get_Some_0().used_regions.contains(r)
+                ==> #[trigger] self.memory.region_view(r) === other.memory.region_view(r)),
+        ensures
+            self.interp_at_entry(layer, ptr, base, idx, pt1) === other.interp_at_entry(layer, ptr, base, idx, pt2),
+        decreases self.arch@.layers.len() - layer
+    {
+        assert(self.view_at(layer, ptr, idx, pt1) === other.view_at(layer, ptr, idx, pt2));
+        let next_layer = (layer + 1) as nat;
+        match self.view_at(layer, ptr, idx, pt1) {
+            GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                let entry_base = self.arch@.entry_base(layer, base, idx);
+                let dir_pt = pt1.entries[idx].get_Some_0();
+                assert(dir_pt === pt2.entries[idx].get_Some_0());
+                assert(self.directories_obey_invariant_at(layer, ptr, pt1));
+                assert(other.directories_obey_invariant_at(layer, ptr, pt2));
+                assert(self.inv_at(next_layer, dir_addr, dir_pt));
+                self.lemma_interp_at_aux_facts(next_layer, dir_addr, entry_base, seq![], dir_pt);
+                other.lemma_interp_at_aux_facts(next_layer, dir_addr, entry_base, seq![], dir_pt);
+
+                assert forall|i: nat| i < self.arch@.num_entries(next_layer) implies
+                    self.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt)
+                        === other.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt)
+                    // && self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries[i]
+                    //     === self.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt)
+                    // && other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries[i]
+                    //     === other.interp_at_entry(next_layer, dir_addr, entry_base, i, dir_pt) by
+                    && #[trigger] self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries.index(i)
+                        === other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries.index(i) by
+                {
+                    self.lemma_interp_at_entry_different_memory(other, next_layer, dir_addr, entry_base, i, dir_pt, dir_pt);
+                };
+                // assert_sets_equal!(self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries, other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries);
+                assume(self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries === other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries);
+            },
+            _ => (),
+        }
+
+    }
+
     // proof fn lemma_interp_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, base_vaddr: nat)
     //     requires
     //         self.inv_at(layer, ptr),
@@ -1099,7 +1147,8 @@ impl PageTable {
                                     assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
                                     assert(self.interp_at(layer, ptr, base, pt_res@).entries.index(i) === self.interp_at_entry(layer, ptr, base, i, pt_res@));
                                     assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
-                                    assume(self.interp_at_entry(layer, ptr, base, i, pt_res@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
+                                    old(self).lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt@, pt_res@);
+                                    assert(self.interp_at_entry(layer, ptr, base, i, pt_res@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                                 };
 
                                 assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[idxg@]);
