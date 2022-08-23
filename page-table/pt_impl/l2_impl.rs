@@ -572,6 +572,7 @@ impl PageTable {
             ==> !(#[trigger] pt.entries[j].get_Some_0().used_regions.contains(r))
     }
 
+    // TODO: this may be implied by the other ones
     pub open spec fn ghost_pt_region_notin_used_regions(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
         forall|i: nat|
             i < pt.entries.len() && pt.entries[i].is_Some()

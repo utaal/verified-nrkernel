@@ -90,7 +90,7 @@ impl PageTableMemory {
             self.region_view(r@) === new_seq(0u64, 512),
             // forall|offset| r@.contains(offset) ==> #[trigger] self.spec_read(offset, r@) == 0,
             forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
-            self.inv() // TODO: derivable
+            self.inv()
     {
         // FIXME:
         unreached()
@@ -111,7 +111,6 @@ impl PageTableMemory {
             // self.spec_read(offset, region@) == value,
             // forall|offset2: nat| offset2 != offset ==> self.spec_read(offset2, region@) == old(self).spec_read(offset2, region@),
             // forall|offset2: nat, r: MemRegion| r !== region@ ==> self.spec_read(offset2, r) == old(self).spec_read(offset2, r),
-            self.inv(), // TODO: derivable
     {
         unsafe { self.ptr.offset(offset as isize).write(value); }
         unreached()
