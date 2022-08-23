@@ -736,8 +736,8 @@ impl PageTable {
                 {
                     self.lemma_interp_at_entry_different_memory(other, next_layer, dir_addr, entry_base, i, dir_pt, dir_pt);
                 };
-                // assert_sets_equal!(self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries, other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries);
-                assume(self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries === other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries);
+                assert_seqs_equal!(self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries, other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries);
+                assert(self.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries === other.interp_at(next_layer, dir_addr, entry_base, dir_pt).entries);
             },
             _ => (),
         }
