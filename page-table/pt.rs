@@ -1,9 +1,11 @@
-#[allow(unused_imports)] use crate::pervasive::*;
-#[allow(unused_imports)] use builtin::*;
-#[allow(unused_imports)] use builtin_macros::*;
+#![allow(unused_imports)]
+use crate::pervasive::*;
+use builtin::*;
+use builtin_macros::*;
 
-#[allow(unused_imports)] use seq::*;
+use seq::*;
 use crate::pt_impl::l0;
+use crate::aux_defs::{ PageTableEntry };
 
 verus! {
 
@@ -13,16 +15,16 @@ pub struct PageTableVariables {
 }
 
 pub enum PageTableStep {
-    Map,
-    Unmap,
+    Map { base: nat, pte: PageTableEntry },
+    Unmap { base: nat },
     Noop,
 }
 
-pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables) -> bool {
+pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: nat, pte: PageTableEntry) -> bool {
     &&& arbitrary()
 }
 
-pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables) -> bool {
+pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, base: nat) -> bool {
     &&& arbitrary()
 }
 
@@ -32,9 +34,9 @@ pub open spec fn step_Noop(s1: PageTableVariables, s2: PageTableVariables) -> bo
 
 pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {
     match step {
-        PageTableStep::Map  => step_Map(s1, s2),
-        PageTableStep::Unmap  => step_Unmap(s1, s2),
-        PageTableStep::Noop => step_Noop(s1, s2),
+        PageTableStep::Map   { base, pte } => step_Map(s1, s2, base, pte),
+        PageTableStep::Unmap { base }      => step_Unmap(s1, s2, base),
+        PageTableStep::Noop                => step_Noop(s1, s2),
     }
 }
 

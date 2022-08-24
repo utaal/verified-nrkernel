@@ -1,11 +1,12 @@
-#[allow(unused_imports)] use crate::pervasive::*;
-#[allow(unused_imports)] use seq::*;
-#[allow(unused_imports)] use crate::*;
-#[allow(unused_imports)] use builtin::*;
-#[allow(unused_imports)] use builtin_macros::*;
-#[allow(unused_imports)] use state_machines_macros::*;
-#[allow(unused_imports)] use map::*;
-#[allow(unused_imports)] use crate::aux_defs::{overlap, MemRegion};
+#![allow(unused_imports)]
+use crate::pervasive::*;
+use seq::*;
+use crate::*;
+use builtin::*;
+use builtin_macros::*;
+use state_machines_macros::*;
+use map::*;
+use crate::aux_defs::{overlap, MemRegion, PageTableEntry, Flags};
 
 // state:
 // - memory
@@ -20,25 +21,11 @@
 verus! {
 
 pub struct AbstractVariables {
-    mem: Map<nat,nat>, // word-indexed
+    pub mem: Map<nat,nat>, // word-indexed
     /// `mappings` constrains the domain of mem. We could instead move the flags into `map` as well
     /// and write the specification exclusively in terms of `map` but that also makes some of the
     /// preconditions awkward, e.g. full mappings have the same flags, etc.
-    mappings: Map<nat,PageTableEntry>
-}
-
-// TODO: Move shared structs to separate module
-#[derive(PartialEq, Eq, Structural)]
-pub struct PageTableEntry {
-    pub region: MemRegion,
-    pub flags: Flags,
-}
-
-#[derive(PartialEq, Eq, Structural)]
-pub struct Flags {
-    pub is_writable: bool,
-    pub is_user_mode_allowed: bool,
-    pub instruction_fetching_disabled: bool,
+    pub mappings: Map<nat,PageTableEntry>
 }
 
 #[derive(PartialEq, Eq, Structural)] #[is_variant]
@@ -58,7 +45,7 @@ pub enum IoOp {
     Load { is_exec: bool, result: LoadResult },
 }
 
-enum AbstractStep {
+pub enum AbstractStep {
     IoOp  { vaddr: nat, op: IoOp },
     Map   { base: nat, pte: PageTableEntry },
     Unmap { base: nat },
@@ -68,21 +55,21 @@ enum AbstractStep {
 // Unaligned accesses are a bit funky with this index function and the word sequences but unaligned
 // accesses can be thought of as two aligned accesses so it's probably fine at least until we
 // consider concurrency.
-spec fn word_index(idx: nat) -> nat {
+pub open spec fn word_index(idx: nat) -> nat {
     idx / 8
 }
 
-spec fn init(s: AbstractVariables) -> bool {
+pub open spec fn init(s: AbstractVariables) -> bool {
     s.mem === Map::empty() // TODO: maybe change this
 }
 
 // TODO: also use this in system spec
 /// Returns `true` if m contains a mapping for `base` and `vaddr` is within the range of that mapping
-spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr: nat) -> bool {
-    m.dom().contains(base) && base <= vaddr && vaddr < base + m.index(base).region.size
+pub open spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr: nat) -> bool {
+    m.dom().contains(base) && base <= vaddr && vaddr < base + m.index(base).frame.size
 }
 
-spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp) -> bool {
+pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp) -> bool {
     &&& s2.mappings === s1.mappings
     &&& if exists|base: nat| mapping_contains(s1.mappings, base, vaddr) {
         let base    = choose|base: nat| mapping_contains(s1.mappings, base, vaddr);
@@ -125,16 +112,16 @@ spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: 
     }
 }
 
-spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry) -> bool {
     &&& true // TODO: alignment, anything else?
     &&& forall|base2: nat, pte2|
         #[trigger] s1.mappings.contains_pair(base2, pte2)
-        ==> !overlap(MemRegion { base, size: pte.region.size }, MemRegion { base: base2, size: pte2.region.size })
+        ==> !overlap(MemRegion { base, size: pte.frame.size }, MemRegion { base: base2, size: pte2.frame.size })
     &&& s2.mem === s1.mem
     &&& s2.mappings === s1.mappings.insert(base, pte)
 }
 
-spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat) -> bool {
+pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat) -> bool {
     &&& true // TODO: anything else?
     &&& s1.mappings.dom().contains(base)
     &&& s1.mappings.index(base).flags.is_user_mode_allowed
@@ -142,7 +129,7 @@ spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat) -> b
     &&& s2.mappings === s1.mappings.remove(base)
 }
 
-spec fn next_step(s1: AbstractVariables, s2: AbstractVariables, step: AbstractStep) -> bool {
+pub open spec fn next_step(s1: AbstractVariables, s2: AbstractVariables, step: AbstractStep) -> bool {
     match step {
         AbstractStep::IoOp  { vaddr, op } => step_IoOp(s1, s2, vaddr, op),
         AbstractStep::Map   { base, pte } => step_Map(s1, s2, base, pte),
@@ -150,7 +137,7 @@ spec fn next_step(s1: AbstractVariables, s2: AbstractVariables, step: AbstractSt
     }
 }
 
-spec fn next(s1: AbstractVariables, s2: AbstractVariables) -> bool {
+pub open spec fn next(s1: AbstractVariables, s2: AbstractVariables) -> bool {
     exists|step: AbstractStep| next_step(s1, s2, step)
 }
 

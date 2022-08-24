@@ -1,12 +1,14 @@
-#[allow(unused_imports)] use crate::pervasive::*;
-#[allow(unused_imports)] use builtin::*;
-#[allow(unused_imports)] use builtin_macros::*;
-#[allow(unused_imports)] use state_machines_macros::*;
+#![allow(unused_imports)] 
+use crate::pervasive::*;
+use builtin::*;
+use builtin_macros::*;
+use state_machines_macros::*;
 use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
-use crate::aux_defs::MemRegion;
+use crate::aux_defs::{PageTableEntry};
 use crate::mem;
+use crate::pt_impl::l0;
 
 // state:
 // - memory
@@ -26,30 +28,13 @@ pub struct SystemVariables {
     pub tlb:    Map<nat,PageTableEntry>,
 }
 
-#[derive(PartialEq, Eq, Structural)]
-pub struct Flags {
-    pub is_writable: bool,
-    pub is_user_mode_allowed: bool,
-    pub instruction_fetching_disabled: bool,
-}
-
-#[derive(PartialEq, Eq, Structural)]
-pub struct PageTableEntry {
-    pub region: MemRegion,
-    pub flags: Flags,
-}
-
-#[derive(PartialEq, Eq, Structural)] #[is_variant]
 pub enum LoadResult {
     PageFault,
-    // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
     Value(nat), // word-sized load
 }
 
-#[derive(PartialEq, Eq, Structural)] #[is_variant]
 pub enum StoreResult {
     PageFault,
-    // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
     Ok,
 }
 
@@ -73,16 +58,25 @@ pub open spec fn word_index(idx: nat) -> nat {
     idx / 8
 }
 
-pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
+// Page table walker interpretation of the page table memory
+pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> l0::PageTableContents;
 
 pub open spec fn init(s: SystemVariables) -> bool {
     s.tlb.dom() === Set::empty()
 }
 
 pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp) -> bool {
-    if exists|base: nat, pte: PageTableEntry| #![auto] s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.region.size {
-        let (base, pte) = choose|p:(nat, PageTableEntry)| #![auto] s1.tlb.contains_pair(p.0,p.1) && p.0 <= vaddr && vaddr < p.0 + p.1.region.size;
-        &&& paddr === (pte.region.base + (vaddr - base)) as nat
+    if exists|base: nat, pte: PageTableEntry| #![auto] s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.frame.size {
+        // TODO:
+        // Should this instead be an argument for this step? I don't really like to use choice in the spec.
+        // To make it part of the arguments I think we'd have to extend IoOp, e.g. Load becomes:
+        // Load { is_exec: bool, result: LoadResult, pte: Option<(nat, PageTableEntry)> },
+        // Then if the pte is_Some() we require that the tlb contains that (nat, pte) pair and if
+        // it is_None() we require that the tlb doesn't contain a suitable entry.
+        // That way we could do the case distinction and use choice in the refinement proof rather
+        // than the spec.
+        let (base, pte) = choose|p:(nat, PageTableEntry)| #![auto] s1.tlb.contains_pair(p.0,p.1) && p.0 <= vaddr && vaddr < p.0 + p.1.frame.size;
+        &&& paddr === (pte.frame.base + (vaddr - base)) as nat
         &&& s2.tlb === s1.tlb
         &&& s2.pt_mem === s1.pt_mem
         &&& match op {
@@ -132,7 +126,7 @@ pub open spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool 
 }
 
 pub open spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {
-    &&& interp_pt_mem(s1.pt_mem).contains_pair(base, pte)
+    &&& interp_pt_mem(s1.pt_mem).map.contains_pair(base, pte)
     &&& s2.tlb === s1.tlb.insert(base, pte)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
@@ -186,147 +180,3 @@ proof fn next_preserves_inv(s1: SystemVariables, s2: SystemVariables)
 }
 
 }
-
-// // == Trusted ==
-
-// #[derive(PartialEq, Eq, Structural)]
-// pub struct Flags {
-//     pub is_writable: bool,
-//     pub is_user_mode_allowed: bool,
-//     pub instruction_fetching_disabled: bool,
-// }
-
-
-// // TODO: this structure implies a transactional page-table
-
-// #[derive(PartialEq, Eq, Structural)]
-// pub struct PageTableEntry {
-//     pub region: crate::spec::MemRegion,
-//     pub flags: Flags,
-// }
-
-// state_machine! { MMU {
-//     fields {
-//         pub tlb: Map</* VAddr */ nat, PageTableEntry>,
-//         pub page_table: Map</* VAddr */ nat, PageTableEntry>,
-//     }
-
-//     readonly! {
-//         tlb_hit(vaddr: nat, paddr: nat, flags: Flags) {
-//             require(exists(|base: nat| #[auto_trigger] pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).region.size));
-//             let base = choose(|base: nat| #[auto_trigger] pre.tlb.dom().contains(base) >>=
-//                 base <= vaddr && vaddr < base + pre.tlb.index(base).region.size);
-//             let entry = pre.tlb.index(base);
-//             require(flags == entry.flags);
-//             require(paddr == entry.region.base + (vaddr - base));
-//         }
-//     }
-
-//     readonly! {
-//         resolve_fail(vaddr: nat) {
-//             require(!exists(|base: nat| #[auto_trigger] pre.tlb.dom().contains(base) && base <= vaddr && vaddr < base + pre.tlb.index(base).region.size));
-//             require(!exists(|base: nat| #[auto_trigger] pre.page_table.dom().contains(base) && base <= vaddr && vaddr < base + pre.page_table.index(base).region.size));
-//         }
-//     }
-
-//     transition! {
-//         fill_tlb(base: nat) {
-//             require(!pre.tlb.dom().contains(base));
-//             require(pre.page_table.dom().contains(base));
-//             update tlb = pre.tlb.insert(base, pre.page_table.index(base));
-//         }
-//     }
-
-//     transition! {
-//         invalidate_tlb_by_addr(base: nat) {
-//             require(pre.tlb.dom().contains(base));
-//             update tlb = pre.tlb.remove(base);
-//         }
-//     }
-
-//     transition! {
-//         update_page_table(new_page_table: Map<nat, PageTableEntry>) {
-//             update page_table = new_page_table;
-//         }
-//     }
-// } }
-
-// #[proof]
-// fn mmu_test_1() {
-//     let entry = PageTableEntry { region: crate::spec::MemRegion { base: 16, size: 8 }, flags: Flags { is_writable: true, is_user_mode_allowed: true, instruction_fetching_disabled: true } };
-//     let mt = MMU::State {
-//         tlb: map![],
-//         page_table: map![128 => entry],
-//     };
-//     let mt_p = MMU::State {
-//         tlb: map![128 => entry],
-//         ..mt
-//     };
-//     let t1 = MMU::Step::fill_tlb(128);
-//     // assert(MMU::State::fill_tlb(mt, mt_p, 128));
-//     // reveal(MMU::State::next_by);
-//     MMU::show::fill_tlb(mt, mt_p, 128);
-//     // assert(MMU::State::next_by(mt, mt_p, t1));
-//     assert(MMU::State::next(mt, mt_p));
-// }
-
-// // ===
-
-// #[derive(PartialEq, Eq, Structural)] #[is_variant]
-// pub enum LoadResult {
-//     PageFault,
-//     // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
-//     Value(usize), // word-sized load
-// }
-
-// #[derive(PartialEq, Eq, Structural)] #[is_variant]
-// pub enum StoreResult {
-//     PageFault,
-//     // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
-//     Ok,
-// }
-
-// pub enum IoOp {
-//     Store { new_value: Seq<u8> /* length 8 */, result: StoreResult }, // represents a third party doing a write too
-//     Load { is_exec: bool, result: LoadResult },
-// }
-
-// // TODO don't use choose
-// state_machine! { System {
-//     fields {
-//         pub mmu: MMU::State,
-//         pub physical_memory: Seq<u8>,
-//     }
-
-//     transition! {
-//         io_op(vaddr: nat, paddr: nat, op: IoOp, flags: Flags) {
-//             require(match op {
-//                 IoOp::Store { new_value, result: store_result } => true &&
-//                     new_value.len() == 8,
-//                 IoOp::Load { is_exec, result: load_result } => true,
-//             });
-//             require(exists(|post_mmu: MMU::State| MMU::State::tlb_hit(pre.mmu, post_mmu, vaddr, paddr, flags)));
-//             match op {
-//                 IoOp::Store { new_value, result: store_result } => {
-//                     if flags.is_writable {
-//                         update physical_memory = choose(|s: Seq<u8>|
-//                             true
-//                             // TODO awful trigger
-//                             && #[trigger] s.len() == pre.physical_memory.len()
-//                             && forall(|i: nat| i < pre.physical_memory.len() >>=
-//                                 (#[trigger] s.index(i)) == if i < paddr || i >= paddr + 8 {
-//                                     pre.physical_memory.index(i)
-//                                 } else {
-//                                     new_value.index(i as int - paddr)
-//                                 }));
-//                     } else {
-
-//                     }
-//                 },
-//                 IoOp::Load { is_exec, result: load_result } => {
-
-//                 },
-//             }
-//         }
-//     }
-// } }
