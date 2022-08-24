@@ -88,8 +88,6 @@ fn overlap_sanity_check() {
             MemRegion { base: 8192, size: 16384 }));
 }
 
-
-#[derive(PartialEq, Eq, Structural)]
 pub struct MemRegionExec { pub base: usize, pub size: usize }
 
 impl MemRegionExec {
@@ -97,6 +95,31 @@ impl MemRegionExec {
         MemRegion {
             base: self.base as nat,
             size: self.size as nat,
+        }
+    }
+}
+
+pub struct Flags {
+    pub is_writable: bool,
+    pub is_user_mode_allowed: bool,
+    pub instruction_fetching_disabled: bool,
+}
+
+pub struct PageTableEntry {
+    pub frame: MemRegion,
+    pub flags: Flags,
+}
+
+pub struct PageTableEntryExec {
+    pub frame: MemRegionExec,
+    pub flags: Flags,
+}
+
+impl PageTableEntryExec {
+    pub open spec fn view(self) -> PageTableEntry {
+        PageTableEntry {
+            frame: self.frame@,
+            flags: self.flags,
         }
     }
 }

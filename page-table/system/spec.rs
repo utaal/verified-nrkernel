@@ -6,6 +6,7 @@ use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
 use crate::aux_defs::MemRegion;
+use crate::mem;
 
 // state:
 // - memory
@@ -21,7 +22,7 @@ verus! {
 
 pub struct SystemVariables {
     pub mem:    Seq<nat>,
-    pub pt_mem: Seq<nat>,
+    pub pt_mem: mem::PageTableMemory,
     pub tlb:    Map<nat,PageTableEntry>,
 }
 
@@ -72,7 +73,7 @@ pub open spec fn word_index(idx: nat) -> nat {
     idx / 8
 }
 
-pub open spec fn interp_pt_mem(pt_mem: Seq<nat>) -> Map<nat, PageTableEntry>;
+pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
 
 pub open spec fn init(s: SystemVariables) -> bool {
     s.tlb.dom() === Set::empty()

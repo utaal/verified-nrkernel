@@ -16,7 +16,7 @@ use crate::aux_defs;
 use result::{*, Result::*};
 
 use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE };
-use crate::aux_defs::{ MemRegion, overlap, Arch, between, aligned };
+use crate::aux_defs::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
 use crate::pt_impl::l0::{ self, ambient_arith, ambient_lemmas1 };
 
 verus! {
@@ -44,7 +44,7 @@ pub proof fn ambient_lemmas2()
 #[is_variant]
 pub tracked enum NodeEntry {
     Directory(Directory),
-    Page(MemRegion),
+    Page(PageTableEntry),
     Empty(),
 }
 
@@ -98,7 +98,7 @@ impl Directory {
         recommends self.well_formed()
     {
         forall|i: nat| (i < self.entries.len() && self.entries.index(i).is_Page())
-            ==> (#[trigger] self.entries.index(i)).get_Page_0().size == self.entry_size()
+            ==> (#[trigger] self.entries.index(i)).get_Page_0().frame.size == self.entry_size()
     }
 
     pub open spec(checked) fn directories_are_in_next_layer(&self) -> bool
@@ -147,7 +147,7 @@ impl Directory {
         recommends self.well_formed()
     {
         forall|i: nat| i < self.entries.len() && self.entries.index(i).is_Page() ==>
-            aligned((#[trigger] self.entries.index(i)).get_Page_0().base, self.entry_size())
+            aligned((#[trigger] self.entries.index(i)).get_Page_0().frame.base, self.entry_size())
     }
 
     pub open spec(checked) fn inv(&self) -> bool
@@ -216,7 +216,7 @@ impl Directory {
                 self.interp_of_entry(i).lower == self.entry_base(i) &&
                 self.interp_of_entry(i).upper == self.entry_base(i+1) &&
                 forall(|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
-                forall(|base: nat, p: MemRegion| self.interp_of_entry(i).map.contains_pair(base, p) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
+                forall(|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
     {
         assert_forall_by(|i: nat| {
             requires(i < self.num_entries());
@@ -242,17 +242,17 @@ impl Directory {
 
         self.arch.lemma_entry_base();
         match self.entries.index(i) {
-            NodeEntry::Page(p)      => {
+            NodeEntry::Page(pte)      => {
                 assert(entry_i.mappings_dont_overlap());
 
                 assert_nonlinear_by({
                     requires([
                              self.inv(),
                              equal(entry_i, self.interp_of_entry(i)),
-                             self.entry_size() == p.size,
+                             self.entry_size() == pte.frame.size,
                              i < self.entries.len(),
                     ]);
-                    ensures(entry_i.candidate_mapping_in_bounds(self.entry_base(i), p));
+                    ensures(entry_i.candidate_mapping_in_bounds(self.entry_base(i), pte));
                 });
                 assert(entry_i.mappings_in_bounds());
             }
@@ -396,22 +396,22 @@ impl Directory {
 
             assert(interp.mappings_are_of_valid_size());
 
-            if let NodeEntry::Page(p) = entry {
+            if let NodeEntry::Page(pte) = entry {
                 self.arch.lemma_entry_base();
             }
 
             assert(interp.mappings_are_aligned());
 
             match entry {
-                NodeEntry::Page(p) => {
+                NodeEntry::Page(pte) => {
                     assert_nonlinear_by({
                         requires([
                             self.inv(),
                             equal(entry_i, self.interp_of_entry(i)),
-                            self.entry_size() == p.size,
+                            self.entry_size() == pte.frame.size,
                             i < self.entries.len(),
                         ]);
-                        ensures(entry_i.candidate_mapping_in_bounds(self.entry_base(i), p));
+                        ensures(entry_i.candidate_mapping_in_bounds(self.entry_base(i), pte));
                     });
                 }
                 NodeEntry::Directory(d) => {
@@ -553,7 +553,7 @@ impl Directory {
              i <= j,
              j < self.entries.len(),
         ensures
-            forall|va: nat, p: MemRegion| #![auto] self.interp_of_entry(j).map.contains_pair(va, p) ==> self.interp_aux(i).map.contains_pair(va, p),
+            forall|va: nat, pte: PageTableEntry| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp_aux(i).map.contains_pair(va, pte),
             forall|va: nat| #![auto] self.interp_of_entry(j).map.dom().contains(va) ==> self.interp_aux(i).map.dom().contains(va),
             forall|va: nat|
                 between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
@@ -588,7 +588,7 @@ impl Directory {
              j < self.entries.len(),
         ensures
             forall|va: nat| #![auto] self.interp_of_entry(j).map.dom().contains(va) ==> self.interp().map.dom().contains(va),
-            forall|va: nat, p: MemRegion| #![auto] self.interp_of_entry(j).map.contains_pair(va, p) ==> self.interp().map.contains_pair(va, p),
+            forall|va: nat, pte: PageTableEntry| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp().map.contains_pair(va, pte),
             forall|va: nat| #![auto]
                 between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
                 ==> !self.interp().map.dom().contains(va),
@@ -621,9 +621,9 @@ impl Directory {
 
         let entry = self.index_for_vaddr(vaddr);
         match self.entries.index(entry) {
-            NodeEntry::Page(p) => {
+            NodeEntry::Page(pte) => {
                 let offset = vaddr - self.entry_base(entry);
-                Ok((p.base + offset) as nat)
+                Ok((pte.frame.base + offset) as nat)
             },
             NodeEntry::Directory(d) => {
                 d.resolve(vaddr)
@@ -664,9 +664,9 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall|base: nat, p: MemRegion|
-                self.interp_aux(j).map.contains_pair(base, p) ==>
-                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p),
+            forall|base: nat, pte: PageTableEntry|
+                self.interp_aux(j).map.contains_pair(base, pte) ==>
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
             forall|base: nat|
                 self.interp_aux(j).map.dom().contains(base) ==>
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)
@@ -676,10 +676,10 @@ impl Directory {
         } else {
             let _ = self.interp_of_entry(j);
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
-            assert_forall_by(|base: nat, p: MemRegion| {
-                requires(self.interp_aux(j).map.contains_pair(base, p));
-                ensures(exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p));
-                if self.interp_aux(j+1).map.contains_pair(base, p) { } else { }
+            assert_forall_by(|base: nat, pte: PageTableEntry| {
+                requires(self.interp_aux(j).map.contains_pair(base, pte));
+                ensures(exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte));
+                if self.interp_aux(j+1).map.contains_pair(base, pte) { } else { }
             });
             assert_forall_by(|base: nat| {
                 requires(self.interp_aux(j).map.dom().contains(base));
@@ -693,9 +693,9 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall|base: nat, p: MemRegion|
-                self.interp().map.contains_pair(base, p) ==>
-                exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, p),
+            forall|base: nat, pte: PageTableEntry|
+                self.interp().map.contains_pair(base, pte) ==>
+                exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
             forall|base: nat|
                 self.interp().map.dom().contains(base) ==>
                 exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base),
@@ -711,11 +711,11 @@ impl Directory {
             between(vaddr, self.interp_of_entry(i).lower, self.interp_of_entry(i).upper),
             !exists|base:nat|
                 self.interp_of_entry(i).map.dom().contains(base) &&
-                between(vaddr, base, base + (#[trigger] self.interp_of_entry(i).map.index(base)).size),
+                between(vaddr, base, base + (#[trigger] self.interp_of_entry(i).map.index(base)).frame.size),
         ensures
             !exists|base:nat|
                 self.interp().map.dom().contains(base) &&
-                between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size),
+                between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size),
     {
         self.arch.lemma_entry_base();
         self.lemma_interp_of_entry();
@@ -723,10 +723,10 @@ impl Directory {
 
         if exists|base:nat|
             self.interp().map.dom().contains(base) &&
-            between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size) {
+            between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size) {
             let base = choose(|base:nat|
                               self.interp().map.dom().contains(base) &&
-                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).size));
+                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size));
             let p = self.interp().map.index(base);
             assert(self.interp().map.contains_pair(base, p));
         }
@@ -785,7 +785,7 @@ impl Directory {
                 assert(self.resolve(vaddr).is_Ok());
                 let p_vaddr = self.entry_base(entry);
                 assert(self.interp().map.contains_pair(p_vaddr, p));
-                assert(vaddr < p_vaddr + self.interp().map.index(p_vaddr).size);
+                assert(vaddr < p_vaddr + self.interp().map.index(p_vaddr).frame.size);
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
@@ -800,11 +800,11 @@ impl Directory {
                     assert(self.resolve(vaddr).is_Ok());
                     assert(exists|base: nat|
                            d.interp().map.dom().contains(base) &&
-                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size));
+                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size));
 
                     let base = choose(|base:nat|
                                     d.interp().map.dom().contains(base) &&
-                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size));
+                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size));
 
                     assert(self.interp().map.contains_pair(base, self.interp_of_entry(entry).map.index(base)));
 
@@ -818,7 +818,7 @@ impl Directory {
                     assert(d.interp().resolve(vaddr).is_Err());
                     assert(!exists|base:nat|
                            d.interp().map.dom().contains(base) &&
-                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).size));
+                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size));
                     self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(vaddr, entry);
                 }
                 assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
@@ -840,47 +840,42 @@ impl Directory {
         }
     }
 
-    // pub proof fn lemma_update(self) {
-    //     ensures(forall(|i: nat, e: NodeEntry| self.inv() && i < self.num_entries() ==> (#[trigger] self.update(i, e).interp().lower) == self.interp().lower));
-
-    // }
-
-    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, frame: MemRegion) -> bool
+    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PageTableEntry) -> bool
         recommends self.inv()
     {
-        self.base_vaddr <= base && base + frame.size <= self.upper_vaddr()
+        self.base_vaddr <= base && base + pte.frame.size <= self.upper_vaddr()
     }
 
-    pub open spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool
+    pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PageTableEntry) -> bool
         recommends self.inv()
     {
-        &&& aligned(base, frame.size)
-        &&& aligned(frame.base, frame.size)
-        &&& self.candidate_mapping_in_bounds(base, frame)
-        &&& self.arch.contains_entry_size_at_index_atleast(frame.size, self.layer)
+        &&& aligned(base, pte.frame.size)
+        &&& aligned(pte.frame.base, pte.frame.size)
+        &&& self.candidate_mapping_in_bounds(base, pte)
+        &&& self.arch.contains_entry_size_at_index_atleast(pte.frame.size, self.layer)
     }
 
-    pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, frame: MemRegion)
+    pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame)
+            self.accepted_mapping(base, pte)
         ensures
-            self.interp().accepted_mapping(base, frame),
+            self.interp().accepted_mapping(base, pte),
     {
         self.lemma_inv_implies_interp_inv();
     }
 
     pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_auto(self)
         ensures
-            forall|base: nat, frame: MemRegion|
-                self.inv() && #[trigger] self.accepted_mapping(base, frame) ==>
-                self.interp().accepted_mapping(base, frame),
+            forall|base: nat, pte: PageTableEntry|
+                self.inv() && #[trigger] self.accepted_mapping(base, pte) ==>
+                self.interp().accepted_mapping(base, pte),
     {
-        assert_forall_by(|base: nat, frame: MemRegion| {
-            requires(self.inv() && #[trigger] self.accepted_mapping(base, frame));
-            ensures(self.interp().accepted_mapping(base, frame));
+        assert_forall_by(|base: nat, pte: PageTableEntry| {
+            requires(self.inv() && #[trigger] self.accepted_mapping(base, pte));
+            ensures(self.interp().accepted_mapping(base, pte));
 
-            self.lemma_accepted_mapping_implies_interp_accepted_mapping_manual(base, frame);
+            self.lemma_accepted_mapping_implies_interp_accepted_mapping_manual(base, pte);
         });
     }
 
@@ -918,37 +913,37 @@ impl Directory {
         assert(new_dir.inv());
     }
 
-    pub open spec fn map_frame(self, base: nat, frame: MemRegion) -> Result<Directory,Directory>
+    pub open spec fn map_frame(self, base: nat, pte: PageTableEntry) -> Result<Directory,Directory>
         decreases self.arch.layers.len() - self.layer
     {
         decreases_by(Self::check_map_frame);
 
-        if self.inv() && self.accepted_mapping(base, frame) {
+        if self.inv() && self.accepted_mapping(base, pte) {
             let entry = self.index_for_vaddr(base);
             match self.entries.index(entry) {
                 NodeEntry::Page(p) => {
                     Err(self)
                 },
                 NodeEntry::Directory(d) => {
-                    if self.entry_size() == frame.size {
+                    if self.entry_size() == pte.frame.size {
                         Err(self)
                     } else {
-                        match d.map_frame(base, frame) {
+                        match d.map_frame(base, pte) {
                             Ok(d)  => Ok(self.update(entry, NodeEntry::Directory(d))),
                             Err(d) => Err(self.update(entry, NodeEntry::Directory(d))),
                         }
                     }
                 },
                 NodeEntry::Empty() => {
-                    if self.entry_size() == frame.size {
-                        Ok(self.update(entry, NodeEntry::Page(frame)))
+                    if self.entry_size() == pte.frame.size {
+                        Ok(self.update(entry, NodeEntry::Page(pte)))
                     } else {
                         // new_empty_dir's recommendation for `self.layer + 1 < self.arch.layers.len()`
                         // is satisfied because we know the frame size isn't this layer's entrysize
                         // (i.e. must be on some lower level).
                         let new_dir = self.new_empty_dir(entry);
                         // We never fail to insert an accepted mapping into an empty directory
-                        Ok(self.update(entry, NodeEntry::Directory(new_dir.map_frame(base, frame).get_Ok_0())))
+                        Ok(self.update(entry, NodeEntry::Directory(new_dir.map_frame(base, pte).get_Ok_0())))
                     }
                 },
             }
@@ -958,27 +953,27 @@ impl Directory {
     }
 
     #[verifier(decreases_by)]
-    proof fn check_map_frame(self, base: nat, frame: MemRegion) {
+    proof fn check_map_frame(self, base: nat, pte: PageTableEntry) {
         ambient_lemmas1();
         ambient_lemmas2(); // TODO: unnecessary?
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-        if self.inv() && self.accepted_mapping(base, frame) {
+        if self.inv() && self.accepted_mapping(base, pte) {
             self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
         }
     }
 
-    pub proof fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, frame: MemRegion, d: Directory)
+    pub proof fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, pte: PageTableEntry, d: Directory)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame),
+            self.accepted_mapping(base, pte),
             equal(d.arch, self.arch),
             d.base_vaddr == self.entry_base(self.index_for_vaddr(base)),
             d.upper_vaddr() == self.entry_base(self.index_for_vaddr(base)+1),
             d.inv(),
             d.layer == self.layer + 1,
-            self.entry_size() != frame.size,
+            self.entry_size() != pte.frame.size,
         ensures
-            d.accepted_mapping(base, frame),
+            d.accepted_mapping(base, pte),
     {
         ambient_lemmas1();
         self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
@@ -989,52 +984,52 @@ impl Directory {
         assert(self.directories_obey_invariant());
         assert(d.inv());
 
-        assert(aligned(base, frame.size));
-        assert(aligned(frame.base, frame.size));
-        assert(d.arch.contains_entry_size_at_index_atleast(frame.size, d.layer));
+        assert(aligned(base, pte.frame.size));
+        assert(aligned(pte.frame.base, pte.frame.size));
+        assert(d.arch.contains_entry_size_at_index_atleast(pte.frame.size, d.layer));
 
         assert(self.entry_base(entry) <= base);
-        assert(aligned(base, frame.size));
+        assert(aligned(base, pte.frame.size));
         self.arch.lemma_entry_sizes_aligned_auto();
-        assert(aligned(self.entry_size(), frame.size));
+        assert(aligned(self.entry_size(), pte.frame.size));
 
         crate::lib::aligned_transitive_auto();
-        assert(aligned(self.entry_base(entry+1), frame.size));
-        crate::lib::leq_add_aligned_less(base, frame.size, self.entry_base(entry+1));
-        assert(base + frame.size <= self.entry_base(entry+1));
-        assert(base + frame.size <= self.entry_base(entry) + self.entry_size());
-        assert(base + frame.size <= d.base_vaddr + self.entry_size());
-        assert(base + frame.size <= d.base_vaddr + d.num_entries() * d.entry_size());
-        assert(base + frame.size <= d.upper_vaddr());
-        assert(d.candidate_mapping_in_bounds(base, frame));
-        assert(aligned(base, frame.size));
-        assert(aligned(frame.base, frame.size));
+        assert(aligned(self.entry_base(entry+1), pte.frame.size));
+        crate::lib::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
+        assert(base + pte.frame.size <= self.entry_base(entry+1));
+        assert(base + pte.frame.size <= self.entry_base(entry) + self.entry_size());
+        assert(base + pte.frame.size <= d.base_vaddr + self.entry_size());
+        assert(base + pte.frame.size <= d.base_vaddr + d.num_entries() * d.entry_size());
+        assert(base + pte.frame.size <= d.upper_vaddr());
+        assert(d.candidate_mapping_in_bounds(base, pte));
+        assert(aligned(base, pte.frame.size));
+        assert(aligned(pte.frame.base, pte.frame.size));
     }
 
-    proof fn lemma_map_frame_empty_is_ok(self, base: nat, frame: MemRegion)
+    proof fn lemma_map_frame_empty_is_ok(self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame),
+            self.accepted_mapping(base, pte),
             self.entries.index(self.index_for_vaddr(base)).is_Empty(),
         ensures
-            self.map_frame(base, frame).is_Ok(),
-            // self.new_empty_dir(self.index_for_vaddr(base)).map_frame(base, frame).is_Ok()
+            self.map_frame(base, pte).is_Ok(),
+            // self.new_empty_dir(self.index_for_vaddr(base)).map_frame(base, pte).is_Ok()
         decreases self.arch.layers.len() - self.layer;
 
-    proof fn lemma_map_frame_preserves_inv(self, base: nat, frame: MemRegion)
+    proof fn lemma_map_frame_preserves_inv(self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame),
-            self.map_frame(base, frame).is_Ok(),
+            self.accepted_mapping(base, pte),
+            self.map_frame(base, pte).is_Ok(),
         ensures
-            equal(self.map_frame(base, frame).get_Ok_0().layer, self.layer),
-            equal(self.map_frame(base, frame).get_Ok_0().arch, self.arch),
-            equal(self.map_frame(base, frame).get_Ok_0().base_vaddr, self.base_vaddr),
-            !self.map_frame(base, frame).get_Ok_0().empty(),
-            self.map_frame(base, frame).get_Ok_0().inv(),
+            self.map_frame(base, pte).get_Ok_0().layer === self.layer,
+            self.map_frame(base, pte).get_Ok_0().arch === self.arch,
+            self.map_frame(base, pte).get_Ok_0().base_vaddr === self.base_vaddr,
+            !self.map_frame(base, pte).get_Ok_0().empty(),
+            self.map_frame(base, pte).get_Ok_0().inv(),
             !exists|b:nat| true
                 && self.interp().map.dom().contains(b)
-                && between(base, b, b + (#[trigger] self.interp().map.index(b)).size),
+                && between(base, b, b + (#[trigger] self.interp().map.index(b)).frame.size),
 
         decreases (self.arch.layers.len() - self.layer)
     {
@@ -1045,18 +1040,18 @@ impl Directory {
         self.arch.lemma_entry_base();
         self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
 
-        let res = self.map_frame(base, frame).get_Ok_0();
+        let res = self.map_frame(base, pte).get_Ok_0();
 
         let entry = self.index_for_vaddr(base);
         match self.entries.index(entry) {
             NodeEntry::Page(p) => (),
             NodeEntry::Directory(d) => {
-                if self.entry_size() == frame.size {
+                if self.entry_size() == pte.frame.size {
                 } else {
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, d);
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, d);
                     d.lemma_inv_implies_interp_inv();
                     assert(d.inv());
-                    d.lemma_map_frame_preserves_inv(base, frame);
+                    d.lemma_map_frame_preserves_inv(base, pte);
                     assert(res.well_formed());
                     assert(res.pages_match_entry_size());
                     assert(res.directories_match_arch());
@@ -1074,7 +1069,7 @@ impl Directory {
                     assert(res.directories_obey_invariant());
                     assert(res.directories_are_nonempty());
                     assert(res.inv());
-                    assert(equal(self.map_frame(base, frame).get_Ok_0().layer, self.layer));
+                    assert(equal(self.map_frame(base, pte).get_Ok_0().layer, self.layer));
 
                     assert(res.entries.index(entry).is_Directory());
                     assert(!res.empty());
@@ -1083,7 +1078,7 @@ impl Directory {
             },
             NodeEntry::Empty() => {
                 self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(base, entry);
-                if self.entry_size() == frame.size {
+                if self.entry_size() == pte.frame.size {
                     assert(equal(res.layer, self.layer));
                     assert(res.entries.index(entry).is_Page());
                     assert(!res.empty());
@@ -1095,12 +1090,12 @@ impl Directory {
                     let new_dir = self.new_empty_dir(entry);
                     self.lemma_new_empty_dir(entry);
 
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, new_dir);
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-                    assert(new_dir.accepted_mapping(base, frame));
+                    assert(new_dir.accepted_mapping(base, pte));
                     new_dir.arch.lemma_index_for_vaddr(new_dir.layer, new_dir.base_vaddr, base);
-                    new_dir.lemma_map_frame_empty_is_ok(base, frame);
-                    new_dir.lemma_map_frame_preserves_inv(base, frame);
+                    new_dir.lemma_map_frame_empty_is_ok(base, pte);
+                    new_dir.lemma_map_frame_preserves_inv(base, pte);
 
                     assert(res.directories_are_in_next_layer());
                     assert(res.directories_obey_invariant());
@@ -1110,13 +1105,13 @@ impl Directory {
                     assert(equal(res.layer, self.layer));
                     assert(res.entries.index(entry).is_Directory());
                     assert(!res.empty());
-                    assert(new_dir.map_frame(base, frame).is_Ok());
+                    assert(new_dir.map_frame(base, pte).is_Ok());
                 }
             },
         }
     }
 
-    proof fn lemma_insert_interp_of_entry_implies_insert_interp_aux(self, i: nat, j: nat, base: nat, n: NodeEntry, frame: MemRegion)
+    proof fn lemma_insert_interp_of_entry_implies_insert_interp_aux(self, i: nat, j: nat, base: nat, n: NodeEntry, pte: PageTableEntry)
         requires
             self.inv(),
             i <= j,
@@ -1124,14 +1119,14 @@ impl Directory {
             !self.interp_aux(i).map.dom().contains(base),
             self.update(j, n).inv(),
             equal(
-                self.interp_of_entry(j).map.insert(base, frame),
+                self.interp_of_entry(j).map.insert(base, pte),
                 match n {
                     NodeEntry::Page(p)      => map![self.entry_base(j) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
                     NodeEntry::Empty()      => map![],
                 }),
         ensures
-            equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map),
+            equal(self.interp_aux(i).map.insert(base, pte), self.update(j, n).interp_aux(i).map),
         decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
     {
         ambient_lemmas1();
@@ -1153,58 +1148,58 @@ impl Directory {
                 assert(!self.interp_aux(i + 1).map.dom().contains(base));
                 assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
 
-                assert(equal(self.interp_of_entry(i).map.insert(base, frame), nself.interp_of_entry(i).map));
+                assert(equal(self.interp_of_entry(i).map.insert(base, pte), nself.interp_of_entry(i).map));
                 self.lemma_entries_equal_implies_interp_aux_equal(nself, i+1);
                 assert(equal(self.interp_aux(i + 1).map, nself.interp_aux(i + 1).map));
 
 
                 assert(!self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).dom().contains(base));
 
-                assert(equal(self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).insert(base, frame),
+                assert(equal(self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map).insert(base, pte),
                              self.update(j, n).interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
 
-                assert(equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map));
+                assert(equal(self.interp_aux(i).map.insert(base, pte), self.update(j, n).interp_aux(i).map));
             } else {
                 assert(i < j);
                 assert(self.directories_obey_invariant());
 
-                self.lemma_insert_interp_of_entry_implies_insert_interp_aux(i + 1, j, base, n, frame);
+                self.lemma_insert_interp_of_entry_implies_insert_interp_aux(i + 1, j, base, n, pte);
                 self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(i + 1, j);
                 assert(!self.interp_of_entry(j).map.dom().contains(base));
 
                 assert(!self.interp_aux(i).map.dom().contains(base));
 
-                assert(equal(self.interp_aux(i + 1).map.insert(base, frame), self.update(j, n).interp_aux(i + 1).map));
+                assert(equal(self.interp_aux(i + 1).map.insert(base, pte), self.update(j, n).interp_aux(i + 1).map));
 
                 assert(equal(self.interp_aux(i).map, self.interp_aux(i + 1).map.union_prefer_right(self.interp_of_entry(i).map)));
 
                 assert(nself.inv());
                 assert(equal(nself.interp_aux(i).map, nself.interp_aux(i + 1).map.union_prefer_right(nself.interp_of_entry(i).map)));
 
-                assert(equal(self.interp_aux(i).map.insert(base, frame), self.update(j, n).interp_aux(i).map));
+                assert(equal(self.interp_aux(i).map.insert(base, pte), self.update(j, n).interp_aux(i).map));
             }
         }
     }
 
-    proof fn lemma_insert_interp_of_entry_implies_insert_interp(self, j: nat, base: nat, n: NodeEntry, frame: MemRegion)
+    proof fn lemma_insert_interp_of_entry_implies_insert_interp(self, j: nat, base: nat, n: NodeEntry, pte: PageTableEntry)
         requires
             self.inv(),
             j < self.num_entries(),
             !self.interp().map.dom().contains(base),
             self.update(j, n).inv(),
             equal(
-                self.interp_of_entry(j).map.insert(base, frame),
+                self.interp_of_entry(j).map.insert(base, pte),
                 match n {
                     NodeEntry::Page(p)      => map![self.entry_base(j) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
                     NodeEntry::Empty()      => map![],
                 }),
         ensures
-            equal(self.interp().map.insert(base, frame), self.update(j, n).interp().map),
+            equal(self.interp().map.insert(base, pte), self.update(j, n).interp().map),
         decreases
             self.arch.layers.len() - self.layer,
     {
-        self.lemma_insert_interp_of_entry_implies_insert_interp_aux(0, j, base, n, frame);
+        self.lemma_insert_interp_of_entry_implies_insert_interp_aux(0, j, base, n, pte);
     }
 
     proof fn lemma_nonempty_implies_exists_interp_dom_contains(self)
@@ -1236,30 +1231,30 @@ impl Directory {
         }
     }
 
-    pub proof fn lemma_map_frame_structure_assertions(self, base: nat, frame: MemRegion, idx: nat)
+    pub proof fn lemma_map_frame_structure_assertions(self, base: nat, pte: PageTableEntry, idx: nat)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame),
+            self.accepted_mapping(base, pte),
             idx == self.index_for_vaddr(base),
         ensures
             match self.entries.index(idx) {
                 NodeEntry::Page(p)      => true,
                 NodeEntry::Directory(d) => {
                     &&& d.inv()
-                    &&& if self.entry_size() == frame.size {
+                    &&& if self.entry_size() == pte.frame.size {
                         true
                     } else {
-                        d.accepted_mapping(base, frame)
+                        d.accepted_mapping(base, pte)
                     }
                 },
                 NodeEntry::Empty()      => {
-                    if self.entry_size() == frame.size {
+                    if self.entry_size() == pte.frame.size {
                         true
                     } else {
                         &&& ((self.layer + 1) as nat) < self.arch.layers.len()
                         &&& self.new_empty_dir(idx).inv()
-                        &&& self.new_empty_dir(idx).accepted_mapping(base, frame)
-                        &&& self.new_empty_dir(idx).map_frame(base, frame).is_Ok()
+                        &&& self.new_empty_dir(idx).accepted_mapping(base, pte)
+                        &&& self.new_empty_dir(idx).map_frame(base, pte).is_Ok()
                     }
                 },
             }
@@ -1272,9 +1267,9 @@ impl Directory {
         self.arch.lemma_entry_base();
         self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
 
-        let res = self.map_frame(base, frame).get_Ok_0();
-        if self.map_frame(base, frame).is_Ok() {
-            self.lemma_map_frame_preserves_inv(base, frame);
+        let res = self.map_frame(base, pte).get_Ok_0();
+        if self.map_frame(base, pte).is_Ok() {
+            self.lemma_map_frame_preserves_inv(base, pte);
         }
 
         let entry = self.index_for_vaddr(base);
@@ -1283,39 +1278,39 @@ impl Directory {
             NodeEntry::Page(p) => { },
             NodeEntry::Directory(d) => {
                 assert(d.inv());
-                if self.entry_size() == frame.size {
+                if self.entry_size() == pte.frame.size {
                 } else {
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, d);
-                    assert(d.accepted_mapping(base, frame));
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, d);
+                    assert(d.accepted_mapping(base, pte));
                 }
             },
             NodeEntry::Empty() => {
-                if self.entry_size() == frame.size {
+                if self.entry_size() == pte.frame.size {
                 } else {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
                     let new_dir = self.new_empty_dir(entry);
                     self.lemma_new_empty_dir(entry);
                     assert(new_dir.inv());
 
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, new_dir);
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-                    assert(new_dir.accepted_mapping(base, frame));
+                    assert(new_dir.accepted_mapping(base, pte));
                     new_dir.arch.lemma_index_for_vaddr(new_dir.layer, new_dir.base_vaddr, base);
 
-                    new_dir.lemma_map_frame_refines_map_frame(base, frame);
-                    assert(new_dir.interp().map_frame(base, frame).is_Ok());
+                    new_dir.lemma_map_frame_refines_map_frame(base, pte);
+                    assert(new_dir.interp().map_frame(base, pte).is_Ok());
                 }
             },
         }
     }
 
-    pub proof fn lemma_map_frame_refines_map_frame(self, base: nat, frame: MemRegion)
+    pub proof fn lemma_map_frame_refines_map_frame(self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame),
+            self.accepted_mapping(base, pte),
         ensures
-            self.map_frame(base, frame).is_Err() ==> self.map_frame(base, frame).get_Err_0() === self,
-            equal(self.map_frame(base, frame).map(|d| d.interp()), self.interp().map_frame(base, frame)),
+            self.map_frame(base, pte).is_Err() ==> self.map_frame(base, pte).get_Err_0() === self,
+            equal(self.map_frame(base, pte).map(|d| d.interp()), self.interp().map_frame(base, pte)),
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();
@@ -1325,80 +1320,80 @@ impl Directory {
         self.arch.lemma_entry_base();
         self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
 
-        let res = self.map_frame(base, frame).get_Ok_0();
-        if self.map_frame(base, frame).is_Ok() {
-            self.lemma_map_frame_preserves_inv(base, frame);
+        let res = self.map_frame(base, pte).get_Ok_0();
+        if self.map_frame(base, pte).is_Ok() {
+            self.lemma_map_frame_preserves_inv(base, pte);
         }
 
         let entry = self.index_for_vaddr(base);
         self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
         match self.entries.index(entry) {
             NodeEntry::Page(p) => {
-                assert(self.map_frame(base, frame).is_Err());
+                assert(self.map_frame(base, pte).is_Err());
 
                 assert(self.interp_of_entry(entry).map.contains_pair(self.entry_base(entry), p));
                 assert(self.interp().map.contains_pair(self.entry_base(entry), p));
-                assert(self.interp().map_frame(base, frame).is_Err());
+                assert(self.interp().map_frame(base, pte).is_Err());
             },
             NodeEntry::Directory(d) => {
                 d.lemma_inv_implies_interp_inv();
                 assert(d.inv());
-                if self.entry_size() == frame.size {
-                    assert(self.map_frame(base, frame).is_Err());
+                if self.entry_size() == pte.frame.size {
+                    assert(self.map_frame(base, pte).is_Err());
                     d.lemma_nonempty_implies_exists_interp_dom_contains();
                     let b = choose(|b: nat| d.interp().map.dom().contains(b));
                     assert(self.interp().map.dom().contains(b));
                     self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
 
-                    assert(!self.interp().valid_mapping(base, frame));
-                    assert(self.interp().map_frame(base, frame).is_Err());
+                    assert(!self.interp().valid_mapping(base, pte));
+                    assert(self.interp().map_frame(base, pte).is_Err());
                 } else {
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, d);
-                    assert(d.accepted_mapping(base, frame));
-                    d.lemma_map_frame_refines_map_frame(base, frame);
-                    assert(equal(d.map_frame(base, frame).map(|d| d.interp()), d.interp().map_frame(base, frame)));
-                    match d.map_frame(base, frame) {
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, d);
+                    assert(d.accepted_mapping(base, pte));
+                    d.lemma_map_frame_refines_map_frame(base, pte);
+                    assert(equal(d.map_frame(base, pte).map(|d| d.interp()), d.interp().map_frame(base, pte)));
+                    match d.map_frame(base, pte) {
                         Ok(nd)  => {
-                            assert(d.map_frame(base, frame).is_Ok());
-                            assert(d.interp().map_frame(base, frame).is_Ok());
-                            assert(d.interp().accepted_mapping(base, frame));
-                            assert(d.interp().valid_mapping(base, frame));
-                            assert(self.interp().accepted_mapping(base, frame));
-                            assert(self.interp().valid_mapping(base, frame));
-                            assert(self.map_frame(base, frame).is_Ok());
-                            self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(nd), frame);
-                            assert(self.interp().map_frame(base, frame).is_Ok());
+                            assert(d.map_frame(base, pte).is_Ok());
+                            assert(d.interp().map_frame(base, pte).is_Ok());
+                            assert(d.interp().accepted_mapping(base, pte));
+                            assert(d.interp().valid_mapping(base, pte));
+                            assert(self.interp().accepted_mapping(base, pte));
+                            assert(self.interp().valid_mapping(base, pte));
+                            assert(self.map_frame(base, pte).is_Ok());
+                            self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(nd), pte);
+                            assert(self.interp().map_frame(base, pte).is_Ok());
 
-                            assert(equal(self.interp().map.insert(base, frame), self.update(entry, NodeEntry::Directory(nd)).interp().map));
-                            assert(equal(self.interp().map.insert(base, frame), self.interp().map_frame(base, frame).get_Ok_0().map));
+                            assert(equal(self.interp().map.insert(base, pte), self.update(entry, NodeEntry::Directory(nd)).interp().map));
+                            assert(equal(self.interp().map.insert(base, pte), self.interp().map_frame(base, pte).get_Ok_0().map));
 
-                            assert(equal(self.map_frame(base, frame).get_Ok_0().interp(), self.interp().map_frame(base, frame).get_Ok_0()));
+                            assert(equal(self.map_frame(base, pte).get_Ok_0().interp(), self.interp().map_frame(base, pte).get_Ok_0()));
                         },
                         Err(e) => {
-                            assert(d.map_frame(base, frame).is_Err());
-                            assert(d.interp().map_frame(base, frame).is_Err());
-                            assert(d.interp().accepted_mapping(base, frame));
-                            assert(!d.interp().valid_mapping(base, frame));
+                            assert(d.map_frame(base, pte).is_Err());
+                            assert(d.interp().map_frame(base, pte).is_Err());
+                            assert(d.interp().accepted_mapping(base, pte));
+                            assert(!d.interp().valid_mapping(base, pte));
                             let b = choose(|b: nat| #[auto_trigger]
                                            d.interp().map.dom().contains(b) && overlap(
-                                               MemRegion { base: base, size: frame.size },
-                                               MemRegion { base: b, size: d.interp().map.index(b).size }
+                                               MemRegion { base: base, size: pte.frame.size },
+                                               MemRegion { base: b, size: d.interp().map.index(b).frame.size }
                                                ));
-                            let bbase = d.interp().map.index(b).base;
-                            let bsize = d.interp().map.index(b).size;
-                            assert(d.interp().map.contains_pair(b, MemRegion { base: bbase, size: bsize }));
+                            let bbase = d.interp().map.index(b).frame.base;
+                            let bsize = d.interp().map.index(b).frame.size;
+                            assert(d.interp().map.contains_pair(b, d.interp().map.index(b)));
                             assert(overlap(
-                                    MemRegion { base: base, size: frame.size },
+                                    MemRegion { base: base, size: pte.frame.size },
                                     MemRegion { base: b, size: bsize }
                                     ));
                             self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
-                            assert(self.interp().map.contains_pair(b, MemRegion { base: bbase, size: bsize }));
+                            assert(self.interp().map.contains_pair(b, d.interp().map.index(b)));
 
-                            assert(self.interp().accepted_mapping(base, frame));
-                            assert(!self.interp().valid_mapping(base, frame));
+                            assert(self.interp().accepted_mapping(base, pte));
+                            assert(!self.interp().valid_mapping(base, pte));
 
-                            assert(self.map_frame(base, frame).is_Err());
-                            assert(self.interp().map_frame(base, frame).is_Err());
+                            assert(self.map_frame(base, pte).is_Err());
+                            assert(self.interp().map_frame(base, pte).is_Err());
                             assert(self.entries.index(entry) === NodeEntry::Directory(d));
                             assert(self.entries.index(entry) === NodeEntry::Directory(e));
                             let res = self.update(entry, NodeEntry::Directory(e)).entries;
@@ -1406,43 +1401,43 @@ impl Directory {
                             assert_seqs_equal!(res, self.entries);
                         },
                     }
-                    // d.lemma_map_frame_preserves_inv(base, frame);
+                    // d.lemma_map_frame_preserves_inv(base, pte);
                 }
             },
             NodeEntry::Empty() => {
-                if self.entry_size() == frame.size {
-                    self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Page(frame), frame);
-                    assert(equal(self.map_frame(base, frame).map(|d| d.interp()), self.interp().map_frame(base, frame)));
+                if self.entry_size() == pte.frame.size {
+                    self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Page(pte), pte);
+                    assert(equal(self.map_frame(base, pte).map(|d| d.interp()), self.interp().map_frame(base, pte)));
                 } else {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
                     let new_dir = self.new_empty_dir(entry);
                     self.lemma_new_empty_dir(entry);
                     assert(new_dir.inv());
 
-                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, frame, new_dir);
+                    self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-                    assert(new_dir.accepted_mapping(base, frame));
+                    assert(new_dir.accepted_mapping(base, pte));
                     new_dir.arch.lemma_index_for_vaddr(new_dir.layer, new_dir.base_vaddr, base);
-                    new_dir.lemma_map_frame_empty_is_ok(base, frame);
-                    new_dir.lemma_map_frame_preserves_inv(base, frame);
+                    new_dir.lemma_map_frame_empty_is_ok(base, pte);
+                    new_dir.lemma_map_frame_preserves_inv(base, pte);
 
-                    let new_dir_mapped = new_dir.map_frame(base, frame).get_Ok_0();
-                    assert(new_dir.map_frame(base, frame).is_Ok());
+                    let new_dir_mapped = new_dir.map_frame(base, pte).get_Ok_0();
+                    assert(new_dir.map_frame(base, pte).is_Ok());
                     assert(new_dir_mapped.inv());
-                    new_dir.lemma_map_frame_refines_map_frame(base, frame);
-                    assert(new_dir.interp().map_frame(base, frame).is_Ok());
-                    assert(equal(new_dir_mapped.interp(), new_dir.interp().map_frame(base, frame).get_Ok_0()));
+                    new_dir.lemma_map_frame_refines_map_frame(base, pte);
+                    assert(new_dir.interp().map_frame(base, pte).is_Ok());
+                    assert(equal(new_dir_mapped.interp(), new_dir.interp().map_frame(base, pte).get_Ok_0()));
 
                     new_dir.lemma_empty_implies_interp_empty();
                     assert_maps_equal!(new_dir.interp().map, map![]);
-                    assert_maps_equal!(new_dir.interp().map_frame(base, frame).get_Ok_0().map, map![base => frame]);
+                    assert_maps_equal!(new_dir.interp().map_frame(base, pte).get_Ok_0().map, map![base => pte]);
                     assert_maps_equal!(self.interp_of_entry(entry).map, map![]);
                     assert(equal(self.interp_of_entry(entry).map, map![]));
-                    assert(equal(map![].insert(base, frame), new_dir_mapped.interp().map));
-                    assert(equal(self.interp_of_entry(entry).map.insert(base, frame), new_dir_mapped.interp().map));
-                    self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(new_dir_mapped), frame);
+                    assert(equal(map![].insert(base, pte), new_dir_mapped.interp().map));
+                    assert(equal(self.interp_of_entry(entry).map.insert(base, pte), new_dir_mapped.interp().map));
+                    self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(new_dir_mapped), pte);
 
-                    assert(equal(self.map_frame(base, frame).map(|d| d.interp()), self.interp().map_frame(base, frame)));
+                    assert(equal(self.map_frame(base, pte).map(|d| d.interp()), self.interp().map_frame(base, pte)));
                 }
             },
         }

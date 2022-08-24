@@ -7,6 +7,8 @@ use crate::pt;
 
 verus! {
 
+// pub closed spec fn interp_ptmem() -> PageTableContents;
+
 pub struct OSVariables {
     pub system: system::SystemVariables,
     pub pt: pt::PageTableVariables,

@@ -14,7 +14,7 @@ use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq };
+use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq };
 use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, ENTRY_BYTES, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
@@ -161,7 +161,7 @@ pub ghost enum GhostPageDirectoryEntry {
         flag_P: bool,
         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
         flag_RW: bool,
-        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+        /// User/supervisor; if 0, user-mode accesses are not allowed to the page controlled by this entry
         flag_US: bool,
         /// Page-level write-through
         flag_PWT: bool,
@@ -612,8 +612,16 @@ impl PageTable {
                 let entry_base = self.arch@.entry_base(layer, base_vaddr, idx);
                 l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, entry_base, pt.entries[idx].get_Some_0()))
             },
-            GhostPageDirectoryEntry::Page { addr, .. } =>
-                l1::NodeEntry::Page(MemRegion { base: addr, size: self.arch@.entry_size(layer) }),
+            GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+                l1::NodeEntry::Page(
+                    PageTableEntry {
+                        frame: MemRegion { base: addr, size: self.arch@.entry_size(layer) },
+                        flags: Flags {
+                            is_writable: flag_RW,
+                            is_user_mode_allowed: flag_US,
+                            instruction_fetching_disabled: flag_XD,
+                        },
+                    }),
             GhostPageDirectoryEntry::Empty =>
                 l1::NodeEntry::Empty(),
         }
@@ -758,7 +766,7 @@ impl PageTable {
                             &&& res.entries.index(j).is_Directory()
                             &&& res.entries.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j), pt.entries[j].get_Some_0())
                         },
-                        GhostPageDirectoryEntry::Page { addr, .. } => res.entries.index(j).is_Page() && res.entries.index(j).get_Page_0().base == addr,
+                        GhostPageDirectoryEntry::Page { addr, .. } => res.entries.index(j).is_Page() && res.entries.index(j).get_Page_0().frame.base == addr,
                         GhostPageDirectoryEntry::Empty             => res.entries.index(j).is_Empty(),
                     })
                 &&& (forall|j: nat| j < res.entries.len() ==> res.entries.index(j) === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt))
@@ -791,7 +799,7 @@ impl PageTable {
                             &&& res.index(j).is_Directory()
                             &&& res.index(j).get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, self.arch@.entry_base(layer, base_vaddr, j), pt.entries[j].get_Some_0())
                         },
-                        GhostPageDirectoryEntry::Page { addr, .. } => res.index(j).is_Page() && res.index(j).get_Page_0().base == addr,
+                        GhostPageDirectoryEntry::Page { addr, .. } => res.index(j).is_Page() && res.index(j).get_Page_0().frame.base == addr,
                         GhostPageDirectoryEntry::Empty             => res.index(j).is_Empty(),
                     })
                 &&& (forall|j: nat| init.len() <= j && j < res.len() ==> res.index(j) === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt))
@@ -892,19 +900,19 @@ impl PageTable {
         self.resolve_aux(0, cr3, 0, vaddr, self.ghost_pt)
     }
 
-    spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, frame: MemRegion) -> bool {
+    spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, pte: PageTableEntry) -> bool {
         &&& 0 < layer // Can't map pages in PML4
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, frame: MemRegionExec, pt: Ghost<PTDir>)
+    fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pte: PageTableEntryExec, pt: Ghost<PTDir>)
         -> (res: (Result<Ghost<(PTDir,Set<MemRegion>)>,()>))
         requires
             old(self).inv_at(layer, ptr, pt@),
             old(self).interp_at(layer, ptr, base, pt@).inv(),
             old(self).memory.inv(),
-            old(self).accepted_mapping(layer, ptr, base, vaddr, frame@),
-            old(self).interp_at(layer, ptr, base, pt@).accepted_mapping(vaddr, frame@),
+            old(self).accepted_mapping(layer, ptr, base, vaddr, pte@),
+            old(self).interp_at(layer, ptr, base, pt@).accepted_mapping(vaddr, pte@),
             base <= vaddr < MAX_BASE,
             // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
         ensures
@@ -931,17 +939,17 @@ impl PageTable {
             match res {
                 Ok(resv) => {
                     let (pt_res, new_regions) = resv@;
-                    Ok(self.interp_at(layer, ptr, base, pt_res)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@)
+                    Ok(self.interp_at(layer, ptr, base, pt_res)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@)
                 },
                 Err(e) =>
-                    Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@),
+                    Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@),
             },
             // // Refinement of l0
             // match res {
             //     Ok(res) =>
             //         Ok(self.interp_at(layer, ptr, base).interp())
-            //             === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
-            //     Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, frame@),
+            //             === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, pte@),
+            //     Err(e)  => Err(e) === old(self).interp_at(layer, ptr, base).interp().map_frame(vaddr, pte@),
             // }
         // decreases self.arch@.layers.len() - layer
     {
@@ -950,10 +958,10 @@ impl PageTable {
         let entry = self.entry_at(layer, ptr, idx, pt);
         let interp: Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base, pt@));
         proof {
-            interp@.lemma_map_frame_structure_assertions(vaddr, frame@, idx);
+            interp@.lemma_map_frame_structure_assertions(vaddr, pte@, idx);
             self.lemma_interp_at_facts(layer, ptr, base, pt@);
             self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
-            interp@.lemma_map_frame_refines_map_frame(vaddr, frame@);
+            interp@.lemma_map_frame_refines_map_frame(vaddr, pte@);
         }
         let entry_base: usize = self.arch.entry_base(layer, base, idx);
         proof {
@@ -962,15 +970,15 @@ impl PageTable {
         }
         if entry.is_mapping() {
             if entry.is_dir(layer) {
-                if self.arch.entry_size(layer) == frame.size {
-                    assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                if self.arch.entry_size(layer) == pte.frame.size {
+                    assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                     Err(())
                 } else {
                     let dir_addr = entry.address() as usize;
                     assert(pt@.entries[idx].is_Some());
                     let dir_pt: Ghost<PTDir> = ghost(pt@.entries[idx].get_Some_0());
                     assert(self.directories_obey_invariant_at(layer, ptr, pt@));
-                    match self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, frame, dir_pt) {
+                    match self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, pte, dir_pt) {
                         Ok(rec_res) => {
                             let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
                             let new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
@@ -978,7 +986,7 @@ impl PageTable {
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] dir_pt@.used_regions.contains(r)));
                             assert(self.inv_at((layer + 1) as nat, dir_addr, dir_pt_res@));
                             assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@))
-                                   === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, frame@));
+                                   === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, pte@));
                             assert(idx == idxg@);
                             assert(idxg@ < pt@.entries.len());
                             let pt_res: Ghost<PTDir> = ghost(
@@ -1095,13 +1103,13 @@ impl PageTable {
 
                             assert(self.inv_at(layer, ptr, pt_res@));
 
-                            assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@)) by
+                            assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@)) by
                             {
                                 self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt_res@);
                                 assert(pt_res@.region === pt@.region);
                                 // recursive postcondition:
                                 assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@))
-                                       === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, frame@));
+                                       === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).map_frame(vaddr, pte@));
                                 assert(self.inv_at(layer, ptr, pt_res@));
                                 assert(old(self).inv_at(layer, ptr, pt@));
                                 assert(pt_res@.entries[idxg@].is_Some());
@@ -1113,20 +1121,20 @@ impl PageTable {
                                     i < old(self).arch@.num_entries(layer) && i != idxg@
                                     implies
                                         self.interp_at(layer, ptr, base, pt_res@).entries.index(i)
-                                        === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries.index(i) by
+                                        === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries.index(i) by
                                 {
-                                    assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).is_Ok());
-                                    assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
+                                    assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).is_Ok());
+                                    assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
                                     assert(self.interp_at(layer, ptr, base, pt_res@).entries.index(i) === self.interp_at_entry(layer, ptr, base, i, pt_res@));
                                     assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                                     old(self).lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt@, pt_res@);
                                     assert(self.interp_at_entry(layer, ptr, base, i, pt_res@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                                 };
 
-                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[idxg@]);
-                                assert_seqs_equal!(self.interp_at(layer, ptr, base, pt_res.view()).entries, old(self).interp_at(layer, ptr, base, pt.view()).map_frame(vaddr, frame.view()).get_Ok_0().entries);
-                                assert(self.interp_at(layer, ptr, base, pt_res@).entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries);
-                                assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                                assert(self.interp_at(layer, ptr, base, pt_res@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
+                                assert_seqs_equal!(self.interp_at(layer, ptr, base, pt_res.view()).entries, old(self).interp_at(layer, ptr, base, pt.view()).map_frame(vaddr, pte.view()).get_Ok_0().entries);
+                                assert(self.interp_at(layer, ptr, base, pt_res@).entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
+                                assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                             };
 
                             assert(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
@@ -1141,23 +1149,23 @@ impl PageTable {
                             Ok(res)
                         },
                         Err(e) => {
-                            assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                            assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                             Err(e)
                         },
                     }
                 }
             } else {
-                assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                 Err(())
             }
         } else {
-            if self.arch.entry_size(layer) == frame.size {
+            if self.arch.entry_size(layer) == pte.frame.size {
                 proof {
-                    let frame_base = frame.base as u64;
+                    let frame_base = pte.frame.base as u64;
                     // FIXME: this should be derivable from alignment property in accepted_mapping
                     assume(addr_is_zero_padded(layer, frame_base, true));
                 }
-                let new_page_entry = PageDirectoryEntry::new_page_entry(layer, frame.base as u64);
+                let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte.frame.base as u64);
                 assume(ptr < 100);
                 // TODO: this assertion goes through "by accident" due to lemma_entry_base. Maybe
                 // we should rename entry_base and use it for all index calculations?
@@ -1226,7 +1234,7 @@ impl PageTable {
 
                 assert(self.inv_at(layer, ptr, pt@));
 
-                assert(Ok(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@)) by {
+                assert(Ok(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@)) by {
                     self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt@);
                     assert(self.inv_at(layer, ptr, pt@));
                     assert(old(self).inv_at(layer, ptr, pt@));
@@ -1237,13 +1245,13 @@ impl PageTable {
                         i < old(self).arch@.num_entries(layer) && i != idxg@
                         implies
                             self.interp_at(layer, ptr, base, pt@).entries.index(i)
-                            === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries.index(i) by
+                            === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries.index(i) by
                     {
                         let byte_addr = (ptrg@ + i * ENTRY_BYTES) as nat;
                         let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
                         assume(word_addr < self.memory.region_view(pt@.region).len());
-                        assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).is_Ok());
-                        assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
+                        assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).is_Ok());
+                        assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
                         assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                         // FIXME:
                         assume(old(self).memory.spec_read((ptr + idx * ENTRY_BYTES) as nat, pt@.region) === self.memory.spec_read((ptr + idx * ENTRY_BYTES) as nat, pt@.region));
@@ -1252,10 +1260,10 @@ impl PageTable {
                     };
 
                     // FIXME:
-                    assume(self.interp_at(layer, ptr, base, pt@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries[idxg@]);
-                    assert_seqs_equal!(self.interp_at(layer, ptr, base, pt.view()).entries, old(self).interp_at(layer, ptr, base, pt.view()).map_frame(vaddr, frame.view()).get_Ok_0().entries);
-                    assert(self.interp_at(layer, ptr, base, pt@).entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@).get_Ok_0().entries);
-                    assert(Ok(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                    assume(self.interp_at(layer, ptr, base, pt@).entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
+                    assert_seqs_equal!(self.interp_at(layer, ptr, base, pt.view()).entries, old(self).interp_at(layer, ptr, base, pt.view()).map_frame(vaddr, pte.view()).get_Ok_0().entries);
+                    assert(self.interp_at(layer, ptr, base, pt@).entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
+                    assert(Ok(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                 };
 
 
@@ -1309,7 +1317,7 @@ impl PageTable {
                 let new_dir_interp: Ghost<l1::Directory> = ghost(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base, new_dir_pt@));
                 assume(new_dir_interp@ === interp@.new_empty_dir(idx));
                 assert(new_dir_interp@.inv());
-                match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, frame, new_dir_pt) {
+                match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, pte, new_dir_pt) {
                     Ok(rec_res) => {
                         let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
                         let dir_new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
@@ -1322,7 +1330,7 @@ impl PageTable {
                         // FIXME:
                         assume(self.inv_at(layer, ptr, pt_res@));
                         assume(Ok(self.interp_at(layer, ptr, base, pt_res@))
-                               === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, frame@));
+                               === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
 
 
                         let new_regions: Ghost<Set<MemRegion>> = ghost(dir_new_regions@.insert(new_dir_region@));
@@ -1344,17 +1352,17 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn map_frame(&mut self, vaddr: usize, frame: MemRegionExec) -> (res: (Result<(),()>))
+    fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: (Result<(),()>))
         requires
             old(self).inv(),
             old(self).memory.inv(),
-            old(self).accepted_mapping(0, old(self).memory.cr3_spec().1, 0, vaddr, old(self).memory.cr3_spec().0),
-            old(self).interp().accepted_mapping(vaddr, frame@),
+            old(self).accepted_mapping(0, old(self).memory.cr3_spec().1, 0, vaddr, pte@),
+            old(self).interp().accepted_mapping(vaddr, pte@),
             vaddr < MAX_BASE,
     {
         proof { ambient_arith(); }
         let (cr3_region, cr3) = self.memory.cr3();
-        match self.map_frame_aux(0, cr3, 0, vaddr, frame, self.ghost_pt) {
+        match self.map_frame_aux(0, cr3, 0, vaddr, pte, self.ghost_pt) {
             Ok(res) => {
                 let pt_res: Ghost<PTDir> = ghost(res@.0);
                 let new_regions: Ghost<Set<MemRegion>> = ghost(res@.1);

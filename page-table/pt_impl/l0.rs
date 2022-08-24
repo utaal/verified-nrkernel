@@ -10,7 +10,7 @@ use set::*;
 use set_lib::*;
 use vec::*;
 use crate::lib_axiom::*;
-use crate::aux_defs::{ MemRegion, overlap, between, Arch, aligned };
+use crate::aux_defs::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
 
 use result::{*, Result::*};
 
@@ -30,32 +30,32 @@ pub proof fn ambient_arith()
 
 pub proof fn ambient_lemmas1()
     ensures
-        forall|s1: Map<nat,MemRegion>, s2: Map<nat,MemRegion>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
+        forall|s1: Map<nat,PageTableEntry>, s2: Map<nat,PageTableEntry>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
         forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a),
-        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat|
             (m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat|
+        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat|
             (m2.dom().contains(n) && !m1.dom().contains(n))
             ==> equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
+        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat, v: PageTableEntry|
             (!m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)),
-        forall|m1: Map<nat, MemRegion>, m2: Map<nat, MemRegion>, n: nat, v: MemRegion|
+        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat, v: PageTableEntry|
             (!m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)),
         // forall(|d: Directory| d.inv() ==> (#[trigger] d.interp().upper == d.upper_vaddr())),
         // forall(|d: Directory| d.inv() ==> (#[trigger] d.interp().lower == d.base_vaddr)),
     {
-    lemma_finite_map_union::<nat,MemRegion>();
+    lemma_finite_map_union::<nat,PageTableEntry>();
     // assert_nonlinear_by({ ensures(forall|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
     // assert_forall_by(|d: Directory, i: nat| {
     //     requires(#[auto_trigger] d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory());
     //     ensures(#[auto_trigger] d.entries.index(i).get_Directory_0().inv());
     //     assert(d.directories_obey_invariant());
     // });
-    lemma_map_union_prefer_right_remove_commute::<nat,MemRegion>();
-    lemma_map_union_prefer_right_insert_commute::<nat,MemRegion>();
+    lemma_map_union_prefer_right_remove_commute::<nat,PageTableEntry>();
+    lemma_map_union_prefer_right_insert_commute::<nat,PageTableEntry>();
     assert(forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a)) by (nonlinear_arith) { };
 }
 
@@ -75,7 +75,7 @@ pub proof fn ambient_lemmas1()
 // }
 
 pub ghost struct PageTableContents {
-    pub map: Map<nat /* VAddr */, MemRegion>,
+    pub map: Map<nat /* VAddr */, PageTableEntry>,
     pub arch: Arch,
     pub lower: nat,
     pub upper: nat,
@@ -94,15 +94,15 @@ impl PageTableContents {
 
     pub open spec(checked) fn mappings_are_of_valid_size(self) -> bool {
         forall|va: nat|
-            #![trigger self.map.index(va).size] #![trigger self.map.index(va).base]
-            self.map.dom().contains(va) ==> self.arch.contains_entry_size(self.map.index(va).size)
+            #![trigger self.map.index(va).frame.size] #![trigger self.map.index(va).frame.base]
+            self.map.dom().contains(va) ==> self.arch.contains_entry_size(self.map.index(va).frame.size)
     }
 
     pub open spec(checked) fn mappings_are_aligned(self) -> bool {
         forall|va: nat|
-            #![trigger self.map.index(va).size] #![trigger self.map.index(va).base]
+            #![trigger self.map.index(va).frame.size] #![trigger self.map.index(va).frame.base]
             self.map.dom().contains(va) ==>
-            aligned(va, self.map.index(va).size) && aligned(self.map.index(va).base, self.map.index(va).size)
+            aligned(va, self.map.index(va).frame.size) && aligned(self.map.index(va).frame.base, self.map.index(va).frame.size)
     }
 
     pub open spec(checked) fn mappings_dont_overlap(self) -> bool {
@@ -111,12 +111,12 @@ impl PageTableContents {
             #![trigger self.map.index(b1), self.map.index(b2)] #![trigger self.map.dom().contains(b1), self.map.dom().contains(b2)]
             self.map.dom().contains(b1) && self.map.dom().contains(b2) ==>
             ((b1 == b2) || !overlap(
-                    MemRegion { base: b1, size: self.map.index(b1).size },
-                    MemRegion { base: b2, size: self.map.index(b2).size }))
+                    MemRegion { base: b1, size: self.map.index(b1).frame.size },
+                    MemRegion { base: b2, size: self.map.index(b2).frame.size }))
     }
 
-    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, frame: MemRegion) -> bool {
-        self.lower <= base && base + frame.size <= self.upper
+    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PageTableEntry) -> bool {
+        self.lower <= base && base + pte.frame.size <= self.upper
     }
 
     pub open spec(checked) fn mappings_in_bounds(self) -> bool {
@@ -126,26 +126,26 @@ impl PageTableContents {
             self.map.dom().contains(b1) ==> self.candidate_mapping_in_bounds(b1, self.map.index(b1))
     }
 
-    pub open spec(checked) fn accepted_mapping(self, base: nat, frame: MemRegion) -> bool {
-        &&& aligned(base, frame.size)
-        &&& aligned(frame.base, frame.size)
-        &&& self.candidate_mapping_in_bounds(base, frame)
-        &&& self.arch.contains_entry_size(frame.size)
+    pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PageTableEntry) -> bool {
+        &&& aligned(base, pte.frame.size)
+        &&& aligned(pte.frame.base, pte.frame.size)
+        &&& self.candidate_mapping_in_bounds(base, pte)
+        &&& self.arch.contains_entry_size(pte.frame.size)
     }
 
-    pub open spec(checked) fn valid_mapping(self, base: nat, frame: MemRegion) -> bool {
+    pub open spec(checked) fn valid_mapping(self, base: nat, pte: PageTableEntry) -> bool {
         forall|b: nat| #![auto]
             self.map.dom().contains(b) ==> !overlap(
-                MemRegion { base: base, size: frame.size },
-                MemRegion { base: b, size: self.map.index(b).size })
+                MemRegion { base: base, size: pte.frame.size },
+                MemRegion { base: b, size: self.map.index(b).frame.size })
     }
 
-    /// Maps the given `frame` at `base` in the address space
-    pub open spec(checked) fn map_frame(self, base: nat, frame: MemRegion) -> Result<PageTableContents,PageTableContents> {
-        if self.accepted_mapping(base, frame) {
-            if self.valid_mapping(base, frame) {
+    /// Maps the given `pte` at `base` in the address space
+    pub open spec(checked) fn map_frame(self, base: nat, pte: PageTableEntry) -> Result<PageTableContents,PageTableContents> {
+        if self.accepted_mapping(base, pte) {
+            if self.valid_mapping(base, pte) {
                 Ok(PageTableContents {
-                    map: self.map.insert(base, frame),
+                    map: self.map.insert(base, pte),
                     ..self
                 })
             } else {
@@ -156,26 +156,17 @@ impl PageTableContents {
         }
     }
 
-    // don't think this is actually necessary for anything?
-    proof fn map_frame_maps_valid(#[spec] self, base: nat, frame: MemRegion)
+    proof fn map_frame_preserves_inv(#[spec] self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
-            self.accepted_mapping(base, frame),
-            self.valid_mapping(base, frame),
-        ensures
-            self.map_frame(base, frame).is_Ok();
-
-    proof fn map_frame_preserves_inv(#[spec] self, base: nat, frame: MemRegion)
-        requires
-            self.inv(),
-            self.accepted_mapping(base, frame),
+            self.accepted_mapping(base, pte),
             // self.map_frame(base, frame).is_Ok(),
         ensures
-            self.map_frame(base, frame).is_Ok()  ==> self.map_frame(base, frame).get_Ok_0().inv(),
-            self.map_frame(base, frame).is_Err() ==> self.map_frame(base, frame).get_Err_0() === self,
+            self.map_frame(base, pte).is_Ok()  ==> self.map_frame(base, pte).get_Ok_0().inv(),
+            self.map_frame(base, pte).is_Err() ==> self.map_frame(base, pte).get_Err_0() === self,
     {
-        if self.map_frame(base, frame).is_Ok() {
-            let nself = self.map_frame(base, frame).get_Ok_0();
+        if self.map_frame(base, pte).is_Ok() {
+            let nself = self.map_frame(base, pte).get_Ok_0();
             assert(nself.mappings_in_bounds());
         }
     }
@@ -192,12 +183,12 @@ impl PageTableContents {
     {
         if exists|base:nat|
             self.map.dom().contains(base) &&
-            between(vaddr, base, base + (#[trigger] self.map.index(base)).size) {
+            between(vaddr, base, base + (#[trigger] self.map.index(base)).frame.size) {
             let base = choose(|base:nat|
                            self.map.dom().contains(base) &&
-                           between(vaddr, base, base + (#[trigger] self.map.index(base)).size));
+                           between(vaddr, base, base + (#[trigger] self.map.index(base)).frame.size));
             let offset = vaddr - base;
-            Ok((self.map.index(base).base + offset) as nat)
+            Ok((self.map.index(base).frame.base + offset) as nat)
         } else {
             Err(())
         }
@@ -260,7 +251,7 @@ impl PageTableContents {
 
     pub open spec fn mappings_disjoint(self, other: Self) -> bool {
         forall|s: nat, o: nat| self.map.dom().contains(s) && other.map.dom().contains(o) ==>
-            !overlap(MemRegion { base: s, size: self.map.index(s).size }, MemRegion { base: o, size: other.map.index(o).size })
+            !overlap(MemRegion { base: s, size: self.map.index(s).frame.size }, MemRegion { base: o, size: other.map.index(o).frame.size })
     }
 
     pub proof fn lemma_ranges_disjoint_implies_mappings_disjoint(self, other: Self)
@@ -275,7 +266,7 @@ impl PageTableContents {
         requires
             self.inv(),
         ensures
-            forall|va: nat| #[trigger] self.map.dom().contains(va) ==> self.map.index(va).size > 0;
+            forall|va: nat| #[trigger] self.map.dom().contains(va) ==> self.map.index(va).frame.size > 0;
 }
 
 // TODO: move
@@ -350,6 +341,7 @@ pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>()
     });
 }
 
+// TODO: should go somewhere else
 pub proof fn lemma_finite_map_union<S,T>()
     ensures
         forall|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
