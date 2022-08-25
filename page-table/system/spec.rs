@@ -9,6 +9,7 @@ use seq::*;
 use crate::aux_defs::{PageTableEntry};
 use crate::mem;
 use crate::pt_impl::l0;
+use option::*;
 
 // state:
 // - memory
@@ -45,7 +46,7 @@ pub enum IoOp {
 
 #[is_variant]
 pub enum SystemStep {
-    IoOp { vaddr: nat, paddr: nat, op: IoOp },
+    IoOp { vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
     PTMemOp,
     TLBFill { base: nat, pte: PageTableEntry },
     TLBEvict { base: nat},
@@ -65,57 +66,53 @@ pub open spec fn init(s: SystemVariables) -> bool {
     s.tlb.dom() === Set::empty()
 }
 
-pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp) -> bool {
-    if exists|base: nat, pte: PageTableEntry| #![auto] s1.tlb.contains_pair(base,pte) && base <= vaddr && vaddr < base + pte.frame.size {
-        // TODO:
-        // Should this instead be an argument for this step? I don't really like to use choice in the spec.
-        // To make it part of the arguments I think we'd have to extend IoOp, e.g. Load becomes:
-        // Load { is_exec: bool, result: LoadResult, pte: Option<(nat, PageTableEntry)> },
-        // Then if the pte is_Some() we require that the tlb contains that (nat, pte) pair and if
-        // it is_None() we require that the tlb doesn't contain a suitable entry.
-        // That way we could do the case distinction and use choice in the refinement proof rather
-        // than the spec.
-        let (base, pte) = choose|p:(nat, PageTableEntry)| #![auto] s1.tlb.contains_pair(p.0,p.1) && p.0 <= vaddr && vaddr < p.0 + p.1.frame.size;
-        &&& paddr === (pte.frame.base + (vaddr - base)) as nat
-        &&& s2.tlb === s1.tlb
-        &&& s2.pt_mem === s1.pt_mem
-        &&& match op {
-            IoOp::Store { new_value, result: StoreResult::Ok }        => {
-                &&& pte.flags.is_user_mode_allowed
-                &&& pte.flags.is_writable
-                &&& s2.mem === s1.mem.update(word_index(paddr), new_value)
-            }
-            IoOp::Store { new_value, result: StoreResult::PageFault } => {
-                &&& s2.mem === s1.mem
-                &&& {
-                    ||| !pte.flags.is_user_mode_allowed
-                    ||| !pte.flags.is_writable
+pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
+    match pte {
+        Option::Some((base, pte)) => {
+            &&& s1.tlb.contains_pair(base, pte)
+            &&& base <= vaddr && vaddr < base + pte.frame.size
+            &&& paddr === (pte.frame.base + (vaddr - base)) as nat
+            &&& s2.tlb === s1.tlb
+            &&& s2.pt_mem === s1.pt_mem
+            &&& match op {
+                IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
+                    &&& pte.flags.is_user_mode_allowed
+                    &&& (is_exec ==> !pte.flags.instruction_fetching_disabled)
+                    &&& s2.mem === s1.mem
+                    &&& n == s1.mem.index(word_index(paddr))
+                },
+                IoOp::Store { new_value, result: StoreResult::Ok }        => {
+                    &&& pte.flags.is_user_mode_allowed
+                    &&& pte.flags.is_writable
+                    &&& s2.mem === s1.mem.update(word_index(paddr), new_value)
                 }
-            }
-            IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
-                &&& pte.flags.is_user_mode_allowed
-                &&& (is_exec ==> !pte.flags.instruction_fetching_disabled)
-                &&& s2.mem === s1.mem
-                &&& n == s1.mem.index(word_index(paddr))
-            },
-            IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
-                &&& s2.mem === s1.mem
-                &&& {
-                    ||| !pte.flags.is_user_mode_allowed
-                    ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                IoOp::Store { new_value, result: StoreResult::PageFault } => {
+                    &&& s2.mem === s1.mem
+                    &&& {
+                        ||| !pte.flags.is_user_mode_allowed
+                        ||| !pte.flags.is_writable
+                    }
                 }
-            },
-        }
-    } else {
-        &&& s2.tlb === s1.tlb
-        &&& s2.pt_mem === s1.pt_mem
-        &&& s2.mem === s1.mem
-        &&& match op {
-            IoOp::Store { new_value, result: StoreResult::Ok }        => false,
-            IoOp::Store { new_value, result: StoreResult::PageFault } => true,
-            IoOp::Load { is_exec, result: LoadResult::Value(n) }      => false,
-            IoOp::Load { is_exec, result: LoadResult::PageFault }     => true,
-        }
+                IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
+                    &&& s2.mem === s1.mem
+                    &&& {
+                        ||| !pte.flags.is_user_mode_allowed
+                        ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                    }
+                },
+            }
+        },
+        Option::None => {
+            &&& s2.tlb === s1.tlb
+            &&& s2.pt_mem === s1.pt_mem
+            &&& s2.mem === s1.mem
+            &&& match op {
+                IoOp::Store { new_value, result: StoreResult::Ok }        => false,
+                IoOp::Store { new_value, result: StoreResult::PageFault } => true,
+                IoOp::Load { is_exec, result: LoadResult::Value(n) }      => false,
+                IoOp::Load { is_exec, result: LoadResult::PageFault }     => true,
+            }
+        },
     }
 }
 
@@ -141,7 +138,7 @@ pub open spec fn step_TLBEvict(s1: SystemVariables, s2: SystemVariables, base: n
 
 pub open spec fn next_step(s1: SystemVariables, s2: SystemVariables, step: SystemStep) -> bool {
     match step {
-        SystemStep::IoOp { vaddr, paddr, op } => step_IoOp(s1, s2, vaddr, paddr, op),
+        SystemStep::IoOp { vaddr, paddr, op, pte } => step_IoOp(s1, s2, vaddr, paddr, op, pte),
         SystemStep::PTMemOp => step_PTMemOp(s1, s2),
         SystemStep::TLBFill { base, pte } => step_TLBFill(s1, s2, base, pte),
         SystemStep::TLBEvict { base } => step_TLBEvict(s1, s2, base),
@@ -172,7 +169,7 @@ proof fn next_preserves_inv(s1: SystemVariables, s2: SystemVariables)
 {
     let step = choose|step: SystemStep| next_step(s1, s2, step);
     match step {
-        SystemStep::IoOp { vaddr, paddr, op } => (),
+        SystemStep::IoOp { vaddr, paddr, op , pte} => (),
         SystemStep::PTMemOp => (),
         SystemStep::TLBFill { base, pte } => (),
         SystemStep::TLBEvict { base } => (),
