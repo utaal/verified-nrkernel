@@ -6,7 +6,8 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
-use crate::aux_defs::{overlap, MemRegion, PageTableEntry, Flags};
+use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult };
+use option::*;
 
 // state:
 // - memory
@@ -22,34 +23,24 @@ verus! {
 
 pub struct AbstractVariables {
     pub mem: Map<nat,nat>, // word-indexed
-    /// `mappings` constrains the domain of mem. We could instead move the flags into `map` as well
-    /// and write the specification exclusively in terms of `map` but that also makes some of the
-    /// preconditions awkward, e.g. full mappings have the same flags, etc.
+    /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
+    /// flags into `map` as well and write the specification exclusively in terms of `map` but that
+    /// also makes some of the preconditions awkward, e.g. full mappings have the same flags, etc.
     pub mappings: Map<nat,PageTableEntry>
 }
 
-#[derive(PartialEq, Eq, Structural)] #[is_variant]
-pub enum LoadResult {
-    PageFault,
-    Value(nat), // word-sized load
-}
-
-#[derive(PartialEq, Eq, Structural)] #[is_variant]
-pub enum StoreResult {
-    PageFault,
-    Ok,
-}
-
-pub enum IoOp {
-    Store { new_value: nat, result: StoreResult },
-    Load { is_exec: bool, result: LoadResult },
-}
-
 pub enum AbstractStep {
-    IoOp  { vaddr: nat, op: IoOp },
+    IoOp  { vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
     Map   { base: nat, pte: PageTableEntry },
     Unmap { base: nat },
+    Stutter,
     // Resolve { vaddr: nat }, // How do we specify this?
+    // TODO:
+    // Need to add resolve. I think if I'm careful in how I connect the hardware spec to the
+    // high-level spec (i.e. when defining the abstraction function), I should be able to guarantee
+    // that the mappings in the high-level spec are the correct ones, i.e. the ones that are
+    // actually used in the system spec, which would make the spec of the resolve function here
+    // meaningful.
 }
 
 // Unaligned accesses are a bit funky with this index function and the word sequences but unaligned
@@ -69,46 +60,50 @@ pub open spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr:
     m.dom().contains(base) && base <= vaddr && vaddr < base + m.index(base).frame.size
 }
 
-pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp) -> bool {
+pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     &&& s2.mappings === s1.mappings
-    &&& if exists|base: nat| mapping_contains(s1.mappings, base, vaddr) {
-        let base    = choose|base: nat| mapping_contains(s1.mappings, base, vaddr);
-        let pte     = s1.mappings.index(base);
-        let mem_idx = word_index(vaddr);
-        let mem_val = s1.mem.index(mem_idx);
-        match op {
-            IoOp::Store { new_value, result: StoreResult::Ok }        => {
-                &&& pte.flags.is_user_mode_allowed
-                &&& pte.flags.is_writable
-                &&& s2.mem === s1.mem.insert(mem_idx, new_value)
-            }
-            IoOp::Store { new_value, result: StoreResult::PageFault } => {
-                &&& {
-                    ||| !pte.flags.is_user_mode_allowed
-                    ||| !pte.flags.is_writable
+    &&& match pte {
+        Option::Some((base, pte)) => {
+            let mem_idx = word_index(vaddr);
+            let mem_val = s1.mem.index(mem_idx);
+            &&& s1.mappings.contains_pair(base, pte)
+            &&& between(vaddr, base, base + pte.frame.size)
+            &&& match op {
+                IoOp::Store { new_value, result: StoreResult::Ok }        => {
+                    &&& pte.flags.is_user_mode_allowed
+                    &&& pte.flags.is_writable
+                    &&& s2.mem === s1.mem.insert(mem_idx, new_value)
                 }
-                &&& s2.mem === s1.mem
-            }
-            IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
-                &&& pte.flags.is_user_mode_allowed
-                &&& (is_exec ==> !pte.flags.instruction_fetching_disabled)
-                &&& s2.mem === s1.mem
-                &&& n == mem_val
-            },
-            IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
-                &&& s2.mem === s1.mem
-                &&& {
-                    ||| !pte.flags.is_user_mode_allowed
-                    ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                IoOp::Store { new_value, result: StoreResult::PageFault } => {
+                    &&& s2.mem === s1.mem
+                    &&& {
+                        ||| !pte.flags.is_user_mode_allowed
+                        ||| !pte.flags.is_writable
+                    }
                 }
-            },
-        }
-    } else {
-        match op {
-            IoOp::Store { new_value, result: StoreResult::PageFault } => s2.mem === s1.mem,
-            IoOp::Load  { is_exec, result: LoadResult::PageFault }    => s2.mem === s1.mem,
-            _                                                         => false,
-        }
+                IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
+                    &&& pte.flags.is_user_mode_allowed
+                    &&& (is_exec ==> !pte.flags.instruction_fetching_disabled)
+                    &&& s2.mem === s1.mem
+                    &&& n == mem_val
+                },
+                IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
+                    &&& s2.mem === s1.mem
+                    &&& {
+                        ||| !pte.flags.is_user_mode_allowed
+                        ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                    }
+                },
+            }
+        },
+        Option::None => {
+            match op {
+                IoOp::Store { new_value, result: StoreResult::PageFault } => s2.mem === s1.mem,
+                IoOp::Load  { is_exec, result: LoadResult::PageFault }    => s2.mem === s1.mem,
+                _                                                         => false,
+            }
+        },
+
     }
 }
 
@@ -129,11 +124,16 @@ pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: 
     &&& s2.mappings === s1.mappings.remove(base)
 }
 
+pub open spec fn step_Stutter(s1: AbstractVariables, s2: AbstractVariables) -> bool {
+    s1 === s2
+}
+
 pub open spec fn next_step(s1: AbstractVariables, s2: AbstractVariables, step: AbstractStep) -> bool {
     match step {
-        AbstractStep::IoOp  { vaddr, op } => step_IoOp(s1, s2, vaddr, op),
-        AbstractStep::Map   { base, pte } => step_Map(s1, s2, base, pte),
-        AbstractStep::Unmap { base }      => step_Unmap(s1, s2, base),
+        AbstractStep::IoOp  { vaddr, op, pte } => step_IoOp(s1, s2, vaddr, op, pte),
+        AbstractStep::Map   { base, pte }      => step_Map(s1, s2, base, pte),
+        AbstractStep::Unmap { base }           => step_Unmap(s1, s2, base),
+        AbstractStep::Stutter                  => step_Stutter(s1, s2),
     }
 }
 

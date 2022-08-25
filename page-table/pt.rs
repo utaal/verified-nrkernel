@@ -17,7 +17,7 @@ pub struct PageTableVariables {
 pub enum PageTableStep {
     Map { base: nat, pte: PageTableEntry },
     Unmap { base: nat },
-    Noop,
+    Stutter,
 }
 
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: nat, pte: PageTableEntry) -> bool {
@@ -28,7 +28,7 @@ pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, base
     &&& arbitrary()
 }
 
-pub open spec fn step_Noop(s1: PageTableVariables, s2: PageTableVariables) -> bool {
+pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
     s1 === s2
 }
 
@@ -36,7 +36,7 @@ pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step:
     match step {
         PageTableStep::Map   { base, pte } => step_Map(s1, s2, base, pte),
         PageTableStep::Unmap { base }      => step_Unmap(s1, s2, base),
-        PageTableStep::Noop                => step_Noop(s1, s2),
+        PageTableStep::Stutter             => step_Stutter(s1, s2),
     }
 }
 

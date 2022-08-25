@@ -65,7 +65,7 @@ impl PageTableMemory {
     pub fn cr3(&self) -> (res: (Ghost<MemRegion>, usize))
         ensures
             res.1 == self.cr3_spec().1,
-            res.0@ == self.cr3_spec().0,
+            res.0@ === self.cr3_spec().0,
             res.0@.contains(res.1),
     {
         // FIXME:

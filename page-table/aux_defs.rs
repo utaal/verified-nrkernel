@@ -44,13 +44,21 @@ pub proof fn lemma_new_seq<T>(i: nat, e: T)
     }
 }
 
-// pub open spec fn seq_union<T>(seq: Seq<Set<T>>) -> Set<T>
-//     decreases seq.len()
-// {
-//     seq[0].union(seq_union::<T>(seq.subrange(1,seq.len())))
-// }
+pub enum LoadResult {
+    PageFault,
+    Value(nat), // word-sized load
+}
 
-#[derive(PartialEq, Eq, Structural)]
+pub enum StoreResult {
+    PageFault,
+    Ok,
+}
+
+pub enum IoOp {
+    Store { new_value: nat, result: StoreResult },
+    Load { is_exec: bool, result: LoadResult },
+}
+
 pub struct MemRegion { pub base: nat, pub size: nat }
 
 impl MemRegion {

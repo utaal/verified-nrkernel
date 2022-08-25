@@ -6,7 +6,7 @@ use state_machines_macros::*;
 use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
-use crate::aux_defs::{PageTableEntry};
+use crate::aux_defs::{ PageTableEntry, IoOp, LoadResult, StoreResult, between };
 use crate::mem;
 use crate::pt_impl::l0;
 use option::*;
@@ -27,21 +27,6 @@ pub struct SystemVariables {
     pub mem:    Seq<nat>,
     pub pt_mem: mem::PageTableMemory,
     pub tlb:    Map<nat,PageTableEntry>,
-}
-
-pub enum LoadResult {
-    PageFault,
-    Value(nat), // word-sized load
-}
-
-pub enum StoreResult {
-    PageFault,
-    Ok,
-}
-
-pub enum IoOp {
-    Store { new_value: nat, result: StoreResult }, // represents a third party doing a write too
-    Load { is_exec: bool, result: LoadResult },
 }
 
 #[is_variant]
@@ -70,7 +55,7 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
     match pte {
         Option::Some((base, pte)) => {
             &&& s1.tlb.contains_pair(base, pte)
-            &&& base <= vaddr && vaddr < base + pte.frame.size
+            &&& between(vaddr, base, base + pte.frame.size)
             &&& paddr === (pte.frame.base + (vaddr - base)) as nat
             &&& s2.tlb === s1.tlb
             &&& s2.pt_mem === s1.pt_mem
@@ -107,10 +92,9 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
             &&& s2.pt_mem === s1.pt_mem
             &&& s2.mem === s1.mem
             &&& match op {
-                IoOp::Store { new_value, result: StoreResult::Ok }        => false,
                 IoOp::Store { new_value, result: StoreResult::PageFault } => true,
-                IoOp::Load { is_exec, result: LoadResult::Value(n) }      => false,
                 IoOp::Load { is_exec, result: LoadResult::PageFault }     => true,
+                _                                                         => false,
             }
         },
     }
