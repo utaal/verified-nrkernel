@@ -41,6 +41,21 @@ pub proof fn ambient_lemmas2()
     });
 }
 
+// Simply uncommenting this thing slows down verification of this file by 2.5x
+// #[proof]
+// fn ambient_lemmas3() {
+//     ensures([
+//             forall(|d: Directory, base: nat, pte: PageTableEntry|
+//                    d.inv() && #[trigger] d.accepted_mapping(base, pte) ==>
+//                    d.interp().accepted_mapping(base, pte)),
+//     ]);
+//     assert_forall_by(|d: Directory, base: nat, pte: PageTableEntry| {
+//         requires(d.inv() && #[trigger] d.accepted_mapping(base, pte));
+//         ensures(d.interp().accepted_mapping(base, pte));
+//         d.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
+//     });
+// }
+
 #[is_variant]
 pub tracked enum NodeEntry {
     Directory(Directory),

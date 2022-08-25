@@ -60,20 +60,6 @@ pub proof fn ambient_lemmas1()
 }
 
 
-// #[proof]
-// fn ambient_lemmas3() {
-//     ensures([
-//             forall(|d: Directory, base: nat, frame: MemRegion|
-//                    d.inv() && #[trigger] d.accepted_mapping(base, frame) ==>
-//                    d.interp().accepted_mapping(base, frame)),
-//     ]);
-//     assert_forall_by(|d: Directory, base: nat, frame: MemRegion| {
-//         requires(d.inv() && #[trigger] d.accepted_mapping(base, frame));
-//         ensures(d.interp().accepted_mapping(base, frame));
-//         d.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-//     });
-// }
-
 pub ghost struct PageTableContents {
     pub map: Map<nat /* VAddr */, PageTableEntry>,
     pub arch: Arch,
