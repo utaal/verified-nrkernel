@@ -6,7 +6,7 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
-use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult };
+use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult };
 use option::*;
 
 // state:
@@ -31,8 +31,8 @@ pub struct AbstractVariables {
 
 pub enum AbstractStep {
     IoOp  { vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
-    Map   { base: nat, pte: PageTableEntry },
-    Unmap { base: nat },
+    Map   { base: nat, pte: PageTableEntry, result: MapResult },
+    Unmap { base: nat, result: UnmapResult },
     Stutter,
     // Resolve { vaddr: nat }, // How do we specify this?
     // TODO:
@@ -107,8 +107,8 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
     }
 }
 
-pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry) -> bool {
-    &&& true // TODO: alignment, anything else?
+pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
+    &&& true // TODO: alignment, anything else? result matching
     &&& forall|base2: nat, pte2|
         #[trigger] s1.mappings.contains_pair(base2, pte2)
         ==> !overlap(MemRegion { base, size: pte.frame.size }, MemRegion { base: base2, size: pte2.frame.size })
@@ -116,7 +116,7 @@ pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: na
     &&& s2.mappings === s1.mappings.insert(base, pte)
 }
 
-pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat) -> bool {
+pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat, result: UnmapResult) -> bool {
     &&& true // TODO: anything else?
     &&& s1.mappings.dom().contains(base)
     &&& s1.mappings.index(base).flags.is_user_mode_allowed
@@ -130,10 +130,10 @@ pub open spec fn step_Stutter(s1: AbstractVariables, s2: AbstractVariables) -> b
 
 pub open spec fn next_step(s1: AbstractVariables, s2: AbstractVariables, step: AbstractStep) -> bool {
     match step {
-        AbstractStep::IoOp  { vaddr, op, pte } => step_IoOp(s1, s2, vaddr, op, pte),
-        AbstractStep::Map   { base, pte }      => step_Map(s1, s2, base, pte),
-        AbstractStep::Unmap { base }           => step_Unmap(s1, s2, base),
-        AbstractStep::Stutter                  => step_Stutter(s1, s2),
+        AbstractStep::IoOp  { vaddr, op, pte }    => step_IoOp(s1, s2, vaddr, op, pte),
+        AbstractStep::Map   { base, pte, result } => step_Map(s1, s2, base, pte, result),
+        AbstractStep::Unmap { base, result }      => step_Unmap(s1, s2, base, result),
+        AbstractStep::Stutter                     => step_Stutter(s1, s2),
     }
 }
 

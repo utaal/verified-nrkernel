@@ -44,6 +44,16 @@ pub proof fn lemma_new_seq<T>(i: nat, e: T)
     }
 }
 
+pub enum MapResult {
+    ErrOverlap,
+    Ok,
+}
+
+pub enum UnmapResult {
+    ErrNoSuchMapping,
+    Ok,
+}
+
 pub enum LoadResult {
     PageFault,
     Value(nat), // word-sized load

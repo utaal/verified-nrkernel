@@ -6,7 +6,7 @@ use map::*;
 
 use crate::system::spec as system;
 use crate::pt;
-use crate::aux_defs::{ between, PageTableEntry, IoOp };
+use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult };
 use crate::high_level_spec as hlspec;
 
 verus! {
@@ -28,27 +28,27 @@ pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: syst
     &&& pt::step_Stutter(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system))
 }
 
-pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
     &&& system::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Map(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system), base, pte)
+    &&& pt::step_Map(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system), base, pte, result)
 }
 
-pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat) -> bool {
+pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
     &&& system::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Unmap(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system), base)
+    &&& pt::step_Unmap(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system), base, result)
 }
 
 pub enum OSStep {
     System { step: system::SystemStep },
-    Map { base: nat, pte: PageTableEntry },
-    Unmap { base: nat },
+    Map { base: nat, pte: PageTableEntry, result: MapResult },
+    Unmap { base: nat, result: UnmapResult },
 }
 
 pub open spec fn next_step(s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
-        OSStep::System { step }      => step_System(s1, s2, step),
-        OSStep::Map    { base, pte } => step_Map(s1, s2, base, pte),
-        OSStep::Unmap  { base }      => step_Unmap(s1, s2, base),
+        OSStep::System { step }              => step_System(s1, s2, step),
+        OSStep::Map    { base, pte, result } => step_Map(s1, s2, base, pte, result),
+        OSStep::Unmap  { base, result }      => step_Unmap(s1, s2, base, result),
     }
 }
 
@@ -65,8 +65,8 @@ pub open spec fn os_step_to_abstract_step(step: OSStep) -> hlspec::AbstractStep 
                 system::SystemStep::TLBFill { base, pte }          => hlspec::AbstractStep::Stutter,
                 system::SystemStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
             },
-        OSStep::Map    { base, pte } => hlspec::AbstractStep::Map { base, pte },
-        OSStep::Unmap  { base }      => hlspec::AbstractStep::Unmap { base },
+        OSStep::Map    { base, pte, result } => hlspec::AbstractStep::Map { base, pte, result },
+        OSStep::Unmap  { base, result }      => hlspec::AbstractStep::Unmap { base, result },
     }
 }
 
@@ -111,14 +111,14 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(abs_s2 === abs_s1);
                 },
             },
-        OSStep::Map { base, pte } => {
+        OSStep::Map { base, pte, result } => {
             assume(hlspec::next_step(abs_s1, abs_s2, abs_step));
             // hlspec::AbstractStep::Map { base, pte }
         },
-        OSStep::Unmap { base } => {
+        OSStep::Unmap { base, result } => {
             // hlspec::AbstractStep::Unmap { base }
-            assert(abs_step === hlspec::AbstractStep::Unmap { base });
-            assert(step_Unmap(s1, s2, base));
+            assert(abs_step === hlspec::AbstractStep::Unmap { base, result });
+            assert(step_Unmap(s1, s2, base, result));
             assume(hlspec::next_step(abs_s1, abs_s2, abs_step));
         },
     }
