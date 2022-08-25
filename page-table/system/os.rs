@@ -72,13 +72,13 @@ pub open spec fn os_step_to_abstract_step(step: OSStep) -> hlspec::AbstractStep 
 
 pub open spec fn os_state_to_abstract_state(s: OSVariables) -> hlspec::AbstractVariables {
     let mappings = system::interp_pt_mem(s.system.pt_mem).map;
-    let mem_domain = |vaddr: nat| exists|base: nat, pte: PageTableEntry| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
-    let mem_values = |vaddr: nat| {
-        let (base, pte) = choose|(base, pte): (nat, PageTableEntry)| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
-        let phys_addr = (pte.frame.base + (vaddr - base)) as nat;
-        s.system.mem[phys_addr]
-    };
-    let mem: Map<nat,nat> = Map::new(mem_domain, mem_values);
+    let mem: Map<nat,nat> = Map::new(
+        |vaddr: nat| exists|base: nat, pte: PageTableEntry| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size),
+        |vaddr: nat| {
+            let (base, pte) = choose|basepte: (nat, PageTableEntry)| mappings.contains_pair(basepte.0, basepte.1) && between(vaddr, basepte.0, basepte.0 + basepte.1.frame.size);
+            let phys_addr = (pte.frame.base + (vaddr - base)) as nat;
+            s.system.mem[phys_addr]
+        });
     hlspec::AbstractVariables {
         mem,
         mappings,
