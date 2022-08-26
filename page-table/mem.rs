@@ -87,7 +87,7 @@ impl PageTableMemory {
             aligned(r@.base, PAGE_SIZE),
             !old(self).regions().contains(r@),
             self.regions() === old(self).regions().insert(r@),
-            self.region_view(r@) === new_seq(0u64, 512),
+            self.region_view(r@) === new_seq::<u64>(512nat, 0u64),
             // forall|offset| r@.contains(offset) ==> #[trigger] self.spec_read(offset, r@) == 0,
             forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.inv()

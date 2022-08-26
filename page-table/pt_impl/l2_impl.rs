@@ -14,7 +14,7 @@ use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq };
+use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, lemma_new_seq };
 use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, ENTRY_BYTES, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
@@ -280,7 +280,7 @@ impl PageDirectoryEntry {
             r.inv(),
             r@.is_Page(),
             r.layer == layer,
-            // r@.get_Page_addr() == address,
+            r@.get_Page_addr() == pte.frame.base,
     {
         Self::new_entry(layer, pte.frame.base as u64, true, pte.flags.is_writable, pte.flags.is_supervisor, false, false, pte.flags.disable_execute)
     }
@@ -293,7 +293,7 @@ impl PageDirectoryEntry {
             r.inv(),
             r@.is_Directory(),
             r.layer == layer,
-            // r@.get_Directory_addr() == address,
+            r@.get_Directory_addr() == address,
     {
         // FIXME: check what flags we want here
         Self::new_entry(layer, address, false, true, true, false, false, false)
@@ -314,7 +314,7 @@ impl PageDirectoryEntry {
             if is_page { 0 < layer } else { layer < 3 },
             addr_is_zero_padded(layer, address, is_page),
         ensures
-            if is_page { r@.is_Page() } else { r@.is_Directory() },
+            if is_page { r@.is_Page() && r@.get_Page_addr() == address } else { r@.is_Directory() && r@.get_Directory_addr() == address},
             r.inv(),
             r.layer == layer,
     {
@@ -340,14 +340,17 @@ impl PageDirectoryEntry {
                     if e.layer() == 3 {
                         assert(is_page);
                         assert(e@.is_Page());
+                        assume(e@.get_Page_addr() == address);
                     } else if e.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
                         // FIXME: bitvector
                         assume(is_page);
                         assert(e@.is_Page());
+                        assume(e@.get_Page_addr() == address);
                     } else {
                         // FIXME: bitvector
                         assume(!is_page);
                         assert(e@.is_Directory());
+                        assume(e@.get_Directory_addr() == address);
                     }
                 } else {
                     // FIXME: bitvector
@@ -445,6 +448,8 @@ pub struct PageTable {
 impl PageTable {
     pub open spec(checked) fn well_formed(self, layer: nat, ptr: usize) -> bool {
         &&& self.arch@.inv()
+        // Make sure each page directory fits in one page:
+        &&& forall|layer: nat| layer < self.arch@.layers.len() ==> self.arch@.num_entries(layer) == 512
         &&& aligned(ptr, PAGE_SIZE)
     }
 
@@ -1264,7 +1269,7 @@ impl PageTable {
                     let new_interp = self.interp_at(layer, ptr, base, pt@);
                     assert(new_interp.entries[idxg@] === self.interp_at_entry(layer, ptr, base, idxg@, pt@));
                     assert(self.view_at(layer, ptr, idxg@, pt@) === new_page_entry@);
-                    // FIXME: bitvector stuff
+                    // FIXME: bitvector stuff?
                     assume(self.interp_at_entry(layer, ptr, base, idxg@, pt@) === l1::NodeEntry::Page(pte@));
                     assert(new_interp.entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
                     assert_seqs_equal!(new_interp.entries, old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
@@ -1312,17 +1317,45 @@ impl PageTable {
                 assume(pt@.region.contains(write_addr));
                 self.memory.write(write_addr, ghost(pt@.region), new_dir_entry.entry);
 
+
                 // Gerd:
                 // Proof sketch:
                 // 1. new_dir_ptr is from alloc_page, which has a postcondition that the page is zeroed out
                 // 2. Prove that view_at of a 0u64 entry is GhostPageDirectoryEntry::Empty
                 // 3. Prove that thus empty_at is true for a page of zeros
                 // 4. Also use step 2 to prove inv_at is true for a page of zeros
-                assume(self.empty_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@));
-                assume(self.inv_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@));
-                let new_dir_interp: Ghost<l1::Directory> = ghost(self.interp_at((layer + 1) as nat, new_dir_ptr, entry_base, new_dir_pt@));
-                assume(new_dir_interp@ === interp@.new_empty_dir(idx));
-                assert(new_dir_interp@.inv());
+
+                let pt_with_empty: Ghost<PTDir> = ghost(
+                    PTDir {
+                        region:       pt@.region,
+                        entries:      pt@.entries.update(idx, Some(new_dir_pt@)),
+                        used_regions: pt@.used_regions.union(new_dir_pt@.used_regions),
+                    });
+                let self_with_empty: Ghost<Self> = ghost(*self);
+                proof {
+                    lemma_new_seq::<u64>(512nat, 0u64);
+                    lemma_new_seq::<Option<PTDir>>(self_with_empty@.arch@.num_entries(layer), None);
+                    assert(new_dir_pt@.entries.len() == 512);
+                    assert(new_dir_region@.contains(new_dir_ptr));
+                    assert(self_with_empty@.memory.region_view(new_dir_region@) === new_seq(512nat, 0u64));
+                    self_with_empty@.lemma_zeroed_page_implies_empty_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@);
+                    assert(self_with_empty@.empty_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@));
+                    assert(self_with_empty@.inv_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@));
+                    assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@)) by {
+                        // FIXME: use framing lemma to get invariant here.
+                        // old(self).lemma_inv_at_different_memory(self_with_empty@, layer, ptr, pt_with_empty@);
+                        assume(self_with_empty@.directories_obey_invariant_at(layer, ptr, pt_with_empty@));
+                        assume(self_with_empty@.inv_at(layer, ptr, pt_with_empty@));
+                    };
+
+                    assert(self_with_empty@.memory.spec_read(write_addr, pt_with_empty@.region) === new_dir_entry.entry);
+                    assert(self_with_empty@.view_at(layer, ptr, idx, pt_with_empty@) === new_dir_entry@);
+                    assert(new_dir_entry@.get_Directory_addr() == new_dir_ptr);
+                    self_with_empty@.lemma_empty_at_interp_equal_l1_empty_dir(layer, ptr, base, idx, pt_with_empty@, interp@);
+                    let new_dir_interp: l1::Directory = self_with_empty@.interp_at((layer + 1) as nat, new_dir_ptr, entry_base, new_dir_pt@);
+                    assert(new_dir_interp === interp@.new_empty_dir(idx));
+                    assert(new_dir_interp.inv());
+                }
                 match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, pte, new_dir_pt) {
                     Ok(rec_res) => {
                         let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
@@ -1355,6 +1388,43 @@ impl PageTable {
                 }
             }
         }
+    }
+
+    proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)
+        requires
+            // TODO: May need more preconditions
+            self.memory.inv(),
+            self.memory.regions().contains(pt.region),
+            pt.region.contains(ptr),
+            self.layer_in_range(layer),
+            pt.entries.len() == self.arch@.num_entries(layer),
+            forall|i: nat| i < self.arch@.num_entries(layer) ==> self.memory.region_view(pt.region).index(i) == 0u64,
+        ensures
+            self.empty_at(layer, ptr, pt),
+            self.inv_at(layer, ptr, pt),
+    {
+        // FIXME: Just assuming this for now, will need nonlinear arith
+        assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
+               ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * ENTRY_BYTES, pt.region.base)) < self.memory.region_view(pt.region).len()));
+        assume(false);
+    }
+
+    proof fn lemma_empty_at_interp_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, idx: nat, pt: PTDir, l1dir: l1::Directory)
+        requires
+            self.inv_at(layer, ptr, pt),
+            idx < self.arch@.num_entries(layer),
+            self.view_at(layer, ptr, idx, pt).is_Directory(),
+            self.empty_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), pt.entries[idx].get_Some_0()),
+            l1dir.inv(),
+            l1dir.layer === layer,
+            l1dir.arch === self.arch@,
+            l1dir.base_vaddr === base,
+        ensures
+            self.interp_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), self.arch@.entry_base(layer, base, idx), pt.entries.index(idx).get_Some_0())
+                === l1dir.new_empty_dir(idx)
+    {
+        // FIXME:
+        assume(false);
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230

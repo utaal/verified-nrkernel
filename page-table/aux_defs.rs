@@ -35,7 +35,7 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
 pub proof fn lemma_new_seq<T>(i: nat, e: T)
     ensures
         new_seq(i, e).len() == i,
-        forall|j: nat| j < new_seq(i, e).len() ==> equal(new_seq(i, e).index(j), e),
+        forall|j: nat| j < i ==> new_seq(i, e).index(j) === e,
     decreases i
 {
     if i == 0 {
@@ -73,7 +73,7 @@ pub struct MemRegion { pub base: nat, pub size: nat }
 
 impl MemRegion {
     pub open spec fn contains(self, addr: nat) -> bool {
-        between(addr, self.base, self.size)
+        between(addr, self.base, self.base + self.size)
     }
 }
 
