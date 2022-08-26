@@ -61,28 +61,28 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
             &&& s2.pt_mem === s1.pt_mem
             &&& match op {
                 IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
-                    &&& pte.flags.is_user_mode_allowed
-                    &&& (is_exec ==> !pte.flags.instruction_fetching_disabled)
+                    &&& !pte.flags.is_supervisor
+                    &&& (is_exec ==> !pte.flags.disable_execute)
                     &&& s2.mem === s1.mem
                     &&& n == s1.mem.index(word_index(paddr))
                 },
                 IoOp::Store { new_value, result: StoreResult::Ok }        => {
-                    &&& pte.flags.is_user_mode_allowed
+                    &&& !pte.flags.is_supervisor
                     &&& pte.flags.is_writable
                     &&& s2.mem === s1.mem.update(word_index(paddr), new_value)
                 }
                 IoOp::Store { new_value, result: StoreResult::PageFault } => {
                     &&& s2.mem === s1.mem
                     &&& {
-                        ||| !pte.flags.is_user_mode_allowed
+                        ||| pte.flags.is_supervisor
                         ||| !pte.flags.is_writable
                     }
                 }
                 IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
                     &&& s2.mem === s1.mem
                     &&& {
-                        ||| !pte.flags.is_user_mode_allowed
-                        ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                        ||| pte.flags.is_supervisor
+                        ||| (is_exec && pte.flags.disable_execute)
                     }
                 },
             }

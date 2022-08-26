@@ -17,7 +17,7 @@ use option::*;
 // - resolve
 
 // TODO:
-// - should Map be able to set is_user_mode_allowed?
+// - should Map be able to set is_supervisor?
 
 verus! {
 
@@ -70,28 +70,28 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
             &&& between(vaddr, base, base + pte.frame.size)
             &&& match op {
                 IoOp::Store { new_value, result: StoreResult::Ok }        => {
-                    &&& pte.flags.is_user_mode_allowed
+                    &&& !pte.flags.is_supervisor
                     &&& pte.flags.is_writable
                     &&& s2.mem === s1.mem.insert(mem_idx, new_value)
                 }
                 IoOp::Store { new_value, result: StoreResult::PageFault } => {
                     &&& s2.mem === s1.mem
                     &&& {
-                        ||| !pte.flags.is_user_mode_allowed
+                        ||| pte.flags.is_supervisor
                         ||| !pte.flags.is_writable
                     }
                 }
                 IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
-                    &&& pte.flags.is_user_mode_allowed
-                    &&& (is_exec ==> !pte.flags.instruction_fetching_disabled)
+                    &&& !pte.flags.is_supervisor
+                    &&& (is_exec ==> !pte.flags.disable_execute)
                     &&& s2.mem === s1.mem
                     &&& n == mem_val
                 },
                 IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
                     &&& s2.mem === s1.mem
                     &&& {
-                        ||| !pte.flags.is_user_mode_allowed
-                        ||| (is_exec && pte.flags.instruction_fetching_disabled)
+                        ||| pte.flags.is_supervisor
+                        ||| (is_exec && pte.flags.disable_execute)
                     }
                 },
             }
@@ -119,7 +119,7 @@ pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: na
 pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat, result: UnmapResult) -> bool {
     &&& true // TODO: anything else?
     &&& s1.mappings.dom().contains(base)
-    &&& s1.mappings.index(base).flags.is_user_mode_allowed
+    &&& !s1.mappings.index(base).flags.is_supervisor
     &&& s2.mem === s1.mem
     &&& s2.mappings === s1.mappings.remove(base)
 }

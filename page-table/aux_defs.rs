@@ -119,8 +119,8 @@ impl MemRegionExec {
 
 pub struct Flags {
     pub is_writable: bool,
-    pub is_user_mode_allowed: bool,
-    pub instruction_fetching_disabled: bool,
+    pub is_supervisor: bool,
+    pub disable_execute: bool,
 }
 
 pub struct PageTableEntry {
