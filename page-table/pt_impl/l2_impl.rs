@@ -942,8 +942,6 @@ impl PageTable {
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
-            // FIXME: remove, only here for quicker verification times
-            assume(false);
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
@@ -1287,19 +1285,18 @@ impl PageTable {
                 self.memory.write(write_addr, ghost(pt@.region), new_dir_entry.entry);
 
 
-                // Gerd:
-                // Proof sketch:
-                // 1. new_dir_ptr is from alloc_page, which has a postcondition that the page is zeroed out
-                // 2. Prove that view_at of a 0u64 entry is GhostPageDirectoryEntry::Empty
-                // 3. Prove that thus empty_at is true for a page of zeros
-                // 4. Also use step 2 to prove inv_at is true for a page of zeros
-
+                // After writing the new empty directory entry we prove that the resulting state
+                // satisfies the invariant and TODO: probably also that the interpretation remains
+                // unchanged.
                 let pt_with_empty: Ghost<PTDir> = ghost(
                     PTDir {
                         region:       pt@.region,
                         entries:      pt@.entries.update(idx, Some(new_dir_pt@)),
                         used_regions: pt@.used_regions.union(new_dir_pt@.used_regions),
                     });
+                // For easier reference we take a snapshot of self here. In the subsequent proofs
+                // (after the recursive call) we have old(self), self_with_empty and self to refer
+                // to each relevant state.
                 let self_with_empty: Ghost<Self> = ghost(*self);
                 proof {
                     lemma_new_seq::<u64>(512nat, 0u64);
@@ -1383,32 +1380,167 @@ impl PageTable {
                     self_with_empty@.lemma_empty_at_interp_equal_l1_empty_dir(layer, ptr, base, idx, pt_with_empty@, interp@);
                     let new_dir_interp: l1::Directory = self_with_empty@.interp_at((layer + 1) as nat, new_dir_ptr, entry_base, new_dir_pt@);
                     assert(new_dir_interp === interp@.new_empty_dir(idx));
+                    // FIXME: will most likely need this for the subsequent interp proof:
+                    // assert(self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@) === old(self).interp_at(layer, ptr, base, pt@));
                     assert(new_dir_interp.inv());
                 }
+
                 match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, pte, new_dir_pt) {
                     Ok(rec_res) => {
                         let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
                         let dir_new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
-                        let pt_res: Ghost<PTDir> = ghost(
+                        let pt_final: Ghost<PTDir> = ghost(
                             PTDir {
-                                region: pt@.region,
-                                entries: pt@.entries.update(idx, Some(dir_pt_res@)),
-                                used_regions: pt@.used_regions.union(dir_new_regions@),
+                                region: pt_with_empty@.region,
+                                entries: pt_with_empty@.entries.update(idx, Some(dir_pt_res@)),
+                                used_regions: pt_with_empty@.used_regions.union(dir_new_regions@),
                             });
-                        // FIXME:
-                        assume(self.inv_at(layer, ptr, pt_res@));
-                        assume(Ok(self.interp_at(layer, ptr, base, pt_res@))
-                               === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
+                        proof {
+                            let ptrg = ptr;
+                            // Note: Many of these invariant/interp framing proofs are nearly
+                            // identical. If I find some time I should extract them into a lemma.
+                            // Would clean up this function quite a bit.
+                            assert(self.inv_at(layer, ptr, pt_final@)) by {
+                                assert(self.ghost_pt_matches_structure(layer, ptr, pt_final@)) by {
+                                    assert forall|i: nat|
+                                        i < self.arch@.num_entries(layer) implies {
+                                            let entry = #[trigger] self.view_at(layer, ptr, i, pt_final@);
+                                            entry.is_Directory() == pt_final@.entries[i].is_Some()
+                                        } by
+                                    {
+                                        let entry = self.view_at(layer, ptr, i, pt_final@);
+                                        assert(self_with_empty@.directories_obey_invariant_at(layer, ptr, pt_with_empty@));
+                                        assert(self_with_empty@.ghost_pt_matches_structure(layer, ptr, pt_with_empty@));
+                                        if i == idxg@ {
+                                        } else {
+                                            let addr = ptrg as nat + i * ENTRY_BYTES;
+                                            // FIXME: indexing calculus
+                                            assume(addr < self.memory.region_view(pt_final@.region).len());
+                                            assert(self.memory.spec_read(addr, pt_final@.region)
+                                                   === self_with_empty@.memory.spec_read(addr, pt_with_empty@.region));
+                                            assert(entry === self_with_empty@.view_at(layer, ptr, i, pt_with_empty@));
+                                            assert(entry.is_Directory() == pt_final@.entries[i].is_Some());
+                                        }
+                                    };
+                                };
+
+                                assert(self.directories_obey_invariant_at(layer, ptr, pt_final@)) by {
+                                    assert forall|i: nat| i < self.arch@.num_entries(layer) implies {
+                                        let entry = #[trigger] self.view_at(layer, ptr, i, pt_final@);
+                                        entry.is_Directory()
+                                            ==> self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_final@.entries[i].get_Some_0())
+                                    } by
+                                    {
+                                        let entry = self.view_at(layer, ptr, i, pt_final@);
+                                        assert(self_with_empty@.directories_obey_invariant_at(layer, ptr, pt_with_empty@));
+                                        assert(self_with_empty@.ghost_pt_matches_structure(layer, ptr, pt_with_empty@));
+                                        assert(self_with_empty@.ghost_pt_used_regions_rtrancl(layer, ptr, pt_with_empty@));
+
+                                        assert(self.ghost_pt_matches_structure(layer, ptr, pt_final@));
+                                        if i == idxg@ {
+                                        } else {
+                                            if entry.is_Directory() {
+                                                let addr = ptrg as nat + i * ENTRY_BYTES;
+                                                // FIXME: indexing calculus
+                                                assume(addr < self.memory.region_view(pt_final@.region).len());
+                                                assert(self.memory.spec_read(addr, pt_final@.region)
+                                                       === self_with_empty@.memory.spec_read(addr, pt_with_empty@.region));
+                                                assert(entry === self_with_empty@.view_at(layer, ptr, i, pt_with_empty@));
+                                                assert(pt_with_empty@.entries[i].is_Some());
+                                                let pt_entry = pt_with_empty@.entries[i].get_Some_0();
+                                                assert(self_with_empty@.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_entry));
+                                                assert(pt_with_empty@.entries[i] === pt_final@.entries[i]);
+                                                assert(self_with_empty@.memory.regions().contains(pt_entry.region));
+                                                assert(self.memory.regions().contains(pt_entry.region));
+                                                self_with_empty@.lemma_inv_at_different_memory(*self, (layer + 1) as nat, entry.get_Directory_addr(), pt_entry);
+                                                assert(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_final@.entries[i].get_Some_0()));
+                                            }
+                                        }
+                                    };
+                                };
+                                assert(pt_final@.entries.len() == pt_with_empty@.entries.len());
+                                assert(forall|i: nat| i != idxg@ && i < pt_final@.entries.len() ==> pt_final@.entries[i] === pt_with_empty@.entries[i]);
+                                assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt_final@)) by {
+                                    assert forall|i: nat, r: MemRegion|
+                                        i < pt_final@.entries.len() &&
+                                        pt_final@.entries[i].is_Some() &&
+                                        #[trigger] pt_final@.entries[i].get_Some_0().used_regions.contains(r)
+                                        implies pt_final@.used_regions.contains(r)
+                                    by
+                                    {
+                                        if i == idxg@ {
+                                            if dir_new_regions@.contains(r) {
+                                                assert(pt_final@.used_regions.contains(r));
+                                            } else {
+                                                assert(pt_with_empty@.entries[i].get_Some_0().used_regions.contains(r));
+                                                assert(pt_with_empty@.used_regions.contains(r));
+                                                assert(pt_final@.used_regions.contains(r));
+                                            }
+                                        } else {
+                                            assert(pt_final@.entries[i] === pt_with_empty@.entries[i]);
+                                        }
+                                    };
+                                };
+                                assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_final@)) by {
+                                    assert forall|i: nat, j: nat, r: MemRegion|
+                                        i != j &&
+                                        i < pt_final@.entries.len() && pt_final@.entries[i].is_Some() &&
+                                        #[trigger] pt_final@.entries[i].get_Some_0().used_regions.contains(r) &&
+                                        j < pt_final@.entries.len() && pt_final@.entries[j].is_Some()
+                                        implies !(#[trigger] pt_final@.entries[j].get_Some_0().used_regions.contains(r))
+                                    by
+                                    {
+                                        assert(self_with_empty@.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_with_empty@));
+                                        if j == idxg@ {
+                                            assert(pt_final@.entries[j].get_Some_0() === dir_pt_res@);
+                                            assert(pt_final@.entries[i] === pt@.entries[i]);
+                                            if dir_new_regions@.contains(r) {
+                                                assert(!new_dir_pt@.used_regions.contains(r));
+                                                assert(!self_with_empty@.memory.regions().contains(r));
+                                                assert(!dir_pt_res@.used_regions.contains(r));
+                                            } else {
+                                                if new_dir_pt@.used_regions.contains(r) {
+                                                    assert(pt@.used_regions.contains(r));
+                                                    assert(self_with_empty@.memory.regions().contains(r));
+                                                    assert(!dir_pt_res@.used_regions.contains(r));
+                                                }
+                                            }
+                                        } else {
+                                            if i == idxg@ {
+                                                assert(pt_final@.entries[i].get_Some_0() === dir_pt_res@);
+                                                assert(pt_final@.entries[j] === pt@.entries[j]);
+                                                if dir_new_regions@.contains(r) {
+                                                    assert(dir_pt_res@.used_regions.contains(r));
+                                                    assert(!new_dir_pt@.used_regions.contains(r));
+                                                    assert(!self_with_empty@.memory.regions().contains(r));
+                                                    assert(!pt@.entries[j].get_Some_0().used_regions.contains(r));
+                                                } else {
+                                                    assert(new_dir_pt@.used_regions.contains(r));
+                                                    assert(!pt@.entries[j].get_Some_0().used_regions.contains(r));
+                                                }
+                                            } else {
+                                                assert(pt_final@.entries[i] === pt@.entries[i]);
+                                                assert(pt_final@.entries[j] === pt@.entries[j]);
+                                            }
+                                        }
+
+                                    };
+                                };
+                                assert(self.inv_at(layer, ptr, pt_final@));
+                            };
+                            assume(Ok(self.interp_at(layer, ptr, base, pt_final@))
+                                   === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
+                        }
 
 
                         let new_regions: Ghost<Set<MemRegion>> = ghost(dir_new_regions@.insert(new_dir_region@));
                         // posts
                         assume(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
                         assume(self.memory.regions() === old(self).memory.regions().union(new_regions@));
-                        assume(pt_res@.used_regions === pt@.used_regions.union(new_regions@));
+                        assume(pt_final@.used_regions === pt@.used_regions.union(new_regions@));
                         assume(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
                         assume(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
-                        Ok(ghost((pt_res@, new_regions@)))
+                        Ok(ghost((pt_final@, new_regions@)))
                     },
                     Err(e) => {
                         assert(false); // We always successfully insert into an empty directory
