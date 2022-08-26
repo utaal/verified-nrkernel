@@ -509,24 +509,6 @@ impl PageTable {
         }
     }
 
-    // pub open spec fn obtain_mem_partitions(self, layer: nat, ptr: usize) -> Seq<Set<MemRegion>>
-    //     recommends self.directories_obey_invariant_at(layer, ptr)
-    // {
-    //     choose|mem_partitions: Seq<Set<MemRegion>>| {
-    //         &&& mem_partitions.len() == self.arch@.num_entries(layer)
-    //         // Union of the partitions is the whole set minus the current directory:
-    //         &&& seq_union(mem_partitions) === regions.remove(self.obtain_dir_region(layer, ptr))
-    //         // No duplicates:
-    //         &&& (forall|i: nat, j: nat, r: MemRegion|
-    //                 i != j && i < mem_partitions.len() && j < mem_partitions.len() && #[trigger] mem_partitions[i].contains(r)
-    //                     ==> !(#[trigger] mem_partitions[j].contains(r)))
-    //         &&& forall|i: nat| i < self.arch@.num_entries(layer) ==> {
-    //             let entry = #[trigger] self.view_at(layer, ptr, i, self.obtain_dir_region(layer, ptr));
-    //             entry.is_Directory() ==> self.inv_at(layer + 1, entry.get_Directory_addr())
-    //         }
-    //     }
-    // }
-
     pub open spec fn empty_at(self, layer: nat, ptr: usize, pt: PTDir) -> bool
         recommends self.well_formed(layer, ptr)
     {
@@ -536,19 +518,6 @@ impl PageTable {
     pub open spec(checked) fn layer_in_range(self, layer: nat) -> bool {
         layer < self.arch@.layers.len()
     }
-
-    // pub open spec fn mem_rtrancl_is_rtrancl(self, layer: nat, ptr: usize, region: MemRegion) -> bool {
-    //     &&& self.mem_rtrancl@.dom().contains(region)
-    //     // reflexive
-    //     &&& self.mem_rtrancl@[region].contains(region)
-    //     // transitive
-    //     &&& forall|i: nat, r: MemRegion| i < self.arch@.num_entries(layer) ==> {
-    //         let entry = #[trigger] self.view_at(layer, ptr, i, region);
-    //         let dir_region = self.mem_structure@[region][i];
-    //         entry.is_Directory() && self.mem_rtrancl@[dir_region].contains(r)
-    //             ==> #[trigger] self.mem_rtrancl@[region].contains(r)
-    //     }
-    // }
 
     pub open spec(checked) fn inv_at(self, layer: nat, ptr: usize, pt: PTDir) -> bool
         decreases self.arch@.layers.len() - layer
@@ -1341,11 +1310,71 @@ impl PageTable {
                     self_with_empty@.lemma_zeroed_page_implies_empty_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@);
                     assert(self_with_empty@.empty_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@));
                     assert(self_with_empty@.inv_at((layer + 1) as nat, new_dir_ptr, new_dir_pt@));
+
+                    assert(forall|r: MemRegion| r !== new_dir_pt@.region && r !== pt_with_empty@.region
+                           ==> self_with_empty@.memory.region_view(r) === old(self).memory.region_view(r));
+                    assert(self_with_empty@.memory.region_view(pt_with_empty@.region)
+                           === old(self).memory.region_view(pt_with_empty@.region).update(word_addr@, new_dir_entry.entry));
+                    assert(forall|i: nat| i < self_with_empty@.arch@.num_entries(layer) && i != idxg@ ==> pt@.entries[i] === pt_with_empty@.entries[i]);
+                    let ptrg = ptr;
                     assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@)) by {
-                        // FIXME: use framing lemma to get invariant here.
-                        // old(self).lemma_inv_at_different_memory(self_with_empty@, layer, ptr, pt_with_empty@);
-                        assume(self_with_empty@.directories_obey_invariant_at(layer, ptr, pt_with_empty@));
-                        assume(self_with_empty@.inv_at(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_matches_structure(layer, ptr, pt_with_empty@)) by {
+                            assert forall|i: nat|
+                                i < self_with_empty@.arch@.num_entries(layer) implies {
+                                    let entry = #[trigger] self_with_empty@.view_at(layer, ptr, i, pt_with_empty@);
+                                    entry.is_Directory() == pt_with_empty@.entries[i].is_Some()
+                                } by
+                            {
+                                let entry = self_with_empty@.view_at(layer, ptr, i, pt_with_empty@);
+                                assert(old(self).directories_obey_invariant_at(layer, ptr, pt@));
+                                assert(old(self).ghost_pt_matches_structure(layer, ptr, pt@));
+                                if i == idxg@ {
+                                } else {
+                                    let addr = ptrg as nat + i * ENTRY_BYTES;
+                                    // FIXME: indexing calculus
+                                    assume(addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
+                                    assert(self_with_empty@.memory.spec_read(addr, pt_with_empty@.region)
+                                           === old(self).memory.spec_read(addr, pt@.region));
+                                    assert(entry === old(self).view_at(layer, ptr, i, pt@));
+                                    assert(entry.is_Directory() == pt_with_empty@.entries[i].is_Some());
+                                }
+                            };
+                        };
+                        assert(self_with_empty@.directories_obey_invariant_at(layer, ptr, pt_with_empty@)) by {
+                            assert forall|i: nat| i < self_with_empty@.arch@.num_entries(layer) implies {
+                                let entry = #[trigger] self_with_empty@.view_at(layer, ptr, i, pt_with_empty@);
+                                entry.is_Directory()
+                                    ==> self_with_empty@.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_with_empty@.entries[i].get_Some_0())
+                            } by
+                            {
+                                let entry = self_with_empty@.view_at(layer, ptr, i, pt_with_empty@);
+                                assert(old(self).directories_obey_invariant_at(layer, ptr, pt@));
+                                assert(old(self).ghost_pt_matches_structure(layer, ptr, pt@));
+                                assert(old(self).ghost_pt_used_regions_rtrancl(layer, ptr, pt@));
+
+                                assert(self.ghost_pt_matches_structure(layer, ptr, pt_with_empty@));
+                                if i == idxg@ {
+                                } else {
+                                    if entry.is_Directory() {
+                                        let addr = ptrg as nat + i * ENTRY_BYTES;
+                                        // FIXME: indexing calculus
+                                        assume(addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
+                                        assert(self_with_empty@.memory.spec_read(addr, pt_with_empty@.region)
+                                               === old(self).memory.spec_read(addr, pt@.region));
+                                        assert(entry === old(self).view_at(layer, ptr, i, pt@));
+                                        assert(pt@.entries[i].is_Some());
+                                        let pt_entry = pt@.entries[i].get_Some_0();
+                                        assert(old(self).inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_entry));
+                                        assert(pt@.entries[i] === pt_with_empty@.entries[i]);
+                                        assert(old(self).memory.regions().contains(pt_entry.region));
+                                        assert(self_with_empty@.memory.regions().contains(pt_entry.region));
+                                        old(self).lemma_inv_at_different_memory(self_with_empty@, (layer + 1) as nat, entry.get_Directory_addr(), pt_entry);
+                                        assert(self_with_empty@.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_with_empty@.entries[i].get_Some_0()));
+                                    }
+                                }
+                            };
+                        };
+                        assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@));
                     };
 
                     assert(self_with_empty@.memory.spec_read(write_addr, pt_with_empty@.region) === new_dir_entry.entry);
