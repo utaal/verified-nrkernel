@@ -69,13 +69,12 @@ pub ghost struct PageTableContents {
 
 impl PageTableContents {
     pub open spec(checked) fn inv(&self) -> bool {
-        true
-        && self.map.dom().finite()
-        && self.arch.inv()
-        && self.mappings_are_of_valid_size()
-        && self.mappings_are_aligned()
-        && self.mappings_dont_overlap()
-        && self.mappings_in_bounds()
+        &&& self.map.dom().finite()
+        &&& self.arch.inv()
+        &&& self.mappings_are_of_valid_size()
+        &&& self.mappings_are_aligned()
+        &&& self.mappings_dont_overlap()
+        &&& self.mappings_in_bounds()
     }
 
     pub open spec(checked) fn mappings_are_of_valid_size(self) -> bool {

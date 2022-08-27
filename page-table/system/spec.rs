@@ -45,7 +45,7 @@ pub open spec fn word_index(idx: nat) -> nat {
 }
 
 // Page table walker interpretation of the page table memory
-pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> l0::PageTableContents;
+pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
 
 pub open spec fn init(s: SystemVariables) -> bool {
     s.tlb.dom() === Set::empty()
@@ -107,7 +107,7 @@ pub open spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool 
 }
 
 pub open spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {
-    &&& interp_pt_mem(s1.pt_mem).map.contains_pair(base, pte)
+    &&& interp_pt_mem(s1.pt_mem).contains_pair(base, pte)
     &&& s2.tlb === s1.tlb.insert(base, pte)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem

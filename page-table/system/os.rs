@@ -6,36 +6,37 @@ use map::*;
 
 use crate::system::spec as system;
 use crate::pt;
-use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult };
+use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult, Arch };
 use crate::high_level_spec as hlspec;
 
 verus! {
 
 pub struct OSVariables {
     pub system: system::SystemVariables,
-    // pub pt: pt::PageTableVariables,
 }
 
-pub open spec fn pt_vars_from_system_vars(s: system::SystemVariables) -> pt::PageTableVariables {
-    pt::PageTableVariables {
-        pt: system::interp_pt_mem(s.pt_mem),
+impl OSVariables {
+    pub open spec fn pt_variables(self) -> pt::PageTableVariables {
+        pt::PageTableVariables {
+            map: system::interp_pt_mem(self.system.pt_mem),
+        }
     }
 }
 
 pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: system::SystemStep) -> bool {
     &&& !system_step.is_PTMemOp()
     &&& system::next_step(s1.system, s2.system, system_step)
-    &&& pt::step_Stutter(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system))
+    &&& pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }
 
 pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
     &&& system::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Map(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system), base, pte, result)
+    &&& pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
 
 pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
     &&& system::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Unmap(pt_vars_from_system_vars(s1.system), pt_vars_from_system_vars(s2.system), base, result)
+    &&& pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 pub enum OSStep {
@@ -71,7 +72,7 @@ pub open spec fn os_step_to_abstract_step(step: OSStep) -> hlspec::AbstractStep 
 }
 
 pub open spec fn os_state_to_abstract_state(s: OSVariables) -> hlspec::AbstractVariables {
-    let mappings = system::interp_pt_mem(s.system.pt_mem).map;
+    let mappings = system::interp_pt_mem(s.system.pt_mem);
     let mem: Map<nat,nat> = Map::new(
         |vaddr: nat| exists|base: nat, pte: PageTableEntry| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size),
         |vaddr: nat| {

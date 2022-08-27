@@ -942,6 +942,8 @@ impl PageTable {
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
+            // FIXME: remove, only here for quicker verification times
+            assume(false);
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
