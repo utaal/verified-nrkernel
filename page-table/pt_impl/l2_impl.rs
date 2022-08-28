@@ -1381,8 +1381,30 @@ impl PageTable {
                     self_with_empty@.lemma_empty_at_interp_equal_l1_empty_dir(layer, ptr, base, idx, pt_with_empty@, interp@);
                     let new_dir_interp: l1::Directory = self_with_empty@.interp_at((layer + 1) as nat, new_dir_ptr, entry_base, new_dir_pt@);
                     assert(new_dir_interp === interp@.new_empty_dir(idx));
-                    // FIXME: will most likely need this for the subsequent interp proof:
-                    assume(self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@) === old(self).interp_at(layer, ptr, base, pt@));
+
+                    old(self).lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt@);
+                    self_with_empty@.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt_with_empty@);
+
+                    assert forall|i: nat|
+                        i < old(self).arch@.num_entries(layer) && i != idxg@
+                        implies
+                            self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@).entries.index(i)
+                            === #[trigger] old(self).interp_at(layer, ptr, base, pt@).entries.index(i) by
+                    {
+                        let prev_interp = old(self).interp_at(layer, ptr, base, pt@);
+                        let byte_addr = (ptrg + i * ENTRY_BYTES) as nat;
+                        let word_addr = word_index_spec(sub(byte_addr, pt_with_empty@.region.base));
+                        // FIXME: indexing calculus
+                        assume(word_addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
+                        assert(prev_interp.entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
+                        assert(old(self).memory.spec_read((ptr + i * ENTRY_BYTES) as nat, pt@.region) === self_with_empty@.memory.spec_read((ptr + i * ENTRY_BYTES) as nat, pt_with_empty@.region));
+                        old(self).lemma_interp_at_entry_different_memory(self_with_empty@, layer, ptr, base, i, pt@, pt_with_empty@);
+                        assert(i < self_with_empty@.arch@.num_entries(layer));
+                        assert(self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
+                        assert(self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@) === self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@).entries.index(i));
+                        assert(self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@).entries.index(i)
+                               === old(self).interp_at(layer, ptr, base, pt@).entries.index(i));
+                    };
                     assert(new_dir_interp.inv());
                 }
 
@@ -1534,18 +1556,19 @@ impl PageTable {
                                 self_with_empty@.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt_with_empty@);
                                 assert(self.inv_at(layer, ptr, pt_final@));
                                 assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@));
+                                self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt_final@);
 
                                 assert forall|i: nat|
                                     i < self_with_empty@.arch@.num_entries(layer) && i != idxg@
                                     implies
                                         self.interp_at(layer, ptr, base, pt_final@).entries.index(i)
-                                        === #[trigger] self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@).map_frame(vaddr, pte@).get_Ok_0().entries.index(i) by
+                                        === #[trigger] self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@).entries.index(i) by
                                 {
                                     let prev_interp = self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@);
                                     let byte_addr = (ptrg + i * ENTRY_BYTES) as nat;
                                     let word_addr = word_index_spec(sub(byte_addr, pt_final@.region.base));
-                                    assert(prev_interp.map_frame(vaddr, pte@).is_Ok());
-                                    assert(prev_interp.map_frame(vaddr, pte@).get_Ok_0().entries[i] === prev_interp.entries[i]);
+                                    // FIXME: indexing calculus
+                                    assume(word_addr < self_with_empty@.memory.region_view(pt_final@.region).len());
                                     assert(prev_interp.entries.index(i) === self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@));
                                     assert(self_with_empty@.memory.spec_read((ptr + i * ENTRY_BYTES) as nat, pt_with_empty@.region) === self.memory.spec_read((ptr + i * ENTRY_BYTES) as nat, pt_final@.region));
                                     self_with_empty@.lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt_with_empty@, pt_final@);
@@ -1554,10 +1577,9 @@ impl PageTable {
 
                                 let final_interp = self.interp_at(layer, ptr, base, pt_final@);
                                 assert(final_interp.entries[idxg@] === self.interp_at_entry(layer, ptr, base, idxg@, pt_final@));
-                                assert(final_interp.entries[idxg@] === self_with_empty@.interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
-                                assert_seqs_equal!(final_interp.entries, self_with_empty@.interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
-                                assert(final_interp.entries === self_with_empty@.interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
-                                assert(Ok(self.interp_at(layer, ptr, base, pt_final@)) === self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@).map_frame(vaddr, pte@));
+                                assert(final_interp.entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
+                                assert_seqs_equal!(final_interp.entries, old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
+                                assert(final_interp.entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
                                 assert(Ok(self.interp_at(layer, ptr, base, pt_final@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                             };
                         }
