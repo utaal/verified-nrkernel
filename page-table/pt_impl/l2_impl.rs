@@ -895,19 +895,20 @@ impl PageTable {
                     // We return the regions that we added
                     &&& self.memory.regions() === old(self).memory.regions().union(new_regions)
                     &&& pt_res.used_regions === pt@.used_regions.union(new_regions)
-                    // only those we added
+                    // and only those we added
                     &&& (forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)))
                     &&& (forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)))
                     // Invariant preserved
                     &&& self.inv_at(layer, ptr, pt_res)
+                    // We only touch already allocated regions if they're in pt.used_regions
+                    &&& (forall|r: MemRegion| !(#[trigger] pt@.used_regions.contains(r)) && !(new_regions.contains(r))
+                        ==> self.memory.region_view(r) === old(self).memory.region_view(r))
                 },
                 Err(e) => {
                     // If error, unchanged
                     &&& self === old(self)
                 },
             },
-            // We only touch regions in pt.used_regions
-            forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r),
             // Refinement of l1
             match res {
                 Ok(resv) => {
@@ -957,6 +958,7 @@ impl PageTable {
                         Ok(rec_res) => {
                             let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
                             let new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
+
                             assert(dir_pt_res@.used_regions === dir_pt@.used_regions.union(new_regions@));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] dir_pt@.used_regions.contains(r)));
                             assert(self.inv_at((layer + 1) as nat, dir_addr, dir_pt_res@));
@@ -970,6 +972,11 @@ impl PageTable {
                                     entries: pt@.entries.update(idx, Some(dir_pt_res@)),
                                     used_regions: pt@.used_regions.union(new_regions@),
                                 });
+
+                            assert(idx < pt@.entries.len());
+                            assert(pt_res@.region === pt@.region);
+                            assert(!new_regions@.contains(pt_res@.region));
+                            assert(!dir_pt_res@.used_regions.contains(pt_res@.region));
 
                             let ptrg: Ghost<usize> = ghost(ptr);
                             assert forall|i: nat| i < self.arch@.num_entries(layer)
@@ -1064,6 +1071,18 @@ impl PageTable {
                                     assert(entry === old(self).view_at(layer, ptr, i, pt@));
                                     assert(entry === old(self).view_at(layer, ptr, i, pt_res@));
                                     if entry.is_Directory() {
+                                        let pt_entry = pt_res@.entries[i].get_Some_0();
+                                        assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
+                                        assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                               implies !new_regions@.contains(r) by
+                                        {
+                                            assert(pt_entry.used_regions.contains(r));
+                                            assert(old(self).memory.regions().contains(r));
+                                        };
+                                        assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                               ==> !dir_pt@.used_regions.contains(r));
+                                        assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+                                               ==> #[trigger] old(self).memory.region_view(r) === self.memory.region_view(r));
                                         assert(old(self).inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i].get_Some_0()));
                                         assert(forall|r: MemRegion| pt_res@.entries[i].get_Some_0().used_regions.contains(r)
                                                ==> #[trigger] self.memory.region_view(r) === old(self).memory.region_view(r));
@@ -1102,6 +1121,20 @@ impl PageTable {
                                     assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
                                     assert(self.interp_at(layer, ptr, base, pt_res@).entries.index(i) === self.interp_at_entry(layer, ptr, base, i, pt_res@));
                                     assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
+                                    if pt_res@.entries[i].is_Some() {
+                                        let pt_entry = pt_res@.entries[i].get_Some_0();
+                                        assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_res@));
+                                        assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                               implies !new_regions@.contains(r) by
+                                        {
+                                            assert(pt_entry.used_regions.contains(r));
+                                            assert(old(self).memory.regions().contains(r));
+                                        };
+                                        assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                               ==> !dir_pt_res@.used_regions.contains(r));
+                                        assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+                                               ==> #[trigger] old(self).memory.region_view(r) === self.memory.region_view(r));
+                                    }
                                     old(self).lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt@, pt_res@);
                                     assert(self.interp_at_entry(layer, ptr, base, i, pt_res@) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                                 };
@@ -1112,9 +1145,12 @@ impl PageTable {
                                 assert(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
                             };
 
-                            assert(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
-
                             // posts
+                            assert forall|r: MemRegion| !pt@.used_regions.contains(r) && !new_regions@.contains(r)
+                                   implies #[trigger] self.memory.region_view(r) === old(self).memory.region_view(r) by
+                            {
+                                assert(!dir_pt@.used_regions.contains(r));
+                            };
                             assert(self.memory.regions() === old(self).memory.regions().union(new_regions@));
                             assert(pt_res@.used_regions === pt@.used_regions.union(new_regions@));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
@@ -1414,12 +1450,16 @@ impl PageTable {
                         let dir_new_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
                         let pt_final: Ghost<PTDir> = ghost(
                             PTDir {
-                                region: pt_with_empty@.region,
-                                entries: pt_with_empty@.entries.update(idx, Some(dir_pt_res@)),
+                                region:       pt_with_empty@.region,
+                                entries:      pt_with_empty@.entries.update(idx, Some(dir_pt_res@)),
                                 used_regions: pt_with_empty@.used_regions.union(dir_new_regions@),
                             });
+                        let new_regions: Ghost<Set<MemRegion>> = ghost(dir_new_regions@.insert(new_dir_region@));
                         proof {
                             let ptrg = ptr;
+                            assert(idx < pt_with_empty@.entries.len());
+                            assert(!dir_new_regions@.contains(pt_final@.region));
+                            assert(!new_dir_pt@.used_regions.contains(pt_final@.region));
                             // Note: Many of these invariant/interp framing proofs are nearly
                             // identical. If I find some time I should extract them into a lemma.
                             // Would clean up this function quite a bit.
@@ -1462,6 +1502,7 @@ impl PageTable {
                                         assert(self.ghost_pt_matches_structure(layer, ptr, pt_final@));
                                         if i == idxg@ {
                                         } else {
+                                            assert(pt_final@.entries[i] === pt_with_empty@.entries[i]);
                                             if entry.is_Directory() {
                                                 let addr = ptrg as nat + i * ENTRY_BYTES;
                                                 // FIXME: indexing calculus
@@ -1475,7 +1516,12 @@ impl PageTable {
                                                 assert(pt_with_empty@.entries[i] === pt_final@.entries[i]);
                                                 assert(self_with_empty@.memory.regions().contains(pt_entry.region));
                                                 assert(self.memory.regions().contains(pt_entry.region));
+                                                assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                                       ==> !dir_new_regions@.contains(r) && !new_dir_pt@.used_regions.contains(r));
+                                                assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+                                                       ==> #[trigger] self_with_empty@.memory.region_view(r) === self.memory.region_view(r));
                                                 self_with_empty@.lemma_inv_at_different_memory(*self, (layer + 1) as nat, entry.get_Directory_addr(), pt_entry);
+                                                assert(pt_final@.entries[i].get_Some_0() === pt_entry);
                                                 assert(self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_final@.entries[i].get_Some_0()));
                                             }
                                         }
@@ -1570,11 +1616,31 @@ impl PageTable {
                                     // FIXME: indexing calculus
                                     assume(word_addr < self_with_empty@.memory.region_view(pt_final@.region).len());
                                     assert(prev_interp.entries.index(i) === self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@));
+                                    // if pt_final@.entries[i].is_Some() {
+                                    //     let pt_entry = pt_final@.entries[i].get_Some_0();
+                                    //     assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_final@));
+                                    //     assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                    //            implies !new_regions@.contains(r) by
+                                    //     {
+                                    //         assert(pt_entry.used_regions.contains(r));
+                                    //         assert(old(self).memory.regions().contains(r));
+                                    //     };
+                                    //     assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                    //            ==> !dir_pt_res@.used_regions.contains(r));
+                                    //     assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+                                    //            ==> #[trigger] old(self).memory.region_view(r) === self.memory.region_view(r));
+                                    // }
+                                    assume(false);
                                     assert(self_with_empty@.memory.spec_read((ptr + i * ENTRY_BYTES) as nat, pt_with_empty@.region) === self.memory.spec_read((ptr + i * ENTRY_BYTES) as nat, pt_final@.region));
+                                    // assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                    //        ==> !dir_new_regions@.contains(r) && !new_dir_pt@.used_regions.contains(r));
+                                    // assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+                                    //        ==> #[trigger] self_with_empty@.memory.region_view(r) === self.memory.region_view(r));
                                     self_with_empty@.lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt_with_empty@, pt_final@);
                                     assert(self.interp_at_entry(layer, ptr, base, i, pt_final@) === self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@));
                                 };
 
+                                assume(false);
                                 let final_interp = self.interp_at(layer, ptr, base, pt_final@);
                                 assert(final_interp.entries[idxg@] === self.interp_at_entry(layer, ptr, base, idxg@, pt_final@));
                                 assert(final_interp.entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
@@ -1584,7 +1650,6 @@ impl PageTable {
                             };
                         }
 
-                        let new_regions: Ghost<Set<MemRegion>> = ghost(dir_new_regions@.insert(new_dir_region@));
                         // posts
                         assume(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
                         assume(self.memory.regions() === old(self).memory.regions().union(new_regions@));
