@@ -6,7 +6,8 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
-use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult };
+use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_mapping };
+use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, ENTRY_BYTES };
 use option::*;
 
 // state:
@@ -21,8 +22,9 @@ use option::*;
 
 verus! {
 
+// FIXME: add constant for phys memory size and add to init that size is <= phys_max, also new pre for map, unmap
 pub struct AbstractVariables {
-    pub mem: Map<nat,nat>, // word-indexed
+    pub mem: Seq<nat>, // word-indexed
     /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
     /// flags into `map` as well and write the specification exclusively in terms of `map` but that
     /// also makes some of the preconditions awkward, e.g. full mappings have the same flags, etc.
@@ -51,7 +53,7 @@ pub open spec fn word_index(idx: nat) -> nat {
 }
 
 pub open spec fn init(s: AbstractVariables) -> bool {
-    s.mem === Map::empty() // TODO: maybe change this
+    s.mem === Seq::empty() // TODO: maybe change this
 }
 
 // TODO: also use this in system spec
@@ -72,7 +74,7 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
                 IoOp::Store { new_value, result: StoreResult::Ok }        => {
                     &&& !pte.flags.is_supervisor
                     &&& pte.flags.is_writable
-                    &&& s2.mem === s1.mem.insert(mem_idx, new_value)
+                    &&& s2.mem === s1.mem.update(mem_idx, new_value)
                 }
                 IoOp::Store { new_value, result: StoreResult::PageFault } => {
                     &&& s2.mem === s1.mem
@@ -99,7 +101,7 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
         Option::None => {
             match op {
                 IoOp::Store { new_value, result: StoreResult::PageFault } => s2.mem === s1.mem,
-                IoOp::Load  { is_exec, result: LoadResult::PageFault }    => s2.mem === s1.mem,
+                IoOp::Load  { is_exec,   result: LoadResult::PageFault }  => s2.mem === s1.mem,
                 _                                                         => false,
             }
         },
@@ -108,20 +110,55 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
 }
 
 pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& true // TODO: alignment, anything else? result matching
-    &&& forall|base2: nat, pte2|
-        #[trigger] s1.mappings.contains_pair(base2, pte2)
-        ==> !overlap(MemRegion { base, size: pte.frame.size }, MemRegion { base: base2, size: pte2.frame.size })
-    &&& s2.mem === s1.mem
-    &&& s2.mappings === s1.mappings.insert(base, pte)
+    &&& aligned(base, pte.frame.size)
+    &&& aligned(pte.frame.base, pte.frame.size)
+    &&& candidate_mapping_in_bounds(base, pte)
+    &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
+        ||| pte.frame.size == L3_ENTRY_SIZE
+        ||| pte.frame.size == L2_ENTRY_SIZE
+        ||| pte.frame.size == L1_ENTRY_SIZE
+    }
+
+    &&& { // Contents of the newly mapped memory are arbitrary
+        let mem_idx = word_index(base);
+        let num_words = pte.frame.size / ENTRY_BYTES;
+        &&& s2.mem.len() == s1.mem.len()
+        &&& (forall|i: nat| #![auto]
+             i < s2.mem.len()
+                 ==> s2.mem[i] == if between(i, mem_idx, mem_idx + num_words) { arbitrary() } else { s1.mem[i] })
+    }
+    &&& match result {
+        MapResult::Ok => {
+            &&& !candidate_mapping_overlaps_existing_mapping(s1.mappings, base, pte)
+            &&& s2.mappings === s1.mappings.insert(base, pte)
+        },
+        MapResult::ErrOverlap => {
+            &&& candidate_mapping_overlaps_existing_mapping(s1.mappings, base, pte)
+            &&& s2.mappings === s1.mappings
+        },
+    }
 }
 
 pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat, result: UnmapResult) -> bool {
-    &&& true // TODO: anything else?
-    &&& s1.mappings.dom().contains(base)
-    &&& !s1.mappings.index(base).flags.is_supervisor
-    &&& s2.mem === s1.mem
-    &&& s2.mappings === s1.mappings.remove(base)
+    &&& between(base, PT_BOUND_LOW, PT_BOUND_HIGH)
+    &&& { // The given base must be aligned to some valid page size
+        ||| aligned(base, L3_ENTRY_SIZE)
+        ||| aligned(base, L2_ENTRY_SIZE)
+        ||| aligned(base, L1_ENTRY_SIZE)
+    }
+    &&& match result {
+        UnmapResult::Ok => {
+            &&& s1.mappings.dom().contains(base)
+            &&& s2.mappings === s1.mappings.remove(base)
+        },
+        UnmapResult::ErrNoSuchMapping => {
+            &&& !s1.mappings.dom().contains(base)
+            &&& s2.mappings === s1.mappings
+        },
+        // FIXME: also add permission error and check supervisor flag?
+        // &&& !s1.mappings.index(base).flags.is_supervisor
+    }
+
 }
 
 pub open spec fn step_Stutter(s1: AbstractVariables, s2: AbstractVariables) -> bool {

@@ -14,6 +14,28 @@ use result::{*, Result::*};
 
 verus! {
 
+pub spec const PT_BOUND_LOW:  nat = 0;
+// Upper bound for x86 4-level paging.
+// 512 entries, each mapping 512*1024*1024*1024 bytes
+pub spec const PT_BOUND_HIGH: nat = 512 * 512 * 1024 * 1024 * 1024;
+pub spec const L3_ENTRY_SIZE: nat = PAGE_SIZE;
+pub spec const L2_ENTRY_SIZE: nat = 512 * L3_ENTRY_SIZE;
+pub spec const L1_ENTRY_SIZE: nat = 512 * L2_ENTRY_SIZE;
+
+pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
+    &&& PT_BOUND_LOW <= base
+    &&& base + pte.frame.size < PT_BOUND_HIGH
+}
+
+pub open spec fn candidate_mapping_overlaps_existing_mapping(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
+    exists|b: nat| #![auto] {
+        &&& mappings.dom().contains(b)
+        &&& overlap(
+            MemRegion { base: base, size: pte.frame.size },
+            MemRegion { base: b,    size: mappings[b].frame.size })
+    }
+}
+
 pub open spec(checked) fn aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }

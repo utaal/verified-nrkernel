@@ -3,10 +3,12 @@ use crate::pervasive::*;
 use builtin::*;
 use builtin_macros::*;
 use map::*;
+use seq::*;
 
 use crate::system::spec as system;
 use crate::pt;
-use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult, Arch };
+use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned };
+use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE };
 use crate::high_level_spec as hlspec;
 
 verus! {
@@ -59,7 +61,7 @@ pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
 
 pub open spec fn os_step_to_abstract_step(step: OSStep) -> hlspec::AbstractStep {
     match step {
-        OSStep::System { step }      =>
+        OSStep::System { step } =>
             match step {
                 system::SystemStep::IoOp { vaddr, paddr, op, pte } => hlspec::AbstractStep::IoOp { vaddr, op, pte },
                 system::SystemStep::PTMemOp                        => arbitrary(),
@@ -67,21 +69,82 @@ pub open spec fn os_step_to_abstract_step(step: OSStep) -> hlspec::AbstractStep 
                 system::SystemStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
             },
         OSStep::Map    { base, pte, result } => hlspec::AbstractStep::Map { base, pte, result },
-        OSStep::Unmap  { base, result }      => hlspec::AbstractStep::Unmap { base, result },
+        OSStep::Unmap  { base, result } => hlspec::AbstractStep::Unmap { base, result },
     }
+}
+
+// TODO: Can we add this to pervasive? Push is awkward to use in recursive functions.
+impl<A> Seq<A> {
+    pub open spec fn cons(self, a: A) -> Self;
+}
+
+#[verifier(external_body)]
+#[verifier(broadcast_forall)]
+pub proof fn axiom_seq_cons_len<A>(s: Seq<A>, a: A)
+    ensures
+        #[trigger] s.cons(a).len() == s.len() + 1,
+{
+}
+
+#[verifier(external_body)]
+#[verifier(broadcast_forall)]
+pub proof fn axiom_seq_cons_index_same<A>(s: Seq<A>, a: A)
+    ensures
+        #[trigger] s.cons(a).index(0) === a,
+{
+}
+
+#[verifier(external_body)]
+#[verifier(broadcast_forall)]
+pub proof fn axiom_seq_push_index_different<A>(s: Seq<A>, a: A, i: int)
+    requires
+        0 < i <= s.len(),
+    ensures
+        s.cons(a)[i] === s[i - 1],
+{
+}
+
+// exclusive on upper bound
+pub open spec fn enum_from_to(from: nat, to: nat) -> Seq<nat>
+    decreases to + 1 - from
+{
+    if from >= to {
+        seq![]
+    } else {
+        enum_from_to(from + 1, to).cons(from)
+    }
+}
+
+pub proof fn lemma_enum_from_to(from: nat, to: nat)
+    ensures
+        from <= to ==> enum_from_to(from, to).len() == to - from,
+        from > to ==> enum_from_to(from, to).len() == 0,
+        forall|i: nat|
+            i < enum_from_to(from, to).len() ==> enum_from_to(from, to)[i] == from + i
+    decreases to + 1 - from
+{
+    if from <= to {
+        lemma_enum_from_to(from + 1, to);
+    }
+}
+
+// TODO: better way of writing this? Maybe directly axiomatize like for Map?
+pub open spec fn new_seq_map_index<T, F: Fn(nat) -> T>(len: nat, f: F) -> Seq<T> {
+    enum_from_to(0, len).map(|idx,i| f(i))
 }
 
 pub open spec fn os_state_to_abstract_state(s: OSVariables) -> hlspec::AbstractVariables {
     let mappings = system::interp_pt_mem(s.system.pt_mem);
-    let mem: Map<nat,nat> = Map::new(
-        |vaddr: nat| exists|base: nat, pte: PageTableEntry| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size),
-        |vaddr: nat| {
-            let (base, pte) = choose|basepte: (nat, PageTableEntry)| #![auto] mappings.contains_pair(basepte.0, basepte.1) && between(vaddr, basepte.0, basepte.0 + basepte.1.frame.size);
-            let phys_addr = (pte.frame.base + (vaddr - base)) as nat;
-            s.system.mem[phys_addr]
-        });
+    // let mem: Map<nat,nat> = Map::new(
+    //     |vaddr: nat| exists|base: nat, pte: PageTableEntry| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size),
+    //     |vaddr: nat| {
+    //         let (base, pte) = choose|basepte: (nat, PageTableEntry)| #![auto] mappings.contains_pair(basepte.0, basepte.1) && between(vaddr, basepte.0, basepte.0 + basepte.1.frame.size);
+    //         let phys_addr = (pte.frame.base + (vaddr - base)) as nat;
+    //         s.system.mem[phys_addr]
+    //     });
+    // let mem: Seq<nat> = new_seq_map_index();
     hlspec::AbstractVariables {
-        mem,
+        mem: arbitrary(), // FIXME:
         mappings,
     }
 }
@@ -113,14 +176,38 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 },
             },
         OSStep::Map { base, pte, result } => {
-            assume(hlspec::next_step(abs_s1, abs_s2, abs_step));
             // hlspec::AbstractStep::Map { base, pte }
+            let pt_s1 = s1.pt_variables();
+            let pt_s2 = s2.pt_variables();
+            assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
+            assert(step_Map(s1, s2, base, pte, result));
+            assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
+            // FIXME: maybe the memory in the system model needs to be total?
+            assume(false);
+            assert(abs_s2.mem === abs_s1.mem);
+            assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
+
         },
         OSStep::Unmap { base, result } => {
             // hlspec::AbstractStep::Unmap { base }
+            let pt_s1 = s1.pt_variables();
+            let pt_s2 = s2.pt_variables();
             assert(abs_step === hlspec::AbstractStep::Unmap { base, result });
             assert(step_Unmap(s1, s2, base, result));
-            assume(hlspec::next_step(abs_s1, abs_s2, abs_step));
+            assert(pt::step_Unmap(pt_s1, pt_s2, base, result));
+            assert(match result {
+                UnmapResult::Ok => {
+                    &&& abs_s1.mappings.dom().contains(base)
+                    &&& abs_s2.mappings === abs_s1.mappings.remove(base)
+                },
+                UnmapResult::ErrNoSuchMapping => {
+                    &&& !abs_s1.mappings.dom().contains(base)
+                    &&& abs_s2.mappings === abs_s1.mappings
+                },
+            });
+            assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
+            assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
         },
     }
 }

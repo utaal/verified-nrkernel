@@ -6,17 +6,10 @@ use builtin_macros::*;
 use seq::*;
 use map::*;
 use crate::pt_impl::l0;
-use crate::aux_defs::{ PageTableEntry, MapResult, UnmapResult, Arch, overlap, MemRegion, aligned, between, PAGE_SIZE };
+use crate::aux_defs::{ PageTableEntry, MapResult, UnmapResult, Arch, overlap, MemRegion, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_mapping };
+use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE };
 
 verus! {
-
-pub spec const PT_BOUND_LOW:  nat = 0;
-// Upper bound for x86 4-level paging.
-// 512 entries, each mapping 512*1024*1024*1024 bytes
-pub spec const PT_BOUND_HIGH: nat = 512 * 512 * 1024 * 1024 * 1024;
-pub spec const L3_ENTRY_SIZE: nat = PAGE_SIZE;
-pub spec const L2_ENTRY_SIZE: nat = 512 * L3_ENTRY_SIZE;
-pub spec const L1_ENTRY_SIZE: nat = 512 * L2_ENTRY_SIZE;
 
 pub struct PageTableVariables {
     pub map: Map<nat /* VAddr */, PageTableEntry>,
@@ -26,22 +19,6 @@ pub enum PageTableStep {
     Map { base: nat, pte: PageTableEntry, result: MapResult },
     Unmap { base: nat, result: UnmapResult },
     Stutter,
-}
-
-pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
-    &&& PT_BOUND_LOW <= base
-    &&& base + pte.frame.size < PT_BOUND_HIGH
-}
-
-impl PageTableVariables {
-    pub open spec fn candidate_mapping_overlaps_existing_mapping(self, base: nat, pte: PageTableEntry) -> bool {
-        exists|b: nat| #![auto] {
-            &&& self.map.dom().contains(b)
-            &&& overlap(
-                MemRegion { base: base, size: pte.frame.size },
-                MemRegion { base: b,    size: self.map[b].frame.size })
-        }
-    }
 }
 
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
@@ -56,11 +33,11 @@ pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: 
 
     &&& match result {
         MapResult::Ok => {
-            &&& !s1.candidate_mapping_overlaps_existing_mapping(base, pte)
+            &&& !candidate_mapping_overlaps_existing_mapping(s1.map, base, pte)
             &&& s2.map === s1.map.insert(base, pte)
         },
         MapResult::ErrOverlap => {
-            &&& s1.candidate_mapping_overlaps_existing_mapping(base, pte)
+            &&& candidate_mapping_overlaps_existing_mapping(s1.map, base, pte)
             &&& s2.map === s1.map
         },
     }
