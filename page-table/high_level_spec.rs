@@ -7,24 +7,17 @@ use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
 use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_mapping };
-use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, ENTRY_BYTES };
+use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use option::*;
-
-// state:
-// - memory
-// transitions:
-// - mem read/write
-// - map/unmap
-// - resolve
 
 // TODO:
 // - should Map be able to set is_supervisor?
 
 verus! {
 
-// FIXME: add constant for phys memory size and add to init that size is <= phys_max, also new pre for map, unmap
 pub struct AbstractVariables {
-    pub mem: Seq<nat>, // word-indexed
+    /// Word-indexed virtual memory
+    pub mem: Map<nat,nat>,
     /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
     /// flags into `map` as well and write the specification exclusively in terms of `map` but that
     /// also makes some of the preconditions awkward, e.g. full mappings have the same flags, etc.
@@ -53,7 +46,7 @@ pub open spec fn word_index(idx: nat) -> nat {
 }
 
 pub open spec fn init(s: AbstractVariables) -> bool {
-    s.mem === Seq::empty() // TODO: maybe change this
+    s.mem === Map::empty() // TODO: maybe change this
 }
 
 // TODO: also use this in system spec
@@ -63,45 +56,41 @@ pub open spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr:
 }
 
 pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
+    let mem_idx = word_index(vaddr);
+    let mem_val = s1.mem.index(mem_idx);
     &&& s2.mappings === s1.mappings
+    // FIXME:
+    // &&& pte.is_Some() === mem_domain_from_mappings(s1.mappings).contains(mem_idx)
     &&& match pte {
         Option::Some((base, pte)) => {
-            let mem_idx = word_index(vaddr);
-            let mem_val = s1.mem.index(mem_idx);
             &&& s1.mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
             &&& match op {
-                IoOp::Store { new_value, result: StoreResult::Ok }        => {
-                    &&& !pte.flags.is_supervisor
-                    &&& pte.flags.is_writable
-                    &&& s2.mem === s1.mem.update(mem_idx, new_value)
-                }
-                IoOp::Store { new_value, result: StoreResult::PageFault } => {
-                    &&& s2.mem === s1.mem
-                    &&& {
-                        ||| pte.flags.is_supervisor
-                        ||| !pte.flags.is_writable
+                IoOp::Store { new_value, result } => {
+                    if !pte.flags.is_supervisor && pte.flags.is_writable {
+                        &&& s2.mem === s1.mem.insert(mem_idx, new_value)
+                        &&& result.is_Ok()
+                    } else {
+                        &&& s2.mem === s1.mem
+                        &&& result.is_Pagefault()
                     }
                 }
-                IoOp::Load { is_exec, result: LoadResult::Value(n) }      => {
-                    &&& !pte.flags.is_supervisor
-                    &&& (is_exec ==> !pte.flags.disable_execute)
+                IoOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
-                    &&& n == mem_val
-                },
-                IoOp::Load { is_exec, result: LoadResult::PageFault }     => {
-                    &&& s2.mem === s1.mem
-                    &&& {
-                        ||| pte.flags.is_supervisor
-                        ||| (is_exec && pte.flags.disable_execute)
+                    &&& if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                        &&& result.is_Value()
+                        &&& result.get_Value_0() == mem_val
+                    } else {
+                        &&& result.is_Pagefault()
                     }
                 },
             }
         },
         Option::None => {
+            // FIXME: this needs to ensure no suitable mapping exists
             match op {
-                IoOp::Store { new_value, result: StoreResult::PageFault } => s2.mem === s1.mem,
-                IoOp::Load  { is_exec,   result: LoadResult::PageFault }  => s2.mem === s1.mem,
+                IoOp::Store { new_value, result: StoreResult::Pagefault } => s2.mem === s1.mem,
+                IoOp::Load  { is_exec,   result: LoadResult::Pagefault }  => s2.mem === s1.mem,
                 _                                                         => false,
             }
         },
@@ -109,56 +98,67 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
     }
 }
 
-pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
+pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool {
     &&& aligned(base, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
+    // FIXME: We don't have an upper bound on the physical addresses we can map. If a physical
+    // address outside the actual physical address space is mapped and then accessed, the spec just
+    // treats it like a valid memory access but in practice we'd get a fault.
+    // &&& pte.frame.base + pte.frame.size <= c.phys_addr_space_size
     &&& candidate_mapping_in_bounds(base, pte)
     &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
+}
 
-    &&& { // Contents of the newly mapped memory are arbitrary
-        let mem_idx = word_index(base);
-        let num_words = pte.frame.size / ENTRY_BYTES;
-        &&& s2.mem.len() == s1.mem.len()
-        &&& (forall|i: nat| #![auto]
-             i < s2.mem.len()
-                 ==> s2.mem[i] == if between(i, mem_idx, mem_idx + num_words) { arbitrary() } else { s1.mem[i] })
-    }
-    &&& match result {
-        MapResult::Ok => {
-            &&& !candidate_mapping_overlaps_existing_mapping(s1.mappings, base, pte)
-            &&& s2.mappings === s1.mappings.insert(base, pte)
-        },
-        MapResult::ErrOverlap => {
-            &&& candidate_mapping_overlaps_existing_mapping(s1.mappings, base, pte)
-            &&& s2.mappings === s1.mappings
-        },
+pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
+    &&& step_Map_preconditions(base, pte)
+    &&& if candidate_mapping_overlaps_existing_mapping(s1.mappings, base, pte) {
+        &&& result.is_ErrOverlap()
+        &&& s2.mappings === s1.mappings
+        &&& s2.mem === s1.mem
+    } else {
+        &&& result.is_Ok()
+        &&& s2.mappings === s1.mappings.insert(base, pte)
+        &&& { // Contents of the newly mapped memory are arbitrary
+            let mem_idx = word_index(base);
+            let num_words = pte.frame.size / WORD_SIZE;
+            &&& (forall|idx| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+            // FIXME:
+            // &&& mem_domain_from_mappings(s2.mappings) === s2.mem.dom()
+            // &&& s2.mem.dom() === s1.mem.dom().union(...)
+            // &&& forall|vaddr, base, pte|
+            //         s1.mappings.contains_pair(base, pte) && pte.frame.contains(vaddr)
+            //         ==> s2.mem[word_index(vaddr)] == s1.mem[word_index(vaddr)]
+            // &&& s2.mem.len() == s1.mem.len()
+            // &&& (forall|i: nat| #![auto]
+            //      i < s2.mem.len() && !between(i, mem_idx, mem_idx + num_words)
+            //      ==> { s2.mem[i] == s1.mem[i] })
+        }
     }
 }
 
-pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat, result: UnmapResult) -> bool {
+pub open spec fn step_Unmap_preconditions(base: nat) -> bool {
     &&& between(base, PT_BOUND_LOW, PT_BOUND_HIGH)
     &&& { // The given base must be aligned to some valid page size
         ||| aligned(base, L3_ENTRY_SIZE)
         ||| aligned(base, L2_ENTRY_SIZE)
         ||| aligned(base, L1_ENTRY_SIZE)
     }
-    &&& match result {
-        UnmapResult::Ok => {
-            &&& s1.mappings.dom().contains(base)
-            &&& s2.mappings === s1.mappings.remove(base)
-        },
-        UnmapResult::ErrNoSuchMapping => {
-            &&& !s1.mappings.dom().contains(base)
-            &&& s2.mappings === s1.mappings
-        },
-        // FIXME: also add permission error and check supervisor flag?
-        // &&& !s1.mappings.index(base).flags.is_supervisor
-    }
+}
 
+pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: nat, result: UnmapResult) -> bool {
+    &&& step_Unmap_preconditions(base)
+    &&& if s1.mappings.dom().contains(base) {
+        &&& result.is_Ok()
+        &&& s2.mappings === s1.mappings.remove(base)
+    } else {
+        &&& result.is_ErrNoSuchMapping()
+        &&& s2.mappings === s1.mappings
+    }
+    &&& s2.mem === s1.mem
 }
 
 pub open spec fn step_Stutter(s1: AbstractVariables, s2: AbstractVariables) -> bool {
@@ -179,96 +179,3 @@ pub open spec fn next(s1: AbstractVariables, s2: AbstractVariables) -> bool {
 }
 
 }
-
-// // RA: the ARMv8 architecture you can also load/store a pair of registers in one instruction,
-// //     (and I think even more than that)
-// //
-// //     now these are technically two loads/stores as I assume.  From the manual (C6.2.130 LDP):
-// //      data1 = Mem[address, dbytes, AccType_NORMAL];
-// //      data2 = Mem[address+dbytes, dbytes, AccType_NORMAL];
-// //      X[t] = data1;
-// //      X[t2] = data2;
-// //
-// //     the ARMv7 has a load multiple.
-// //
-// //     the other thing to consider here would be the SIMD registers, where we can do a
-// //     load/store of up to 512bits.
-// //
-// //     I think conceptually we could say that this will be just two load/stores. Though, the
-// //     difference here may be subtle, if you do two independent load/stores, then there could be
-// //     some rescheduling in between, whereas with `ldp` this is not the case (maybe tha load multiple
-// //     is kind of "atomic")
-// //
-// #[derive(PartialEq, Eq, Structural)] #[is_variant]
-// pub enum LoadResult {
-//     PageFault,
-//     // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
-//     Value(usize), // word-sized load
-// }
-// 
-// #[derive(PartialEq, Eq, Structural)] #[is_variant]
-// pub enum StoreResult {
-//     PageFault,
-//     // BusError,  // maybe that's something to consider, e.g., the absence of bus errors ?
-//     Ok,
-// }
-// 
-// // operations on the kernel+hardware systems
-// // =========================================
-// 
-// // TODO sharing between processes, sharing domains
-// enum TransitionLabel {
-//     // SYSCALL
-//     // exception is device drivers that ask for a paddr
-//     //   - contiguous physical memory
-//     //
-//     // the user process cannot request aliased mappings
-//     // TODO Map { mappings: Set</* vaddr: */ nat>, flags: Flags, is_ok: bool },
-//  
-//     // consider MapDevice { mappings: Set</* vaddr: */ nat>, flags: Flags, is_ok: bool },
-// 
-//     // TODO do we need this? MapObject { mappings: Set</* vaddr: */ nat>, device_id: nat, flags: Flags, is_ok: bool },
-//     //   - a device can be currently modeled as a process Store/Load that hallucinates the correct vaddr
-//     // have a transaction that maps n pages as once
-// 
-//     // SYSCALL
-//     // one page
-//     // TODO Unmap { mappings: Set<nat>, is_ok: bool }, // TODO: 
-// 
-//     // SYSCALL
-//     // user processes do not lookup mappings, except for device drivers
-//     // Resolve { vaddr: nat, Result<(/* paddr: */ nat, Flags)> },
-// 
-//     // INSTRUCTION
-//     // write anywhere, on any length, maybe span two pages?
-//     // TODO: what happens if we straddle two pages and only one is mapped?
-//     // everything is persistent memory!
-//     // AVX gather scatter? if they are not atomic, just represent them with a seq of these
-//     IOOp { vaddr: nat, io_op: IoOp },
-// }
-// 
-// 
-// // TODO is the page table in memory?
-// 
-// pub enum IoOp {
-//     Store { new_value: usize, result: StoreResult }, // represents a third party doing a write too
-//     Load { is_exec: bool, result: LoadResult },
-// }
-// 
-// state_machine! { ProcessSystem {
-// 
-//     fields {
-//         pub usize_bytes: nat,
-//         pub bytes: Seq<usize>, // sequence of machine words
-//     }
-// 
-//     transition! {
-//         io_op(vaddr: nat, op: IoOp) {
-//             require(match op {
-//                 IoOp::Store { new_value, result } => true,
-//                 IoOp::Load { is_exec, result } => true,
-//             });
-//         }
-//     }
-// 
-// } }

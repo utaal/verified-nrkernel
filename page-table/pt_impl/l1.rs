@@ -1325,7 +1325,7 @@ impl Directory {
             self.accepted_mapping(base, pte),
         ensures
             self.map_frame(base, pte).is_Err() ==> self.map_frame(base, pte).get_Err_0() === self,
-            equal(self.map_frame(base, pte).map(|d| d.interp()), self.interp().map_frame(base, pte)),
+            self.map_frame(base, pte).map(|d| d.interp()) === self.interp().map_frame(base, pte),
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();

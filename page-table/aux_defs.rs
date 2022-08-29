@@ -66,26 +66,31 @@ pub proof fn lemma_new_seq<T>(i: nat, e: T)
     }
 }
 
+#[is_variant]
 pub enum MapResult {
     ErrOverlap,
     Ok,
 }
 
+#[is_variant]
 pub enum UnmapResult {
     ErrNoSuchMapping,
     Ok,
 }
 
+#[is_variant]
 pub enum LoadResult {
-    PageFault,
+    Pagefault,
     Value(nat), // word-sized load
 }
 
+#[is_variant]
 pub enum StoreResult {
-    PageFault,
+    Pagefault,
     Ok,
 }
 
+#[is_variant]
 pub enum IoOp {
     Store { new_value: nat, result: StoreResult },
     Load { is_exec: bool, result: LoadResult },
@@ -331,7 +336,7 @@ pub const MAXPHYADDR_BITS: u64 = 52;
 // bitvector assertions.
 pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
 
-pub const ENTRY_BYTES: usize = 8;
+pub const WORD_SIZE: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
 pub spec const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;

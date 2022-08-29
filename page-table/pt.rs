@@ -21,7 +21,9 @@ pub enum PageTableStep {
     Stutter,
 }
 
-pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
+// not-always-enabled actions unsatisfiable spec caveat
+
+pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool {
     &&& aligned(base, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& candidate_mapping_in_bounds(base, pte)
@@ -30,40 +32,45 @@ pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: 
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
+}
 
-    &&& match result {
-        MapResult::Ok => {
-            &&& !candidate_mapping_overlaps_existing_mapping(s1.map, base, pte)
-            &&& s2.map === s1.map.insert(base, pte)
-        },
-        MapResult::ErrOverlap => {
-            &&& candidate_mapping_overlaps_existing_mapping(s1.map, base, pte)
-            &&& s2.map === s1.map
-        },
+pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
+    &&& step_Map_preconditions(base, pte)
+    &&& if candidate_mapping_overlaps_existing_mapping(s1.map, base, pte) {
+        &&& result.is_ErrOverlap()
+        &&& s2.map === s1.map
+    } else {
+        &&& result.is_Ok()
+        &&& s2.map === s1.map.insert(base, pte)
     }
 }
 
-pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, base: nat, result: UnmapResult) -> bool {
+pub open spec fn step_Unmap_preconditions(base: nat) -> bool {
     &&& between(base, PT_BOUND_LOW, PT_BOUND_HIGH)
     &&& { // The given base must be aligned to some valid page size
         ||| aligned(base, L3_ENTRY_SIZE)
         ||| aligned(base, L2_ENTRY_SIZE)
         ||| aligned(base, L1_ENTRY_SIZE)
     }
-    &&& match result {
-        UnmapResult::Ok => {
-            &&& s1.map.dom().contains(base)
-            &&& s2.map === s1.map.remove(base)
-        },
-        UnmapResult::ErrNoSuchMapping => {
-            &&& !s1.map.dom().contains(base)
-            &&& s2.map === s1.map
-        },
+}
+
+pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, base: nat, result: UnmapResult) -> bool {
+    &&& step_Unmap_preconditions(base)
+    &&& if s1.map.dom().contains(base) {
+        &&& result.is_Ok()
+        &&& s2.map === s1.map.remove(base)
+    } else {
+        &&& result.is_ErrNoSuchMapping()
+        &&& s2.map === s1.map
     }
 }
 
 pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
     s1 === s2
+}
+
+pub open spec fn init(s: PageTableVariables) -> bool {
+    s.map === Map::empty() // FIXME: ?
 }
 
 pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {

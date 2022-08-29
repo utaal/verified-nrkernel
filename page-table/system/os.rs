@@ -7,8 +7,8 @@ use seq::*;
 
 use crate::system::spec as system;
 use crate::pt;
-use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned };
-use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE };
+use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq };
+use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::high_level_spec as hlspec;
 
 verus! {
@@ -135,6 +135,8 @@ pub open spec fn new_seq_map_index<T, F: Fn(nat) -> T>(len: nat, f: F) -> Seq<T>
 
 pub open spec fn os_state_to_abstract_state(s: OSVariables) -> hlspec::AbstractVariables {
     let mappings = system::interp_pt_mem(s.system.pt_mem);
+    // This is incorrect because the hlspec uses word-indexed memory, i.e. arguments aren't vaddr
+    // but memory index.
     // let mem: Map<nat,nat> = Map::new(
     //     |vaddr: nat| exists|base: nat, pte: PageTableEntry| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size),
     //     |vaddr: nat| {
@@ -142,9 +144,26 @@ pub open spec fn os_state_to_abstract_state(s: OSVariables) -> hlspec::AbstractV
     //         let phys_addr = (pte.frame.base + (vaddr - base)) as nat;
     //         s.system.mem[phys_addr]
     //     });
-    // let mem: Seq<nat> = new_seq_map_index();
+    // let mem: Seq<nat> = new_seq(c.phys_addr_space_size, ()).map(
+    //     |idx:int,e:()| {
+    //         let vaddr: nat = (idx * WORD_SIZE) as nat;
+    //         if exists|base: nat, pte: PageTableEntry| {
+    //             &&& mappings.contains_pair(base, pte)
+    //             &&& between(vaddr, base, base + pte.frame.size) }
+    //         {
+    //             let (base, pte) = choose|basepte: (nat, PageTableEntry)| #![auto] {
+    //                 &&& mappings.contains_pair(basepte.0, basepte.1)
+    //                 &&& between(vaddr, basepte.0, basepte.0 + basepte.1.frame.size)
+    //             };
+    //             let paddr = (pte.frame.base + (vaddr - base)) as nat;
+    //             s.system.mem[paddr]
+    //         } else {
+    //             arbitrary()
+    //         }
+    //     });
+    let mem = arbitrary();
     hlspec::AbstractVariables {
-        mem: arbitrary(), // FIXME:
+        mem,
         mappings,
     }
 }
@@ -182,7 +201,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
             assert(step_Map(s1, s2, base, pte, result));
             assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
-            // FIXME: maybe the memory in the system model needs to be total?
+            // FIXME: By mapping a new entry we change the memory for the newly mapped region.
             assume(false);
             assert(abs_s2.mem === abs_s1.mem);
             assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
