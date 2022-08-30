@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use crate::pervasive::*;
 use seq::*;
+use set::*;
 use crate::*;
 use builtin::*;
 use builtin_macros::*;
@@ -8,7 +9,7 @@ use state_machines_macros::*;
 use map::*;
 use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_mapping };
 use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
-use option::*;
+use option::{ *, Option::None, Option::Some };
 
 // TODO:
 // - should Map be able to set is_supervisor?
@@ -55,27 +56,36 @@ pub open spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr:
     m.dom().contains(base) && base <= vaddr && vaddr < base + m.index(base).frame.size
 }
 
+pub open spec fn mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>) -> Set<nat> {
+    Set::new(|word_idx: nat| {
+        let vaddr = word_idx * WORD_SIZE;
+        exists|base, pte|
+            mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size)
+    })
+}
+
+// FIXME: should vaddr be a word-address instead?
 pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     let mem_idx = word_index(vaddr);
     let mem_val = s1.mem.index(mem_idx);
     &&& s2.mappings === s1.mappings
-    // FIXME:
-    // &&& pte.is_Some() === mem_domain_from_mappings(s1.mappings).contains(mem_idx)
     &&& match pte {
-        Option::Some((base, pte)) => {
+        Some((base, pte)) => {
+            // If pte is Some, it's an existing mapping that contains vaddr..
             &&& s1.mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
+            // .. and the result depends on the flags.
             &&& match op {
                 IoOp::Store { new_value, result } => {
                     if !pte.flags.is_supervisor && pte.flags.is_writable {
-                        &&& s2.mem === s1.mem.insert(mem_idx, new_value)
                         &&& result.is_Ok()
+                        &&& s2.mem === s1.mem.insert(mem_idx, new_value)
                     } else {
-                        &&& s2.mem === s1.mem
                         &&& result.is_Pagefault()
+                        &&& s2.mem === s1.mem
                     }
-                }
-                IoOp::Load { is_exec, result } => {
+                },
+                IoOp::Load  { is_exec, result } => {
                     &&& s2.mem === s1.mem
                     &&& if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result.is_Value()
@@ -86,15 +96,16 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
                 },
             }
         },
-        Option::None => {
-            // FIXME: this needs to ensure no suitable mapping exists
-            match op {
-                IoOp::Store { new_value, result: StoreResult::Pagefault } => s2.mem === s1.mem,
-                IoOp::Load  { is_exec,   result: LoadResult::Pagefault }  => s2.mem === s1.mem,
-                _                                                         => false,
+        None => {
+            // If pte is None, no mapping containing vaddr exists..
+            &&& !mem_domain_from_mappings(s1.mappings).contains(mem_idx)
+            // .. and the result is always a pagefault and an unchanged memory.
+            &&& s2.mem === s1.mem
+            &&& match op {
+                IoOp::Store { new_value, result } => result.is_Pagefault(),
+                IoOp::Load  { is_exec, result }   => result.is_Pagefault(),
             }
         },
-
     }
 }
 
@@ -122,21 +133,8 @@ pub open spec fn step_Map(s1: AbstractVariables, s2: AbstractVariables, base: na
     } else {
         &&& result.is_Ok()
         &&& s2.mappings === s1.mappings.insert(base, pte)
-        &&& { // Contents of the newly mapped memory are arbitrary
-            let mem_idx = word_index(base);
-            let num_words = pte.frame.size / WORD_SIZE;
-            &&& (forall|idx| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
-            // FIXME:
-            // &&& mem_domain_from_mappings(s2.mappings) === s2.mem.dom()
-            // &&& s2.mem.dom() === s1.mem.dom().union(...)
-            // &&& forall|vaddr, base, pte|
-            //         s1.mappings.contains_pair(base, pte) && pte.frame.contains(vaddr)
-            //         ==> s2.mem[word_index(vaddr)] == s1.mem[word_index(vaddr)]
-            // &&& s2.mem.len() == s1.mem.len()
-            // &&& (forall|i: nat| #![auto]
-            //      i < s2.mem.len() && !between(i, mem_idx, mem_idx + num_words)
-            //      ==> { s2.mem[i] == s1.mem[i] })
-        }
+        &&& (forall|idx| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+        &&& s2.mem.dom() === mem_domain_from_mappings(s2.mappings)
     }
 }
 
@@ -158,7 +156,8 @@ pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: 
         &&& result.is_ErrNoSuchMapping()
         &&& s2.mappings === s1.mappings
     }
-    &&& s2.mem === s1.mem
+    &&& (forall|idx| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+    &&& s2.mem.dom() === mem_domain_from_mappings(s2.mappings)
 }
 
 pub open spec fn step_Stutter(s1: AbstractVariables, s2: AbstractVariables) -> bool {

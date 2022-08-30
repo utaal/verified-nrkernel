@@ -21,7 +21,7 @@ pub enum PageTableStep {
     Stutter,
 }
 
-// not-always-enabled actions unsatisfiable spec caveat
+// TODO: discuss not-always-enabled actions unsatisfiable spec problem in thesis
 
 pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool {
     &&& aligned(base, pte.frame.size)
