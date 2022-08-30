@@ -56,15 +56,17 @@ pub open spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr:
     m.dom().contains(base) && base <= vaddr && vaddr < base + m.index(base).frame.size
 }
 
-pub open spec fn mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>) -> Set<nat> {
-    Set::new(|word_idx: nat| {
-        let vaddr = word_idx * WORD_SIZE;
-        exists|base, pte|
-            mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size)
-    })
+pub open spec fn mem_domain_from_mappings_contains(word_idx: nat, mappings: Map<nat, PageTableEntry>) -> bool {
+    let vaddr = word_idx * WORD_SIZE;
+    exists|base, pte|
+        mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size)
 }
 
-// FIXME: should vaddr be a word-address instead?
+pub open spec fn mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>) -> Set<nat> {
+    Set::new(|word_idx: nat| mem_domain_from_mappings_contains(word_idx, mappings))
+}
+
+// FIXME: should vaddr be a word-address instead? Otherwise at least require aligned(vaddr, 8).
 pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     let mem_idx = word_index(vaddr);
     let mem_val = s1.mem.index(mem_idx);
