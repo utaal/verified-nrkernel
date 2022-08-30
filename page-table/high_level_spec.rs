@@ -158,8 +158,8 @@ pub open spec fn step_Unmap(s1: AbstractVariables, s2: AbstractVariables, base: 
         &&& result.is_ErrNoSuchMapping()
         &&& s2.mappings === s1.mappings
     }
-    &&& (forall|idx| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
     &&& s2.mem.dom() === mem_domain_from_mappings(s2.mappings)
+    &&& (forall|idx| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
 }
 
 pub open spec fn step_Stutter(s1: AbstractVariables, s2: AbstractVariables) -> bool {

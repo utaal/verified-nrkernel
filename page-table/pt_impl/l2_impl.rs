@@ -1412,6 +1412,19 @@ impl PageTable {
                                 }
                             };
                         };
+                        assert(self_with_empty@.well_formed(layer, ptr));
+                        assert(self_with_empty@.memory.inv());
+                        assert(self_with_empty@.memory.regions().contains(pt_with_empty@.region));
+                        assert(pt_with_empty@.region.contains(ptr));
+                        assert(self_with_empty@.layer_in_range(layer));
+                        assert(pt_with_empty@.entries.len() == self_with_empty@.arch@.num_entries(layer));
+                        assert(self_with_empty@.directories_obey_invariant_at(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_matches_structure(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_used_regions_rtrancl(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_region_notin_used_regions(layer, ptr, pt_with_empty@));
+                        assert(pt_with_empty@.used_regions.subset_of(self_with_empty@.memory.regions()));
+
                         assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@));
                     };
 
@@ -1674,6 +1687,7 @@ impl PageTable {
     proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)
         requires
             // TODO: May need more preconditions
+            self.well_formed(layer, ptr),
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
             pt.region.contains(ptr),
@@ -1687,11 +1701,27 @@ impl PageTable {
         // FIXME: Just assuming this for now, will need nonlinear arith
         assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
                ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * WORD_SIZE, pt.region.base)) < self.memory.region_view(pt.region).len()));
-        assume(false);
+
+        assume(self.empty_at(layer, ptr, pt));
+
+        assert(self.well_formed(layer, ptr));
+        assert(self.memory.inv());
+        assert(self.memory.regions().contains(pt.region));
+        assert(pt.region.contains(ptr));
+        assert(self.layer_in_range(layer));
+        assert(pt.entries.len() == self.arch@.num_entries(layer));
+        assert(self.directories_obey_invariant_at(layer, ptr, pt));
+        assume(self.ghost_pt_matches_structure(layer, ptr, pt));
+        assume(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
+        assume(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
+        assume(self.ghost_pt_region_notin_used_regions(layer, ptr, pt));
+        assume(pt.used_regions.subset_of(self.memory.regions()));
+        assert(self.inv_at(layer, ptr, pt));
     }
 
     proof fn lemma_empty_at_interp_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, idx: nat, pt: PTDir, l1dir: l1::Directory)
         requires
+            // TODO: May need more preconditions
             self.inv_at(layer, ptr, pt),
             idx < self.arch@.num_entries(layer),
             self.view_at(layer, ptr, idx, pt).is_Directory(),
@@ -1705,6 +1735,8 @@ impl PageTable {
                 === l1dir.new_empty_dir(idx)
     {
         // FIXME:
+        // For each entry self.interp_at_entry == l1::NodeEntry::Empty()
+        // lemma_new_empty_dir
         assume(false);
     }
 
@@ -1722,6 +1754,8 @@ impl PageTable {
         //     self.inv(),
         //     self.interp().inv(),
     {
+        // FIXME: accepted_mapping is contradictory. rephrase it with
+        // contains_entry_size_at_index_atleast
         assert(false);
         proof { ambient_arith(); }
         let (cr3_region, cr3) = self.memory.cr3();
