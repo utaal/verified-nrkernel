@@ -6,10 +6,10 @@ use state_machines_macros::*;
 use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
-use crate::aux_defs::{ PageTableEntry, IoOp, LoadResult, StoreResult, between };
+use crate::aux_defs::{ PageTableEntry, IoOp, LoadResult, StoreResult, between, aligned };
 use crate::mem;
 use crate::pt_impl::l0;
-use option::*;
+use option::{ *, Option::* };
 
 // state:
 // - memory
@@ -53,42 +53,49 @@ pub open spec fn init(s: SystemVariables) -> bool {
 }
 
 pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
-    match pte {
-        Option::Some((base, pte)) => {
+    let mem_idx = word_index(vaddr);
+    &&& aligned(vaddr, 8)
+    &&& s2.pt_mem === s1.pt_mem
+    &&& s2.tlb === s1.tlb
+    &&& match pte {
+        Some((base, pte)) => {
+            // If pte is Some, it's a cached mapping that maps vaddr to paddr..
             &&& s1.tlb.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
             &&& paddr === (pte.frame.base + (vaddr - base)) as nat
-            &&& s2.tlb === s1.tlb
-            &&& s2.pt_mem === s1.pt_mem
+            // .. and the result depends on the flags.
             &&& match op {
-                IoOp::Load { is_exec, result } => {
-                    &&& s2.mem === s1.mem
-                    &&& if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                        &&& result.is_Value()
-                        &&& result.get_Value_0() == s1.mem.index(word_index(paddr))
-                    } else {
-                        &&& result.is_Pagefault()
-                    }
-                },
                 IoOp::Store { new_value, result } => {
                     if !pte.flags.is_supervisor && pte.flags.is_writable {
                         &&& result.is_Ok()
-                        &&& s2.mem === s1.mem.update(word_index(paddr), new_value)
+                        &&& s2.mem === s1.mem.update(mem_idx, new_value)
                     } else {
                         &&& result.is_Pagefault()
                         &&& s2.mem === s1.mem
                     }
-                }
+                },
+                IoOp::Load { is_exec, result } => {
+                    &&& s2.mem === s1.mem
+                    &&& if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                        &&& result.is_Value()
+                        &&& result.get_Value_0() == s1.mem.index(mem_idx)
+                    } else {
+                        &&& result.is_Pagefault()
+                    }
+                },
             }
         },
-        Option::None => {
-            &&& s2.tlb === s1.tlb
-            &&& s2.pt_mem === s1.pt_mem
+        None => {
+            // If pte is None, no mapping containing vaddr exists..
+            &&& (!exists|base, pte| {
+                 &&& interp_pt_mem(s1.pt_mem).contains_pair(base, pte)
+                 &&& between(vaddr, base, base + pte.frame.size)
+            })
+            // .. and the result is always a pagefault and an unchanged memory.
             &&& s2.mem === s1.mem
             &&& match op {
-                IoOp::Store { new_value, result: StoreResult::Pagefault } => true,
-                IoOp::Load { is_exec, result: LoadResult::Pagefault }     => true,
-                _                                                         => false,
+                IoOp::Store { new_value, result } => result.is_Pagefault(),
+                IoOp::Load  { is_exec, result }   => result.is_Pagefault(),
             }
         },
     }

@@ -104,7 +104,7 @@ pub proof fn lemma_mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>, 
 // FIXME: should vaddr be a word-address instead? Otherwise at least require aligned(vaddr, 8).
 pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     let mem_idx = word_index(vaddr);
-    let mem_val = s1.mem.index(mem_idx);
+    &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings
     &&& match pte {
         Some((base, pte)) => {
@@ -126,7 +126,7 @@ pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: 
                     &&& s2.mem === s1.mem
                     &&& if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result.is_Value()
-                        &&& result.get_Value_0() == mem_val
+                        &&& result.get_Value_0() == s1.mem.index(mem_idx)
                     } else {
                         &&& result.is_Pagefault()
                     }
