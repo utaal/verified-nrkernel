@@ -7,7 +7,7 @@ use seq::*;
 
 use crate::system::spec as system;
 use crate::pt;
-use crate::aux_defs::{ between, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq };
+use crate::aux_defs::{ between, MemRegion, overlap, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_mapping };
 use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::high_level_spec as hlspec;
 
@@ -18,19 +18,27 @@ pub struct OSVariables {
 }
 
 impl OSVariables {
+    pub open spec fn inv(self) -> bool {
+        self.pt_variables().inv()
+    }
+
     pub open spec fn pt_variables(self) -> pt::PageTableVariables {
         pt::PageTableVariables {
-            map: system::interp_pt_mem(self.system.pt_mem),
+            map: self.interp_mappings(),
         }
     }
 
+    pub open spec fn interp_mappings(self) -> Map<nat, PageTableEntry> {
+        system::interp_pt_mem(self.system.pt_mem)
+    }
+
     pub open spec fn interp(self) -> hlspec::AbstractVariables {
-        let mappings = system::interp_pt_mem(self.system.pt_mem);
+        let mappings = self.interp_mappings();
         let mem: Map<nat,nat> = Map::new(
             |word_idx: nat| hlspec::mem_domain_from_mappings_contains(word_idx, mappings),
             |word_idx: nat| {
                 let vaddr = word_idx * WORD_SIZE;
-                let (base, pte) = choose|basepte: (nat, PageTableEntry)| #![auto] mappings.contains_pair(basepte.0, basepte.1) && between(vaddr, basepte.0, basepte.0 + basepte.1.frame.size);
+                let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
                 let phys_addr = (pte.frame.base + (vaddr - base)) as nat;
                 self.system.mem[phys_addr]
             });
@@ -40,19 +48,54 @@ impl OSVariables {
         }
     }
 
-    // proof fn lemma_interp(self)
-    //     ensures
-    //         forall|base: nat, word_idx: nat|
-    //             self.mappings.dom().contains(base) && hlspec::mem_domain_from_mappings(self.mappings.remove(base)).contains(word_idx)
-    //             ==> {
-    //                 &&& hlspec::mem_domain_from_mappings(self.mappings).contains(word_idx)
-    //                 &&& self.interp().mem[word_idx] === self.interp()
-    //                 // &&& hlspec::mem_domain_from_mappings(mappings.remove(base))[word_idx]
-    //                 //         === hlspec::mem_domain_from_mappings(mappings)[word_idx]
-    //             },
-    // {
-    //     assume(false);
-    // }
+    proof fn lemma_interp(self, other: OSVariables)
+        requires
+            other.system.mem === self.system.mem,
+            forall|base, pte| self.interp_mappings().contains_pair(base, pte) ==> other.interp_mappings().contains_pair(base, pte),
+            self.inv(),
+            other.inv(),
+        ensures
+            forall|word_idx: nat|
+                self.interp().mem.dom().contains(word_idx)
+                ==> {
+                    &&& #[trigger] other.interp().mem.dom().contains(word_idx)
+                    &&& other.interp().mem[word_idx] == self.interp().mem[word_idx]
+                },
+    {
+        assert forall|word_idx: nat|
+            self.interp().mem.dom().contains(word_idx)
+            implies {
+                &&& #[trigger] other.interp().mem.dom().contains(word_idx)
+                &&& other.interp().mem[word_idx] == self.interp().mem[word_idx]
+            } by
+        {
+            let vaddr = word_idx * WORD_SIZE;
+            let self_mappings = self.interp_mappings();
+            let other_mappings = other.interp_mappings();
+            assert(hlspec::mem_domain_from_mappings_contains(word_idx, self_mappings));
+            let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] self_mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
+            assert(self_mappings.contains_pair(base, pte));
+            assert(between(vaddr, base, base + pte.frame.size));
+            assert(other_mappings.contains_pair(base, pte));
+
+            assert(other.interp().mem.dom().contains(word_idx));
+            if other.interp().mem[word_idx] !== self.interp().mem[word_idx] {
+                let (base2, pte2): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] other_mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
+                assert(other_mappings.contains_pair(base, pte));
+                assert(other_mappings.contains_pair(base2, pte2));
+                assert(between(vaddr, base2, base2 + pte2.frame.size));
+                assert(overlap(
+                        MemRegion { base: base, size: base + pte.frame.size },
+                        MemRegion { base: base2, size: base2 + pte2.frame.size }));
+                assert(other.pt_variables().mappings_dont_overlap());
+                assert(((base == base2) || !overlap(
+                               MemRegion { base: base, size: pte.frame.size },
+                               MemRegion { base: base2, size: pte2.frame.size })));
+                assert(base != base2);
+                assert(false);
+            }
+        };
+    }
 }
 
 pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: system::SystemStep) -> bool {
@@ -107,10 +150,13 @@ pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
 
 proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: OSStep)
     requires
+        s1.inv(),
         next_step(s1, s2, step)
     ensures
         hlspec::next_step(s1.interp(), s2.interp(), step.interp())
 {
+    // FIXME:
+    assume(s2.inv());
     let abs_s1   = s1.interp();
     let abs_s2   = s2.interp();
     let abs_step = step.interp();
@@ -138,10 +184,30 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
             assert(step_Map(s1, s2, base, pte, result));
             assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
-            // FIXME: By mapping a new entry we change the memory for the newly mapped region.
-            assume(false);
-            assert(abs_s2.mem === abs_s1.mem);
-            assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            assert(hlspec::step_Map_preconditions(base, pte));
+            if candidate_mapping_overlaps_existing_mapping(pt_s1.map, base, pte) {
+                assert(candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
+                assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            } else {
+                assert(!candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
+                // hlspec::lemma_mem_domain_from_mappings();
+                assert(forall|base, pte| s1.interp_mappings().contains_pair(base, pte) ==> s2.interp_mappings().contains_pair(base, pte));
+                assert(forall|base, pte| s1.interp().mappings.contains_pair(base, pte) ==> s2.interp().mappings.contains_pair(base, pte));
+                assert(s1.interp().mappings === s1.interp_mappings());
+                assert(s2.interp().mappings === s2.interp_mappings());
+                s1.lemma_interp(s2);
+                assert(result.is_Ok());
+                assert(abs_s2.mappings === abs_s1.mappings.insert(base, pte));
+                assert forall|word_idx|
+                    #[trigger] abs_s1.mem.dom().contains(word_idx)
+                    implies abs_s2.mem[word_idx] === abs_s1.mem[word_idx] by
+                {
+                    assert(abs_s2.mem.dom().contains(word_idx));
+                    assert(abs_s2.mem[word_idx] == abs_s1.mem[word_idx]);
+                };
+                assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
+                assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            }
             assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
 
         },
@@ -160,9 +226,14 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 assert(abs_s2.mappings === abs_s1.mappings.remove(base));
 
                 assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
-                // assert(forall|idx| #![auto] abs_s2.mem.dom().contains(idx) ==> abs_s1.mem.dom().contains(idx));
-                // FIXME:
-                assume(forall|idx| #![auto] abs_s2.mem.dom().contains(idx) ==> abs_s2.mem[idx] === abs_s1.mem[idx]);
+                s2.lemma_interp(s1);
+                assert forall|word_idx|
+                    #[trigger] abs_s2.mem.dom().contains(word_idx)
+                    implies abs_s1.mem[word_idx] === abs_s2.mem[word_idx] by
+                {
+                    assert(abs_s1.mem.dom().contains(word_idx));
+                    assert(abs_s1.mem[word_idx] == abs_s2.mem[word_idx]);
+                };
 
                 assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
             } else {

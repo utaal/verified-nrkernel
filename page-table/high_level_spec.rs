@@ -50,12 +50,6 @@ pub open spec fn init(s: AbstractVariables) -> bool {
     s.mem === Map::empty() // TODO: maybe change this
 }
 
-// TODO: also use this in system spec
-/// Returns `true` if m contains a mapping for `base` and `vaddr` is within the range of that mapping
-pub open spec fn mapping_contains(m: Map<nat, PageTableEntry>, base: nat, vaddr: nat) -> bool {
-    m.dom().contains(base) && base <= vaddr && vaddr < base + m.index(base).frame.size
-}
-
 pub open spec fn mem_domain_from_mappings_contains(word_idx: nat, mappings: Map<nat, PageTableEntry>) -> bool {
     let vaddr = word_idx * WORD_SIZE;
     exists|base, pte|
@@ -64,6 +58,47 @@ pub open spec fn mem_domain_from_mappings_contains(word_idx: nat, mappings: Map<
 
 pub open spec fn mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>) -> Set<nat> {
     Set::new(|word_idx: nat| mem_domain_from_mappings_contains(word_idx, mappings))
+}
+
+pub proof fn lemma_mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry)
+    requires
+        !mappings.dom().contains(base)
+    ensures
+        (forall|word_idx: nat|
+            mem_domain_from_mappings_contains(word_idx, mappings)
+            ==> #[trigger] mem_domain_from_mappings_contains(word_idx, mappings.insert(base, pte))),
+        (forall|word_idx: nat|
+            !mem_domain_from_mappings_contains(word_idx, mappings)
+            && #[trigger] mem_domain_from_mappings_contains(word_idx, mappings.insert(base, pte))
+            ==> between(word_idx * WORD_SIZE, base, base + pte.frame.size)),
+{
+    assert forall|word_idx: nat|
+        mem_domain_from_mappings_contains(word_idx, mappings)
+        implies #[trigger] mem_domain_from_mappings_contains(word_idx, mappings.insert(base, pte)) by
+    {
+        let vaddr = word_idx * WORD_SIZE;
+        let (base2, pte2) = choose|base, pte| mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
+        assert(mappings.insert(base, pte).contains_pair(base2, pte2));
+    };
+    assert forall|word_idx: nat|
+        !mem_domain_from_mappings_contains(word_idx, mappings)
+        && #[trigger] mem_domain_from_mappings_contains(word_idx, mappings.insert(base, pte))
+        implies between(word_idx * WORD_SIZE, base, base + pte.frame.size) by
+    {
+        let vaddr = word_idx * WORD_SIZE;
+        let (base2, pte2) = choose|base2, pte2| #![auto] mappings.insert(base, pte).contains_pair(base2, pte2) && between(vaddr, base2, base2 + pte2.frame.size);
+        assert(mappings.insert(base, pte).contains_pair(base2, pte2));
+        assert(between(vaddr, base2, base2 + pte2.frame.size));
+        if !between(vaddr, base, base + pte.frame.size) {
+            assert(base2 != base || pte2 !== pte);
+            if base2 != base {
+                assert(mappings.contains_pair(base2, pte2));
+                assert(mem_domain_from_mappings_contains(word_idx, mappings));
+            }
+            assert(false);
+        } else {
+        }
+    };
 }
 
 // FIXME: should vaddr be a word-address instead? Otherwise at least require aligned(vaddr, 8).
