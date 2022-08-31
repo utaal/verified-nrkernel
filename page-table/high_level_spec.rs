@@ -10,6 +10,7 @@ use map::*;
 use crate::aux_defs::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_mapping };
 use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use option::{ *, Option::None, Option::Some };
+use crate::mem::{ word_index_spec };
 
 // TODO:
 // - should Map be able to set is_supervisor?
@@ -37,13 +38,6 @@ pub enum AbstractStep {
     // that the mappings in the high-level spec are the correct ones, i.e. the ones that are
     // actually used in the system spec, which would make the spec of the resolve function here
     // meaningful.
-}
-
-// Unaligned accesses are a bit funky with this index function and the word sequences but unaligned
-// accesses can be thought of as two aligned accesses so it's probably fine at least until we
-// consider concurrency.
-pub open spec fn word_index(idx: nat) -> nat {
-    idx / 8
 }
 
 pub open spec fn init(s: AbstractVariables) -> bool {
@@ -103,7 +97,7 @@ pub proof fn lemma_mem_domain_from_mappings(mappings: Map<nat, PageTableEntry>, 
 
 // FIXME: should vaddr be a word-address instead? Otherwise at least require aligned(vaddr, 8).
 pub open spec fn step_IoOp(s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
-    let mem_idx = word_index(vaddr);
+    let mem_idx = word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings
     &&& match pte {

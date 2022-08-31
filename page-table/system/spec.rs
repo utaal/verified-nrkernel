@@ -7,7 +7,7 @@ use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
 use crate::aux_defs::{ PageTableEntry, IoOp, LoadResult, StoreResult, between, aligned };
-use crate::mem;
+use crate::mem::{ self, word_index_spec };
 use crate::pt_impl::l0;
 use option::{ *, Option::* };
 
@@ -38,13 +38,6 @@ pub enum SystemStep {
     TLBEvict { base: nat},
 }
 
-// Unaligned accesses are a bit funky with this index function and the word sequences but unaligned
-// accesses can be thought of as two aligned accesses so it's probably fine at least until we
-// consider concurrency.
-pub open spec fn word_index(idx: nat) -> nat {
-    idx / 8
-}
-
 // Page table walker interpretation of the page table memory
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
 
@@ -52,8 +45,11 @@ pub open spec fn init(s: SystemVariables) -> bool {
     s.tlb.dom() === Set::empty()
 }
 
+// TODO: we only allow aligned accesses, need to argue in report that that's fine. can think of
+// unaligned accesses as two aligned accesses. when we get to concurrency we may have to change
+// that.
 pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
-    let mem_idx = word_index(vaddr);
+    let mem_idx = word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.tlb === s1.tlb

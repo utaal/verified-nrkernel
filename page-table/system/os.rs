@@ -10,6 +10,8 @@ use crate::pt;
 use crate::aux_defs::{ between, MemRegion, overlap, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_mapping };
 use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::high_level_spec as hlspec;
+use crate::mem::{ word_index_spec };
+use option::{ *, Option::* };
 
 verus! {
 
@@ -110,14 +112,15 @@ pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: Page
 }
 
 pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
+    // &&& s1.system.tlb
     &&& system::step_PTMemOp(s1.system, s2.system)
     &&& pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 pub enum OSStep {
     System { step: system::SystemStep },
-    Map { base: nat, pte: PageTableEntry, result: MapResult },
-    Unmap { base: nat, result: UnmapResult },
+    Map    { base: nat, pte: PageTableEntry, result: MapResult },
+    Unmap  { base: nat, result: UnmapResult },
 }
 
 impl OSStep {
@@ -156,6 +159,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
         hlspec::next_step(s1.interp(), s2.interp(), step.interp())
 {
     // FIXME:
+    assume(false);
     assume(s2.inv());
     let abs_s1   = s1.interp();
     let abs_s2   = s2.interp();
@@ -165,7 +169,49 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             match step {
                 system::SystemStep::IoOp { vaddr, paddr, op, pte } => {
                     // hlspec::AbstractStep::IoOp { vaddr, op, pte }
-                    assume(hlspec::next_step(abs_s1, abs_s2, abs_step));
+                    let mem_idx = word_index_spec(vaddr);
+                    assert(s2.system.pt_mem === s1.system.pt_mem);
+                    assert(s2.system.tlb === s1.system.tlb);
+                    match pte {
+                        Some((base, pte)) => {
+                            // system
+                            assert(s1.system.tlb.contains_pair(base, pte));
+                            assert(between(vaddr, base, base + pte.frame.size));
+                            assert(paddr === (pte.frame.base + (vaddr - base)) as nat);
+
+                            // abs
+                            assert(abs_s1.mappings.contains_pair(base, pte));
+                            match op {
+                                IoOp::Store { new_value, result } => {
+                                    if !pte.flags.is_supervisor && pte.flags.is_writable {
+                                        assert(result.is_Ok());
+                                        assert(s2.system.mem === s1.system.mem.update(mem_idx, new_value));
+                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                    } else {
+                                        assert(result.is_Pagefault());
+                                        assert(s2.system.mem === s1.system.mem);
+                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                    }
+                                },
+                                IoOp::Load { is_exec, result } => {
+                                    assert(s2.system.mem === s1.system.mem);
+                                    if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                                        assert(result.is_Value());
+                                        assert(result.get_Value_0() == s1.system.mem.index(mem_idx));
+                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                    } else {
+                                        assert(result.is_Pagefault());
+                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                    }
+                                },
+                            }
+                        },
+                        None => {
+                            assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
+                        },
+                    }
+                    assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
+                    assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
                 },
                 system::SystemStep::PTMemOp => assert(false),
                 system::SystemStep::TLBFill { base, pte } => {

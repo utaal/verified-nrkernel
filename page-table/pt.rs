@@ -30,7 +30,7 @@ impl PageTableVariables {
 }
 
 pub enum PageTableStep {
-    Map { base: nat, pte: PageTableEntry, result: MapResult },
+    Map   { base: nat, pte: PageTableEntry, result: MapResult },
     Unmap { base: nat, result: UnmapResult },
     Stutter,
 }
