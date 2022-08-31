@@ -99,8 +99,9 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
 
 pub open spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool {
     &&& s2.mem === s1.mem
-    &&& s2.tlb === s1.tlb
-    // only pt_mem may change, but arbitrarily
+    // s2.tlb is a submap of s1.tlb
+    &&& forall|base: nat, pte: PageTableEntry| s2.tlb.contains_pair(base, pte) ==> s1.tlb.contains_pair(base, pte)
+    // pt_mem may change arbitrarily
 }
 
 pub open spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {

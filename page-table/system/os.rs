@@ -26,16 +26,19 @@ impl OSVariables {
 
     pub open spec fn pt_variables(self) -> pt::PageTableVariables {
         pt::PageTableVariables {
-            map: self.interp_mappings(),
+            map: self.interp_pt_mem(),
         }
     }
 
-    pub open spec fn interp_mappings(self) -> Map<nat, PageTableEntry> {
+    pub open spec fn interp_pt_mem(self) -> Map<nat, PageTableEntry> {
         system::interp_pt_mem(self.system.pt_mem)
     }
 
     pub open spec fn interp(self) -> hlspec::AbstractVariables {
-        let mappings = self.interp_mappings();
+        let mappings: Map<nat,PageTableEntry> = Map::new(
+            |base: nat| self.system.tlb.dom().contains(base) || self.interp_pt_mem().dom().contains(base),
+            |base: nat| if self.system.tlb.dom().contains(base) { self.system.tlb.index(base) } else { self.interp_pt_mem().index(base) },
+            );
         let mem: Map<nat,nat> = Map::new(
             |word_idx: nat| hlspec::mem_domain_from_mappings_contains(word_idx, mappings),
             |word_idx: nat| {
@@ -53,7 +56,7 @@ impl OSVariables {
     proof fn lemma_interp(self, other: OSVariables)
         requires
             other.system.mem === self.system.mem,
-            forall|base, pte| self.interp_mappings().contains_pair(base, pte) ==> other.interp_mappings().contains_pair(base, pte),
+            forall|base, pte| self.interp_pt_mem().contains_pair(base, pte) ==> other.interp_pt_mem().contains_pair(base, pte),
             self.inv(),
             other.inv(),
         ensures
@@ -71,9 +74,11 @@ impl OSVariables {
                 &&& other.interp().mem[word_idx] == self.interp().mem[word_idx]
             } by
         {
+            // FIXME
+            assume(false);
             let vaddr = word_idx * WORD_SIZE;
-            let self_mappings = self.interp_mappings();
-            let other_mappings = other.interp_mappings();
+            let self_mappings = self.interp_pt_mem();
+            let other_mappings = other.interp_pt_mem();
             assert(hlspec::mem_domain_from_mappings_contains(word_idx, self_mappings));
             let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] self_mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
             assert(self_mappings.contains_pair(base, pte));
@@ -112,6 +117,15 @@ pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: Page
 }
 
 pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
+    let pte = s1.interp_pt_mem().index(base);
+    // The system step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
+    // that s2.tlb doesn't contain this particular entry.
+    &&& !s2.system.tlb.dom().contains(base)
+    // TODO: is this fine?
+    // &&& forall|word_idx: nat| {
+    //     let vaddr = word_idx * WORD_SIZE;
+    //     between(vaddr, base, base + pte.frame.size) ==> ??
+    // }
     // &&& s1.system.tlb
     &&& system::step_PTMemOp(s1.system, s2.system)
     &&& pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
@@ -237,10 +251,10 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             } else {
                 assert(!candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
                 // hlspec::lemma_mem_domain_from_mappings();
-                assert(forall|base, pte| s1.interp_mappings().contains_pair(base, pte) ==> s2.interp_mappings().contains_pair(base, pte));
+                assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
                 assert(forall|base, pte| s1.interp().mappings.contains_pair(base, pte) ==> s2.interp().mappings.contains_pair(base, pte));
-                assert(s1.interp().mappings === s1.interp_mappings());
-                assert(s2.interp().mappings === s2.interp_mappings());
+                assert(s1.interp().mappings === s1.interp_pt_mem());
+                assert(s2.interp().mappings === s2.interp_pt_mem());
                 s1.lemma_interp(s2);
                 assert(result.is_Ok());
                 assert(abs_s2.mappings === abs_s1.mappings.insert(base, pte));
