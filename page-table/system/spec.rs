@@ -53,12 +53,12 @@ pub open spec fn init(s: SystemVariables) -> bool {
 // unaligned accesses as two aligned accesses. when we get to concurrency we may have to change
 // that.
 pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
-    let mem_idx = word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.tlb === s1.tlb
     &&& match pte {
         Some((base, pte)) => {
+            let mem_idx = word_index_spec(paddr);
             // If pte is Some, it's a cached mapping that maps vaddr to paddr..
             &&& s1.tlb.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
