@@ -1687,6 +1687,7 @@ impl PageTable {
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
             pt.region.contains(ptr),
+            ptr == pt.region.base,
             self.layer_in_range(layer),
             pt.entries.len() == self.arch@.num_entries(layer),
             forall|i: nat| i < self.arch@.num_entries(layer) ==> self.memory.region_view(pt.region).index(i) == 0u64,
@@ -1695,10 +1696,18 @@ impl PageTable {
             self.inv_at(layer, ptr, pt),
     {
         // FIXME: Just assuming this for now, will need nonlinear arith
-        assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
-               ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * WORD_SIZE, pt.region.base)) < self.memory.region_view(pt.region).len()));
+        //assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
+        //       ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * WORD_SIZE, pt.region.base)) < self.memory.region_view(pt.region).len()));
 
-        assume(self.empty_at(layer, ptr, pt));
+        //let entry = self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region);
+        assert forall|i: nat| i < self.arch@.num_entries(layer) implies self.view_at(layer, ptr, i, pt).is_Empty() by {
+            let entry = self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region);
+            assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
+        };
+
+        assert(forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, pt).is_Empty());
+        //assert!(self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region)
+        assert(self.empty_at(layer, ptr, pt));
 
         assert(self.well_formed(layer, ptr));
         assert(self.memory.inv());
