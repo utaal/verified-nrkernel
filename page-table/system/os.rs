@@ -244,15 +244,15 @@ impl OSVariables {
             forall|word_idx: nat|
                 self.interp().mem.dom().contains(word_idx)
                 ==> {
-                    &&& #[trigger] other.interp().mem.dom().contains(word_idx)
-                    &&& other.interp().mem[word_idx] == self.interp().mem[word_idx]
+                    &&& other.interp().mem.dom().contains(word_idx)
+                    &&& #[trigger] other.interp().mem.index(word_idx) == #[trigger] self.interp().mem.index(word_idx)
                 },
     {
         assert forall|word_idx: nat|
             self.interp().mem.dom().contains(word_idx)
             implies {
-                &&& #[trigger] other.interp().mem.dom().contains(word_idx)
-                &&& #[trigger] other.interp().mem[word_idx] == self.interp().mem[word_idx]
+                &&& other.interp().mem.dom().contains(word_idx)
+                &&& #[trigger] other.interp().mem.index(word_idx) == #[trigger] self.interp().mem.index(word_idx)
             } by
         {
             let vaddr = word_idx * WORD_SIZE;
@@ -281,8 +281,8 @@ impl OSVariables {
                 assert(false);
             }
         };
-        // Incompleteness: https://github.com/secure-foundations/verus/issues/241
-        assume(false);
+        // // Incompleteness: https://github.com/secure-foundations/verus/issues/241
+        // assume(false);
     }
 }
 
@@ -433,13 +433,13 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(sys_s2.tlb === sys_s1.tlb);
                     match pte {
                         Some((base, pte)) => {
+                            s1.lemma_interp();
+                            s2.lemma_interp();
+
                             // system
                             assert(sys_s1.tlb.contains_pair(base, pte));
                             assert(between(vaddr, base, base + pte.frame.size));
                             assert(paddr === (pte.frame.base + (vaddr - base)) as nat);
-
-                            s1.lemma_interp();
-                            s2.lemma_interp();
 
                             // abs
                             assert(abs_s1.mappings.contains_pair(base, pte));
@@ -448,28 +448,32 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                     if !pte.flags.is_supervisor && pte.flags.is_writable {
                                         assert(result.is_Ok());
                                         assert(sys_s2.mem === sys_s1.mem.update(pmem_idx, new_value));
-                                        // FIXME:
-                                        assume(false);
-                                        // assert forall|vmem_idx2, val|
-                                        //     #[trigger] abs_s2.mem.contains_pair(vmem_idx2, val)
-                                        //     implies #[trigger] abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val) by
-                                        // {
-                                        //     // assert(sys_s2.mem.index(pmem_idx) == val);
-                                        //     assert(abs_s1.mem.dom().contains(vmem_idx2));
-                                        //     if vmem_idx2 == vmem_idx {
-                                        //         assert(abs_s1.mem.insert(vmem_idx, new_value).index(vmem_idx2) == new_value);
-                                        //         assert(abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val));
-                                        //     } else {
-                                        //         assert(abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val));
-                                        //     }
-                                        // };
-                                        // assert forall|vmem_idx2, val|
-                                        //     #[trigger] abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val)
-                                        //     implies #[trigger] abs_s2.mem.contains_pair(vmem_idx2, val) by
-                                        // {
-                                        //     // FIXME
-                                        //     assume(false);
-                                        // };
+                                        assert(hlspec::mem_domain_from_mappings_contains(vmem_idx, s1.interp_pt_mem()));
+                                        assert(abs_s1.mem.dom() === abs_s2.mem.dom());
+
+                                        assert(sys_s1.mem.index(pmem_idx) == abs_s1.mem.index(vmem_idx));
+
+                                        assert forall|vmem_idx2, val|
+                                            #[trigger] abs_s2.mem.contains_pair(vmem_idx2, val)
+                                            implies #[trigger] abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val) by
+                                        {
+                                            assume(false);
+                                            // assert(sys_s2.mem.index(pmem_idx) == val);
+                                            assert(abs_s1.mem.dom().contains(vmem_idx2));
+                                            if vmem_idx2 == vmem_idx {
+                                                assert(abs_s1.mem.insert(vmem_idx, new_value).index(vmem_idx2) == new_value);
+                                                assert(abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val));
+                                            } else {
+                                                assert(abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val));
+                                            }
+                                        };
+                                        assert forall|vmem_idx2, val|
+                                            #[trigger] abs_s1.mem.insert(vmem_idx, new_value).contains_pair(vmem_idx2, val)
+                                            implies #[trigger] abs_s2.mem.contains_pair(vmem_idx2, val) by
+                                        {
+                                            // FIXME
+                                            assume(false);
+                                        };
                                         assert_maps_equal_contains_pair::<nat,nat>(abs_s2.mem, abs_s1.mem.insert(vmem_idx, new_value));
                                         assert(abs_s2.mem === abs_s1.mem.insert(vmem_idx, new_value));
                                         assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
@@ -565,7 +569,6 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     #[trigger] abs_s2.mem.dom().contains(word_idx)
                     implies abs_s1.mem[word_idx] === abs_s2.mem[word_idx] by
                 {
-                    assert(abs_s1.mem.dom().contains(word_idx));
                     assert(abs_s1.mem[word_idx] == abs_s2.mem[word_idx]);
                 };
 
@@ -574,7 +577,6 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 assert(!abs_s1.mappings.dom().contains(base));
                 assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
             }
-            // FIXME
             assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
             assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
         },
