@@ -180,9 +180,6 @@ impl OSVariables {
                 assert(overlap(
                         MemRegion { base: base, size: base + pte.frame.size },
                         MemRegion { base: base2, size: base2 + pte2.frame.size }));
-                // FIXME: need mappings_dont_overlap on effective_mappings and also have the
-                // invariant saying that the tlb is a subset of the page table. (Which is only true
-                // because tlb invalidation happens atomically in the unmap step.)
                 assert(other.pt_variables().mappings_dont_overlap());
                 assert(((base == base2) || !overlap(
                                MemRegion { base: base, size: pte.frame.size },
@@ -329,8 +326,6 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
     ensures
         hlspec::next_step(s1.interp(), s2.interp(), step.interp())
 {
-    // FIXME
-    assume(false);
     next_step_preserves_inv(s1, s2, step);
     let abs_s1   = s1.interp();
     let abs_s2   = s2.interp();
@@ -381,16 +376,19 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     //         assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
                     //     },
                     // }
-                    assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
+                    // FIXME
+                    assume(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
                     assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
                 },
                 system::SystemStep::PTMemOp => assert(false),
                 system::SystemStep::TLBFill { base, pte } => {
                     // hlspec::AbstractStep::Stutter
+                    s1.lemma_effective_mappings(s2);
                     assert(abs_s2 === abs_s1);
                 },
                 system::SystemStep::TLBEvict { base } => {
                     // hlspec::AbstractStep::Stutter
+                    s1.lemma_effective_mappings(s2);
                     assert(abs_s2 === abs_s1);
                 },
             },
@@ -425,7 +423,8 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             //     assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
             //     assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
             // }
-            assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            // FIXME
+            assume(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
             assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
         },
         OSStep::Unmap { base, result } => {
@@ -457,7 +456,8 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             //     assert(!abs_s1.mappings.dom().contains(base));
             //     assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
             // }
-            assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
+            // FIXME
+            assume(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
             assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
         },
     }
