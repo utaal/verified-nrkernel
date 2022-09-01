@@ -23,6 +23,9 @@ use option::{ *, Option::* };
 
 verus! {
 
+// TODO: is it correct that the tlb stores full page translations? i.e. we always only need to
+// invalidate a single entry?
+
 pub struct SystemVariables {
     /// Word-indexed physical memory
     pub mem:    Seq<nat>,
@@ -42,7 +45,8 @@ pub enum SystemStep {
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
 
 pub open spec fn init(s: SystemVariables) -> bool {
-    s.tlb.dom() === Set::empty()
+    &&& s.tlb.dom() === Set::empty()
+    &&& interp_pt_mem(s.pt_mem) === Map::empty()
 }
 
 // TODO: we only allow aligned accesses, need to argue in report that that's fine. can think of

@@ -20,8 +20,21 @@ pub struct OSVariables {
 }
 
 impl OSVariables {
+    pub open spec fn pt_mappings_dont_overlap(self) -> bool {
+        forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
+            self.interp_pt_mem().contains_pair(b1, pte1) && self.interp_pt_mem().contains_pair(b2, pte2) ==>
+            ((b1 == b2) || !overlap(
+                    MemRegion { base: b1, size: pte1.frame.size },
+                    MemRegion { base: b2, size: pte2.frame.size }))
+    }
+
+    pub open spec fn tlb_is_submap_of_pt(self) -> bool {
+        forall|base, pte| self.system.tlb.contains_pair(base, pte) ==> #[trigger] self.interp_pt_mem().contains_pair(base, pte)
+    }
+
     pub open spec fn inv(self) -> bool {
-        self.pt_variables().inv()
+        &&& self.pt_mappings_dont_overlap()
+        &&& self.tlb_is_submap_of_pt()
     }
 
     pub open spec fn pt_variables(self) -> pt::PageTableVariables {
@@ -30,15 +43,90 @@ impl OSVariables {
         }
     }
 
-    pub open spec fn interp_pt_mem(self) -> Map<nat, PageTableEntry> {
+    pub open spec fn interp_pt_mem(self) -> Map<nat,PageTableEntry> {
         system::interp_pt_mem(self.system.pt_mem)
+    }
+    
+    pub open spec fn effective_mappings(self) -> Map<nat,PageTableEntry> {
+        Map::new(
+            |base: nat| self.system.tlb.dom().contains(base) || self.interp_pt_mem().dom().contains(base),
+            |base: nat| if self.system.tlb.dom().contains(base) { self.system.tlb.index(base) } else { self.interp_pt_mem().index(base) },
+            )
+    }
+
+    pub proof fn lemma_effective_mappings(self, other: Self)
+        requires
+            self.inv(),
+            other.inv(),
+            self.system.pt_mem === other.system.pt_mem,
+        ensures
+            self.effective_mappings() === other.effective_mappings(),
+    {
+        let eff1 = self.effective_mappings();
+        let eff2 = other.effective_mappings();
+        let tlb1 = self.system.tlb;
+        let tlb2 = other.system.tlb;
+        let pt1 = self.interp_pt_mem();
+        let pt2 = other.interp_pt_mem();
+        assert forall|base, pte|
+            eff1.contains_pair(base, pte)
+            implies eff2.contains_pair(base, pte) by
+        {
+            assert(pt1.contains_pair(base, pte));
+            assert(pt2.contains_pair(base, pte));
+            if tlb2.dom().contains(base) {
+                if tlb2.index(base) !== pte {
+                    let pteprime = tlb2.index(base);
+                    assert(pt2.contains_pair(base, pteprime));
+                    assert(false);
+                }
+                assert(tlb2.contains_pair(base, pte));
+                assert(eff2.contains_pair(base, pte));
+            } else {
+                assert(eff2.contains_pair(base, pte));
+            }
+            assert(eff2.contains_pair(base, pte));
+        };
+        assert forall|base, pte|
+            eff2.contains_pair(base, pte)
+            implies eff1.contains_pair(base, pte) by
+        {
+            assert(pt1.contains_pair(base, pte));
+            assert(pt2.contains_pair(base, pte));
+            if tlb1.dom().contains(base) {
+                if tlb1.index(base) !== pte {
+                    let pteprime = tlb1.index(base);
+                    assert(pt1.contains_pair(base, pteprime));
+                    assert(false);
+                }
+                assert(tlb1.contains_pair(base, pte));
+                assert(eff1.contains_pair(base, pte));
+            } else {
+                assert(eff1.contains_pair(base, pte));
+            }
+            assert(eff1.contains_pair(base, pte));
+        };
+        assert forall|base|
+            eff1.dom().contains(base)
+            implies eff2.dom().contains(base) by
+        { assert(eff2.contains_pair(base, eff1.index(base))); };
+        assert forall|base|
+            eff2.dom().contains(base)
+            implies eff1.dom().contains(base) by
+        { assert(eff1.contains_pair(base, eff2.index(base))); };
+        assert forall|base|
+            eff1.dom().contains(base) && eff2.dom().contains(base)
+            implies #[trigger] eff2.index(base) === #[trigger] eff1.index(base) by
+        {
+            let pte = eff1.index(base);
+            assert(eff1.contains_pair(base, pte));
+            assert(eff2.contains_pair(base, pte));
+        };
+        assert_maps_equal!(eff1, eff2);
     }
 
     pub open spec fn interp(self) -> hlspec::AbstractVariables {
-        let mappings: Map<nat,PageTableEntry> = Map::new(
-            |base: nat| self.system.tlb.dom().contains(base) || self.interp_pt_mem().dom().contains(base),
-            |base: nat| if self.system.tlb.dom().contains(base) { self.system.tlb.index(base) } else { self.interp_pt_mem().index(base) },
-            );
+        let mappings: Map<nat,PageTableEntry> = self.effective_mappings();
         let mem: Map<nat,nat> = Map::new(
             |word_idx: nat| hlspec::mem_domain_from_mappings_contains(word_idx, mappings),
             |word_idx: nat| {
@@ -56,7 +144,7 @@ impl OSVariables {
     proof fn lemma_interp(self, other: OSVariables)
         requires
             other.system.mem === self.system.mem,
-            forall|base, pte| self.interp_pt_mem().contains_pair(base, pte) ==> other.interp_pt_mem().contains_pair(base, pte),
+            forall|base, pte| self.effective_mappings().contains_pair(base, pte) ==> other.effective_mappings().contains_pair(base, pte),
             self.inv(),
             other.inv(),
         ensures
@@ -71,14 +159,12 @@ impl OSVariables {
             self.interp().mem.dom().contains(word_idx)
             implies {
                 &&& #[trigger] other.interp().mem.dom().contains(word_idx)
-                &&& other.interp().mem[word_idx] == self.interp().mem[word_idx]
+                &&& #[trigger] other.interp().mem[word_idx] == self.interp().mem[word_idx]
             } by
         {
-            // FIXME
-            assume(false);
             let vaddr = word_idx * WORD_SIZE;
-            let self_mappings = self.interp_pt_mem();
-            let other_mappings = other.interp_pt_mem();
+            let self_mappings = self.effective_mappings();
+            let other_mappings = other.effective_mappings();
             assert(hlspec::mem_domain_from_mappings_contains(word_idx, self_mappings));
             let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] self_mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
             assert(self_mappings.contains_pair(base, pte));
@@ -94,6 +180,9 @@ impl OSVariables {
                 assert(overlap(
                         MemRegion { base: base, size: base + pte.frame.size },
                         MemRegion { base: base2, size: base2 + pte2.frame.size }));
+                // FIXME: need mappings_dont_overlap on effective_mappings and also have the
+                // invariant saying that the tlb is a subset of the page table. (Which is only true
+                // because tlb invalidation happens atomically in the unmap step.)
                 assert(other.pt_variables().mappings_dont_overlap());
                 assert(((base == base2) || !overlap(
                                MemRegion { base: base, size: pte.frame.size },
@@ -102,6 +191,8 @@ impl OSVariables {
                 assert(false);
             }
         };
+        // Incompleteness: https://github.com/secure-foundations/verus/issues/241
+        assume(false);
     }
 }
 
@@ -165,6 +256,72 @@ pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
     exists|step: OSStep| next_step(s1, s2, step)
 }
 
+pub open spec fn init(s: OSVariables) -> bool {
+    system::init(s.system)
+}
+
+// not technically necessary, i think
+proof fn init_implies_pt_init(s: OSVariables)
+    requires
+        init(s)
+    ensures
+        pt::init(s.pt_variables());
+
+proof fn init_implies_inv(s: OSVariables)
+    requires
+        init(s)
+    ensures
+        s.inv();
+
+proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
+    requires
+        s1.inv(),
+        next_step(s1, s2, step)
+    ensures
+        s2.inv(),
+{
+    match step {
+        OSStep::System { step: system_step } => {
+            assert(step_System(s1, s2, system_step));
+        },
+        OSStep::Map { base, pte, result } => {
+            let pt_s1 = s1.pt_variables();
+            let pt_s2 = s2.pt_variables();
+            assert(step_Map(s1, s2, base, pte, result));
+            assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
+            if candidate_mapping_overlaps_existing_mapping(pt_s1.map, base, pte) {
+                assert(s2.inv());
+            } else {
+                assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
+                assert(s2.inv());
+            }
+        },
+        OSStep::Unmap { base, result } => {
+            let pt_s1 = s1.pt_variables();
+            let pt_s2 = s2.pt_variables();
+            assert(step_Unmap(s1, s2, base, result));
+            assert(pt::step_Unmap(pt_s1, pt_s2, base, result));
+            if pt_s1.map.dom().contains(base) {
+                assert(result.is_Ok());
+                assert(pt_s2.map === pt_s1.map.remove(base));
+                assert(s2.pt_mappings_dont_overlap());
+                assert forall|base2, pte2|
+                    s2.system.tlb.contains_pair(base2, pte2)
+                    implies #[trigger] s2.interp_pt_mem().contains_pair(base2, pte2) by
+                {
+                    assert(s1.system.tlb.contains_pair(base2, pte2));
+                    assert(s1.tlb_is_submap_of_pt());
+                    assert(s1.interp_pt_mem().contains_pair(base2, pte2));
+                    assert(s2.interp_pt_mem().contains_pair(base2, pte2));
+                };
+                assert(s2.inv());
+            } else {
+                assert(s2.inv());
+            }
+        },
+    }
+}
+
 proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: OSStep)
     requires
         s1.inv(),
@@ -172,58 +329,58 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
     ensures
         hlspec::next_step(s1.interp(), s2.interp(), step.interp())
 {
-    // FIXME:
+    // FIXME
     assume(false);
-    assume(s2.inv());
+    next_step_preserves_inv(s1, s2, step);
     let abs_s1   = s1.interp();
     let abs_s2   = s2.interp();
     let abs_step = step.interp();
     match step {
-        OSStep::System { step } =>
-            match step {
+        OSStep::System { step: system_step } =>
+            match system_step {
                 system::SystemStep::IoOp { vaddr, paddr, op, pte } => {
-                    // hlspec::AbstractStep::IoOp { vaddr, op, pte }
-                    let mem_idx = word_index_spec(vaddr);
-                    assert(s2.system.pt_mem === s1.system.pt_mem);
-                    assert(s2.system.tlb === s1.system.tlb);
-                    match pte {
-                        Some((base, pte)) => {
-                            // system
-                            assert(s1.system.tlb.contains_pair(base, pte));
-                            assert(between(vaddr, base, base + pte.frame.size));
-                            assert(paddr === (pte.frame.base + (vaddr - base)) as nat);
+                    // // hlspec::AbstractStep::IoOp { vaddr, op, pte }
+                    // let mem_idx = word_index_spec(vaddr);
+                    // assert(s2.system.pt_mem === s1.system.pt_mem);
+                    // assert(s2.system.tlb === s1.system.tlb);
+                    // match pte {
+                    //     Some((base, pte)) => {
+                    //         // system
+                    //         assert(s1.system.tlb.contains_pair(base, pte));
+                    //         assert(between(vaddr, base, base + pte.frame.size));
+                    //         assert(paddr === (pte.frame.base + (vaddr - base)) as nat);
 
-                            // abs
-                            assert(abs_s1.mappings.contains_pair(base, pte));
-                            match op {
-                                IoOp::Store { new_value, result } => {
-                                    if !pte.flags.is_supervisor && pte.flags.is_writable {
-                                        assert(result.is_Ok());
-                                        assert(s2.system.mem === s1.system.mem.update(mem_idx, new_value));
-                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
-                                    } else {
-                                        assert(result.is_Pagefault());
-                                        assert(s2.system.mem === s1.system.mem);
-                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
-                                    }
-                                },
-                                IoOp::Load { is_exec, result } => {
-                                    assert(s2.system.mem === s1.system.mem);
-                                    if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                                        assert(result.is_Value());
-                                        assert(result.get_Value_0() == s1.system.mem.index(mem_idx));
-                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
-                                    } else {
-                                        assert(result.is_Pagefault());
-                                        assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
-                                    }
-                                },
-                            }
-                        },
-                        None => {
-                            assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
-                        },
-                    }
+                    //         // abs
+                    //         assert(abs_s1.mappings.contains_pair(base, pte));
+                    //         match op {
+                    //             IoOp::Store { new_value, result } => {
+                    //                 if !pte.flags.is_supervisor && pte.flags.is_writable {
+                    //                     assert(result.is_Ok());
+                    //                     assert(s2.system.mem === s1.system.mem.update(mem_idx, new_value));
+                    //                     assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                    //                 } else {
+                    //                     assert(result.is_Pagefault());
+                    //                     assert(s2.system.mem === s1.system.mem);
+                    //                     assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                    //                 }
+                    //             },
+                    //             IoOp::Load { is_exec, result } => {
+                    //                 assert(s2.system.mem === s1.system.mem);
+                    //                 if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                    //                     assert(result.is_Value());
+                    //                     assert(result.get_Value_0() == s1.system.mem.index(mem_idx));
+                    //                     assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                    //                 } else {
+                    //                     assert(result.is_Pagefault());
+                    //                     assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                    //                 }
+                    //             },
+                    //         }
+                    //     },
+                    //     None => {
+                    //         assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
+                    //     },
+                    // }
                     assert(hlspec::step_IoOp(abs_s1, abs_s2, vaddr, op, pte));
                     assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
                 },
@@ -238,68 +395,68 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 },
             },
         OSStep::Map { base, pte, result } => {
-            // hlspec::AbstractStep::Map { base, pte }
-            let pt_s1 = s1.pt_variables();
-            let pt_s2 = s2.pt_variables();
-            assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
-            assert(step_Map(s1, s2, base, pte, result));
-            assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
-            assert(hlspec::step_Map_preconditions(base, pte));
-            if candidate_mapping_overlaps_existing_mapping(pt_s1.map, base, pte) {
-                assert(candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
-                assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
-            } else {
-                assert(!candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
-                // hlspec::lemma_mem_domain_from_mappings();
-                assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
-                assert(forall|base, pte| s1.interp().mappings.contains_pair(base, pte) ==> s2.interp().mappings.contains_pair(base, pte));
-                assert(s1.interp().mappings === s1.interp_pt_mem());
-                assert(s2.interp().mappings === s2.interp_pt_mem());
-                s1.lemma_interp(s2);
-                assert(result.is_Ok());
-                assert(abs_s2.mappings === abs_s1.mappings.insert(base, pte));
-                assert forall|word_idx|
-                    #[trigger] abs_s1.mem.dom().contains(word_idx)
-                    implies abs_s2.mem[word_idx] === abs_s1.mem[word_idx] by
-                {
-                    assert(abs_s2.mem.dom().contains(word_idx));
-                    assert(abs_s2.mem[word_idx] == abs_s1.mem[word_idx]);
-                };
-                assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
-                assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
-            }
+            // // hlspec::AbstractStep::Map { base, pte }
+            // let pt_s1 = s1.pt_variables();
+            // let pt_s2 = s2.pt_variables();
+            // assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
+            // assert(step_Map(s1, s2, base, pte, result));
+            // assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
+            // assert(hlspec::step_Map_preconditions(base, pte));
+            // if candidate_mapping_overlaps_existing_mapping(pt_s1.map, base, pte) {
+            //     assert(candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
+            //     assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            // } else {
+            //     assert(!candidate_mapping_overlaps_existing_mapping(abs_s1.mappings, base, pte));
+            //     // hlspec::lemma_mem_domain_from_mappings();
+            //     assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
+            //     assert(forall|base, pte| s1.interp().mappings.contains_pair(base, pte) ==> s2.interp().mappings.contains_pair(base, pte));
+            //     assert(s1.interp().mappings === s1.interp_pt_mem());
+            //     assert(s2.interp().mappings === s2.interp_pt_mem());
+            //     s1.lemma_interp(s2);
+            //     assert(result.is_Ok());
+            //     assert(abs_s2.mappings === abs_s1.mappings.insert(base, pte));
+            //     assert forall|word_idx|
+            //         #[trigger] abs_s1.mem.dom().contains(word_idx)
+            //         implies abs_s2.mem[word_idx] === abs_s1.mem[word_idx] by
+            //     {
+            //         assert(abs_s2.mem.dom().contains(word_idx));
+            //         assert(abs_s2.mem[word_idx] == abs_s1.mem[word_idx]);
+            //     };
+            //     assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
+            //     assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
+            // }
+            assert(hlspec::step_Map(abs_s1, abs_s2, base, pte, result));
             assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
-
         },
         OSStep::Unmap { base, result } => {
-            // hlspec::AbstractStep::Unmap { base }
-            let pt_s1 = s1.pt_variables();
-            let pt_s2 = s2.pt_variables();
-            assert(abs_step === hlspec::AbstractStep::Unmap { base, result });
-            assert(step_Unmap(s1, s2, base, result));
-            assert(pt::step_Unmap(pt_s1, pt_s2, base, result));
-            assert(hlspec::step_Unmap_preconditions(base));
-            if pt_s1.map.dom().contains(base) {
-                assert(abs_s1.mappings.dom().contains(base));
-                assert(result.is_Ok());
-                assert(pt_s2.map === pt_s1.map.remove(base));
-                assert(abs_s2.mappings === abs_s1.mappings.remove(base));
+            // // hlspec::AbstractStep::Unmap { base }
+            // let pt_s1 = s1.pt_variables();
+            // let pt_s2 = s2.pt_variables();
+            // assert(abs_step === hlspec::AbstractStep::Unmap { base, result });
+            // assert(step_Unmap(s1, s2, base, result));
+            // assert(pt::step_Unmap(pt_s1, pt_s2, base, result));
+            // assert(hlspec::step_Unmap_preconditions(base));
+            // if pt_s1.map.dom().contains(base) {
+            //     assert(abs_s1.mappings.dom().contains(base));
+            //     assert(result.is_Ok());
+            //     assert(pt_s2.map === pt_s1.map.remove(base));
+            //     assert(abs_s2.mappings === abs_s1.mappings.remove(base));
 
-                assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
-                s2.lemma_interp(s1);
-                assert forall|word_idx|
-                    #[trigger] abs_s2.mem.dom().contains(word_idx)
-                    implies abs_s1.mem[word_idx] === abs_s2.mem[word_idx] by
-                {
-                    assert(abs_s1.mem.dom().contains(word_idx));
-                    assert(abs_s1.mem[word_idx] == abs_s2.mem[word_idx]);
-                };
+            //     assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_s2.mappings));
+            //     s2.lemma_interp(s1);
+            //     assert forall|word_idx|
+            //         #[trigger] abs_s2.mem.dom().contains(word_idx)
+            //         implies abs_s1.mem[word_idx] === abs_s2.mem[word_idx] by
+            //     {
+            //         assert(abs_s1.mem.dom().contains(word_idx));
+            //         assert(abs_s1.mem[word_idx] == abs_s2.mem[word_idx]);
+            //     };
 
-                assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
-            } else {
-                assert(!abs_s1.mappings.dom().contains(base));
-                assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
-            }
+            //     assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
+            // } else {
+            //     assert(!abs_s1.mappings.dom().contains(base));
+            //     assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
+            // }
             assert(hlspec::step_Unmap(abs_s1, abs_s2, base, result));
             assert(hlspec::next_step(abs_s1, abs_s2, abs_step));
         },

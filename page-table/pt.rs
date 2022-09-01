@@ -24,6 +24,7 @@ impl PageTableVariables {
                     MemRegion { base: b2, size: pte2.frame.size }))
     }
 
+    // FIXME: dont think i actually need an invariant here
     pub open spec fn inv(self) -> bool {
         self.mappings_dont_overlap()
     }
@@ -84,7 +85,7 @@ pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) ->
 }
 
 pub open spec fn init(s: PageTableVariables) -> bool {
-    s.map === Map::empty() // FIXME: ?
+    s.map === Map::empty()
 }
 
 pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {
