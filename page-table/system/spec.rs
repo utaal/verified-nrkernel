@@ -58,7 +58,7 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
     &&& s2.tlb === s1.tlb
     &&& match pte {
         Some((base, pte)) => {
-            let mem_idx = word_index_spec(paddr);
+            let pmem_idx = word_index_spec(paddr);
             // If pte is Some, it's a cached mapping that maps vaddr to paddr..
             &&& s1.tlb.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
@@ -66,9 +66,9 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
             // .. and the result depends on the flags.
             &&& match op {
                 IoOp::Store { new_value, result } => {
-                    if !pte.flags.is_supervisor && pte.flags.is_writable {
+                    if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
                         &&& result.is_Ok()
-                        &&& s2.mem === s1.mem.update(mem_idx, new_value)
+                        &&& s2.mem === s1.mem.update(pmem_idx, new_value)
                     } else {
                         &&& result.is_Pagefault()
                         &&& s2.mem === s1.mem
@@ -76,9 +76,9 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
                 },
                 IoOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
-                    &&& if !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                    &&& if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result.is_Value()
-                        &&& result.get_Value_0() == s1.mem.index(mem_idx)
+                        &&& result.get_Value_0() == s1.mem.index(pmem_idx)
                     } else {
                         &&& result.is_Pagefault()
                     }
