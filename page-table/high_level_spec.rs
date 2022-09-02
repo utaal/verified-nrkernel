@@ -49,7 +49,7 @@ pub open spec fn init(s: AbstractVariables) -> bool {
 }
 
 pub open spec fn mem_domain_from_mappings_contains(phys_mem_size: nat, word_idx: nat, mappings: Map<nat, PageTableEntry>) -> bool {
-    let vaddr = word_idx * WORD_SIZE;
+    let vaddr = word_idx * WORD_SIZE as nat;
     exists|base: nat, pte: PageTableEntry| {
         let paddr = (pte.frame.base + (vaddr - base)) as nat;
         let pmem_idx = word_index_spec(paddr);
@@ -73,13 +73,13 @@ pub proof fn lemma_mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<na
         (forall|word_idx: nat|
             !mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings)
             && #[trigger] mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings.insert(base, pte))
-            ==> between(word_idx * WORD_SIZE, base, base + pte.frame.size)),
+            ==> between(word_idx * WORD_SIZE as nat, base, base + pte.frame.size)),
 {
     assert forall|word_idx: nat|
         mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings)
         implies #[trigger] mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings.insert(base, pte)) by
     {
-        let vaddr = word_idx * WORD_SIZE;
+        let vaddr = word_idx * WORD_SIZE as nat;
         let (base2, pte2) = choose|base: nat, pte: PageTableEntry| {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
             let pmem_idx = word_index_spec(paddr);
@@ -92,9 +92,9 @@ pub proof fn lemma_mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<na
     assert forall|word_idx: nat|
         !mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings)
         && #[trigger] mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings.insert(base, pte))
-        implies between(word_idx * WORD_SIZE, base, base + pte.frame.size) by
+        implies between(word_idx * WORD_SIZE as nat, base, base + pte.frame.size) by
     {
-        let vaddr = word_idx * WORD_SIZE;
+        let vaddr = word_idx * WORD_SIZE as nat;
         let (base2, pte2) = choose|base2: nat, pte2: PageTableEntry| {
             let paddr = (pte2.frame.base + (vaddr - base2)) as nat;
             let pmem_idx = word_index_spec(paddr);

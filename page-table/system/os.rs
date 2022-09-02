@@ -284,7 +284,7 @@ impl OSVariables {
         Map::new(
             |vmem_idx: nat| hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
             |vmem_idx: nat| {
-                let vaddr = vmem_idx * WORD_SIZE;
+                let vaddr = vmem_idx * WORD_SIZE as nat;
                 let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = word_index_spec(paddr);
@@ -313,8 +313,8 @@ impl OSVariables {
             other.inv(),
             other.system.pt_mem === self.system.pt_mem,
             self.interp_pt_mem().contains_pair(base, pte),
-            between(vmem_idx * WORD_SIZE, base, base + pte.frame.size),
-            ({  let vaddr = vmem_idx * WORD_SIZE;
+            between(vmem_idx * WORD_SIZE as nat, base, base + pte.frame.size),
+            ({  let vaddr = vmem_idx * WORD_SIZE as nat;
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = word_index_spec(paddr);
                 other.system.mem === self.system.mem.update(pmem_idx, val)
@@ -343,13 +343,13 @@ impl OSVariables {
         requires
             self.inv(),
             self.interp_pt_mem().contains_pair(base, pte),
-            between(vmem_idx * WORD_SIZE, base, base + pte.frame.size),
-            word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE) - base)) as nat) < self.system.mem.len()
+            between(vmem_idx * WORD_SIZE as nat, base, base + pte.frame.size),
+            word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE as nat) - base)) as nat) < self.system.mem.len()
         ensures
             self.interp().mappings === self.interp_pt_mem(),
             self.interp().mappings === self.effective_mappings(),
             ({
-                let vaddr = vmem_idx * WORD_SIZE;
+                let vaddr = vmem_idx * WORD_SIZE as nat;
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = word_index_spec(paddr);
                 &&& self.interp().mem.dom().contains(vmem_idx)
@@ -367,7 +367,7 @@ impl OSVariables {
             self.interp().mappings === self.interp_pt_mem(),
             self.interp().mappings === self.effective_mappings(),
             forall|base: nat, pte: PageTableEntry, vmem_idx: nat| {
-                let vaddr = vmem_idx * WORD_SIZE;
+                let vaddr = vmem_idx * WORD_SIZE as nat;
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = word_index_spec(paddr);
                 #[trigger] self.interp_pt_mem().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size) && pmem_idx < self.system.mem.len()
@@ -376,15 +376,15 @@ impl OSVariables {
     {
         self.lemma_effective_mappings_equal_interp_pt_mem();
         assert forall|base: nat, pte: PageTableEntry, vmem_idx: nat| {
-            let vaddr = vmem_idx * WORD_SIZE;
+            let vaddr = vmem_idx * WORD_SIZE as nat;
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
             let pmem_idx = word_index_spec(paddr);
             #[trigger] self.interp_pt_mem().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size) && pmem_idx < self.system.mem.len()
-        } implies self.system.mem.index(word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE) - base)) as nat)) === #[trigger] self.interp().mem.index(vmem_idx)
+        } implies self.system.mem.index(word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE as nat) - base)) as nat)) === #[trigger] self.interp().mem.index(vmem_idx)
         by {
             let pt = self.interp_pt_mem();
             let sys_mem = self.system.mem;
-            let vaddr = vmem_idx * WORD_SIZE;
+            let vaddr = vmem_idx * WORD_SIZE as nat;
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
             let pmem_idx = word_index_spec(paddr);
             if self.system.mem.index(pmem_idx) !== self.interp().mem.index(vmem_idx) {
@@ -424,7 +424,7 @@ impl OSVariables {
                 &&& #[trigger] other.interp().mem.index(word_idx) == #[trigger] self.interp().mem.index(word_idx)
             } by
         {
-            let vaddr = word_idx * WORD_SIZE;
+            let vaddr = word_idx * WORD_SIZE as nat;
             let self_mappings = self.effective_mappings();
             let other_mappings = other.effective_mappings();
             let phys_mem_size = self.interp_constants().phys_mem_size;
@@ -685,7 +685,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                 assert(abs_s2.mem.index(vmem_idx2) == new_value);
                                             } else {
                                                 assert(hlspec::mem_domain_from_mappings_contains(abs_c.phys_mem_size, vmem_idx2, pt1));
-                                                let vaddr2 = vmem_idx2 * WORD_SIZE;
+                                                let vaddr2 = vmem_idx2 * WORD_SIZE as nat;
                                                 let (base2, pte2): (nat, PageTableEntry) = choose|base2: nat, pte2: PageTableEntry| {
                                                     let paddr2 = (pte2.frame.base + (vaddr2 - base2)) as nat;
                                                     let pmem_idx2 = word_index_spec(paddr2);

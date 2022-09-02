@@ -463,7 +463,7 @@ impl PageTable {
     /// Get the view of the entry at address ptr + i * WORD_SIZE
     pub open spec fn view_at(self, layer: nat, ptr: usize, i: nat, pt: PTDir) -> GhostPageDirectoryEntry {
         PageDirectoryEntry {
-            entry: self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region),
+            entry: self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region),
             layer,
         }@
     }
@@ -687,7 +687,7 @@ impl PageTable {
             self.inv_at(layer, ptr, pt1),
             other.inv_at(layer, ptr, pt2),
             self.arch@ === other.arch@,
-            self.memory.spec_read(ptr as nat + idx * WORD_SIZE, pt1.region) === other.memory.spec_read(ptr as nat + idx * WORD_SIZE, pt2.region),
+            self.memory.spec_read(ptr as nat + (idx * WORD_SIZE as nat), pt1.region) === other.memory.spec_read(ptr as nat + (idx * WORD_SIZE as nat), pt2.region),
             pt2.entries[idx].is_Some() ==> (forall|r: MemRegion| pt2.entries[idx].get_Some_0().used_regions.contains(r)
                 ==> #[trigger] self.memory.region_view(r) === other.memory.region_view(r)),
         ensures
@@ -1368,7 +1368,7 @@ impl PageTable {
                                 assert(old(self).ghost_pt_matches_structure(layer, ptr, pt@));
                                 if i == idxg@ {
                                 } else {
-                                    let addr = ptrg as nat + i * WORD_SIZE;
+                                    let addr = ptrg as nat + (i * WORD_SIZE as nat);
                                     // FIXME: indexing calculus
                                     assume(addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
                                     assert(self_with_empty@.memory.spec_read(addr, pt_with_empty@.region)
@@ -1394,7 +1394,7 @@ impl PageTable {
                                 if i == idxg@ {
                                 } else {
                                     if entry.is_Directory() {
-                                        let addr = ptrg as nat + i * WORD_SIZE;
+                                        let addr = ptrg as nat + (i * WORD_SIZE as nat);
                                         // FIXME: indexing calculus
                                         assume(addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
                                         assert(self_with_empty@.memory.spec_read(addr, pt_with_empty@.region)
@@ -1485,7 +1485,7 @@ impl PageTable {
                                         assert(self_with_empty@.ghost_pt_matches_structure(layer, ptr, pt_with_empty@));
                                         if i == idxg@ {
                                         } else {
-                                            let addr = ptrg as nat + i * WORD_SIZE;
+                                            let addr = ptrg as nat + (i * WORD_SIZE as nat);
                                             // FIXME: indexing calculus
                                             assume(addr < self.memory.region_view(pt_final@.region).len());
                                             assert(self.memory.spec_read(addr, pt_final@.region)
@@ -1513,7 +1513,7 @@ impl PageTable {
                                         } else {
                                             assert(pt_final@.entries[i] === pt_with_empty@.entries[i]);
                                             if entry.is_Directory() {
-                                                let addr = ptrg as nat + i * WORD_SIZE;
+                                                let addr = ptrg as nat + (i * WORD_SIZE as nat);
                                                 // FIXME: indexing calculus
                                                 assume(addr < self.memory.region_view(pt_final@.region).len());
                                                 assert(self.memory.spec_read(addr, pt_final@.region)
@@ -1699,14 +1699,14 @@ impl PageTable {
         //assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
         //       ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * WORD_SIZE, pt.region.base)) < self.memory.region_view(pt.region).len()));
 
-        //let entry = self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region);
+        //let entry = self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region);
         assert forall|i: nat| i < self.arch@.num_entries(layer) implies self.view_at(layer, ptr, i, pt).is_Empty() by {
-            let entry = self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region);
+            let entry = self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region);
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
 
         assert(forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, pt).is_Empty());
-        //assert!(self.memory.spec_read(ptr as nat + i * WORD_SIZE, pt.region)
+        //assert!(self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region)
         assert(self.empty_at(layer, ptr, pt));
 
         assert(self.well_formed(layer, ptr));
