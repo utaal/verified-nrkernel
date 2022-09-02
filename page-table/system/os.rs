@@ -671,7 +671,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
 
                                         assert(abs_s1.mem.dom().contains(vmem_idx));
                                         assert(abs_s1.mem.insert(vmem_idx, new_value).dom() === abs_s1.mem.dom().insert(vmem_idx));
-                                        assume(abs_s1.mem.dom(), abs_s1.mem.dom().insert(vmem_idx));
+                                        assume(abs_s1.mem.dom() === abs_s1.mem.dom().insert(vmem_idx));
                                         // FIXME: ill-typed AIR
                                         // assert_sets_equal!(abs_s1.mem.dom(), abs_s1.mem.dom().insert(vmem_idx));
                                         assert(abs_s1.mem.insert(vmem_idx, new_value).dom() === abs_s2.mem.dom());
