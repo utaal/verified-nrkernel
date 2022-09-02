@@ -13,7 +13,7 @@ use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq };
+use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry };
 use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
@@ -41,6 +41,23 @@ pub open spec fn word_index_spec(idx: nat) -> nat
     }
 }
 
+pub struct TLB {
+}
+
+impl TLB {
+    pub spec fn view(self) -> Map<nat,PageTableEntry>;
+
+    /// Invalidates any TLB entries containing `vbase`.
+    #[verifier(external_body)]
+    pub fn invalidate_entry(&mut self, vbase: usize)
+        ensures
+            forall|base, pte| self.view().contains_pair(base, pte) ==> old(self).view().contains_pair(base, pte),
+            !self.view().dom().contains(vbase),
+    {
+        unreached()
+    }
+}
+
 // FIXME: We need to allow the dirty and accessed bits to change in the memory.
 // Or maybe we just specify reads to return those bits as arbitrary?
 #[verifier(external_body)]
@@ -50,8 +67,6 @@ pub struct PageTableMemory {
 }
 
 impl PageTableMemory {
-    // pub open spec fn view(&self) -> Seq<nat>;
-
     pub spec fn regions(self) -> Set<MemRegion>;
     pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
 
