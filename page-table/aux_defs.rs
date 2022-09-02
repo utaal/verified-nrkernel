@@ -27,12 +27,19 @@ pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> 
     &&& base + pte.frame.size < PT_BOUND_HIGH
 }
 
-pub open spec fn candidate_mapping_overlaps_existing_mapping(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn candidate_mapping_overlaps_existing_vmem(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
     exists|b: nat| #![auto] {
         &&& mappings.dom().contains(b)
         &&& overlap(
             MemRegion { base: base, size: pte.frame.size },
             MemRegion { base: b,    size: mappings[b].frame.size })
+    }
+}
+
+pub open spec fn candidate_mapping_overlaps_existing_pmem(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
+    exists|b: nat| #![auto] {
+        &&& mappings.dom().contains(b)
+        &&& overlap(pte.frame, mappings.index(b).frame)
     }
 }
 
