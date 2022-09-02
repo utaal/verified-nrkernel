@@ -123,12 +123,11 @@ impl PageTableMemory {
             self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(offset, region@.base)), value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
             self.regions() === old(self).regions(),
-            // self.spec_read(offset, region@) == value,
-            // forall|offset2: nat| offset2 != offset ==> self.spec_read(offset2, region@) == old(self).spec_read(offset2, region@),
-            // forall|offset2: nat, r: MemRegion| r !== region@ ==> self.spec_read(offset2, r) == old(self).spec_read(offset2, r),
     {
-        unsafe { self.ptr.offset(offset as isize).write(value); }
-        unreached()
+        let word_offset: isize = word_index(offset) as isize;
+        unsafe {
+            self.ptr.offset(word_offset).write(value);
+        }
     }
 
     #[verifier(external_body)]
@@ -141,7 +140,10 @@ impl PageTableMemory {
         ensures
             res == self.spec_read(offset, region@)
     {
-        unsafe { self.ptr.offset(word_index(offset) as isize).read() }
+        let word_offset: isize = word_index(offset) as isize;
+        unsafe {
+            self.ptr.offset(word_offset).read()
+        }
     }
 
     pub open spec fn spec_read(self, offset: nat, region: MemRegion) -> (res: u64) {
