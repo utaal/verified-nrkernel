@@ -947,8 +947,6 @@ impl PageTable {
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
-            // FIXME: remove, only here for quicker verification times
-            assume(false);
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
@@ -1777,9 +1775,9 @@ impl PageTable {
 }
 
 impl impl_spec::PTImpl for PageTable {
-    fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult) {
+    fn map_frame(&mut self, base: usize, pte: PageTableEntryExec) -> (res: MapResult) {
         assume(false);
-        match self.map_frame(vaddr, pte) {
+        match self.map_frame(base, pte) {
             Ok(e)  => MapResult::Ok,
             Err(e) => MapResult::ErrOverlap,
         }
