@@ -111,6 +111,7 @@ impl MemRegion {
     }
 }
 
+// only well-defined for sizes > 0
 pub open spec(checked) fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
         region2.base < region1.base + region1.size

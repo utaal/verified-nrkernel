@@ -63,6 +63,10 @@ impl OSVariables {
     pub proof fn lemma_pt_mappings_dont_overlap_in_pmem(self, other: Self)
         requires
             self.pt_mappings_dont_overlap_in_pmem(),
+            self.pt_entry_sizes_are_valid(),
+            other.pt_entry_sizes_are_valid(),
+            self.tlb_is_submap_of_pt(),
+            other.tlb_is_submap_of_pt(),
         ensures
             forall|base, pte|
                 !candidate_mapping_overlaps_existing_pmem(self.interp_pt_mem(), base, pte) &&
@@ -72,17 +76,93 @@ impl OSVariables {
                 other.interp_pt_mem() === self.interp_pt_mem().remove(base)
                 ==> other.pt_mappings_dont_overlap_in_pmem(),
     {
-        // FIXME:
-        assume(false);
+        assert forall|base, pte|
+            !candidate_mapping_overlaps_existing_pmem(self.interp_pt_mem(), base, pte) &&
+            other.interp_pt_mem() === self.interp_pt_mem().insert(base, pte)
+            implies other.pt_mappings_dont_overlap_in_pmem() by
+        {
+            self.lemma_effective_mappings_equal_interp_pt_mem();
+            other.lemma_effective_mappings_equal_interp_pt_mem();
+            assert forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
+                other.interp_pt_mem().contains_pair(b1, pte1) && other.interp_pt_mem().contains_pair(b2, pte2)
+                implies
+                ((b1 == b2) || !overlap(pte1.frame, pte2.frame)) by
+            {
+                if b1 == b2 {
+                } else {
+                    if b1 == base {
+                        assert(!overlap(pte1.frame, pte2.frame));
+                    } else {
+                        assert(self.interp_pt_mem().dom().contains(b1));
+                        assert(self.interp_pt_mem().contains_pair(b1, pte1));
+                        if b2 == base {
+                            assert(pte2 === pte);
+                            assert(!candidate_mapping_overlaps_existing_pmem(self.interp_pt_mem(), base, pte));
+                            assert(forall|b: nat| {
+                                self.interp_pt_mem().dom().contains(b)
+                                    ==> !(#[trigger] overlap(pte.frame, self.interp_pt_mem().index(b).frame))
+                            });
+                            assert(self.interp_pt_mem().index(b1) === pte1);
+                            assert(self.interp_pt_mem().dom().contains(b1));
+                            assert(!overlap(pte.frame, pte1.frame));
+                            assert(pte.frame.size > 0);
+                            assert(pte1.frame.size > 0);
+                            assert(!overlap(pte1.frame, pte.frame));
+                        } else {
+                            assert(self.interp_pt_mem().dom().contains(b2));
+                            assert(self.interp_pt_mem().contains_pair(b2, pte2));
+                            assert(!overlap(pte1.frame, pte2.frame));
+                        }
+                    }
+                }
+            };
+        };
+        assert forall|base|
+            other.interp_pt_mem() === self.interp_pt_mem().remove(base)
+            implies
+            other.pt_mappings_dont_overlap_in_pmem() by
+        {
+            self.lemma_effective_mappings_equal_interp_pt_mem();
+            other.lemma_effective_mappings_equal_interp_pt_mem();
+            assert forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
+                other.interp_pt_mem().contains_pair(b1, pte1) && other.interp_pt_mem().contains_pair(b2, pte2)
+                implies
+                ((b1 == b2) || !overlap(pte1.frame, pte2.frame)) by
+            {
+                if b1 == b2 {
+                } else {
+                    assert(b2 != base);
+                    if b1 == base {
+                        assert(!overlap(pte1.frame, pte2.frame));
+                    } else {
+                        assert(self.interp_pt_mem().dom().contains(b1));
+                        assert(self.interp_pt_mem().contains_pair(b1, pte1));
+                        assert(self.interp_pt_mem().dom().contains(b2));
+                        assert(self.interp_pt_mem().contains_pair(b2, pte2));
+                        assert(!overlap(pte1.frame, pte2.frame));
+                    }
+                }
+            };
+
+        };
     }
 
     pub open spec fn tlb_is_submap_of_pt(self) -> bool {
         forall|base, pte| self.system.tlb.contains_pair(base, pte) ==> #[trigger] self.interp_pt_mem().contains_pair(base, pte)
     }
 
+    pub open spec fn pt_entry_sizes_are_valid(self) -> bool {
+        forall|base, pte| self.interp_pt_mem().contains_pair(base, pte) ==> {
+            ||| pte.frame.size == L3_ENTRY_SIZE
+            ||| pte.frame.size == L2_ENTRY_SIZE
+            ||| pte.frame.size == L1_ENTRY_SIZE
+        }
+    }
+
     pub open spec fn inv(self) -> bool {
         &&& self.pt_mappings_dont_overlap_in_vmem()
         &&& self.pt_mappings_dont_overlap_in_pmem()
+        &&& self.pt_entry_sizes_are_valid()
         &&& self.tlb_is_submap_of_pt()
     }
 
@@ -105,7 +185,7 @@ impl OSVariables {
 
     pub proof fn lemma_effective_mappings_equal_interp_pt_mem(self)
         requires
-            self.inv(),
+            self.tlb_is_submap_of_pt()
         ensures
             self.effective_mappings() === self.interp_pt_mem(),
     {
@@ -144,8 +224,8 @@ impl OSVariables {
 
     pub proof fn lemma_effective_mappings_other(self, other: Self)
         requires
-            self.inv(),
-            other.inv(),
+            self.tlb_is_submap_of_pt(),
+            other.tlb_is_submap_of_pt(),
             self.system.pt_mem === other.system.pt_mem,
         ensures
             self.effective_mappings() === other.effective_mappings(),
@@ -370,8 +450,6 @@ impl OSVariables {
                 assert(false);
             }
         };
-        // // Incompleteness: https://github.com/secure-foundations/verus/issues/241
-        // assume(false);
     }
 }
 
@@ -453,7 +531,6 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
     ensures
         s2.inv(),
 {
-    s1.lemma_pt_mappings_dont_overlap_in_pmem(s2);
     match step {
         OSStep::System { step: system_step } => {
             assert(step_System(s1, s2, system_step));
@@ -468,6 +545,32 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 assert(s2.inv());
             } else {
                 assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
+                assert forall|baseprime, pteprime| s2.interp_pt_mem().contains_pair(baseprime, pteprime) implies {
+                    ||| pteprime.frame.size == L3_ENTRY_SIZE
+                    ||| pteprime.frame.size == L2_ENTRY_SIZE
+                    ||| pteprime.frame.size == L1_ENTRY_SIZE
+                } by
+                {
+                    if base == baseprime {
+                        assert({
+                            ||| pteprime.frame.size == L3_ENTRY_SIZE
+                            ||| pteprime.frame.size == L2_ENTRY_SIZE
+                            ||| pteprime.frame.size == L1_ENTRY_SIZE
+                        });
+                    } else {
+                        assert(s1.pt_entry_sizes_are_valid());
+                        assert(s1.interp_pt_mem().dom().contains(baseprime));
+                        assert(s1.interp_pt_mem().contains_pair(baseprime, pteprime));
+                        assert({
+                            ||| pteprime.frame.size == L3_ENTRY_SIZE
+                            ||| pteprime.frame.size == L2_ENTRY_SIZE
+                            ||| pteprime.frame.size == L1_ENTRY_SIZE
+                        });
+                    }
+                };
+                assert(s2.pt_entry_sizes_are_valid());
+                assert(s2.tlb_is_submap_of_pt());
+                s1.lemma_pt_mappings_dont_overlap_in_pmem(s2);
                 assert(s2.pt_mappings_dont_overlap_in_pmem());
                 assert(s2.inv());
             }
@@ -490,6 +593,23 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                     assert(s1.interp_pt_mem().contains_pair(base2, pte2));
                     assert(s2.interp_pt_mem().contains_pair(base2, pte2));
                 };
+                assert forall|baseprime, pteprime| s2.interp_pt_mem().contains_pair(baseprime, pteprime) implies {
+                    ||| pteprime.frame.size == L3_ENTRY_SIZE
+                    ||| pteprime.frame.size == L2_ENTRY_SIZE
+                    ||| pteprime.frame.size == L1_ENTRY_SIZE
+                } by
+                {
+                    assert(s1.pt_entry_sizes_are_valid());
+                    assert(s1.interp_pt_mem().dom().contains(baseprime));
+                    assert(s1.interp_pt_mem().contains_pair(baseprime, pteprime));
+                    assert({
+                        ||| pteprime.frame.size == L3_ENTRY_SIZE
+                        ||| pteprime.frame.size == L2_ENTRY_SIZE
+                        ||| pteprime.frame.size == L1_ENTRY_SIZE
+                    });
+                };
+                assert(s2.pt_entry_sizes_are_valid());
+                s1.lemma_pt_mappings_dont_overlap_in_pmem(s2);
                 assert(s2.inv());
             } else {
                 assert(s2.inv());
