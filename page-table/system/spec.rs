@@ -11,20 +11,7 @@ use crate::mem::{ self, word_index_spec };
 use crate::pt_impl::l0;
 use option::{ *, Option::* };
 
-// state:
-// - memory
-// - pt memory
-// - tlb
-// transitions:
-// - mem read/write
-// - pt mem op
-// - resolve --> this will be introduced in the composition state machine
-// - tlb evict, tlb fill
-
 verus! {
-
-// TODO: is it correct that the tlb stores full page translations? i.e. we always only need to
-// invalidate a single entry?
 
 pub struct SystemVariables {
     /// Word-indexed physical memory

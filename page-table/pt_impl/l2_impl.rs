@@ -875,8 +875,13 @@ impl PageTable {
         res
     }
 
-    spec fn accepted_mapping(self, layer: nat, ptr: usize, base: nat, vaddr: nat, pte: PageTableEntry) -> bool {
-        &&& 0 < layer // Can't map pages in PML4
+    // I have no reason to believe that this functions is particularly problematic and should be
+    // opaque. However, after changing it slightly map_frame_aux was timing out and this is a
+    // bandaid that allows me to continue without refactoring that entire function's proofs.
+    #[verifier(opaque)]
+    spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
+        // Can't map pages in PML4, i.e. layer 0
+        self.arch@.contains_entry_size_at_index_atleast(pte.frame.size, 1)
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
@@ -886,7 +891,7 @@ impl PageTable {
             old(self).inv_at(layer, ptr, pt@),
             old(self).interp_at(layer, ptr, base, pt@).inv(),
             old(self).memory.inv(),
-            old(self).accepted_mapping(layer, ptr, base, vaddr, pte@),
+            old(self).accepted_mapping(vaddr, pte@),
             old(self).interp_at(layer, ptr, base, pt@).accepted_mapping(vaddr, pte@),
             base <= vaddr < MAX_BASE,
             // aligned(base, old(self).arch@.entry_size(layer) * old(self).arch@.num_entries(layer)),
@@ -1173,6 +1178,9 @@ impl PageTable {
             }
         } else {
             if self.arch.entry_size(layer) == pte.frame.size {
+                assert(0 < layer) by {
+                    reveal(Self::accepted_mapping);
+                };
                 proof {
                     let frame_base = pte.frame.base as u64;
                     // FIXME: this should be derivable from alignment property in accepted_mapping
@@ -1451,6 +1459,9 @@ impl PageTable {
                     assert(new_dir_interp.inv());
                 }
 
+                assert(self.accepted_mapping(vaddr, pte@)) by {
+                    reveal(Self::accepted_mapping);
+                };
                 match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, pte, new_dir_pt) {
                     Ok(rec_res) => {
                         let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
@@ -1743,13 +1754,12 @@ impl PageTable {
         assume(false);
     }
 
-    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: (Result<(),()>))
+    fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
         requires
             old(self).inv(),
             old(self).interp().inv(),
             old(self).memory.inv(),
-            old(self).accepted_mapping(0, old(self).memory.cr3_spec().1, 0, vaddr, pte@),
+            old(self).accepted_mapping(vaddr, pte@),
             old(self).interp().accepted_mapping(vaddr, pte@),
             vaddr < MAX_BASE,
         // ensures
@@ -1759,7 +1769,7 @@ impl PageTable {
     {
         // FIXME: accepted_mapping is contradictory. rephrase it with
         // contains_entry_size_at_index_atleast
-        assert(false);
+        // assert(false);
         proof { ambient_arith(); }
         let (cr3_region, cr3) = self.memory.cr3();
         match self.map_frame_aux(0, cr3, 0, vaddr, pte, self.ghost_pt) {
@@ -1767,9 +1777,9 @@ impl PageTable {
                 let pt_res: Ghost<PTDir> = ghost(res@.0);
                 let new_regions: Ghost<Set<MemRegion>> = ghost(res@.1);
                 self.ghost_pt = pt_res;
-                Ok(())
+                MapResult::Ok
             },
-            Err(e) => Err(e),
+            Err(e) => MapResult::ErrOverlap,
         }
     }
 }
@@ -1777,10 +1787,7 @@ impl PageTable {
 impl impl_spec::PTImpl for PageTable {
     fn map_frame(&mut self, base: usize, pte: PageTableEntryExec) -> (res: MapResult) {
         assume(false);
-        match self.map_frame(base, pte) {
-            Ok(e)  => MapResult::Ok,
-            Err(e) => MapResult::ErrOverlap,
-        }
+        self.map_frame(base, pte)
     }
 
     spec fn inv(&self) -> bool {
