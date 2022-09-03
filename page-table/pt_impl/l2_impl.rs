@@ -14,12 +14,13 @@ use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, lemma_new_seq, MapResult };
-use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
+use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, lemma_new_seq, MapResult, candidate_mapping_in_bounds };
+use crate::aux_defs::{ x86_arch, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE };
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
 use crate::pt_impl::impl_spec;
 use crate::mem::{ self, word_index_spec };
+use crate::pt;
 
 verus! {
 
@@ -910,6 +911,8 @@ impl PageTable {
                     // We only touch already allocated regions if they're in pt.used_regions
                     &&& (forall|r: MemRegion| !(#[trigger] pt@.used_regions.contains(r)) && !(new_regions.contains(r))
                         ==> self.memory.region_view(r) === old(self).memory.region_view(r))
+                    &&& self.arch@ === old(self).arch@
+                    &&& pt_res.region === pt@.region
                 },
                 Err(e) => {
                     // If error, unchanged
@@ -1162,6 +1165,8 @@ impl PageTable {
                             assert(pt_res@.used_regions === pt@.used_regions.union(new_regions@));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+                            assert(self.arch@ === old(self).arch@);
+                            assert(pt_res@.region === pt@.region);
 
                             let res: Ghost<(PTDir,Set<MemRegion>)> = ghost((pt_res@,new_regions@));
                             Ok(res)
@@ -1305,6 +1310,8 @@ impl PageTable {
                 }
                 assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
                 assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+                assert(self.arch@ === old(self).arch@);
+                assert(pt@.region === pt@.region);
 
                 Ok(ghost((pt@, set![])))
             } else {
@@ -1346,6 +1353,8 @@ impl PageTable {
                 // to each relevant state.
                 let self_with_empty: Ghost<Self> = ghost(*self);
                 proof {
+                    assert(self.arch@ === old(self).arch@);
+                    assert(pt_with_empty@.region === pt@.region);
                     lemma_new_seq::<u64>(512nat, 0u64);
                     lemma_new_seq::<Option<PTDir>>(self_with_empty@.arch@.num_entries(layer), None);
                     assert(new_dir_pt@.entries.len() == 512);
@@ -1673,6 +1682,8 @@ impl PageTable {
                         }
 
                         // posts
+                        assert(self.arch@ === old(self).arch@);
+                        assert(pt_final@.region === pt@.region);
                         assume(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
                         assume(self.memory.regions() === old(self).memory.regions().union(new_regions@));
                         assume(pt_final@.used_regions === pt@.used_regions.union(new_regions@));
@@ -1762,37 +1773,101 @@ impl PageTable {
             old(self).accepted_mapping(vaddr, pte@),
             old(self).interp().accepted_mapping(vaddr, pte@),
             vaddr < MAX_BASE,
-        // ensures
-        //     pt::step_Map(interp_pt_mem(old(self).memory), interp_pt_mem(self.memory))
-        //     self.inv(),
-        //     self.interp().inv(),
+        ensures
+            // pt::step_Map(interp_pt_mem(old(self).memory), interp_pt_mem(self.memory))
+            self.inv(),
+            self.interp().inv(),
+            self.arch@ === old(self).arch@,
+            self.ghost_pt@.region === old(self).ghost_pt@.region,
+            // Refinement of l1
+            match res {
+                MapResult::Ok => {
+                    Ok(self.interp()) === old(self).interp().map_frame(vaddr, pte@)
+                },
+                MapResult::ErrOverlap =>
+                    Err(self.interp()) === old(self).interp().map_frame(vaddr, pte@),
+            },
+            // Refinement of l0
+            match res {
+                MapResult::Ok => {
+                    Ok(self.interp().interp()) === old(self).interp().interp().map_frame(vaddr, pte@)
+                },
+                MapResult::ErrOverlap =>
+                    Err(self.interp().interp()) === old(self).interp().interp().map_frame(vaddr, pte@),
+            },
     {
-        // FIXME: accepted_mapping is contradictory. rephrase it with
-        // contains_entry_size_at_index_atleast
-        // assert(false);
         proof { ambient_arith(); }
         let (cr3_region, cr3) = self.memory.cr3();
         match self.map_frame_aux(0, cr3, 0, vaddr, pte, self.ghost_pt) {
             Ok(res) => {
                 let pt_res: Ghost<PTDir> = ghost(res@.0);
                 let new_regions: Ghost<Set<MemRegion>> = ghost(res@.1);
+                assert(self.inv_at(0, cr3, pt_res@));
+                let self_before_pt_update: Ghost<Self> = ghost(*self);
                 self.ghost_pt = pt_res;
+                // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
+                assume(self.inv_at(0, cr3, pt_res@));
+                // FIXME: prove lemma that interp_at is preserved when changing self.ghost_pt
+                assume(self.interp_at(0, cr3, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3, 0, pt_res@));
+                proof {
+                    // FIXME: add a postcondition to map_frame_aux, saying that cr3 and cr3_region
+                    // remain unchanged. Will also need to add that fact to the memory
+                    // postconditions for any functions with mutable borrows.
+                    assume(cr3_region@ === self.memory.cr3_spec().0);
+                    assume(cr3 == self.memory.cr3_spec().1);
+                    assert(self.ghost_pt@.region === cr3_region@);
+                    assert(self.inv_at(0, cr3, self.ghost_pt@));
+                    assert(self.inv());
+                    old(self).interp().lemma_map_frame_preserves_inv(vaddr, pte@);
+                    assert(self.arch@ === old(self).arch@);
+                    assert(Ok(self.interp()) === old(self).interp().map_frame(vaddr, pte@));
+                    old(self).interp().lemma_map_frame_refines_map_frame(vaddr, pte@);
+                    assert(Ok(self.interp().interp()) === old(self).interp().interp().map_frame(vaddr, pte@));
+                    assert(self.interp().inv());
+                }
                 MapResult::Ok
             },
-            Err(e) => MapResult::ErrOverlap,
+            Err(e) => {
+                // FIXME: wtf?
+                assume(false);
+                MapResult::ErrOverlap
+            },
         }
     }
 }
 
 impl impl_spec::PTImpl for PageTable {
-    fn map_frame(&mut self, base: usize, pte: PageTableEntryExec) -> (res: MapResult) {
-        assume(false);
-        self.map_frame(base, pte)
+    spec fn implspec_interp(&self) -> pt::PageTableVariables {
+        arbitrary()
     }
 
-    spec fn inv(&self) -> bool {
-        arbitrary()
-        // self.inv() && self.interp().inv()
+    fn implspec_map_frame(&mut self, base: usize, pte: PageTableEntryExec) -> (res: MapResult) {
+        // requires
+        assert(pt::step_Map_preconditions(base, pte@));
+        // assert(aligned(base, pte@.frame.size));
+        // assert(aligned(pte.frame.base, pte@.frame.size));
+        // assert(candidate_mapping_in_bounds(base, pte@));
+        // assert({
+        //     ||| pte.frame.size == L3_ENTRY_SIZE
+        //     ||| pte.frame.size == L2_ENTRY_SIZE
+        //     ||| pte.frame.size == L1_ENTRY_SIZE
+        // });
+        assert(self.accepted_mapping(base, pte@)) by {
+            reveal(Self::accepted_mapping);
+        };
+        assert(self.implspec_inv());
+        let res = self.map_frame(base, pte);
+        // ensures
+        assert(self.implspec_inv());
+        assume(pt::step_Map(old(self).implspec_interp(), self.implspec_interp(), base, pte@, res));
+        res
+    }
+
+    spec fn implspec_inv(&self) -> bool {
+        &&& self.inv()
+        &&& self.interp().inv()
+        &&& self.arch@ === x86_arch
+        // &&& self.ghost_pt@.region === 
     }
 }
 

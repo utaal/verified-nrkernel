@@ -1031,7 +1031,7 @@ impl Directory {
             // self.new_empty_dir(self.index_for_vaddr(base)).map_frame(base, pte).is_Ok()
         decreases self.arch.layers.len() - self.layer;
 
-    proof fn lemma_map_frame_preserves_inv(self, base: nat, pte: PageTableEntry)
+    pub proof fn lemma_map_frame_preserves_inv(self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),

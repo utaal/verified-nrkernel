@@ -21,6 +21,7 @@ pub spec const PT_BOUND_HIGH: nat = 512 * 512 * 1024 * 1024 * 1024;
 pub spec const L3_ENTRY_SIZE: nat = PAGE_SIZE;
 pub spec const L2_ENTRY_SIZE: nat = 512 * L3_ENTRY_SIZE;
 pub spec const L1_ENTRY_SIZE: nat = 512 * L2_ENTRY_SIZE;
+pub spec const L0_ENTRY_SIZE: nat = 512 * L1_ENTRY_SIZE;
 
 pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
     &&& PT_BOUND_LOW <= base
@@ -602,29 +603,30 @@ impl Arch {
 
 }
 
+pub spec const x86_arch: Arch = Arch {
+    layers: seq![
+        ArchLayer { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
+        ArchLayer { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
+        ArchLayer { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
+        ArchLayer { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
+    ],
+};
+
 #[verifier(nonlinear)]
 proof fn arch_inv_test() {
-    let x86 = Arch {
-        layers: seq![
-            ArchLayer { entry_size: 512 * 1024 * 1024 * 1024, num_entries: 512 },
-            ArchLayer { entry_size: 1 * 1024 * 1024 * 1024, num_entries: 512 },
-            ArchLayer { entry_size: 2 * 1024 * 1024, num_entries: 512 },
-            ArchLayer { entry_size: 4 * 1024, num_entries: 512 },
-        ],
-    };
-    assert(x86.entry_size(3) == 4096);
-    assert(x86.contains_entry_size(4096));
-    assert(x86.layers.len() <= MAX_NUM_LAYERS);
-    assert forall|i:nat| i < x86.layers.len() implies {
-            &&& 0 < #[trigger] x86.entry_size(i)  <= MAX_ENTRY_SIZE
-            &&& 0 < #[trigger] x86.num_entries(i) <= MAX_NUM_ENTRIES
-            &&& x86.entry_size_is_next_layer_size(i)
+    assert(x86_arch.entry_size(3) == 4096);
+    assert(x86_arch.contains_entry_size(4096));
+    assert(x86_arch.layers.len() <= MAX_NUM_LAYERS);
+    assert forall|i:nat| i < x86_arch.layers.len() implies {
+            &&& 0 < #[trigger] x86_arch.entry_size(i)  <= MAX_ENTRY_SIZE
+            &&& 0 < #[trigger] x86_arch.num_entries(i) <= MAX_NUM_ENTRIES
+            &&& x86_arch.entry_size_is_next_layer_size(i)
         } by {
-        assert(0 < #[trigger] x86.entry_size(i)  <= MAX_ENTRY_SIZE);
-        assert(0 < #[trigger] x86.num_entries(i) <= MAX_NUM_ENTRIES);
-        assert(x86.entry_size_is_next_layer_size(i));
+        assert(0 < #[trigger] x86_arch.entry_size(i)  <= MAX_ENTRY_SIZE);
+        assert(0 < #[trigger] x86_arch.num_entries(i) <= MAX_NUM_ENTRIES);
+        assert(x86_arch.entry_size_is_next_layer_size(i));
     }
-    assert(x86.inv());
+    assert(x86_arch.inv());
 }
 
 }
