@@ -63,40 +63,40 @@ proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
 
 
 // MASK_FLAG_* are flags valid for all entries.
-const MASK_FLAG_P:    u64 = bit!(0u64);
-const MASK_FLAG_RW:   u64 = bit!(1u64);
-const MASK_FLAG_US:   u64 = bit!(2u64);
-const MASK_FLAG_PWT:  u64 = bit!(3u64);
-const MASK_FLAG_PCD:  u64 = bit!(4u64);
-const MASK_FLAG_A:    u64 = bit!(5u64);
-const MASK_FLAG_XD:   u64 = bit!(63u64);
+pub const MASK_FLAG_P:    u64 = bit!(0u64);
+pub const MASK_FLAG_RW:   u64 = bit!(1u64);
+pub const MASK_FLAG_US:   u64 = bit!(2u64);
+pub const MASK_FLAG_PWT:  u64 = bit!(3u64);
+pub const MASK_FLAG_PCD:  u64 = bit!(4u64);
+pub const MASK_FLAG_A:    u64 = bit!(5u64);
+pub const MASK_FLAG_XD:   u64 = bit!(63u64);
 // We can use the same address mask for all layers as long as we preserve the invariant that the
 // lower bits that *should* be masked off are already zero.
-const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
+pub const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
 // const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
-const MASK_PG_FLAG_D:    u64 = bit!(6u64);
-const MASK_PG_FLAG_G:    u64 = bit!(8u64);
-const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
+pub const MASK_PG_FLAG_D:    u64 = bit!(6u64);
+pub const MASK_PG_FLAG_G:    u64 = bit!(8u64);
+pub const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
 
-const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
-const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
+pub const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
+pub const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
 
-const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
+pub const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
 
 // const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
 // const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
 // const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
 // const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
-const MASK_DIR_ADDR:           u64 = MASK_ADDR;
+pub const MASK_DIR_ADDR:           u64 = MASK_ADDR;
 
 // We should be able to always use the 12:52 mask and have the invariant state that in the
 // other cases, the lower bits are already zero anyway.
-const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
-const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
-const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
+pub const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
+pub const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
+pub const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
 
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
