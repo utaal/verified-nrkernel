@@ -24,18 +24,18 @@ verus! {
 /// entries. This function converts a word-aligned byte offset to a word index.
 pub fn word_index(idx: usize) -> (res: usize)
     requires
-        aligned(idx, 8),
+        aligned(idx, WORD_SIZE),
     ensures
         res == word_index_spec(idx)
 {
-    idx / 8
+    idx / WORD_SIZE
 }
 
 pub open spec fn word_index_spec(idx: nat) -> nat
     recommends aligned(idx, 8)
 {
-    if aligned(idx, 8) {
-        idx / 8
+    if aligned(idx, WORD_SIZE) {
+        idx / WORD_SIZE
     } else {
         arbitrary()
     }
