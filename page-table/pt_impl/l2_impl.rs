@@ -624,7 +624,7 @@ impl PageTable {
         assume(false);
     }
 
-    spec fn interp(self) -> l1::Directory {
+    pub open spec fn interp(self) -> l1::Directory {
         let (cr3_region, cr3) = self.memory.cr3_spec();
         self.interp_at(0, cr3, 0, self.ghost_pt@)
     }
@@ -880,7 +880,7 @@ impl PageTable {
     // opaque. However, after changing it slightly map_frame_aux was timing out and this is a
     // bandaid that allows me to continue without refactoring that entire function's proofs.
     #[verifier(opaque)]
-    spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
+    pub open spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
         // Can't map pages in PML4, i.e. layer 0
         self.arch@.contains_entry_size_at_index_atleast(pte.frame.size, 1)
     }
@@ -1765,7 +1765,7 @@ impl PageTable {
         assume(false);
     }
 
-    fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
+    pub fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
         requires
             old(self).inv(),
             old(self).interp().inv(),

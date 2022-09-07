@@ -17,11 +17,11 @@ verus! {
 pub spec const PT_BOUND_LOW:  nat = 0;
 // Upper bound for x86 4-level paging.
 // 512 entries, each mapping 512*1024*1024*1024 bytes
-pub spec const PT_BOUND_HIGH: nat = 512 * 512 * 1024 * 1024 * 1024;
-pub spec const L3_ENTRY_SIZE: nat = PAGE_SIZE;
-pub spec const L2_ENTRY_SIZE: nat = 512 * L3_ENTRY_SIZE;
-pub spec const L1_ENTRY_SIZE: nat = 512 * L2_ENTRY_SIZE;
-pub spec const L0_ENTRY_SIZE: nat = 512 * L1_ENTRY_SIZE;
+pub const PT_BOUND_HIGH: usize = 512 * 512 * 1024 * 1024 * 1024;
+pub const L3_ENTRY_SIZE: usize = PAGE_SIZE;
+pub const L2_ENTRY_SIZE: usize = 512 * L3_ENTRY_SIZE;
+pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
+pub const L0_ENTRY_SIZE: usize = 512 * L1_ENTRY_SIZE;
 
 pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
     &&& PT_BOUND_LOW <= base
@@ -602,6 +602,16 @@ impl Arch {
     }
 
 }
+
+#[verifier(external_body)]
+pub spec const x86_arch_exec: ArchExec = ArchExec {
+    layers: Vec { vec: vec![
+        ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
+        ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
+        ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
+        ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
+    ]},
+};
 
 pub spec const x86_arch: Arch = Arch {
     layers: seq![

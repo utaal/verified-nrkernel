@@ -29,22 +29,22 @@ pub trait PTImpl {
         ensures
             self.implspec_inv(memory);
 
-    fn implspec_map_frame(&self, memory: &mut mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: MapResult)
+    fn implspec_map_frame(&self, memory: mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory))
         requires
             pt::step_Map_preconditions(base, pte@),
-            self.implspec_inv(*old(memory)),
+            self.implspec_inv(memory),
         ensures
-            self.implspec_inv(*memory),
-            pt::step_Map(PageTableVariables { map: interp_pt_mem(*old(memory)) }, PageTableVariables { map: interp_pt_mem(*memory) }, base, pte@, res);
+            self.implspec_inv(res.1),
+            pt::step_Map(PageTableVariables { map: interp_pt_mem(memory) }, PageTableVariables { map: interp_pt_mem(res.1) }, base, pte@, res.0);
 
     // FIXME: do i need to add tlb state to the pt state machine?
-    fn implspec_unmap(&self, memory: &mut mem::PageTableMemory, base: usize) -> (res: UnmapResult)
+    fn implspec_unmap(&self, memory: mem::PageTableMemory, base: usize) -> (res: (UnmapResult, mem::PageTableMemory))
         requires
             pt::step_Unmap_preconditions(base),
-            self.implspec_inv(*old(memory)),
+            self.implspec_inv(memory),
         ensures
-            self.implspec_inv(*memory),
-            pt::step_Unmap(PageTableVariables { map: interp_pt_mem(*old(memory)) }, PageTableVariables { map: interp_pt_mem(*memory) }, base, res);
+            self.implspec_inv(res.1),
+            pt::step_Unmap(PageTableVariables { map: interp_pt_mem(memory) }, PageTableVariables { map: interp_pt_mem(res.1) }, base, res.0);
             // FIXME: tlb stuff
 }
 
