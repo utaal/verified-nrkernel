@@ -1717,10 +1717,6 @@ impl PageTable {
             self.empty_at(layer, ptr, pt),
             self.inv_at(layer, ptr, pt),
     {
-        // FIXME: Just assuming this for now, will need nonlinear arith
-        //assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
-        //       ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * WORD_SIZE, pt.region.base)) < self.memory.region_view(pt.region).len()));
-
         assert forall|i: nat| i < self.arch@.num_entries(layer) implies self.view_at(layer, ptr, i, pt).is_Empty() by {
             let entry = self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region);
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
