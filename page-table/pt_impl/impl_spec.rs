@@ -7,7 +7,6 @@ use crate::aux_defs::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::pt;
 use crate::system::spec::interp_pt_mem;
 use crate::mem;
-use crate::pt::PageTableVariables;
 
 verus! {
 
@@ -25,7 +24,7 @@ pub trait PTImpl {
 
     proof fn implspec_init_implies_inv(&self, memory: mem::PageTableMemory)
         requires
-            pt::init(PageTableVariables { map: interp_pt_mem(memory) })
+            pt::init(pt::PageTableVariables { map: interp_pt_mem(memory) })
         ensures
             self.implspec_inv(memory);
 
@@ -35,7 +34,7 @@ pub trait PTImpl {
             self.implspec_inv(memory),
         ensures
             self.implspec_inv(res.1),
-            pt::step_Map(PageTableVariables { map: interp_pt_mem(memory) }, PageTableVariables { map: interp_pt_mem(res.1) }, base, pte@, res.0);
+            pt::step_Map(pt::PageTableVariables { map: interp_pt_mem(memory) }, pt::PageTableVariables { map: interp_pt_mem(res.1) }, base, pte@, res.0);
 
     // FIXME: do i need to add tlb state to the pt state machine?
     fn implspec_unmap(&self, memory: mem::PageTableMemory, base: usize) -> (res: (UnmapResult, mem::PageTableMemory))
@@ -44,7 +43,7 @@ pub trait PTImpl {
             self.implspec_inv(memory),
         ensures
             self.implspec_inv(res.1),
-            pt::step_Unmap(PageTableVariables { map: interp_pt_mem(memory) }, PageTableVariables { map: interp_pt_mem(res.1) }, base, res.0);
+            pt::step_Unmap(pt::PageTableVariables { map: interp_pt_mem(memory) }, pt::PageTableVariables { map: interp_pt_mem(res.1) }, base, res.0);
             // FIXME: tlb stuff
 }
 

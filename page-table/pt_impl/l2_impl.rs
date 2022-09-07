@@ -632,7 +632,7 @@ impl PageTable {
     proof fn lemma_inv_at_different_memory(self, other: PageTable, layer: nat, ptr: usize, pt: PTDir)
         requires
             self.inv_at(layer, ptr, pt),
-            self.arch@ === other.arch@,
+            self.arch === other.arch,
             forall|r: MemRegion| pt.used_regions.contains(r)
                 ==> #[trigger] self.memory.region_view(r) === other.memory.region_view(r),
             // Some parts of other's invariant that we should already know
@@ -687,7 +687,7 @@ impl PageTable {
             pt2.entries[idx] === pt1.entries[idx],
             self.inv_at(layer, ptr, pt1),
             other.inv_at(layer, ptr, pt2),
-            self.arch@ === other.arch@,
+            self.arch === other.arch,
             self.memory.spec_read(ptr as nat + (idx * WORD_SIZE as nat), pt1.region) === other.memory.spec_read(ptr as nat + (idx * WORD_SIZE as nat), pt2.region),
             pt2.entries[idx].is_Some() ==> (forall|r: MemRegion| pt2.entries[idx].get_Some_0().used_regions.contains(r)
                 ==> #[trigger] self.memory.region_view(r) === other.memory.region_view(r)),
@@ -911,7 +911,7 @@ impl PageTable {
                     // We only touch already allocated regions if they're in pt.used_regions
                     &&& (forall|r: MemRegion| !(#[trigger] pt@.used_regions.contains(r)) && !(new_regions.contains(r))
                         ==> self.memory.region_view(r) === old(self).memory.region_view(r))
-                    &&& self.arch@ === old(self).arch@
+                    &&& self.arch === old(self).arch
                     &&& pt_res.region === pt@.region
                 },
                 Err(e) => {
@@ -1165,7 +1165,7 @@ impl PageTable {
                             assert(pt_res@.used_regions === pt@.used_regions.union(new_regions@));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
-                            assert(self.arch@ === old(self).arch@);
+                            assert(self.arch === old(self).arch);
                             assert(pt_res@.region === pt@.region);
 
                             let res: Ghost<(PTDir,Set<MemRegion>)> = ghost((pt_res@,new_regions@));
@@ -1310,7 +1310,7 @@ impl PageTable {
                 }
                 assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
                 assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
-                assert(self.arch@ === old(self).arch@);
+                assert(self.arch === old(self).arch);
                 assert(pt@.region === pt@.region);
 
                 Ok(ghost((pt@, set![])))
@@ -1353,7 +1353,7 @@ impl PageTable {
                 // to each relevant state.
                 let self_with_empty: Ghost<Self> = ghost(*self);
                 proof {
-                    assert(self.arch@ === old(self).arch@);
+                    assert(self.arch === old(self).arch);
                     assert(pt_with_empty@.region === pt@.region);
                     lemma_new_seq::<u64>(512nat, 0u64);
                     lemma_new_seq::<Option<PTDir>>(self_with_empty@.arch@.num_entries(layer), None);
@@ -1682,7 +1682,7 @@ impl PageTable {
                         }
 
                         // posts
-                        assert(self.arch@ === old(self).arch@);
+                        assert(self.arch === old(self).arch);
                         assert(pt_final@.region === pt@.region);
                         assume(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
                         assume(self.memory.regions() === old(self).memory.regions().union(new_regions@));
@@ -1777,7 +1777,7 @@ impl PageTable {
             // pt::step_Map(interp_pt_mem(old(self).memory), interp_pt_mem(self.memory))
             self.inv(),
             self.interp().inv(),
-            self.arch@ === old(self).arch@,
+            self.arch === old(self).arch,
             self.ghost_pt@.region === old(self).ghost_pt@.region,
             // Refinement of l1
             match res {
@@ -1819,7 +1819,7 @@ impl PageTable {
                     assert(self.inv_at(0, cr3, self.ghost_pt@));
                     assert(self.inv());
                     old(self).interp().lemma_map_frame_preserves_inv(vaddr, pte@);
-                    assert(self.arch@ === old(self).arch@);
+                    assert(self.arch === old(self).arch);
                     assert(Ok(self.interp()) === old(self).interp().map_frame(vaddr, pte@));
                     old(self).interp().lemma_map_frame_refines_map_frame(vaddr, pte@);
                     assert(Ok(self.interp().interp()) === old(self).interp().interp().map_frame(vaddr, pte@));

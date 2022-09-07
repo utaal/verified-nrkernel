@@ -603,8 +603,9 @@ impl Arch {
 
 }
 
+// FIXME: can we get rid of this somehow?
 #[verifier(external_body)]
-pub spec const x86_arch_exec: ArchExec = ArchExec {
+pub exec const x86_arch_exec: ArchExec = ArchExec {
     layers: Vec { vec: vec![
         ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
         ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },

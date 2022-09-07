@@ -22,10 +22,28 @@ use crate::pt_impl::l2_impl;
 use crate::mem::{ self, word_index_spec };
 use crate::pt;
 use crate::aux_defs::{ PageTableEntryExec, MapResult, UnmapResult };
+use crate::system::spec::interp_pt_mem;
 
 verus! {
 
 pub struct PageTableImpl {}
+
+spec fn dummy_trigger(x: Ghost<l2_impl::PTDir>) -> bool {
+    true
+}
+
+spec fn choose_ghost_pt(memory: mem::PageTableMemory) -> l2_impl::PTDir {
+    (choose|ghost_pt: Ghost<l2_impl::PTDir>| {
+        let page_table = l2_impl::PageTable {
+            memory: memory,
+            arch: x86_arch_exec,
+            ghost_pt: ghost_pt,
+        };
+        &&& page_table.inv()
+        &&& page_table.interp().inv()
+        &&& #[trigger] dummy_trigger(ghost_pt)
+    })@
+}
 
 impl impl_spec::PTImpl for PageTableImpl {
     spec fn implspec_inv(&self, memory: mem::PageTableMemory) -> bool {
@@ -37,6 +55,7 @@ impl impl_spec::PTImpl for PageTableImpl {
             };
             &&& page_table.inv()
             &&& page_table.interp().inv()
+            &&& #[trigger] dummy_trigger(ghost_pt)
         }
     }
 
@@ -52,31 +71,32 @@ impl impl_spec::PTImpl for PageTableImpl {
         //     ||| pte.frame.size == L1_ENTRY_SIZE
         // });
         assert(self.implspec_inv(memory));
-        let ghost_pt = choose|ghost_pt: Ghost<l2_impl::PTDir>| {
-            let page_table = l2_impl::PageTable {
-                memory: memory,
-                arch: x86_arch_exec,
-                ghost_pt: ghost_pt,
-            };
-            &&& page_table.inv()
-            &&& page_table.interp().inv()
-        };
+        let ghost_pt: Ghost<l2_impl::PTDir> = ghost(choose_ghost_pt(memory));
 
-        let page_table = l2_impl::PageTable {
-            memory: memory,
-            arch: x86_arch_exec,
-            ghost_pt: ghost_pt,
+        let mut page_table = l2_impl::PageTable {
+            memory:    memory,
+            arch:      x86_arch_exec,
+            ghost_pt:  ghost_pt,
         };
         assert(page_table.inv());
         assert(page_table.interp().inv());
 
         assert(page_table.accepted_mapping(base, pte@)) by {
             reveal(l2_impl::PageTable::accepted_mapping);
+            assume(false);
         };
+        assume(page_table.interp().accepted_mapping(base, pte@));
         let res = page_table.map_frame(base, pte);
+        assert(page_table.inv());
+        assert(page_table.interp().inv());
         // ensures
-        assert(self.implspec_inv(memory));
-        // assume(pt::step_Map(old(page_table).implspec_interp(), page_table.implspec_interp(), base, pte@, res));
+        proof {
+            let page_table_post_state = page_table;
+            assert(self.implspec_inv(page_table.memory)) by {
+                assert(dummy_trigger(page_table_post_state.ghost_pt));
+            };
+            assume(pt::step_Map(pt::PageTableVariables { map: interp_pt_mem(memory) }, pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, base, pte@, res));
+        }
         (res, page_table.memory)
     }
 
