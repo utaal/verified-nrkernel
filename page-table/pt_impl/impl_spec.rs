@@ -5,8 +5,15 @@ use crate::high_level_spec as hlspec;
 use crate::pervasive::*;
 use crate::aux_defs::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::pt;
+use crate::system::spec::interp_pt_mem;
+use crate::mem;
+use crate::pt::PageTableVariables;
 
 verus! {
+
+pub struct PTState {
+    pub memory: mem::PageTableMemory,
+}
 
 // FIXME: What's the pen-and-paper VC here? I think it's: The specification for each of the
 // operations specified here results in the corresponding state transition in the *os* state
@@ -14,32 +21,30 @@ verus! {
 // FIXME: do i need to add memory invariant preservation to the ensures?
 // Do i actually need it?
 pub trait PTImpl {
-    spec fn implspec_interp(&self) -> pt::PageTableVariables;
+    spec fn implspec_inv(&self, memory: mem::PageTableMemory) -> bool;
 
-    spec fn implspec_inv(&self) -> bool;
-
-    proof fn implspec_init_implies_inv(&self)
+    proof fn implspec_init_implies_inv(&self, memory: mem::PageTableMemory)
         requires
-            pt::init(self.implspec_interp())
+            pt::init(PageTableVariables { map: interp_pt_mem(memory) })
         ensures
-            self.implspec_inv();
+            self.implspec_inv(memory);
 
-    fn implspec_map_frame(&mut self, base: usize, pte: PageTableEntryExec) -> (res: MapResult)
+    fn implspec_map_frame(&self, memory: &mut mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: MapResult)
         requires
             pt::step_Map_preconditions(base, pte@),
-            old(self).implspec_inv(),
+            self.implspec_inv(*old(memory)),
         ensures
-            self.implspec_inv(),
-            pt::step_Map(old(self).implspec_interp(), self.implspec_interp(), base, pte@, res);
+            self.implspec_inv(*memory),
+            pt::step_Map(PageTableVariables { map: interp_pt_mem(*old(memory)) }, PageTableVariables { map: interp_pt_mem(*memory) }, base, pte@, res);
 
     // FIXME: do i need to add tlb state to the pt state machine?
-    fn implspec_unmap(&mut self, base: usize) -> (res: UnmapResult)
+    fn implspec_unmap(&self, memory: &mut mem::PageTableMemory, base: usize) -> (res: UnmapResult)
         requires
             pt::step_Unmap_preconditions(base),
-            old(self).implspec_inv(),
+            self.implspec_inv(*old(memory)),
         ensures
-            self.implspec_inv(),
-            pt::step_Unmap(old(self).implspec_interp(), self.implspec_interp(), base, res);
+            self.implspec_inv(*memory),
+            pt::step_Unmap(PageTableVariables { map: interp_pt_mem(*old(memory)) }, PageTableVariables { map: interp_pt_mem(*memory) }, base, res);
             // FIXME: tlb stuff
 }
 

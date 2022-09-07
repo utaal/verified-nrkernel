@@ -1836,41 +1836,6 @@ impl PageTable {
     }
 }
 
-impl impl_spec::PTImpl for PageTable {
-    spec fn implspec_interp(&self) -> pt::PageTableVariables {
-        arbitrary()
-    }
-
-    fn implspec_map_frame(&mut self, base: usize, pte: PageTableEntryExec) -> (res: MapResult) {
-        // requires
-        assert(pt::step_Map_preconditions(base, pte@));
-        // assert(aligned(base, pte@.frame.size));
-        // assert(aligned(pte.frame.base, pte@.frame.size));
-        // assert(candidate_mapping_in_bounds(base, pte@));
-        // assert({
-        //     ||| pte.frame.size == L3_ENTRY_SIZE
-        //     ||| pte.frame.size == L2_ENTRY_SIZE
-        //     ||| pte.frame.size == L1_ENTRY_SIZE
-        // });
-        assert(self.accepted_mapping(base, pte@)) by {
-            reveal(Self::accepted_mapping);
-        };
-        assert(self.implspec_inv());
-        let res = self.map_frame(base, pte);
-        // ensures
-        assert(self.implspec_inv());
-        assume(pt::step_Map(old(self).implspec_interp(), self.implspec_interp(), base, pte@, res));
-        res
-    }
-
-    spec fn implspec_inv(&self) -> bool {
-        &&& self.inv()
-        &&& self.interp().inv()
-        &&& self.arch@ === x86_arch
-        // &&& self.ghost_pt@.region === 
-    }
-}
-
 pub proof fn lemma_set_union_empty_equals_set<T>(s: Set<T>)
     ensures
         s.union(set![]) === s
