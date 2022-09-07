@@ -537,7 +537,7 @@ impl PageTable {
         &&& self.ghost_pt_region_notin_used_regions(layer, ptr, pt)
         &&& pt.used_regions.subset_of(self.memory.regions())
     }
-    
+
     pub open spec fn ghost_pt_used_regions_pairwise_disjoint(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
         forall|i: nat, j: nat, r: MemRegion|
             i != j &&
@@ -1707,10 +1707,12 @@ impl PageTable {
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
             pt.region.contains(ptr),
+            pt.used_regions.contains(pt.region),
             ptr == pt.region.base,
             self.layer_in_range(layer),
             pt.entries.len() == self.arch@.num_entries(layer),
             forall|i: nat| i < self.arch@.num_entries(layer) ==> self.memory.region_view(pt.region).index(i) == 0u64,
+            forall|i: nat| i < self.arch@.num_entries(layer) ==> pt.entries[i].is_None(),
         ensures
             self.empty_at(layer, ptr, pt),
             self.inv_at(layer, ptr, pt),
@@ -1725,6 +1727,7 @@ impl PageTable {
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
 
+
         assert(forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, pt).is_Empty());
         //assert!(self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region)
         assert(self.empty_at(layer, ptr, pt));
@@ -1736,11 +1739,15 @@ impl PageTable {
         assert(self.layer_in_range(layer));
         assert(pt.entries.len() == self.arch@.num_entries(layer));
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
-        assume(self.ghost_pt_matches_structure(layer, ptr, pt));
-        assume(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
-        assume(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
-        assume(self.ghost_pt_region_notin_used_regions(layer, ptr, pt));
-        assume(pt.used_regions.subset_of(self.memory.regions()));
+        assert(self.ghost_pt_matches_structure(layer, ptr, pt));
+        assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
+
+        assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
+        assert(self.ghost_pt_region_notin_used_regions(layer, ptr, pt));
+
+
+        assert(pt.used_regions.subset_of(self.memory.regions()));
+
         assert(self.inv_at(layer, ptr, pt));
     }
 
