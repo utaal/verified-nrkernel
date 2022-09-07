@@ -1707,8 +1707,8 @@ impl PageTable {
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
             pt.region.contains(ptr),
-            pt.used_regions.contains(pt.region),
             ptr == pt.region.base,
+            pt.used_regions === set![pt.region],
             self.layer_in_range(layer),
             pt.entries.len() == self.arch@.num_entries(layer),
             forall|i: nat| i < self.arch@.num_entries(layer) ==> self.memory.region_view(pt.region).index(i) == 0u64,
@@ -1721,34 +1721,12 @@ impl PageTable {
         //assume(forall_arith(|i: nat| i < self.arch@.num_entries(layer)
         //       ==> word_index_spec(sub(#[trigger] (ptr as nat + i) * WORD_SIZE, pt.region.base)) < self.memory.region_view(pt.region).len()));
 
-        //let entry = self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region);
         assert forall|i: nat| i < self.arch@.num_entries(layer) implies self.view_at(layer, ptr, i, pt).is_Empty() by {
             let entry = self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region);
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
 
-
-        assert(forall|i: nat| i < self.arch@.num_entries(layer) ==> self.view_at(layer, ptr, i, pt).is_Empty());
-        //assert!(self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region)
-        assert(self.empty_at(layer, ptr, pt));
-
-        assert(self.well_formed(layer, ptr));
-        assert(self.memory.inv());
-        assert(self.memory.regions().contains(pt.region));
-        assert(pt.region.contains(ptr));
-        assert(self.layer_in_range(layer));
-        assert(pt.entries.len() == self.arch@.num_entries(layer));
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
-        assert(self.ghost_pt_matches_structure(layer, ptr, pt));
-        assert(self.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
-
-        assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
-        assert(self.ghost_pt_region_notin_used_regions(layer, ptr, pt));
-
-
-        assert(pt.used_regions.subset_of(self.memory.regions()));
-
-        assert(self.inv_at(layer, ptr, pt));
     }
 
     proof fn lemma_empty_at_interp_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, idx: nat, pt: PTDir, l1dir: l1::Directory)
