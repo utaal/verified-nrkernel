@@ -1743,7 +1743,21 @@ impl PageTable {
         // FIXME:
         // For each entry self.interp_at_entry == l1::NodeEntry::Empty()
         // lemma_new_empty_dir
-        assume(false);
+        let c = self.interp_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), self.arch@.entry_base(layer, base, idx), pt.entries.index(idx).get_Some_0());
+        let s = l1dir.new_empty_dir(idx);
+
+        assert(self.inv_at(layer + 1, ptr, pt));
+
+        assert(c.layer == layer + 1);
+        assert(l1dir.layer == layer);
+        assert(s.layer == layer + 1);
+        assert(c.layer === s.layer);
+
+        // assert(s.arch === self.arch@);
+        assume(c.arch === s.arch);
+
+        assume(c.base_vaddr === s.base_vaddr);
+        assume(c.entries === s.entries);
     }
 
     pub fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
