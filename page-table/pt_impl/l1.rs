@@ -1515,7 +1515,7 @@ impl Directory {
     }
 
 
-    proof fn lemma_unmap_preserves_inv(self, base: nat)
+    pub proof fn lemma_unmap_preserves_inv(self, base: nat)
         requires
             self.inv(),
             self.accepted_unmap(base),
@@ -1600,7 +1600,7 @@ impl Directory {
         }
    }
 
-    proof fn lemma_unmap_refines_unmap(self, base: nat)
+    pub proof fn lemma_unmap_refines_unmap(self, base: nat)
         requires
              self.inv(),
              self.accepted_unmap(base),

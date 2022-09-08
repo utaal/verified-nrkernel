@@ -14,7 +14,7 @@ use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, lemma_new_seq, MapResult, candidate_mapping_in_bounds };
+use crate::aux_defs::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds };
 use crate::aux_defs::{ x86_arch, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE };
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
@@ -928,15 +928,6 @@ impl PageTable {
                 Err(e) =>
                     Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@),
             },
-            // // Refinement of l0
-            // match res {
-            //     Ok(resv) => {
-            //         let (pt_res, new_regions) = resv@;
-            //         Ok(self.interp_at(layer, ptr, base, pt_res).interp())
-            //             === old(self).interp_at(layer, ptr, base, pt_res).interp().map_frame(vaddr, pte@)
-            //     },
-            //     Err(e)  => Err(self.interp_at(layer, ptr, base, pt@).interp()) === old(self).interp_at(layer, ptr, base, pt@).interp().map_frame(vaddr, pte@),
-            // }
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
@@ -1823,9 +1814,278 @@ impl PageTable {
                 MapResult::Ok
             },
             Err(e) => {
-                // FIXME: wtf?
-                assume(false);
+                proof {
+                    old(self).interp().lemma_map_frame_refines_map_frame(vaddr, pte@);
+                }
                 MapResult::ErrOverlap
+            },
+        }
+    }
+
+    fn is_directory_empty(&mut self, layer: usize, ptr: usize, pt: Ghost<PTDir>) -> (res: bool)
+        requires
+            old(self).inv_at(layer, ptr, pt@),
+        ensures
+            res === self.empty_at(layer, ptr, pt@)
+    {
+        assert(self.directories_obey_invariant_at(layer, ptr, pt@));
+        let mut idx = 0;
+        while idx < self.arch.num_entries(layer) {
+            // Any chance it's actually faster to just bitwise or all the entries together and check at the end?
+            let entry = self.entry_at(layer, ptr, idx, pt);
+            if entry.is_mapping() {
+                return false;
+            }
+            idx = idx + 1;
+        }
+        true
+    }
+
+    #[verifier(spinoff_prover)] #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    fn unmap_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: Ghost<PTDir>)
+        -> (res: (Result<Ghost<(PTDir,Set<MemRegion>)>,()>))
+        requires
+            old(self).inv_at(layer, ptr, pt@),
+            old(self).interp_at(layer, ptr, base, pt@).inv(),
+            old(self).memory.inv(),
+            // old(self).accepted_unmap(vaddr),
+            old(self).interp_at(layer, ptr, base, pt@).accepted_unmap(vaddr),
+            base <= vaddr < MAX_BASE,
+        ensures
+            match res {
+                Ok(resv) => {
+                    let (pt_res, removed_regions) = resv@;
+                    // We return the regions that we removed
+                    &&& old(self).memory.regions() === self.memory.regions().union(removed_regions)
+                    &&& pt@.used_regions === pt_res.used_regions.union(removed_regions)
+                    // and only those we removed
+                    &&& (forall|r: MemRegion| removed_regions.contains(r) ==> !(#[trigger] self.memory.regions().contains(r)))
+                    &&& (forall|r: MemRegion| removed_regions.contains(r) ==> !(#[trigger] pt_res.used_regions.contains(r)))
+                    // Invariant preserved
+                    &&& self.inv_at(layer, ptr, pt_res)
+                    // We only touch regions in pt.used_regions
+                    &&& (forall|r: MemRegion| !(#[trigger] pt_res.used_regions.contains(r))
+                        ==> self.memory.region_view(r) === old(self).memory.region_view(r))
+                    &&& self.arch === old(self).arch
+                    &&& pt_res.region === pt@.region
+                },
+                Err(e) => {
+                    // If error, unchanged
+                    &&& self === old(self)
+                },
+            },
+            // Refinement of l1
+            match res {
+                Ok(resv) => {
+                    let (pt_res, removed_regions) = resv@;
+                    Ok(self.interp_at(layer, ptr, base, pt_res)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr)
+                },
+                Err(e) =>
+                    Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr),
+            },
+        // decreases self.arch@.layers.len() - layer
+    {
+        let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
+        let idxg: Ghost<usize> = ghost(idx);
+        let entry = self.entry_at(layer, ptr, idx, pt);
+        let interp: Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base, pt@));
+        proof {
+            interp@.lemma_unmap_structure_assertions(vaddr, idx);
+            self.lemma_interp_at_facts(layer, ptr, base, pt@);
+            self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+            interp@.lemma_unmap_refines_unmap(vaddr);
+        }
+        let entry_base: usize = self.arch.entry_base(layer, base, idx);
+        proof {
+            self.arch@.lemma_entry_base();
+            assert(entry_base <= vaddr);
+        }
+        if entry.is_mapping() {
+            if entry.is_dir(layer) {
+                let dir_addr = entry.address() as usize;
+                assert(pt@.entries[idx].is_Some());
+                let dir_pt: Ghost<PTDir> = ghost(pt@.entries[idx].get_Some_0());
+                assert(self.directories_obey_invariant_at(layer, ptr, pt@));
+                match self.unmap_aux(layer + 1, dir_addr, entry_base, vaddr, dir_pt) {
+                    Ok(rec_res) => {
+                        let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
+                        let removed_regions: Ghost<Set<MemRegion>> = ghost(rec_res@.1);
+
+                        assert(self.inv_at((layer + 1) as nat, dir_addr, dir_pt_res@));
+                        assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt_res@))
+                               === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base, dir_pt@).unmap(vaddr));
+                        assert(idx == idxg@);
+                        assert(idxg@ < pt@.entries.len());
+
+                        if self.is_directory_empty(layer + 1, dir_addr, dir_pt_res) {
+                            let write_addr = ptr + idx * WORD_SIZE;
+                            let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
+                            // FIXME: indexing calculus
+                            assume(word_addr@ < self.memory.region_view(pt@.region).len());
+                            assume(pt@.region.contains(write_addr));
+                            assume(self.memory.regions().contains(pt@.region));
+                            assume(self.memory.inv());
+                            self.memory.write(write_addr, ghost(pt@.region), 0u64);
+
+                            let pt_res: Ghost<PTDir> = ghost(
+                                PTDir {
+                                    region: pt@.region,
+                                    entries: pt@.entries.update(idx, None),
+                                    used_regions: pt@.used_regions.difference(removed_regions@).remove(dir_pt_res@.region),
+                                });
+
+                            let res: Ghost<(PTDir,Set<MemRegion>)> = ghost((pt_res@,removed_regions@));
+                            // Refinement
+                            assume(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr));
+                            // postconditions
+                            assume(old(self).memory.regions() === self.memory.regions().union(removed_regions@));
+                            assume(pt@.used_regions === pt_res@.used_regions.union(removed_regions@));
+                            assume((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] self.memory.regions().contains(r))));
+                            assume((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] pt_res@.used_regions.contains(r))));
+                            assume(self.inv_at(layer, ptr, pt_res@));
+                            assume(forall|r: MemRegion| !(#[trigger] pt_res@.used_regions.contains(r))
+                                   ==> self.memory.region_view(r) === old(self).memory.region_view(r));
+                            assume(self.arch === old(self).arch);
+                            assume(pt_res@.region === pt@.region);
+                            Ok(res)
+                        } else {
+                            let pt_res: Ghost<PTDir> = ghost(
+                                PTDir {
+                                    region: pt@.region,
+                                    entries: pt@.entries.update(idx, Some(dir_pt_res@)),
+                                    used_regions: pt@.used_regions.difference(removed_regions@),
+                                });
+
+                            assert(idx < pt@.entries.len());
+                            assert(pt_res@.region === pt@.region);
+
+                            let res: Ghost<(PTDir,Set<MemRegion>)> = ghost((pt_res@,removed_regions@));
+                            // Refinement
+                            assume(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr));
+                            // postconditions
+                            assume(old(self).memory.regions() === self.memory.regions().union(removed_regions@));
+                            assume(pt@.used_regions === pt_res@.used_regions.union(removed_regions@));
+                            assume((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] self.memory.regions().contains(r))));
+                            assume((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] pt_res@.used_regions.contains(r))));
+                            assume(self.inv_at(layer, ptr, pt_res@));
+                            assume(forall|r: MemRegion| !(#[trigger] pt_res@.used_regions.contains(r))
+                                   ==> self.memory.region_view(r) === old(self).memory.region_view(r));
+                            assume(self.arch === old(self).arch);
+                            assume(pt_res@.region === pt@.region);
+                            Ok(res)
+                        }
+
+                    },
+                    Err(e) => {
+                        assert(self === old(self));
+                        assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr));
+                        Err(e)
+                    },
+                }
+            } else {
+                if aligned_exec(vaddr, self.arch.entry_size(layer)) {
+                    let write_addr = ptr + idx * WORD_SIZE;
+                    let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
+                    // FIXME: indexing calculus
+                    assume(word_addr@ < self.memory.region_view(pt@.region).len());
+                    assume(pt@.region.contains(write_addr));
+                    self.memory.write(write_addr, ghost(pt@.region), 0u64);
+
+                    let pt_res: Ghost<PTDir> = pt;
+                    let removed_regions: Ghost<Set<MemRegion>> = ghost(Set::empty());
+                    let res: Ghost<(PTDir,Set<MemRegion>)> = ghost((pt_res@, removed_regions@));
+
+                    // Refinement
+                    assume(Ok(self.interp_at(layer, ptr, base, pt_res@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr));
+                    // postconditions
+                    assume(old(self).memory.regions() === self.memory.regions().union(removed_regions@));
+                    assume(pt@.used_regions === pt_res@.used_regions.union(removed_regions@));
+                    assume((forall|r: MemRegion| removed_regions@.contains(r) == !(#[trigger] self.memory.regions().contains(r))));
+                    assume((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] pt_res@.used_regions.contains(r))));
+                    assume(self.inv_at(layer, ptr, pt_res@));
+                    assume(forall|r: MemRegion| !(#[trigger] pt_res@.used_regions.contains(r))
+                           ==> self.memory.region_view(r) === old(self).memory.region_view(r));
+                    assume(self.arch === old(self).arch);
+                    assume(pt_res@.region === pt@.region);
+                    Ok(res)
+                } else {
+                    assert(self === old(self));
+                    assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr));
+                    Err(())
+                }
+            }
+        } else {
+            assert(self === old(self));
+            assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).unmap(vaddr));
+            Err(())
+        }
+    }
+
+    pub fn unmap(&mut self, vaddr: usize) -> (res: UnmapResult)
+        requires
+            old(self).inv(),
+            old(self).interp().inv(),
+            old(self).memory.inv(),
+            // old(self).accepted_unmap(vaddr),
+            old(self).interp().accepted_unmap(vaddr),
+            vaddr < MAX_BASE,
+        ensures
+            self.inv(),
+            self.interp().inv(),
+            self.arch === old(self).arch,
+            self.ghost_pt@.region === old(self).ghost_pt@.region,
+            // Refinement of l1
+            match res {
+                UnmapResult::Ok => {
+                    Ok(self.interp()) === old(self).interp().unmap(vaddr)
+                },
+                UnmapResult::ErrNoSuchMapping =>
+                    Err(self.interp()) === old(self).interp().unmap(vaddr),
+            },
+            // Refinement of l0
+            match res {
+                UnmapResult::Ok => {
+                    Ok(self.interp().interp()) === old(self).interp().interp().unmap(vaddr)
+                },
+                UnmapResult::ErrNoSuchMapping =>
+                    Err(self.interp().interp()) === old(self).interp().interp().unmap(vaddr),
+            },
+    {
+        proof { ambient_arith(); }
+        let (cr3_region, cr3) = self.memory.cr3();
+        match self.unmap_aux(0, cr3, 0, vaddr, self.ghost_pt) {
+            Ok(res) => {
+                let pt_res: Ghost<PTDir> = ghost(res@.0);
+                assert(self.inv_at(0, cr3, pt_res@));
+                let self_before_pt_update: Ghost<Self> = ghost(*self);
+                self.ghost_pt = pt_res;
+                // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
+                assume(self.inv_at(0, cr3, pt_res@));
+                // FIXME: prove lemma that interp_at is preserved when changing self.ghost_pt
+                assume(self.interp_at(0, cr3, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3, 0, pt_res@));
+                proof {
+                    // FIXME: add a postcondition to map_frame_aux, saying that cr3 and cr3_region
+                    // remain unchanged. Will also need to add that fact to the memory
+                    // postconditions for any functions with mutable borrows.
+                    assume(cr3_region@ === self.memory.cr3_spec().0);
+                    assume(cr3 == self.memory.cr3_spec().1);
+                    assert(self.ghost_pt@.region === cr3_region@);
+                    assert(self.inv_at(0, cr3, self.ghost_pt@));
+                    assert(self.inv());
+                    old(self).interp().lemma_unmap_preserves_inv(vaddr);
+                    assert(self.arch === old(self).arch);
+                    assert(Ok(self.interp()) === old(self).interp().unmap(vaddr));
+                    old(self).interp().lemma_unmap_refines_unmap(vaddr);
+                    assert(Ok(self.interp().interp()) === old(self).interp().interp().unmap(vaddr));
+                    assert(self.interp().inv());
+                }
+                UnmapResult::Ok
+            },
+            Err(e) => {
+                proof {
+                    old(self).interp().lemma_unmap_refines_unmap(vaddr);
+                }
+                UnmapResult::ErrNoSuchMapping
             },
         }
     }
