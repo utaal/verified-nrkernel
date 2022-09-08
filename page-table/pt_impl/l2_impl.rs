@@ -885,7 +885,7 @@ impl PageTable {
         self.arch@.contains_entry_size_at_index_atleast(pte.frame.size, 1)
     }
 
-    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    #[verifier(spinoff_prover)] #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
     fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pte: PageTableEntryExec, pt: Ghost<PTDir>)
         -> (res: (Result<Ghost<(PTDir,Set<MemRegion>)>,()>))
         requires
@@ -1702,7 +1702,6 @@ impl PageTable {
 
     proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)
         requires
-            // TODO: May need more preconditions
             self.well_formed(layer, ptr),
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
@@ -1746,6 +1745,7 @@ impl PageTable {
         let c = self.interp_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), self.arch@.entry_base(layer, base, idx), pt.entries.index(idx).get_Some_0());
         let s = l1dir.new_empty_dir(idx);
 
+        assume(false);
         assert(self.inv_at(layer + 1, ptr, pt));
 
         assert(c.layer == layer + 1);
