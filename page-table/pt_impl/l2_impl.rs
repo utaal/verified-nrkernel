@@ -1822,18 +1822,26 @@ impl PageTable {
         }
     }
 
-    fn is_directory_empty(&mut self, layer: usize, ptr: usize, pt: Ghost<PTDir>) -> (res: bool)
+    fn is_directory_empty(&self, layer: usize, ptr: usize, pt: Ghost<PTDir>) -> (res: bool)
         requires
-            old(self).inv_at(layer, ptr, pt@),
+            self.inv_at(layer, ptr, pt@),
         ensures
             res === self.empty_at(layer, ptr, pt@)
     {
         assert(self.directories_obey_invariant_at(layer, ptr, pt@));
         let mut idx = 0;
-        while idx < self.arch.num_entries(layer) {
+        let num_entries = self.arch.num_entries(layer);
+        while idx < num_entries
+            invariant
+                self.inv_at(layer, ptr, pt@),
+                forall|i: nat| i < idx ==> self.view_at(layer, ptr, i, pt@).is_Empty(),
+        {
+            assert(idx < num_entries);
             // Any chance it's actually faster to just bitwise or all the entries together and check at the end?
             let entry = self.entry_at(layer, ptr, idx, pt);
             if entry.is_mapping() {
+                assert(!self.view_at(layer, ptr, idx, pt@).is_Empty());
+                assume(!self.empty_at(layer, ptr, pt@));
                 return false;
             }
             idx = idx + 1;
