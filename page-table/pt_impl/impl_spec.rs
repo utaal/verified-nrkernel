@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use builtin_macros::*;
 use builtin::*;
-use crate::high_level_spec as hlspec;
+use crate::hlspec_t as hlspec;
 use crate::pervasive::*;
 use crate::aux_defs::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::pt_u as pt;

@@ -10,7 +10,7 @@ use crate::system::spec as system;
 use crate::pt_u as pt;
 use crate::aux_defs::{ between, MemRegion, overlap, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::aux_defs::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
-use crate::high_level_spec as hlspec;
+use crate::hlspec_t as hlspec;
 use crate::mem_t::{ word_index_spec };
 use option::{ *, Option::* };
 
