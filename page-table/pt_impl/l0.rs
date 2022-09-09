@@ -24,7 +24,7 @@ pub proof fn ambient_arith()
         forall_arith(|a: int, b: int| #[trigger] (a * b) == (b * a)),
         forall|a:nat| a != 0 ==> aligned(0, a)
 {
-    crate::lib::aligned_zero();
+    crate::lib_u::aligned_zero();
 }
 
 pub proof fn ambient_lemmas1()

@@ -297,7 +297,7 @@ impl ArchExec {
             res == self@.entry_base(layer, base, idx)
     {
         proof {
-            crate::lib::mult_leq_mono_both(idx, self@.entry_size(layer), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
+            crate::lib_u::mult_leq_mono_both(idx, self@.entry_size(layer), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
         }
         base + idx * self.entry_size(layer)
     }
@@ -433,8 +433,8 @@ impl Arch {
         } else {
             assert(forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a));
             self.lemma_entry_sizes_aligned(i+1,j);
-            crate::lib::mod_of_mul_auto();
-            crate::lib::aligned_transitive_auto();
+            crate::lib_u::mod_of_mul_auto();
+            crate::lib_u::aligned_transitive_auto();
             assert(aligned(self.entry_size(i), self.entry_size(j)));
         }
     }

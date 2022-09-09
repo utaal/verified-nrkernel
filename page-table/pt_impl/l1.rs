@@ -1007,9 +1007,9 @@ impl Directory {
         self.arch.lemma_entry_sizes_aligned_auto();
         assert(aligned(self.entry_size(), pte.frame.size));
 
-        crate::lib::aligned_transitive_auto();
+        crate::lib_u::aligned_transitive_auto();
         assert(aligned(self.entry_base(entry+1), pte.frame.size));
-        crate::lib::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
+        crate::lib_u::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
         assert(base + pte.frame.size <= self.entry_base(entry+1));
         assert(base + pte.frame.size <= self.entry_base(entry) + self.entry_size());
         assert(base + pte.frame.size <= d.base_vaddr + self.entry_size());
