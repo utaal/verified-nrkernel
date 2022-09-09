@@ -19,7 +19,7 @@ use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
-use crate::pt_u as pt;
+use crate::impl_u::spec_pt;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::spec_t::hardware::interp_pt_mem;
 
@@ -47,7 +47,7 @@ impl impl_spec::PTImpl for PageTableImpl {
 
     fn implspec_map_frame(&self, memory: mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
         // requires
-        assert(pt::step_Map_preconditions(base, pte@));
+        assert(spec_pt::step_Map_preconditions(base, pte@));
         // assert(aligned(base, pte@.frame.size));
         // assert(aligned(pte.frame.base, pte@.frame.size));
         // assert(candidate_mapping_in_bounds(base, pte@));
@@ -92,7 +92,7 @@ impl impl_spec::PTImpl for PageTableImpl {
             assert(self.implspec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
-            assume(pt::step_Map(pt::PageTableVariables { map: interp_pt_mem(memory) }, pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, base, pte@, res));
+            assume(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, base, pte@, res));
         }
         (res, page_table.memory)
     }

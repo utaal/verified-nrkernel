@@ -19,7 +19,6 @@ use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::mem_t as mem;
 use crate::mem_t::{ word_index_spec };
-use crate::pt_u as pt;
 
 verus! {
 
@@ -1759,7 +1758,6 @@ impl PageTable {
             old(self).interp().accepted_mapping(vaddr, pte@),
             vaddr < MAX_BASE,
         ensures
-            // pt::step_Map(interp_pt_mem(old(self).memory), interp_pt_mem(self.memory))
             self.inv(),
             self.interp().inv(),
             self.arch === old(self).arch,

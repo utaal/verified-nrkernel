@@ -7,7 +7,7 @@ use seq::*;
 use set_lib::*;
 
 use crate::spec_t::{ hardware, hlspec };
-use crate::pt_u as pt;
+use crate::impl_u::spec_pt;
 use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::mem_t::{ word_index_spec };
@@ -166,8 +166,8 @@ impl OSVariables {
         &&& self.tlb_is_submap_of_pt()
     }
 
-    pub open spec fn pt_variables(self) -> pt::PageTableVariables {
-        pt::PageTableVariables {
+    pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
+        spec_pt::PageTableVariables {
             map: self.interp_pt_mem(),
         }
     }
@@ -456,12 +456,12 @@ impl OSVariables {
 pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: hardware::SystemStep) -> bool {
     &&& !system_step.is_PTMemOp()
     &&& hardware::next_step(s1.system, s2.system, system_step)
-    &&& pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }
 
 pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
     &&& hardware::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
+    &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
 
 pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
@@ -470,7 +470,7 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
     // that s2.tlb doesn't contain this particular entry.
     &&& !s2.system.tlb.dom().contains(base)
     &&& hardware::step_PTMemOp(s1.system, s2.system)
-    &&& pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
+    &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 pub enum OSStep {
@@ -516,7 +516,7 @@ proof fn init_implies_pt_init(s: OSVariables)
     requires
         init(s)
     ensures
-        pt::init(s.pt_variables());
+        spec_pt::init(s.pt_variables());
 
 proof fn init_implies_inv(s: OSVariables)
     requires
@@ -539,7 +539,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
             assert(step_Map(s1, s2, base, pte, result));
-            assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
+            assert(spec_pt::step_Map(pt_s1, pt_s2, base, pte, result));
             assert(!candidate_mapping_overlaps_existing_pmem(pt_s1.map, base, pte));
             if candidate_mapping_overlaps_existing_vmem(pt_s1.map, base, pte) {
                 assert(s2.inv());
@@ -579,7 +579,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
             assert(step_Unmap(s1, s2, base, result));
-            assert(pt::step_Unmap(pt_s1, pt_s2, base, result));
+            assert(spec_pt::step_Unmap(pt_s1, pt_s2, base, result));
             if pt_s1.map.dom().contains(base) {
                 assert(result.is_Ok());
                 assert(pt_s2.map === pt_s1.map.remove(base));
@@ -618,6 +618,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
     }
 }
 
+// TODO: move the untrusted stuff of the refinement proof to separate file
 proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: OSStep)
     requires
         s1.inv(),
@@ -766,7 +767,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             let pt_s2 = s2.pt_variables();
             assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
             assert(step_Map(s1, s2, base, pte, result));
-            assert(pt::step_Map(pt_s1, pt_s2, base, pte, result));
+            assert(spec_pt::step_Map(pt_s1, pt_s2, base, pte, result));
             assert(hlspec::step_Map_preconditions(base, pte));
             if candidate_mapping_overlaps_existing_vmem(pt_s1.map, base, pte) {
                 assert(candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, base, pte));
@@ -799,7 +800,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             let pt_s2 = s2.pt_variables();
             assert(abs_step === hlspec::AbstractStep::Unmap { base, result });
             assert(step_Unmap(s1, s2, base, result));
-            assert(pt::step_Unmap(pt_s1, pt_s2, base, result));
+            assert(spec_pt::step_Unmap(pt_s1, pt_s2, base, result));
             assert(hlspec::step_Unmap_preconditions(base));
             if pt_s1.map.dom().contains(base) {
                 assert(abs_s1.mappings.dom().contains(base));
