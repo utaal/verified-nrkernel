@@ -6,11 +6,10 @@ use map::*;
 use seq::*;
 use set_lib::*;
 
-use crate::system::spec as system;
+use crate::spec_t::{ hardware, hlspec };
 use crate::pt_u as pt;
 use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
-use crate::hlspec_t as hlspec;
 use crate::mem_t::{ word_index_spec };
 use option::{ *, Option::* };
 
@@ -43,7 +42,7 @@ pub proof fn assert_maps_equal_contains_pair<K,V>(m1: Map<K,V>, m2: Map<K,V>)
 }
 
 pub struct OSVariables {
-    pub system: system::SystemVariables,
+    pub system: hardware::SystemVariables,
 }
 
 impl OSVariables {
@@ -174,7 +173,7 @@ impl OSVariables {
     }
 
     pub open spec fn interp_pt_mem(self) -> Map<nat,PageTableEntry> {
-        system::interp_pt_mem(self.system.pt_mem)
+        hardware::interp_pt_mem(self.system.pt_mem)
     }
 
     pub open spec fn effective_mappings(self) -> Map<nat,PageTableEntry> {
@@ -454,14 +453,14 @@ impl OSVariables {
     }
 }
 
-pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: system::SystemStep) -> bool {
+pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: hardware::SystemStep) -> bool {
     &&& !system_step.is_PTMemOp()
-    &&& system::next_step(s1.system, s2.system, system_step)
+    &&& hardware::next_step(s1.system, s2.system, system_step)
     &&& pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }
 
 pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& system::step_PTMemOp(s1.system, s2.system)
+    &&& hardware::step_PTMemOp(s1.system, s2.system)
     &&& pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
 
@@ -470,12 +469,12 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
     // The system step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
     &&& !s2.system.tlb.dom().contains(base)
-    &&& system::step_PTMemOp(s1.system, s2.system)
+    &&& hardware::step_PTMemOp(s1.system, s2.system)
     &&& pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 pub enum OSStep {
-    System { step: system::SystemStep },
+    System { step: hardware::SystemStep },
     Map    { base: nat, pte: PageTableEntry, result: MapResult },
     Unmap  { base: nat, result: UnmapResult },
 }
@@ -485,10 +484,10 @@ impl OSStep {
         match self {
             OSStep::System { step } =>
                 match step {
-                    system::SystemStep::IoOp { vaddr, paddr, op, pte } => hlspec::AbstractStep::IoOp { vaddr, op, pte },
-                    system::SystemStep::PTMemOp                        => arbitrary(),
-                    system::SystemStep::TLBFill { base, pte }          => hlspec::AbstractStep::Stutter,
-                    system::SystemStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
+                    hardware::SystemStep::IoOp { vaddr, paddr, op, pte } => hlspec::AbstractStep::IoOp { vaddr, op, pte },
+                    hardware::SystemStep::PTMemOp                        => arbitrary(),
+                    hardware::SystemStep::TLBFill { base, pte }          => hlspec::AbstractStep::Stutter,
+                    hardware::SystemStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
                 },
             OSStep::Map    { base, pte, result } => hlspec::AbstractStep::Map { base, pte, result },
             OSStep::Unmap  { base, result } => hlspec::AbstractStep::Unmap { base, result },
@@ -509,7 +508,7 @@ pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
 }
 
 pub open spec fn init(s: OSVariables) -> bool {
-    system::init(s.system)
+    hardware::init(s.system)
 }
 
 // not technically necessary, i think
@@ -641,7 +640,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
         OSStep::System { step: system_step } => {
             s1.lemma_effective_mappings_other(s2);
             match system_step {
-                system::SystemStep::IoOp { vaddr, paddr, op, pte } => {
+                hardware::SystemStep::IoOp { vaddr, paddr, op, pte } => {
                     // hlspec::AbstractStep::IoOp { vaddr, op, pte }
                     let pmem_idx = word_index_spec(paddr);
                     let vmem_idx = word_index_spec(vaddr);
@@ -750,12 +749,12 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, pte));
                     assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
                 },
-                system::SystemStep::PTMemOp => assert(false),
-                system::SystemStep::TLBFill { base, pte } => {
+                hardware::SystemStep::PTMemOp => assert(false),
+                hardware::SystemStep::TLBFill { base, pte } => {
                     // hlspec::AbstractStep::Stutter
                     assert(abs_s2 === abs_s1);
                 },
-                system::SystemStep::TLBEvict { base } => {
+                hardware::SystemStep::TLBEvict { base } => {
                     // hlspec::AbstractStep::Stutter
                     assert(abs_s2 === abs_s1);
                 },

@@ -1,11 +1,11 @@
 #![allow(unused_imports)]
 use builtin_macros::*;
 use builtin::*;
-use crate::hlspec_t as hlspec;
+use crate::spec_t::hlspec;
 use crate::pervasive::*;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::pt_u as pt;
-use crate::system::spec::interp_pt_mem;
+use crate::spec_t::hardware::interp_pt_mem;
 use crate::mem_t as mem;
 
 verus! {

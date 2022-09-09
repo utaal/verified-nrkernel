@@ -21,7 +21,7 @@ use crate::pt_impl::impl_spec;
 use crate::pt_impl::l2_impl;
 use crate::pt_u as pt;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult };
-use crate::system::spec::interp_pt_mem;
+use crate::spec_t::hardware::interp_pt_mem;
 
 verus! {
 
