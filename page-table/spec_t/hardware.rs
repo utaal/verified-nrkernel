@@ -14,7 +14,7 @@ use option::{ *, Option::* };
 
 verus! {
 
-pub struct SystemVariables {
+pub struct HWVariables {
     /// Word-indexed physical memory
     pub mem:    Seq<nat>,
     pub pt_mem: mem::PageTableMemory,
@@ -22,7 +22,7 @@ pub struct SystemVariables {
 }
 
 #[is_variant]
-pub enum SystemStep {
+pub enum HWStep {
     IoOp { vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
     PTMemOp,
     TLBFill { base: nat, pte: PageTableEntry },
@@ -32,7 +32,7 @@ pub enum SystemStep {
 // Page table walker interpretation of the page table memory
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
 
-pub open spec fn init(s: SystemVariables) -> bool {
+pub open spec fn init(s: HWVariables) -> bool {
     &&& s.tlb.dom() === Set::empty()
     &&& interp_pt_mem(s.pt_mem) === Map::empty()
 }
@@ -40,7 +40,7 @@ pub open spec fn init(s: SystemVariables) -> bool {
 // TODO: we only allow aligned accesses, need to argue in report that that's fine. can think of
 // unaligned accesses as two aligned accesses. when we get to concurrency we may have to change
 // that.
-pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
+pub open spec fn step_IoOp(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     &&& aligned(vaddr, 8)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.tlb === s1.tlb
@@ -89,64 +89,64 @@ pub open spec fn step_IoOp(s1: SystemVariables, s2: SystemVariables, vaddr: nat,
     }
 }
 
-pub open spec fn step_PTMemOp(s1: SystemVariables, s2: SystemVariables) -> bool {
+pub open spec fn step_PTMemOp(s1: HWVariables, s2: HWVariables) -> bool {
     &&& s2.mem === s1.mem
     // s2.tlb is a submap of s1.tlb
     &&& forall|base: nat, pte: PageTableEntry| s2.tlb.contains_pair(base, pte) ==> s1.tlb.contains_pair(base, pte)
     // pt_mem may change arbitrarily
 }
 
-pub open spec fn step_TLBFill(s1: SystemVariables, s2: SystemVariables, base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_TLBFill(s1: HWVariables, s2: HWVariables, base: nat, pte: PageTableEntry) -> bool {
     &&& interp_pt_mem(s1.pt_mem).contains_pair(base, pte)
     &&& s2.tlb === s1.tlb.insert(base, pte)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
 }
 
-pub open spec fn step_TLBEvict(s1: SystemVariables, s2: SystemVariables, base: nat) -> bool {
+pub open spec fn step_TLBEvict(s1: HWVariables, s2: HWVariables, base: nat) -> bool {
     &&& s1.tlb.dom().contains(base)
     &&& s2.tlb === s1.tlb.remove(base)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
 }
 
-pub open spec fn next_step(s1: SystemVariables, s2: SystemVariables, step: SystemStep) -> bool {
+pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
-        SystemStep::IoOp { vaddr, paddr, op, pte } => step_IoOp(s1, s2, vaddr, paddr, op, pte),
-        SystemStep::PTMemOp => step_PTMemOp(s1, s2),
-        SystemStep::TLBFill { base, pte } => step_TLBFill(s1, s2, base, pte),
-        SystemStep::TLBEvict { base } => step_TLBEvict(s1, s2, base),
+        HWStep::IoOp { vaddr, paddr, op, pte } => step_IoOp(s1, s2, vaddr, paddr, op, pte),
+        HWStep::PTMemOp => step_PTMemOp(s1, s2),
+        HWStep::TLBFill { base, pte } => step_TLBFill(s1, s2, base, pte),
+        HWStep::TLBEvict { base } => step_TLBEvict(s1, s2, base),
     }
 }
 
-pub open spec fn next(s1: SystemVariables, s2: SystemVariables) -> bool {
-    exists|step: SystemStep| next_step(s1, s2, step)
+pub open spec fn next(s1: HWVariables, s2: HWVariables) -> bool {
+    exists|step: HWStep| next_step(s1, s2, step)
 }
 
-pub closed spec fn inv(s: SystemVariables) -> bool {
+pub closed spec fn inv(s: HWVariables) -> bool {
     true
 }
 
-proof fn init_implies_inv(s: SystemVariables)
+proof fn init_implies_inv(s: HWVariables)
     requires
         init(s),
     ensures
         inv(s)
 { }
 
-proof fn next_preserves_inv(s1: SystemVariables, s2: SystemVariables)
+proof fn next_preserves_inv(s1: HWVariables, s2: HWVariables)
     requires
         next(s1, s2),
         inv(s1),
     ensures
         inv(s2),
 {
-    let step = choose|step: SystemStep| next_step(s1, s2, step);
+    let step = choose|step: HWStep| next_step(s1, s2, step);
     match step {
-        SystemStep::IoOp { vaddr, paddr, op , pte} => (),
-        SystemStep::PTMemOp => (),
-        SystemStep::TLBFill { base, pte } => (),
-        SystemStep::TLBEvict { base } => (),
+        HWStep::IoOp { vaddr, paddr, op , pte} => (),
+        HWStep::PTMemOp => (),
+        HWStep::TLBFill { base, pte } => (),
+        HWStep::TLBEvict { base } => (),
     }
 }
 

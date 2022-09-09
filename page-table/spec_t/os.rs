@@ -42,7 +42,7 @@ pub proof fn assert_maps_equal_contains_pair<K,V>(m1: Map<K,V>, m2: Map<K,V>)
 }
 
 pub struct OSVariables {
-    pub system: hardware::SystemVariables,
+    pub system: hardware::HWVariables,
 }
 
 impl OSVariables {
@@ -453,7 +453,7 @@ impl OSVariables {
     }
 }
 
-pub open spec fn step_System(s1: OSVariables, s2: OSVariables, system_step: hardware::SystemStep) -> bool {
+pub open spec fn step_HW(s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
     &&& !system_step.is_PTMemOp()
     &&& hardware::next_step(s1.system, s2.system, system_step)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
@@ -474,7 +474,7 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
 }
 
 pub enum OSStep {
-    System { step: hardware::SystemStep },
+    HW { step: hardware::HWStep },
     Map    { base: nat, pte: PageTableEntry, result: MapResult },
     Unmap  { base: nat, result: UnmapResult },
 }
@@ -482,12 +482,12 @@ pub enum OSStep {
 impl OSStep {
     pub open spec fn interp(self) -> hlspec::AbstractStep {
         match self {
-            OSStep::System { step } =>
+            OSStep::HW { step } =>
                 match step {
-                    hardware::SystemStep::IoOp { vaddr, paddr, op, pte } => hlspec::AbstractStep::IoOp { vaddr, op, pte },
-                    hardware::SystemStep::PTMemOp                        => arbitrary(),
-                    hardware::SystemStep::TLBFill { base, pte }          => hlspec::AbstractStep::Stutter,
-                    hardware::SystemStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::IoOp { vaddr, paddr, op, pte } => hlspec::AbstractStep::IoOp { vaddr, op, pte },
+                    hardware::HWStep::PTMemOp                        => arbitrary(),
+                    hardware::HWStep::TLBFill { base, pte }          => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
                 },
             OSStep::Map    { base, pte, result } => hlspec::AbstractStep::Map { base, pte, result },
             OSStep::Unmap  { base, result } => hlspec::AbstractStep::Unmap { base, result },
@@ -497,7 +497,7 @@ impl OSStep {
 
 pub open spec fn next_step(s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
-        OSStep::System { step }              => step_System(s1, s2, step),
+        OSStep::HW { step }              => step_HW(s1, s2, step),
         OSStep::Map    { base, pte, result } => step_Map(s1, s2, base, pte, result),
         OSStep::Unmap  { base, result }      => step_Unmap(s1, s2, base, result),
     }
@@ -532,8 +532,8 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
         s2.inv(),
 {
     match step {
-        OSStep::System { step: system_step } => {
-            assert(step_System(s1, s2, system_step));
+        OSStep::HW { step: system_step } => {
+            assert(step_HW(s1, s2, system_step));
         },
         OSStep::Map { base, pte, result } => {
             let pt_s1 = s1.pt_variables();
@@ -638,10 +638,10 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
     let pt2      = s2.interp_pt_mem();
     let abs_step = step.interp();
     match step {
-        OSStep::System { step: system_step } => {
+        OSStep::HW { step: system_step } => {
             s1.lemma_effective_mappings_other(s2);
             match system_step {
-                hardware::SystemStep::IoOp { vaddr, paddr, op, pte } => {
+                hardware::HWStep::IoOp { vaddr, paddr, op, pte } => {
                     // hlspec::AbstractStep::IoOp { vaddr, op, pte }
                     let pmem_idx = word_index_spec(paddr);
                     let vmem_idx = word_index_spec(vaddr);
@@ -750,12 +750,12 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, pte));
                     assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
                 },
-                hardware::SystemStep::PTMemOp => assert(false),
-                hardware::SystemStep::TLBFill { base, pte } => {
+                hardware::HWStep::PTMemOp => assert(false),
+                hardware::HWStep::TLBFill { base, pte } => {
                     // hlspec::AbstractStep::Stutter
                     assert(abs_s2 === abs_s1);
                 },
-                hardware::SystemStep::TLBEvict { base } => {
+                hardware::HWStep::TLBEvict { base } => {
                     // hlspec::AbstractStep::Stutter
                     assert(abs_s2 === abs_s1);
                 },
