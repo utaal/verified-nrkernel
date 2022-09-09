@@ -8,6 +8,7 @@ use option::{*, Option::*};
 use map::*;
 use set::*;
 use set_lib::*;
+use crate::impl_u::lib;
 use vec::*;
 use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
 
@@ -24,7 +25,7 @@ pub proof fn ambient_arith()
         forall_arith(|a: int, b: int| #[trigger] (a * b) == (b * a)),
         forall|a:nat| a != 0 ==> aligned(0, a)
 {
-    crate::lib_u::aligned_zero();
+    lib::aligned_zero();
 }
 
 pub proof fn ambient_lemmas1()

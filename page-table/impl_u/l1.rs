@@ -11,6 +11,7 @@ use set::*;
 use set_lib::*;
 use vec::*;
 use crate::definitions_t::{new_seq, lemma_new_seq};
+use crate::impl_u::lib;
 
 use result::{*, Result::*};
 
@@ -1007,9 +1008,9 @@ impl Directory {
         self.arch.lemma_entry_sizes_aligned_auto();
         assert(aligned(self.entry_size(), pte.frame.size));
 
-        crate::lib_u::aligned_transitive_auto();
+        lib::aligned_transitive_auto();
         assert(aligned(self.entry_base(entry+1), pte.frame.size));
-        crate::lib_u::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
+        lib::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
         assert(base + pte.frame.size <= self.entry_base(entry+1));
         assert(base + pte.frame.size <= self.entry_base(entry) + self.entry_size());
         assert(base + pte.frame.size <= d.base_vaddr + self.entry_size());
