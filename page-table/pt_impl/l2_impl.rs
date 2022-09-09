@@ -19,7 +19,7 @@ use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
 use crate::pt_impl::impl_spec;
 use crate::mem::{ self, word_index_spec };
-use crate::pt;
+use crate::pt_u as pt;
 
 verus! {
 

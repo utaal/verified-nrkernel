@@ -4,7 +4,7 @@ use builtin::*;
 use crate::high_level_spec as hlspec;
 use crate::pervasive::*;
 use crate::aux_defs::{ PageTableEntryExec, MapResult, UnmapResult };
-use crate::pt;
+use crate::pt_u as pt;
 use crate::system::spec::interp_pt_mem;
 use crate::mem;
 
