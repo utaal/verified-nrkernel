@@ -10,6 +10,7 @@ use set::*;
 use set_lib::*;
 use seq_lib::*;
 use vec::*;
+use crate::mem_t as mem;
 
 use result::{*, Result::*};
 
@@ -18,7 +19,6 @@ use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
 use crate::pt_impl::impl_spec;
 use crate::pt_impl::l2_impl;
-use crate::mem::{ self, word_index_spec };
 use crate::pt_u as pt;
 use crate::aux_defs::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::system::spec::interp_pt_mem;

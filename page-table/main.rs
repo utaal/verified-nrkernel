@@ -8,6 +8,6 @@ pub mod system;
 pub mod pt_u;
 pub mod high_level_spec;
 pub mod aux_defs;
-pub mod mem;
+pub mod mem_t;
 
 fn main() {}

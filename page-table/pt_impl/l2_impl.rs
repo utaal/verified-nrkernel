@@ -18,7 +18,8 @@ use crate::aux_defs::{ x86_arch, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_
 use crate::pt_impl::l1;
 use crate::pt_impl::l0::{ambient_arith};
 use crate::pt_impl::impl_spec;
-use crate::mem::{ self, word_index_spec };
+use crate::mem_t as mem;
+use crate::mem_t::{ word_index_spec };
 use crate::pt_u as pt;
 
 verus! {
