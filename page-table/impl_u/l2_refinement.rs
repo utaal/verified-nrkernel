@@ -15,10 +15,10 @@ use crate::mem_t as mem;
 use result::{*, Result::*};
 
 use crate::definitions_t::{ x86_arch_exec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE };
-use crate::pt_impl::l1;
-use crate::pt_impl::l0::{ambient_arith};
+use crate::impl_u::l1;
+use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
-use crate::pt_impl::l2_impl;
+use crate::impl_u::l2_impl;
 use crate::pt_u as pt;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::spec_t::hardware::interp_pt_mem;

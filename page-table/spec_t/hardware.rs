@@ -9,7 +9,7 @@ use seq::*;
 use crate::definitions_t::{ PageTableEntry, IoOp, LoadResult, StoreResult, between, aligned };
 use crate::mem_t as mem;
 use crate::mem_t::{ word_index_spec };
-use crate::pt_impl::l0;
+use crate::impl_u::l0;
 use option::{ *, Option::* };
 
 verus! {

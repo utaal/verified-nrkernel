@@ -16,7 +16,7 @@ use result::{*, Result::*};
 
 use crate::definitions_t::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE };
 use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
-use crate::pt_impl::l0::{ self, ambient_arith, ambient_lemmas1 };
+use crate::impl_u::l0::{ self, ambient_arith, ambient_lemmas1 };
 
 verus! {
 
