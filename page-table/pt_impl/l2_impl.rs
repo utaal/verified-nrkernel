@@ -10,7 +10,6 @@ use set::*;
 use set_lib::*;
 use seq_lib::*;
 use vec::*;
-use crate::lib_axiom::*;
 
 use result::{*, Result::*};
 
@@ -2029,6 +2028,7 @@ impl PageTable {
         }
     }
 
+    // FIXME: need to do tlb invalidate
     pub fn unmap(&mut self, vaddr: usize) -> (res: UnmapResult)
         requires
             old(self).inv(),

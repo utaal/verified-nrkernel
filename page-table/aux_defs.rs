@@ -9,7 +9,6 @@ use map::*;
 use set::*;
 use set_lib::*;
 use vec::*;
-use crate::lib_axiom::*;
 use result::{*, Result::*};
 
 verus! {
