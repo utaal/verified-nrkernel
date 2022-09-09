@@ -45,6 +45,8 @@ pub open spec fn candidate_mapping_overlaps_existing_pmem(mappings: Map<nat, Pag
 }
 
 pub exec fn aligned_exec(addr: usize, size: usize) -> (res: bool)
+    requires
+        size > 0
     ensures
         res == aligned(addr, size)
 {
