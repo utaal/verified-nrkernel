@@ -9,7 +9,7 @@ use map::*;
 use set::*;
 use set_lib::*;
 use vec::*;
-use crate::aux_defs::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
+use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
 
 use result::{*, Result::*};
 

@@ -6,7 +6,7 @@ use builtin_macros::*;
 #[allow(unused_imports)]
 use crate::pervasive::*;
 #[allow(unused_imports)]
-use crate::aux_defs::aligned;
+use crate::definitions_t::aligned;
 
 // mod
 

@@ -10,12 +10,12 @@ use map::*;
 use set::*;
 use set_lib::*;
 use vec::*;
-use crate::aux_defs;
+use crate::definitions_t::{new_seq, lemma_new_seq};
 
 use result::{*, Result::*};
 
-use crate::aux_defs::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE };
-use crate::aux_defs::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
+use crate::definitions_t::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE };
+use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
 use crate::pt_impl::l0::{ self, ambient_arith, ambient_lemmas1 };
 
 verus! {
@@ -901,7 +901,7 @@ impl Directory {
             self.layer + 1 < self.arch.layers.len(),
     {
         Directory {
-            entries:    aux_defs::new_seq(self.arch.num_entries((self.layer + 1) as nat), NodeEntry::Empty()),
+            entries:    new_seq(self.arch.num_entries((self.layer + 1) as nat), NodeEntry::Empty()),
             layer:      self.layer + 1,
             base_vaddr: self.entry_base(entry),
             arch:       self.arch,
@@ -921,7 +921,7 @@ impl Directory {
         let new_dir = self.new_empty_dir(entry);
         let num_entries = self.arch.num_entries((self.layer + 1) as nat);
         self.arch.lemma_entry_base();
-        aux_defs::lemma_new_seq::<NodeEntry>(num_entries, NodeEntry::Empty());
+        lemma_new_seq::<NodeEntry>(num_entries, NodeEntry::Empty());
 
         assert(new_dir.directories_obey_invariant());
         assert(new_dir.inv());

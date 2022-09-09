@@ -6,7 +6,7 @@ use state_machines_macros::*;
 use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
-use crate::aux_defs::{ PageTableEntry, IoOp, LoadResult, StoreResult, between, aligned };
+use crate::definitions_t::{ PageTableEntry, IoOp, LoadResult, StoreResult, between, aligned };
 use crate::mem_t as mem;
 use crate::mem_t::{ word_index_spec };
 use crate::pt_impl::l0;
