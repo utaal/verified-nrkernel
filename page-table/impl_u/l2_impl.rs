@@ -526,7 +526,9 @@ impl PageTable {
         &&& self.well_formed(layer, ptr)
         &&& self.memory.inv()
         &&& self.memory.regions().contains(pt.region)
-        &&& pt.region.contains(ptr)
+        &&& pt.region.base == ptr
+        &&& pt.region.size == PAGE_SIZE
+        &&& self.memory.region_view(pt.region).len() == pt.entries.len()
         &&& self.layer_in_range(layer)
         &&& pt.entries.len() == self.arch@.num_entries(layer)
         &&& self.directories_obey_invariant_at(layer, ptr, pt)
@@ -645,7 +647,7 @@ impl PageTable {
         assert(other.well_formed(layer, ptr));
         assert(other.memory.inv());
         assert(other.memory.regions().contains(pt.region));
-        assert(pt.region.contains(ptr));
+        assert(pt.region.base == ptr);
         assert(other.layer_in_range(layer));
         assert(pt.entries.len() == other.arch@.num_entries(layer));
         assert(other.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
@@ -936,11 +938,14 @@ impl PageTable {
         proof {
             interp@.lemma_map_frame_structure_assertions(vaddr, pte@, idx);
             self.lemma_interp_at_facts(layer, ptr, base, pt@);
-            indexing::lemma_index_from_base_and_addr(base, vaddr, self.arch@.entry_size(layer), self.arch@.num_entries(layer));
-            assert(between(vaddr, self.arch@.entry_base(layer, base, idx), self.arch@.next_entry_base(layer, base, idx)));
-            assert(aligned(vaddr, self.arch@.entry_size(layer)) ==> vaddr == self.arch@.entry_base(layer, base, idx));
-            assert(idx < MAX_NUM_ENTRIES);
-            assert(idx < self.arch@.num_entries(layer));
+            assert({
+                &&& between(vaddr, self.arch@.entry_base(layer, base, idx), self.arch@.next_entry_base(layer, base, idx))
+                &&& aligned(vaddr, self.arch@.entry_size(layer)) ==> vaddr == self.arch@.entry_base(layer, base, idx)
+                &&& idx < MAX_NUM_ENTRIES
+                &&& idx < self.arch@.num_entries(layer) }) by
+            {
+                indexing::lemma_index_from_base_and_addr(base, vaddr, self.arch@.entry_size(layer), self.arch@.num_entries(layer));
+            };
             interp@.lemma_map_frame_refines_map_frame(vaddr, pte@);
         }
         let entry_base: usize = self.arch.entry_base(layer, base, idx);
@@ -989,11 +994,6 @@ impl PageTable {
                                     entry.is_Directory() == (#[trigger] pt_res@.entries.index(i)).is_Some()
                                 }
                             by {
-                                let byte_addr = (ptrg@ + i * WORD_SIZE) as nat;
-                                let word_addr = word_index_spec(sub(byte_addr, pt_res@.region.base));
-                                // assert(byte_addr >= pt_res@.region.base);
-                                // FIXME: indexing calculus
-                                assume(word_addr < self.memory.region_view(pt_res@.region).len());
                                 assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
                                 let entry = self.view_at(layer, ptrg@, i, pt_res@);
                                 if i == idxg@ {
@@ -1063,9 +1063,6 @@ impl PageTable {
                             by {
                                 let entry = #[trigger] self.view_at(layer, ptr, i, pt_res@);
                                 let byte_addr = (ptrg@ + i * WORD_SIZE) as nat;
-                                let word_addr = word_index_spec(sub(byte_addr, pt_res@.region.base));
-                                // FIXME: indexing calculus
-                                assume(word_addr < self.memory.region_view(pt_res@.region).len());
                                 if i == idxg@ {
                                     assert(pt_res@.entries[i].get_Some_0() === dir_pt_res@);
                                     assert(entry.get_Directory_addr() === dir_addr);
@@ -1178,10 +1175,18 @@ impl PageTable {
             }
         } else {
             if self.arch.entry_size(layer) == pte.frame.size {
-                assert(0 < layer) by {
-                    reveal(Self::accepted_mapping);
-                };
                 proof {
+                    let layerg = layer;
+                    assert(0 < layer) by {
+                        reveal(Self::accepted_mapping);
+                        if layerg == 0 {
+                            let iprime = choose|i: nat| 1 <= i && i < self.arch@.layers.len() && #[trigger] self.arch@.entry_size(i) == pte.frame.size;
+                            assert(self.arch@.entry_size(0) == pte.frame.size);
+                            assert(self.arch@.contains_entry_size_at_index_atleast(pte.frame.size, 1));
+                            // FIXME: unstable
+                            assume(forall|i: nat| 0 < i < self.arch@.layers.len() ==> self.arch@.entry_size(0) < #[trigger] self.arch@.entry_size(i));
+                        }
+                    };
                     let frame_base = pte.frame.base as u64;
                     // FIXME: this should be derivable from alignment property in accepted_mapping
                     assume(addr_is_zero_padded(layer, frame_base, true));
@@ -1193,13 +1198,11 @@ impl PageTable {
                 // Actually there's some other reason this is going through. Not sure what it is.
                 assert(aligned((ptr + idx * WORD_SIZE) as nat, 8));
                 let write_addr = ptr + idx * WORD_SIZE;
-                let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
-                // FIXME: indexing calculus
-                assume(word_addr@ < self.memory.region_view(pt@.region).len());
                 assume(pt@.region.contains(write_addr));
                 let pwmem: Ghost<mem::PageTableMemory> = ghost(self.memory);
                 self.memory.write(write_addr, ghost(pt@.region), new_page_entry.entry);
-                assert(self.memory.region_view(pt@.region) === pwmem@.region_view(pt@.region).update(word_addr@, new_page_entry.entry));
+                assert(self.memory.region_view(pt@.region) === pwmem@.region_view(pt@.region).update(idx, new_page_entry.entry));
+                assert(self.memory.region_view(pt@.region).len() == self.arch@.num_entries(layer));
 
                 let ptrg: Ghost<usize> = ghost(ptr);
                 assert forall|i: nat| i < self.arch@.num_entries(layer)
@@ -1209,10 +1212,6 @@ impl PageTable {
                     }
                 by {
                     let byte_addr = (ptrg@ + i * WORD_SIZE) as nat;
-                    let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
-                    // FIXME: This is basically index_for_vaddr, should reuse those lemmas
-                    // FIXME: indexing calculus
-                    assume(word_addr < self.memory.region_view(pt@.region).len());
                     let entry = self.view_at(layer, ptr, i, pt@);
                     if i == idxg@ {
                         assert(entry === new_page_entry@);
@@ -1231,9 +1230,7 @@ impl PageTable {
                 by {
                     let entry = #[trigger] self.view_at(layer, ptr, i, pt@);
                     let byte_addr = (ptrg@ + i * WORD_SIZE) as nat;
-                    let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
-                    // FIXME: indexing calculus
-                    assume(word_addr < self.memory.region_view(pt@.region).len());
+                    assert(i < self.memory.region_view(pt@.region).len());
                     if i == idxg@ {
                         assert(entry === new_page_entry@);
                         assert(!entry.is_Directory());
@@ -1270,9 +1267,6 @@ impl PageTable {
                             === #[trigger] old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries.index(i) by
                     {
                         let byte_addr = (ptrg@ + i * WORD_SIZE) as nat;
-                        let word_addr = word_index_spec(sub(byte_addr, pt@.region.base));
-                        // FIXME: indexing calculus
-                        assume(word_addr < self.memory.region_view(pt@.region).len());
                         assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).is_Ok());
                         assert(old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[i] === old(self).interp_at(layer, ptr, base, pt@).entries[i]);
                         assert(old(self).interp_at(layer, ptr, base, pt@).entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
@@ -1327,10 +1321,7 @@ impl PageTable {
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 assume(ptr < 100);
                 let write_addr = ptr + idx * WORD_SIZE;
-                let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
                 assert(aligned(write_addr, 8));
-                // FIXME: indexing calculus
-                assume(word_addr@ < self.memory.region_view(pt@.region).len());
                 assume(pt@.region.contains(write_addr));
                 self.memory.write(write_addr, ghost(pt@.region), new_dir_entry.entry);
 
@@ -1363,7 +1354,7 @@ impl PageTable {
                     assert(forall|r: MemRegion| r !== new_dir_pt@.region && r !== pt_with_empty@.region
                            ==> self_with_empty@.memory.region_view(r) === old(self).memory.region_view(r));
                     assert(self_with_empty@.memory.region_view(pt_with_empty@.region)
-                           === old(self).memory.region_view(pt_with_empty@.region).update(word_addr@, new_dir_entry.entry));
+                           === old(self).memory.region_view(pt_with_empty@.region).update(idx, new_dir_entry.entry));
                     assert(forall|i: nat| i < self_with_empty@.arch@.num_entries(layer) && i != idxg@ ==> pt@.entries[i] === pt_with_empty@.entries[i]);
                     let ptrg = ptr;
                     assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@)) by {
@@ -1449,9 +1440,6 @@ impl PageTable {
                     {
                         let prev_interp = old(self).interp_at(layer, ptr, base, pt@);
                         let byte_addr = (ptrg + i * WORD_SIZE) as nat;
-                        let word_addr = word_index_spec(sub(byte_addr, pt_with_empty@.region.base));
-                        // FIXME: indexing calculus
-                        assume(word_addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
                         assert(prev_interp.entries.index(i) === old(self).interp_at_entry(layer, ptr, base, i, pt@));
                         assert(old(self).memory.spec_read((ptr + i * WORD_SIZE) as nat, pt@.region) === self_with_empty@.memory.spec_read((ptr + i * WORD_SIZE) as nat, pt_with_empty@.region));
                         old(self).lemma_interp_at_entry_different_memory(self_with_empty@, layer, ptr, base, i, pt@, pt_with_empty@);
@@ -1639,9 +1627,6 @@ impl PageTable {
                                 {
                                     let prev_interp = self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@);
                                     let byte_addr = (ptrg + i * WORD_SIZE) as nat;
-                                    let word_addr = word_index_spec(sub(byte_addr, pt_final@.region.base));
-                                    // FIXME: indexing calculus
-                                    assume(word_addr < self_with_empty@.memory.region_view(pt_final@.region).len());
                                     assert(prev_interp.entries.index(i) === self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@));
                                     // if pt_final@.entries[i].is_Some() {
                                     //     let pt_entry = pt_final@.entries[i].get_Some_0();
@@ -1701,7 +1686,10 @@ impl PageTable {
             self.well_formed(layer, ptr),
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
-            pt.region.contains(ptr),
+            pt.region.base == ptr,
+            pt.region.size == PAGE_SIZE,
+            self.memory.region_view(pt.region).len() == pt.entries.len(),
+            pt.region.base == ptr,
             ptr == pt.region.base,
             pt.used_regions === set![pt.region],
             self.layer_in_range(layer),
@@ -1931,9 +1919,6 @@ impl PageTable {
 
                         if self.is_directory_empty(layer + 1, dir_addr, dir_pt_res) {
                             let write_addr = ptr + idx * WORD_SIZE;
-                            let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
-                            // FIXME: indexing calculus
-                            assume(word_addr@ < self.memory.region_view(pt@.region).len());
                             assume(pt@.region.contains(write_addr));
                             assume(self.memory.regions().contains(pt@.region));
                             assume(self.memory.inv());
@@ -1997,9 +1982,6 @@ impl PageTable {
             } else {
                 if aligned_exec(vaddr, self.arch.entry_size(layer)) {
                     let write_addr = ptr + idx * WORD_SIZE;
-                    let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
-                    // FIXME: indexing calculus
-                    assume(word_addr@ < self.memory.region_view(pt@.region).len());
                     assume(pt@.region.contains(write_addr));
                     self.memory.write(write_addr, ghost(pt@.region), 0u64);
 
