@@ -11,6 +11,7 @@ use set_lib::*;
 use vec::*;
 use result::{*, Result::*};
 use crate::impl_u::lib;
+use crate::impl_u::indexing;
 
 verus! {
 
@@ -258,7 +259,8 @@ impl ArchExec {
             layer < self@.layers.len(),
             vaddr >= base,
         ensures
-            res == self@.index_for_vaddr(layer, base, vaddr)
+            res == self@.index_for_vaddr(layer, base, vaddr),
+            res == indexing::index_from_base_and_addr(base, vaddr, self@.entry_size(layer)),
     {
         let es = self.entry_size(layer);
         assert(es == self@.entry_size(layer));
@@ -390,7 +392,7 @@ impl Arch {
             self.inv(),
             layer < self.layers.len(),
     {
-        base + self.num_entries(layer) * self.entry_size(layer)
+        self.entry_base(layer, base, self.num_entries(layer))
     }
 
     pub open spec(checked) fn inv(&self) -> bool {
@@ -511,20 +513,24 @@ impl Arch {
         assert(idx < MAX_NUM_ENTRIES);
     }
 
+    #[verifier(inline)]
     pub open spec(checked) fn entry_base(self, layer: nat, base: nat, idx: nat) -> nat
         recommends
             self.inv(),
             layer < self.layers.len()
     {
-        base + idx * self.entry_size(layer)
+        // base + idx * self.entry_size(layer)
+        indexing::entry_base_from_index(base, idx, self.entry_size(layer))
     }
 
+    #[verifier(inline)]
     pub open spec(checked) fn next_entry_base(self, layer: nat, base: nat, idx: nat) -> nat
         recommends
             self.inv(),
             layer < self.layers.len()
     {
-        base + (idx + 1) * self.entry_size(layer)
+        // base + (idx + 1) * self.entry_size(layer)
+        indexing::next_entry_base_from_index(base, idx, self.entry_size(layer))
     }
 
     // #[verifier(nonlinear)]

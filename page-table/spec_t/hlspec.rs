@@ -13,7 +13,7 @@ use option::{ *, Option::None, Option::Some };
 use crate::mem_t::{ word_index_spec };
 
 // TODO:
-// - should Map be able to set is_supervisor?
+// - should Unmap be able to unmap when is_supervisor is set?
 
 verus! {
 
@@ -27,7 +27,7 @@ pub struct AbstractVariables {
     /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
     /// flags into `map` as well and write the specification exclusively in terms of `map` but that
     /// also makes some of the preconditions awkward, e.g. full mappings have the same flags, etc.
-    pub mappings: Map<nat,PageTableEntry>
+    pub mappings: Map<nat,PageTableEntry>,
 }
 
 pub enum AbstractStep {
@@ -166,10 +166,6 @@ pub open spec fn step_IoOp(c: AbstractConstants, s1: AbstractVariables, s2: Abst
 pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool {
     &&& aligned(base, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
-    // FIXME: We don't have an upper bound on the physical addresses we can map. If a physical
-    // address outside the actual physical address space is mapped and then accessed, the spec just
-    // treats it like a valid memory access but in practice we'd get a fault.
-    // &&& pte.frame.base + pte.frame.size <= c.phys_addr_space_size
     &&& candidate_mapping_in_bounds(base, pte)
     &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE

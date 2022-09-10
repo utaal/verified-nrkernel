@@ -16,28 +16,26 @@ use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, b
 use crate::definitions_t::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
+use crate::impl_u::indexing;
 
 verus! {
 
-/// We view the memory as a sequence of u64s but have to use byte offsets in the page table
-/// entries. This function converts a word-aligned byte offset to a word index.
-pub fn word_index(idx: usize) -> (res: usize)
+pub fn word_index(offset: usize) -> (res: usize)
     requires
-        aligned(idx, WORD_SIZE),
+        aligned(offset, 8),
     ensures
-        res == word_index_spec(idx)
+        res as nat === word_index_spec(offset),
+        // Prove this equivalence to use the indexing lemmas
+        res as nat === indexing::index_from_offset(offset, WORD_SIZE),
+        word_index_spec(offset) === indexing::index_from_offset(offset, WORD_SIZE),
 {
-    idx / WORD_SIZE
+    offset / WORD_SIZE
 }
 
-pub open spec fn word_index_spec(idx: nat) -> nat
-    recommends aligned(idx, 8)
+pub open spec fn word_index_spec(offset: nat) -> nat
+    recommends aligned(offset, 8)
 {
-    if aligned(idx, WORD_SIZE) {
-        idx / WORD_SIZE
-    } else {
-        arbitrary()
-    }
+    offset / WORD_SIZE
 }
 
 pub struct TLB {

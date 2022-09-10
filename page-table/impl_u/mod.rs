@@ -6,3 +6,4 @@ pub mod spec_pt;
 // TODO: This can be private once I moved the indexing calculus stuff out of the Arch struct and
 // into some file in impl_u
 pub mod lib;
+pub mod indexing;

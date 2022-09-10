@@ -19,6 +19,7 @@ use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::mem_t as mem;
 use crate::mem_t::{ word_index_spec };
+use crate::impl_u::indexing;
 
 verus! {
 
@@ -816,7 +817,7 @@ impl PageTable {
         if entry.is_mapping() {
             let entry_base: usize = self.arch.entry_base(layer, base, idx);
             proof {
-                self.arch@.lemma_entry_base();
+                indexing::lemma_entry_base_from_index(base, idx, self.arch@.entry_size(layer));
                 assert(entry_base <= vaddr);
             }
             if entry.is_dir(layer) {
@@ -940,7 +941,7 @@ impl PageTable {
         }
         let entry_base: usize = self.arch.entry_base(layer, base, idx);
         proof {
-            self.arch@.lemma_entry_base();
+            indexing::lemma_entry_base_from_index(base, idx, self.arch@.entry_size(layer));
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
@@ -986,6 +987,7 @@ impl PageTable {
                             by {
                                 let byte_addr = (ptrg@ + i * WORD_SIZE) as nat;
                                 let word_addr = word_index_spec(sub(byte_addr, pt_res@.region.base));
+                                // assert(byte_addr >= pt_res@.region.base);
                                 // FIXME: indexing calculus
                                 assume(word_addr < self.memory.region_view(pt_res@.region).len());
                                 assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
@@ -1184,6 +1186,7 @@ impl PageTable {
                 assume(ptr < 100);
                 // TODO: this assertion goes through "by accident" due to lemma_entry_base. Maybe
                 // we should rename entry_base and use it for all index calculations?
+                // Actually there's some other reason this is going through. Not sure what it is.
                 assert(aligned((ptr + idx * WORD_SIZE) as nat, 8));
                 let write_addr = ptr + idx * WORD_SIZE;
                 let word_addr: Ghost<nat> = ghost(word_index_spec(sub(write_addr, pt@.region.base)));
@@ -1902,7 +1905,7 @@ impl PageTable {
         }
         let entry_base: usize = self.arch.entry_base(layer, base, idx);
         proof {
-            self.arch@.lemma_entry_base();
+            indexing::lemma_entry_base_from_index(base, idx, self.arch@.entry_size(layer));
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
