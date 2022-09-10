@@ -811,7 +811,7 @@ impl PageTable {
         proof {
             interp@.lemma_resolve_structure_assertions(vaddr, idx);
             self.lemma_interp_at_facts(layer, ptr, base, pt@);
-            self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+            indexing::lemma_index_from_base_and_addr(base, vaddr, self.arch@.entry_size(layer), self.arch@.num_entries(layer));
             interp@.lemma_resolve_refines(vaddr);
         }
         if entry.is_mapping() {
@@ -936,7 +936,11 @@ impl PageTable {
         proof {
             interp@.lemma_map_frame_structure_assertions(vaddr, pte@, idx);
             self.lemma_interp_at_facts(layer, ptr, base, pt@);
-            self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+            indexing::lemma_index_from_base_and_addr(base, vaddr, self.arch@.entry_size(layer), self.arch@.num_entries(layer));
+            assert(between(vaddr, self.arch@.entry_base(layer, base, idx), self.arch@.next_entry_base(layer, base, idx)));
+            assert(aligned(vaddr, self.arch@.entry_size(layer)) ==> vaddr == self.arch@.entry_base(layer, base, idx));
+            assert(idx < MAX_NUM_ENTRIES);
+            assert(idx < self.arch@.num_entries(layer));
             interp@.lemma_map_frame_refines_map_frame(vaddr, pte@);
         }
         let entry_base: usize = self.arch.entry_base(layer, base, idx);
@@ -1900,7 +1904,7 @@ impl PageTable {
         proof {
             interp@.lemma_unmap_structure_assertions(vaddr, idx);
             self.lemma_interp_at_facts(layer, ptr, base, pt@);
-            self.arch@.lemma_index_for_vaddr(layer, base, vaddr);
+            indexing::lemma_index_from_base_and_addr(base, vaddr, self.arch@.entry_size(layer), self.arch@.num_entries(layer));
             interp@.lemma_unmap_refines_unmap(vaddr);
         }
         let entry_base: usize = self.arch.entry_base(layer, base, idx);

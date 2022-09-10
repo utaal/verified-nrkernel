@@ -457,61 +457,62 @@ impl Arch {
         });
     }
 
+    #[verifier(inline)]
     pub open spec(checked) fn index_for_vaddr(self, layer: nat, base: nat, vaddr: nat) -> nat
         recommends
             self.inv(),
             layer < self.layers.len(),
             base <= vaddr,
     {
-         ((vaddr - base) as nat) / self.entry_size(layer)
+        indexing::index_from_base_and_addr(base, vaddr, self.entry_size(layer))
     }
 
-    pub proof fn lemma_index_for_vaddr(self, layer: nat, base: nat, vaddr: nat)
-        requires
-            self.inv(),
-            layer < self.layers.len(),
-            base <= vaddr,
-            vaddr < self.upper_vaddr(layer, base),
-        ensures
-            ({
-                let idx = self.index_for_vaddr(layer, base, vaddr);
-                &&& idx < self.num_entries(layer)
-                &&& between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))
-                &&& aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)
-                &&& idx < MAX_NUM_ENTRIES
-            }),
-    {
-        // FIXME: prove all this stuff
-        let idx = self.index_for_vaddr(layer, base, vaddr);
-        assert(idx < self.num_entries(layer)) by(nonlinear_arith)
-            requires
-                self.inv(),
-                layer < self.layers.len(),
-                between(vaddr, base, self.upper_vaddr(layer, base)),
-                idx == self.index_for_vaddr(layer, base, vaddr),
-        { };
-        assert(between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))) by(nonlinear_arith)
-            requires
-                self.inv(),
-                layer < self.layers.len(),
-                between(vaddr, base, self.upper_vaddr(layer, base)),
-                idx == self.index_for_vaddr(layer, base, vaddr),
-                idx < self.num_entries(layer),
-        { };
-        assert(aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)) by (nonlinear_arith)
-            requires
-                self.inv(),
-                layer < self.layers.len(),
-                base <= vaddr,
-                vaddr < self.upper_vaddr(layer, base),
-                idx == self.index_for_vaddr(layer, base, vaddr),
-                idx < self.num_entries(layer),
-                between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx)),
-        {
-            assume(false);
-        };
-        assert(idx < MAX_NUM_ENTRIES);
-    }
+    // pub proof fn lemma_index_for_vaddr(self, layer: nat, base: nat, vaddr: nat)
+    //     requires
+    //         self.inv(),
+    //         layer < self.layers.len(),
+    //         base <= vaddr,
+    //         vaddr < self.upper_vaddr(layer, base),
+    //     ensures
+    //         ({
+    //             let idx = self.index_for_vaddr(layer, base, vaddr);
+    //             &&& idx < self.num_entries(layer)
+    //             &&& between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))
+    //             &&& aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)
+    //             &&& idx < MAX_NUM_ENTRIES
+    //         }),
+    // {
+    //     // FIXME: prove all this stuff
+    //     let idx = self.index_for_vaddr(layer, base, vaddr);
+    //     assert(idx < self.num_entries(layer)) by(nonlinear_arith)
+    //         requires
+    //             self.inv(),
+    //             layer < self.layers.len(),
+    //             between(vaddr, base, self.upper_vaddr(layer, base)),
+    //             idx == self.index_for_vaddr(layer, base, vaddr),
+    //     { };
+    //     assert(between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))) by(nonlinear_arith)
+    //         requires
+    //             self.inv(),
+    //             layer < self.layers.len(),
+    //             between(vaddr, base, self.upper_vaddr(layer, base)),
+    //             idx == self.index_for_vaddr(layer, base, vaddr),
+    //             idx < self.num_entries(layer),
+    //     { };
+    //     assert(aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)) by (nonlinear_arith)
+    //         requires
+    //             self.inv(),
+    //             layer < self.layers.len(),
+    //             base <= vaddr,
+    //             vaddr < self.upper_vaddr(layer, base),
+    //             idx == self.index_for_vaddr(layer, base, vaddr),
+    //             idx < self.num_entries(layer),
+    //             between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx)),
+    //     {
+    //         assume(false);
+    //     };
+    //     assert(idx < MAX_NUM_ENTRIES);
+    // }
 
     #[verifier(inline)]
     pub open spec(checked) fn entry_base(self, layer: nat, base: nat, idx: nat) -> nat

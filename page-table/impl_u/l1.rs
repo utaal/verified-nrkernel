@@ -669,7 +669,7 @@ impl Directory {
 
         assert(between(vaddr, self.base_vaddr, self.upper_vaddr()));
         let entry = self.index_for_vaddr(vaddr);
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, vaddr);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, vaddr, self.entry_size(), self.num_entries());
         // TODO: This makes the recommends failure on the line below go away but not the one in the
         // corresponding spec function. wtf
         assert(0 <= entry < self.entries.len());
@@ -780,7 +780,7 @@ impl Directory {
         ambient_lemmas2();
 
         indexing::lemma_entry_base_from_index(self.base_vaddr, idx, self.entry_size());
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, vaddr);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, vaddr, self.entry_size(), self.num_entries());
 
         match self.entries.index(idx) {
             NodeEntry::Page(p) => { },
@@ -807,7 +807,7 @@ impl Directory {
 
         let entry = self.index_for_vaddr(vaddr);
         indexing::lemma_entry_base_from_index(self.base_vaddr, entry, self.entry_size());
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, vaddr);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, vaddr, self.entry_size(), self.num_entries());
         self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
 
         match self.entries.index(entry) {
@@ -989,7 +989,7 @@ impl Directory {
         ambient_lemmas2(); // TODO: unnecessary?
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         if self.inv() && self.accepted_mapping(base, pte) {
-            self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+            indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         }
     }
 
@@ -1007,7 +1007,7 @@ impl Directory {
             d.accepted_mapping(base, pte),
     {
         ambient_lemmas1();
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
 
         let entry = self.index_for_vaddr(base);
@@ -1069,7 +1069,7 @@ impl Directory {
         ambient_lemmas1();
         ambient_lemmas2();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
 
         let res = self.map_frame(base, pte).get_Ok_0();
 
@@ -1125,7 +1125,7 @@ impl Directory {
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
                     assert(new_dir.accepted_mapping(base, pte));
-                    new_dir.arch.lemma_index_for_vaddr(new_dir.layer, new_dir.base_vaddr, base);
+                    indexing::lemma_index_from_base_and_addr(new_dir.base_vaddr, base, new_dir.entry_size(), new_dir.num_entries());
                     new_dir.lemma_map_frame_empty_is_ok(base, pte);
                     new_dir.lemma_map_frame_preserves_inv(base, pte);
 
@@ -1296,7 +1296,7 @@ impl Directory {
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
 
         let res = self.map_frame(base, pte).get_Ok_0();
         if self.map_frame(base, pte).is_Ok() {
@@ -1327,7 +1327,7 @@ impl Directory {
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
                     assert(new_dir.accepted_mapping(base, pte));
-                    new_dir.arch.lemma_index_for_vaddr(new_dir.layer, new_dir.base_vaddr, base);
+                    indexing::lemma_index_from_base_and_addr(new_dir.base_vaddr, base, new_dir.entry_size(), new_dir.num_entries());
 
                     new_dir.lemma_map_frame_refines_map_frame(base, pte);
                     assert(new_dir.interp().map_frame(base, pte).is_Ok());
@@ -1349,7 +1349,7 @@ impl Directory {
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
 
         let res = self.map_frame(base, pte).get_Ok_0();
         if self.map_frame(base, pte).is_Ok() {
@@ -1449,7 +1449,7 @@ impl Directory {
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, new_dir);
                     new_dir.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
                     assert(new_dir.accepted_mapping(base, pte));
-                    new_dir.arch.lemma_index_for_vaddr(new_dir.layer, new_dir.base_vaddr, base);
+                    indexing::lemma_index_from_base_and_addr(new_dir.base_vaddr, base, new_dir.entry_size(), new_dir.num_entries());
                     new_dir.lemma_map_frame_empty_is_ok(base, pte);
                     new_dir.lemma_map_frame_preserves_inv(base, pte);
 
@@ -1526,7 +1526,7 @@ impl Directory {
     proof fn check_unmap(self, base: nat) {
         if self.inv() && self.accepted_unmap(base) {
             ambient_lemmas2();
-            self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+            indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         } else {
         }
     }
@@ -1548,7 +1548,7 @@ impl Directory {
 
         let entry = self.index_for_vaddr(base);
         indexing::lemma_entry_base_from_index(self.base_vaddr, entry, self.entry_size());
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
 
         assert(entry < self.num_entries());
         match self.entries.index(entry) {
@@ -1600,7 +1600,7 @@ impl Directory {
         self.lemma_inv_implies_interp_inv();
 
         indexing::lemma_entry_base_from_index(self.base_vaddr, idx, self.entry_size());
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
 
         match self.entries.index(self.index_for_vaddr(base)) {
             NodeEntry::Page(p) => {
@@ -1646,7 +1646,7 @@ impl Directory {
         let entry = self.index_for_vaddr(base);
         indexing::lemma_entry_base_from_index(self.base_vaddr, entry, self.entry_size());
         indexing::lemma_entry_base_from_index_support(self.base_vaddr, entry, self.entry_size());
-        self.arch.lemma_index_for_vaddr(self.layer, self.base_vaddr, base);
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
 
         match self.entries.index(entry) {
