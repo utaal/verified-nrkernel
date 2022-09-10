@@ -114,7 +114,7 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
     ensures
         forall|idx2: nat|
             #![trigger entry_base_from_index(base, idx, entry_size), entry_base_from_index(base, idx2, entry_size)]
-            idx < idx2 ==> entry_base_from_index(base, idx, entry_size) <  entry_base_from_index(base, idx2, entry_size),
+            idx < idx2 ==> entry_base_from_index(base, idx, entry_size) < entry_base_from_index(base, idx2, entry_size),
                    // // && next_entry_base_from_index(base, idx, entry_size) <= entry_base_from_index(layer, base, j),
         // TODO: The line above can't be a separate postcondition because it doesn't have any valid triggers.
         // The trigger for it is pretty bad.
@@ -145,49 +145,63 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
         // function call there on which we can trigger. In other words: the lack of mixed triggers
         // makes it impossible to generalize this postcondition.
 {
-    // // FIXME: prove this
-    // assert(forall|idx: nat, j: nat, base: nat, layer: nat|
-    //         #![trigger entry_base_from_index(base, idx, entry_size), entry_base_from_index(base, j, entry_size)]
-    //         layer < self.layers.len() && idx < j ==> entry_base_from_index(base, idx, entry_size)     <  entry_base_from_index(base, j, entry_size)
-    //                && entry_base_from_index(base, idx + 1, entry_size) <= entry_base_from_index(base, j, entry_size)) by(nonlinear_arith)
-    //     requires
-    //         self.inv(),
-    // { };
-
-
-    // assert(forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
-    //         ==> next_entry_base_from_index(base, idx, entry_size) <= entry_base_from_index(base, j, entry_size)) by (nonlinear_arith)
-    //     requires self.inv(),
-    // { }
-
-    // assert forall|idx: nat, base: nat, layer: nat|
-    //         layer < self.layers.len() implies
-    //     {
-    //         &&& #[trigger] next_entry_base_from_index(base, idx, entry_size) == entry_base_from_index(base, idx, entry_size) + self.entry_size(layer)
-    //         &&& next_entry_base_from_index(base, idx, entry_size) == self.entry_size(layer) + entry_base_from_index(base, idx, entry_size)
-    //     } by {
-
-    //     assert(
-    //         #[trigger] next_entry_base_from_index(base, idx, entry_size) == entry_base_from_index(base, idx, entry_size) + self.entry_size(layer)) by (nonlinear_arith)
-    //         requires self.inv(), layer < self.layers.len(),
-    //     { };
-
-    //     assert(
-    //         next_entry_base_from_index(base, idx, entry_size) == self.entry_size(layer) + entry_base_from_index(base, idx, entry_size)) by (nonlinear_arith)
-    //         requires self.inv(), layer < self.layers.len(),
-    //     { };
-    // }
-
-    // assert forall|idx: nat, base: nat, layer: nat|
-    //         layer < self.layers.len() && aligned(base, self.entry_size(layer)) implies #[trigger] aligned(entry_base_from_index(base, idx, entry_size), self.entry_size(layer)) by {
-
-    //     assert(aligned(entry_base_from_index(base, idx, entry_size), self.entry_size(layer))) by (nonlinear_arith)
-    //         requires self.inv(), layer < self.layers.len(), aligned(base, self.entry_size(layer)),
-    //     {
-    //         assume(false);
-    //     }
-    // }
-    assume(false);
+        assert forall|idx2: nat|
+            idx < idx2
+            implies entry_base_from_index(base, idx, entry_size) < entry_base_from_index(base, idx2, entry_size) by
+        {
+            assert(entry_base_from_index(base, idx, entry_size) < entry_base_from_index(base, idx2, entry_size))
+                by(nonlinear_arith)
+                requires
+                    idx < idx2
+            {
+                // FIXME:
+                assume(false);
+            };
+        };
+        assert forall|idx2: nat|
+            idx < idx2
+            implies next_entry_base_from_index(base, idx, entry_size) <= entry_base_from_index(base, idx2, entry_size) by
+        {
+            assert(next_entry_base_from_index(base, idx, entry_size) <= entry_base_from_index(base, idx2, entry_size))
+                by(nonlinear_arith)
+                requires
+                    idx < idx2
+            {
+            };
+        };
+        assert(next_entry_base_from_index(base, idx, entry_size) == entry_base_from_index(base, idx + 1, entry_size));
+        assert(next_entry_base_from_index(base, idx, entry_size) == entry_base_from_index(base, idx, entry_size) + entry_size) by(nonlinear_arith);
+        assert(next_entry_base_from_index(base, idx, entry_size) == entry_size + entry_base_from_index(base, idx, entry_size));
+        assert forall|n: nat|
+            aligned(base, n) && aligned(entry_size, n)
+            implies #[trigger] aligned(entry_base_from_index(base, idx, entry_size), n) by
+        {
+            assert(aligned(entry_base_from_index(base, idx, entry_size), n))
+                by(nonlinear_arith)
+                requires
+                    aligned(base, n),
+                    aligned(entry_size, n)
+            {
+                // FIXME:
+                assume(false);
+            };
+        };
+        assert forall|n: nat|
+            aligned(base, n) && aligned(entry_size, n)
+            implies #[trigger] aligned(next_entry_base_from_index(base, idx, entry_size), n) by
+        {
+            assert(aligned(next_entry_base_from_index(base, idx, entry_size), n))
+                by(nonlinear_arith)
+                requires
+                    aligned(base, n),
+                    aligned(entry_size, n)
+            {
+                // FIXME:
+                assume(false);
+            };
+        };
+        assert(aligned(base, entry_size) ==> aligned(entry_base_from_index(base, idx, entry_size), entry_size));
+        assert(base <= entry_base_from_index(base, idx, entry_size));
 }
 
 }

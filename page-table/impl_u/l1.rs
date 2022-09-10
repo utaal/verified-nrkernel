@@ -742,7 +742,12 @@ impl Directory {
                 self.interp().map.dom().contains(base) &&
                 between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size),
     {
-        self.arch.lemma_entry_base();
+        assert forall|idx: nat, idx2: nat, base: nat, layer: nat|
+            layer < self.arch.layers.len() && idx < idx2
+            implies self.arch.entry_base(layer, base, idx) <  self.arch.entry_base(layer, base, idx2) by
+        {
+            indexing::lemma_entry_base_from_index(base, idx, self.arch.entry_size(layer));
+        };
         self.lemma_interp_of_entry();
         self.lemma_interp_contains_implies_interp_of_entry_contains();
 

@@ -533,88 +533,88 @@ impl Arch {
         indexing::next_entry_base_from_index(base, idx, self.entry_size(layer))
     }
 
-    // #[verifier(nonlinear)]
-    pub proof fn lemma_entry_base(self)
-        requires
-            self.inv(),
-        ensures
-            forall|idx: nat, j: nat, base: nat, layer: nat|
-                #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
-                layer < self.layers.len() && idx < j ==>
-                          self.entry_base(layer, base, idx) <  self.entry_base(layer, base, j),
-                       // && self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j),
-            // TODO: The line above can't be a separate postcondition because it doesn't have any valid triggers.
-            // The trigger for it is pretty bad.
-            forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
-                ==> self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j),
-            // forall|a: nat, base: nat, layer: nat|
-            //     aligned(base, self.entry_size(layer) * a) ==> #[trigger] aligned(base, self.entry_size(layer)),
-            // TODO: Have to use a less general postcondition because the one above doesn't have
-            // any valid triggers
-            forall|idx: nat, base: nat, layer: nat| #![trigger self.next_entry_base(layer, base, idx)]
-                layer < self.layers.len() ==>
-            {
-                &&& self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)
-                &&& self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)
-            },
-            forall|idx: nat, base: nat, layer: nat|
-                layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, idx), self.entry_size(layer)),
-            forall|idx: nat, base: nat, layer: nat|
-                layer < self.layers.len() ==> base <= self.entry_base(layer, base, idx),
-            forall|idx: nat, base: nat, layer: nat|
-                layer < self.layers.len() && idx < self.num_entries(layer) ==> self.entry_base(layer, base, idx) < self.upper_vaddr(layer, base),
-            forall|idx: nat, base: nat, layer: nat|
-                layer < self.layers.len() && idx <= self.num_entries(layer) ==> self.entry_base(layer, base, idx) <= self.upper_vaddr(layer, base),
-            forall|idx: nat, base: nat, layer: nat|
-                layer + 1 < self.layers.len() ==> #[trigger] self.next_entry_base(layer, base, idx) == self.upper_vaddr(layer + 1, self.entry_base(layer, base, idx)),
-            // Support postconditions:
-            forall|base: nat, layer: nat| // Used to infer lhs of next postcondition's implication
-                layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
-    {
-        // FIXME: prove this
-        assert(forall|idx: nat, j: nat, base: nat, layer: nat|
-                #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
-                layer < self.layers.len() && idx < j ==> self.entry_base(layer, base, idx)     <  self.entry_base(layer, base, j)
-                       && self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j)) by(nonlinear_arith)
-            requires
-                self.inv(),
-        { };
+    // // #[verifier(nonlinear)]
+    // pub proof fn lemma_entry_base(self)
+    //     requires
+    //         self.inv(),
+    //     ensures
+    //         forall|idx: nat, j: nat, base: nat, layer: nat|
+    //             #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
+    //             layer < self.layers.len() && idx < j ==>
+    //                       self.entry_base(layer, base, idx) <  self.entry_base(layer, base, j),
+    //                    // && self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j),
+    //         // TODO: The line above can't be a separate postcondition because it doesn't have any valid triggers.
+    //         // The trigger for it is pretty bad.
+    //         forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
+    //             ==> self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j),
+    //         // forall|a: nat, base: nat, layer: nat|
+    //         //     aligned(base, self.entry_size(layer) * a) ==> #[trigger] aligned(base, self.entry_size(layer)),
+    //         // TODO: Have to use a less general postcondition because the one above doesn't have
+    //         // any valid triggers
+    //         forall|idx: nat, base: nat, layer: nat| #![trigger self.next_entry_base(layer, base, idx)]
+    //             layer < self.layers.len() ==>
+    //         {
+    //             &&& self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)
+    //             &&& self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)
+    //         },
+    //         forall|idx: nat, base: nat, layer: nat|
+    //             layer < self.layers.len() && aligned(base, self.entry_size(layer)) ==> #[trigger] aligned(self.entry_base(layer, base, idx), self.entry_size(layer)),
+    //         forall|idx: nat, base: nat, layer: nat|
+    //             layer < self.layers.len() ==> base <= self.entry_base(layer, base, idx),
+    //         forall|idx: nat, base: nat, layer: nat|
+    //             layer < self.layers.len() && idx < self.num_entries(layer) ==> self.entry_base(layer, base, idx) < self.upper_vaddr(layer, base),
+    //         forall|idx: nat, base: nat, layer: nat|
+    //             layer < self.layers.len() && idx <= self.num_entries(layer) ==> self.entry_base(layer, base, idx) <= self.upper_vaddr(layer, base),
+    //         forall|idx: nat, base: nat, layer: nat|
+    //             layer + 1 < self.layers.len() ==> #[trigger] self.next_entry_base(layer, base, idx) == self.upper_vaddr(layer + 1, self.entry_base(layer, base, idx)),
+    //         // Support postconditions:
+    //         forall|base: nat, layer: nat| // Used to infer lhs of next postcondition's implication
+    //             layer < self.layers.len() && aligned(base, self.entry_size(layer) * self.num_entries(layer)) ==> #[trigger] aligned(base, self.entry_size(layer)),
+    // {
+    //     // FIXME: prove this
+    //     assert(forall|idx: nat, j: nat, base: nat, layer: nat|
+    //             #![trigger self.entry_base(layer, base, idx), self.entry_base(layer, base, j)]
+    //             layer < self.layers.len() && idx < j ==> self.entry_base(layer, base, idx)     <  self.entry_base(layer, base, j)
+    //                    && self.entry_base(layer, base, idx + 1) <= self.entry_base(layer, base, j)) by(nonlinear_arith)
+    //         requires
+    //             self.inv(),
+    //     { };
 
 
-        assert(forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
-                ==> self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j)) by (nonlinear_arith)
-            requires self.inv(),
-        { }
+    //     assert(forall|idx: nat, j: nat, base: nat, layer: nat| idx < j
+    //             ==> self.next_entry_base(layer, base, idx) <= self.entry_base(layer, base, j)) by (nonlinear_arith)
+    //         requires self.inv(),
+    //     { }
 
-        assert forall|idx: nat, base: nat, layer: nat|
-                layer < self.layers.len() implies
-            {
-                &&& #[trigger] self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)
-                &&& self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)
-            } by {
+    //     assert forall|idx: nat, base: nat, layer: nat|
+    //             layer < self.layers.len() implies
+    //         {
+    //             &&& #[trigger] self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)
+    //             &&& self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)
+    //         } by {
 
-            assert(
-                #[trigger] self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)) by (nonlinear_arith)
-                requires self.inv(), layer < self.layers.len(),
-            { };
+    //         assert(
+    //             #[trigger] self.next_entry_base(layer, base, idx) == self.entry_base(layer, base, idx) + self.entry_size(layer)) by (nonlinear_arith)
+    //             requires self.inv(), layer < self.layers.len(),
+    //         { };
 
-            assert(
-                self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)) by (nonlinear_arith)
-                requires self.inv(), layer < self.layers.len(),
-            { };
-        }
+    //         assert(
+    //             self.next_entry_base(layer, base, idx) == self.entry_size(layer) + self.entry_base(layer, base, idx)) by (nonlinear_arith)
+    //             requires self.inv(), layer < self.layers.len(),
+    //         { };
+    //     }
 
-        assert forall|idx: nat, base: nat, layer: nat|
-                layer < self.layers.len() && aligned(base, self.entry_size(layer)) implies #[trigger] aligned(self.entry_base(layer, base, idx), self.entry_size(layer)) by {
+    //     assert forall|idx: nat, base: nat, layer: nat|
+    //             layer < self.layers.len() && aligned(base, self.entry_size(layer)) implies #[trigger] aligned(self.entry_base(layer, base, idx), self.entry_size(layer)) by {
 
-            assert(aligned(self.entry_base(layer, base, idx), self.entry_size(layer))) by (nonlinear_arith)
-                requires self.inv(), layer < self.layers.len(), aligned(base, self.entry_size(layer)),
-            {
-                assume(false);
-            }
-        }
-        assume(false);
-    }
+    //         assert(aligned(self.entry_base(layer, base, idx), self.entry_size(layer))) by (nonlinear_arith)
+    //             requires self.inv(), layer < self.layers.len(), aligned(base, self.entry_size(layer)),
+    //         {
+    //             assume(false);
+    //         }
+    //     }
+    //     assume(false);
+    // }
 
 }
 
