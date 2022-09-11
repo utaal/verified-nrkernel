@@ -1371,8 +1371,6 @@ impl PageTable {
                                 if i == idxg@ {
                                 } else {
                                     let addr = ptrg as nat + (i * WORD_SIZE as nat);
-                                    // FIXME: indexing calculus
-                                    assume(addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
                                     assert(self_with_empty@.memory.spec_read(addr, pt_with_empty@.region)
                                            === old(self).memory.spec_read(addr, pt@.region));
                                     assert(entry === old(self).view_at(layer, ptr, i, pt@));
@@ -1397,8 +1395,6 @@ impl PageTable {
                                 } else {
                                     if entry.is_Directory() {
                                         let addr = ptrg as nat + (i * WORD_SIZE as nat);
-                                        // FIXME: indexing calculus
-                                        assume(addr < self_with_empty@.memory.region_view(pt_with_empty@.region).len());
                                         assert(self_with_empty@.memory.spec_read(addr, pt_with_empty@.region)
                                                === old(self).memory.spec_read(addr, pt@.region));
                                         assert(entry === old(self).view_at(layer, ptr, i, pt@));
@@ -1414,10 +1410,9 @@ impl PageTable {
                                 }
                             };
                         };
-                        // FIXME: This suddenly started failing, don't know why
-                        assume(self_with_empty@.ghost_pt_used_regions_rtrancl(layer, ptr, pt_with_empty@));
-                        assume(self_with_empty@.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_with_empty@));
-                        assume(self_with_empty@.ghost_pt_region_notin_used_regions(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_used_regions_rtrancl(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_with_empty@));
+                        assert(self_with_empty@.ghost_pt_region_notin_used_regions(layer, ptr, pt_with_empty@));
 
                         assert(self_with_empty@.inv_at(layer, ptr, pt_with_empty@));
                     };
@@ -1488,8 +1483,6 @@ impl PageTable {
                                         if i == idxg@ {
                                         } else {
                                             let addr = ptrg as nat + (i * WORD_SIZE as nat);
-                                            // FIXME: indexing calculus
-                                            assume(addr < self.memory.region_view(pt_final@.region).len());
                                             assert(self.memory.spec_read(addr, pt_final@.region)
                                                    === self_with_empty@.memory.spec_read(addr, pt_with_empty@.region));
                                             assert(entry === self_with_empty@.view_at(layer, ptr, i, pt_with_empty@));
@@ -1516,8 +1509,6 @@ impl PageTable {
                                             assert(pt_final@.entries[i] === pt_with_empty@.entries[i]);
                                             if entry.is_Directory() {
                                                 let addr = ptrg as nat + (i * WORD_SIZE as nat);
-                                                // FIXME: indexing calculus
-                                                assume(addr < self.memory.region_view(pt_final@.region).len());
                                                 assert(self.memory.spec_read(addr, pt_final@.region)
                                                        === self_with_empty@.memory.spec_read(addr, pt_with_empty@.region));
                                                 assert(entry === self_with_empty@.view_at(layer, ptr, i, pt_with_empty@));
@@ -1606,10 +1597,8 @@ impl PageTable {
 
                                     };
                                 };
-
-                                // FIXME: This suddenly started failing, don't know why
                                 assert(self.ghost_pt_matches_structure(layer, ptr, pt_final@));
-                                assume(self.ghost_pt_region_notin_used_regions(layer, ptr, pt_final@));
+                                assert(self.ghost_pt_region_notin_used_regions(layer, ptr, pt_final@));
                                 assert(self.inv_at(layer, ptr, pt_final@));
                             };
 
@@ -1628,37 +1617,37 @@ impl PageTable {
                                     let prev_interp = self_with_empty@.interp_at(layer, ptr, base, pt_with_empty@);
                                     let byte_addr = (ptrg + i * WORD_SIZE) as nat;
                                     assert(prev_interp.entries.index(i) === self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@));
-                                    // if pt_final@.entries[i].is_Some() {
-                                    //     let pt_entry = pt_final@.entries[i].get_Some_0();
-                                    //     assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_final@));
-                                    //     assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
-                                    //            implies !new_regions@.contains(r) by
-                                    //     {
-                                    //         assert(pt_entry.used_regions.contains(r));
-                                    //         assert(old(self).memory.regions().contains(r));
-                                    //     };
-                                    //     assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
-                                    //            ==> !dir_pt_res@.used_regions.contains(r));
-                                    //     assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
-                                    //            ==> #[trigger] old(self).memory.region_view(r) === self.memory.region_view(r));
-                                    // }
-                                    assume(false);
+                                    if pt_final@.entries[i].is_Some() {
+                                        let pt_entry = pt_final@.entries[i].get_Some_0();
+                                        assert(self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt_final@));
+                                        assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                               implies !new_regions@.contains(r) by
+                                        {
+                                            assert(pt_entry.used_regions.contains(r));
+                                            assert(self_with_empty@.memory.regions().contains(r));
+                                            assert(old(self).memory.regions().contains(r));
+                                            assert(!new_regions@.contains(r));
+                                        };
+                                        assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+                                               ==> !dir_pt_res@.used_regions.contains(r));
+                                        assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+                                               ==> #[trigger] old(self).memory.region_view(r) === self.memory.region_view(r));
+                                    }
                                     assert(self_with_empty@.memory.spec_read((ptr + i * WORD_SIZE) as nat, pt_with_empty@.region) === self.memory.spec_read((ptr + i * WORD_SIZE) as nat, pt_final@.region));
-                                    // assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
-                                    //        ==> !dir_new_regions@.contains(r) && !new_dir_pt@.used_regions.contains(r));
-                                    // assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
-                                    //        ==> #[trigger] self_with_empty@.memory.region_view(r) === self.memory.region_view(r));
                                     self_with_empty@.lemma_interp_at_entry_different_memory(*self, layer, ptr, base, i, pt_with_empty@, pt_final@);
                                     assert(self.interp_at_entry(layer, ptr, base, i, pt_final@) === self_with_empty@.interp_at_entry(layer, ptr, base, i, pt_with_empty@));
                                 };
 
-                                assume(false);
                                 let final_interp = self.interp_at(layer, ptr, base, pt_final@);
                                 assert(final_interp.entries[idxg@] === self.interp_at_entry(layer, ptr, base, idxg@, pt_final@));
                                 assert(final_interp.entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
                                 assert_seqs_equal!(final_interp.entries, old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
                                 assert(final_interp.entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
-                                assert(Ok(self.interp_at(layer, ptr, base, pt_final@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
+                                assert(final_interp.layer === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().layer);
+                                assert(final_interp.base_vaddr === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().base_vaddr);
+                                assert(final_interp.arch === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().arch);
+                                assert(Ok(self.interp_at(layer, ptr, base, pt_final@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@)) by {
+                                };
                             };
                         }
 
