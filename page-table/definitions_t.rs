@@ -109,7 +109,7 @@ pub enum StoreResult {
 }
 
 #[is_variant]
-pub enum IoOp {
+pub enum RWOp {
     Store { new_value: nat, result: StoreResult },
     Load { is_exec: bool, result: LoadResult },
 }

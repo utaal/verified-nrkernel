@@ -6,7 +6,7 @@ use state_machines_macros::*;
 use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
-use crate::definitions_t::{ PageTableEntry, IoOp, LoadResult, StoreResult, between, aligned };
+use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned };
 use crate::mem_t as mem;
 use crate::mem_t::{ word_index_spec };
 use crate::impl_u::l0;
@@ -23,7 +23,7 @@ pub struct HWVariables {
 
 #[is_variant]
 pub enum HWStep {
-    IoOp { vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
+    ReadWrite { vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     PTMemOp,
     TLBFill  { vaddr: nat, pte: PageTableEntry },
     TLBEvict { vaddr: nat},
@@ -40,7 +40,7 @@ pub open spec fn init(s: HWVariables) -> bool {
 // TODO: we only allow aligned accesses, need to argue in report that that's fine. can think of
 // unaligned accesses as two aligned accesses. when we get to concurrency we may have to change
 // that.
-pub open spec fn step_IoOp(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
+pub open spec fn step_ReadWrite(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     &&& aligned(vaddr, 8)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.tlb === s1.tlb
@@ -53,7 +53,7 @@ pub open spec fn step_IoOp(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: 
             &&& paddr === (pte.frame.base + (vaddr - base)) as nat
             // .. and the result depends on the flags.
             &&& match op {
-                IoOp::Store { new_value, result } => {
+                RWOp::Store { new_value, result } => {
                     if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
                         &&& result.is_Ok()
                         &&& s2.mem === s1.mem.update(pmem_idx, new_value)
@@ -62,7 +62,7 @@ pub open spec fn step_IoOp(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: 
                         &&& s2.mem === s1.mem
                     }
                 },
-                IoOp::Load { is_exec, result } => {
+                RWOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
                     &&& if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result.is_Value()
@@ -82,8 +82,8 @@ pub open spec fn step_IoOp(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: 
             // .. and the result is always a pagefault and an unchanged memory.
             &&& s2.mem === s1.mem
             &&& match op {
-                IoOp::Store { new_value, result } => result.is_Pagefault(),
-                IoOp::Load  { is_exec, result }   => result.is_Pagefault(),
+                RWOp::Store { new_value, result } => result.is_Pagefault(),
+                RWOp::Load  { is_exec, result }   => result.is_Pagefault(),
             }
         },
     }
@@ -112,10 +112,10 @@ pub open spec fn step_TLBEvict(s1: HWVariables, s2: HWVariables, vaddr: nat) -> 
 
 pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
-        HWStep::IoOp { vaddr, paddr, op, pte } => step_IoOp(s1, s2, vaddr, paddr, op, pte),
-        HWStep::PTMemOp                        => step_PTMemOp(s1, s2),
-        HWStep::TLBFill  { vaddr, pte }        => step_TLBFill(s1, s2, vaddr, pte),
-        HWStep::TLBEvict { vaddr }             => step_TLBEvict(s1, s2, vaddr),
+        HWStep::ReadWrite { vaddr, paddr, op, pte } => step_ReadWrite(s1, s2, vaddr, paddr, op, pte),
+        HWStep::PTMemOp                             => step_PTMemOp(s1, s2),
+        HWStep::TLBFill  { vaddr, pte }             => step_TLBFill(s1, s2, vaddr, pte),
+        HWStep::TLBEvict { vaddr }                  => step_TLBEvict(s1, s2, vaddr),
     }
 }
 
@@ -143,10 +143,10 @@ proof fn next_preserves_inv(s1: HWVariables, s2: HWVariables)
 {
     let step = choose|step: HWStep| next_step(s1, s2, step);
     match step {
-        HWStep::IoOp { vaddr, paddr, op , pte} => (),
-        HWStep::PTMemOp                        => (),
-        HWStep::TLBFill  { vaddr, pte }        => (),
-        HWStep::TLBEvict { vaddr }             => (),
+        HWStep::ReadWrite { vaddr, paddr, op , pte} => (),
+        HWStep::PTMemOp                             => (),
+        HWStep::TLBFill  { vaddr, pte }             => (),
+        HWStep::TLBEvict { vaddr }                  => (),
     }
 }
 

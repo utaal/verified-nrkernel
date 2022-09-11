@@ -8,7 +8,7 @@ use set_lib::*;
 
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, IoOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::mem_t::{ word_index_spec };
 use option::{ *, Option::* };
@@ -452,10 +452,10 @@ impl OSStep {
         match self {
             OSStep::HW { step } =>
                 match step {
-                    hardware::HWStep::IoOp { vaddr, paddr, op, pte }  => hlspec::AbstractStep::IoOp { vaddr, op, pte },
-                    hardware::HWStep::PTMemOp                         => arbitrary(),
-                    hardware::HWStep::TLBFill { vaddr, pte }          => hlspec::AbstractStep::Stutter,
-                    hardware::HWStep::TLBEvict { vaddr }              => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::ReadWrite { vaddr, paddr, op, pte } => hlspec::AbstractStep::ReadWrite { vaddr, op, pte },
+                    hardware::HWStep::PTMemOp                             => arbitrary(),
+                    hardware::HWStep::TLBFill { vaddr, pte }              => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::TLBEvict { vaddr }                  => hlspec::AbstractStep::Stutter,
                 },
             OSStep::Map    { vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
             OSStep::Unmap  { vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
@@ -609,8 +609,8 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
         OSStep::HW { step: system_step } => {
             s1.lemma_effective_mappings_other(s2);
             match system_step {
-                hardware::HWStep::IoOp { vaddr, paddr, op, pte } => {
-                    // hlspec::AbstractStep::IoOp { vaddr, op, pte }
+                hardware::HWStep::ReadWrite { vaddr, paddr, op, pte } => {
+                    // hlspec::AbstractStep::ReadWrite { vaddr, op, pte }
                     let pmem_idx = word_index_spec(paddr);
                     let vmem_idx = word_index_spec(vaddr);
                     assert(sys_s2.pt_mem === sys_s1.pt_mem);
@@ -628,7 +628,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                             // abs
                             assert(abs_s1.mappings.contains_pair(base, pte));
                             match op {
-                                IoOp::Store { new_value, result } => {
+                                RWOp::Store { new_value, result } => {
                                     if pmem_idx < sys_s1.mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
                                         assert(result.is_Ok());
                                         assert(sys_s2.mem === sys_s1.mem.update(pmem_idx, new_value));
@@ -689,33 +689,33 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                             }
                                         };
                                         assert_maps_equal!(abs_s2.mem, abs_s1.mem.insert(vmem_idx, new_value));
-                                        assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                        assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     } else {
                                         assert(result.is_Pagefault());
                                         assert(sys_s2.mem === sys_s1.mem);
-                                        assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                        assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     }
                                 },
-                                IoOp::Load { is_exec, result } => {
+                                RWOp::Load { is_exec, result } => {
                                     assert(sys_s2.mem === sys_s1.mem);
                                     if pmem_idx < sys_s1.mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                                         assert(result.is_Value());
                                         assert(result.get_Value_0() == sys_s1.mem.index(pmem_idx));
                                         assert(hlspec::mem_domain_from_mappings_contains(abs_c.phys_mem_size, vmem_idx, s1.interp_pt_mem()));
                                         assert(sys_s1.mem.index(pmem_idx) == abs_s1.mem.index(vmem_idx));
-                                        assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                        assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     } else {
                                         assert(result.is_Pagefault());
-                                        assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                        assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     }
                                 },
                             }
                         },
                         None => {
-                            assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, pte));
+                            assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, pte));
                         },
                     }
-                    assert(hlspec::step_IoOp(abs_c, abs_s1, abs_s2, vaddr, op, pte));
+                    assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, pte));
                     assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
                 },
                 hardware::HWStep::PTMemOp => assert(false),

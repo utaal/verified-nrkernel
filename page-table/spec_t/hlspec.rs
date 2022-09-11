@@ -7,7 +7,7 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
-use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, IoOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem };
+use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use option::{ *, Option::None, Option::Some };
 use crate::mem_t::{ word_index_spec };
@@ -31,9 +31,9 @@ pub struct AbstractVariables {
 }
 
 pub enum AbstractStep {
-    IoOp  { vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
-    Map   { vaddr: nat, pte: PageTableEntry, result: MapResult },
-    Unmap { vaddr: nat, result: UnmapResult },
+    ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
+    Map       { vaddr: nat, pte: PageTableEntry, result: MapResult },
+    Unmap     { vaddr: nat, result: UnmapResult },
     Stutter,
     // Resolve { vaddr: nat }, // How do we specify this?
     // TODO:
@@ -116,8 +116,7 @@ pub proof fn lemma_mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<na
     };
 }
 
-// FIXME: should vaddr be a word-address instead? Otherwise at least require aligned(vaddr, 8).
-pub open spec fn step_IoOp(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)>) -> bool {
+pub open spec fn step_ReadWrite(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     let vmem_idx = word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings
@@ -130,7 +129,7 @@ pub open spec fn step_IoOp(c: AbstractConstants, s1: AbstractVariables, s2: Abst
             &&& between(vaddr, base, base + pte.frame.size)
             // .. and the result depends on the flags.
             &&& match op {
-                IoOp::Store { new_value, result } => {
+                RWOp::Store { new_value, result } => {
                     if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
                         &&& result.is_Ok()
                         &&& s2.mem === s1.mem.insert(vmem_idx, new_value)
@@ -139,7 +138,7 @@ pub open spec fn step_IoOp(c: AbstractConstants, s1: AbstractVariables, s2: Abst
                         &&& s2.mem === s1.mem
                     }
                 },
-                IoOp::Load  { is_exec, result } => {
+                RWOp::Load  { is_exec, result } => {
                     &&& s2.mem === s1.mem
                     &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result.is_Value()
@@ -156,8 +155,8 @@ pub open spec fn step_IoOp(c: AbstractConstants, s1: AbstractVariables, s2: Abst
             // .. and the result is always a pagefault and an unchanged memory.
             &&& s2.mem === s1.mem
             &&& match op {
-                IoOp::Store { new_value, result } => result.is_Pagefault(),
-                IoOp::Load  { is_exec, result }   => result.is_Pagefault(),
+                RWOp::Store { new_value, result } => result.is_Pagefault(),
+                RWOp::Load  { is_exec, result }   => result.is_Pagefault(),
             }
         },
     }
@@ -216,10 +215,10 @@ pub open spec fn step_Stutter(c: AbstractConstants, s1: AbstractVariables, s2: A
 
 pub open spec fn next_step(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, step: AbstractStep) -> bool {
     match step {
-        AbstractStep::IoOp  { vaddr, op, pte }    => step_IoOp(c, s1, s2, vaddr, op, pte),
-        AbstractStep::Map   { vaddr, pte, result } => step_Map(c, s1, s2, vaddr, pte, result),
-        AbstractStep::Unmap { vaddr, result }      => step_Unmap(c, s1, s2, vaddr, result),
-        AbstractStep::Stutter                     => step_Stutter(c, s1, s2),
+        AbstractStep::ReadWrite { vaddr, op, pte }     => step_ReadWrite(c, s1, s2, vaddr, op, pte),
+        AbstractStep::Map       { vaddr, pte, result } => step_Map(c, s1, s2, vaddr, pte, result),
+        AbstractStep::Unmap     { vaddr, result }      => step_Unmap(c, s1, s2, vaddr, result),
+        AbstractStep::Stutter                          => step_Stutter(c, s1, s2),
     }
 }
 
