@@ -1193,12 +1193,8 @@ impl PageTable {
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte);
                 assume(ptr < 100);
-                // TODO: this assertion goes through "by accident" due to lemma_entry_base. Maybe
-                // we should rename entry_base and use it for all index calculations?
-                // Actually there's some other reason this is going through. Not sure what it is.
                 assert(aligned((ptr + idx * WORD_SIZE) as nat, 8));
                 let write_addr = ptr + idx * WORD_SIZE;
-                assume(pt@.region.contains(write_addr));
                 let pwmem: Ghost<mem::PageTableMemory> = ghost(self.memory);
                 self.memory.write(write_addr, ghost(pt@.region), new_page_entry.entry);
                 assert(self.memory.region_view(pt@.region) === pwmem@.region_view(pt@.region).update(idx, new_page_entry.entry));
@@ -1322,7 +1318,6 @@ impl PageTable {
                 assume(ptr < 100);
                 let write_addr = ptr + idx * WORD_SIZE;
                 assert(aligned(write_addr, 8));
-                assume(pt@.region.contains(write_addr));
                 self.memory.write(write_addr, ghost(pt@.region), new_dir_entry.entry);
 
 
@@ -1333,7 +1328,7 @@ impl PageTable {
                     PTDir {
                         region:       pt@.region,
                         entries:      pt@.entries.update(idx, Some(new_dir_pt@)),
-                        used_regions: pt@.used_regions.union(new_dir_pt@.used_regions),
+                        used_regions: pt@.used_regions.insert(new_dir_pt@.region),
                     });
                 // For easier reference we take a snapshot of self here. In the subsequent proofs
                 // (after the recursive call) we have old(self), self_with_empty and self to refer
@@ -1652,13 +1647,39 @@ impl PageTable {
                         }
 
                         // posts
-                        assert(self.arch === old(self).arch);
-                        assert(pt_final@.region === pt@.region);
-                        assume(forall|r: MemRegion| !pt@.used_regions.contains(r) ==> self.memory.region_view(r) === old(self).memory.region_view(r));
-                        assume(self.memory.regions() === old(self).memory.regions().union(new_regions@));
-                        assume(pt_final@.used_regions === pt@.used_regions.union(new_regions@));
-                        assume(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(self).memory.regions().contains(r)));
-                        assume(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+                        proof {
+                            assert(self.arch === old(self).arch);
+                            assert(pt_final@.region === pt@.region);
+                            // assert_sets_equal!(pt_with_empty@.used_regions, pt@.used_regions.union(new_regions@));
+                            assert_sets_equal!(pt_final@.used_regions, pt@.used_regions.union(new_regions@));
+                            assert(pt_final@.used_regions === pt@.used_regions.union(new_regions@));
+                            assert_sets_equal!(self.memory.regions(), old(self).memory.regions().union(new_regions@));
+                            assert(self.memory.regions() === old(self).memory.regions().union(new_regions@));
+                            assert forall|r: MemRegion|
+                                !(#[trigger] pt@.used_regions.contains(r))
+                                && !new_regions@.contains(r)
+                                implies self.memory.region_view(r) === old(self).memory.region_view(r) by
+                            {
+                                assert(r !== new_dir_region@);
+                                assert(!pt_with_empty@.used_regions.contains(r));
+                                assert(!new_dir_pt@.used_regions.contains(r));
+                                assert(!dir_new_regions@.contains(r));
+                                assert(self.memory.region_view(r) === self_with_empty@.memory.region_view(r));
+                            };
+                            assert forall|r: MemRegion|
+                                new_regions@.contains(r)
+                                implies !(#[trigger] old(self).memory.regions().contains(r)) by
+                            {
+                                if r === new_dir_region@ {
+                                    assert(!old(self).memory.regions().contains(r));
+                                } else {
+                                    assert(dir_new_regions@.contains(r));
+                                    assert(!self_with_empty@.memory.regions().contains(r));
+                                    assert(!old(self).memory.regions().contains(r));
+                                }
+                            };
+                            assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
+                        }
                         Ok(ghost((pt_final@, new_regions@)))
                     },
                     Err(e) => {
