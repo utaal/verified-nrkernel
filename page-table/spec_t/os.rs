@@ -306,38 +306,6 @@ impl OSVariables {
         }
     }
 
-    pub proof fn xx(self, other: Self, vmem_idx: nat, val: nat, base: nat, pte: PageTableEntry)
-        requires
-            self.inv(),
-            other.inv(),
-            other.system.pt_mem === self.system.pt_mem,
-            self.interp_pt_mem().contains_pair(base, pte),
-            between(vmem_idx * WORD_SIZE as nat, base, base + pte.frame.size),
-            ({  let vaddr = vmem_idx * WORD_SIZE as nat;
-                let paddr = (pte.frame.base + (vaddr - base)) as nat;
-                let pmem_idx = word_index_spec(paddr);
-                other.system.mem === self.system.mem.update(pmem_idx, val)
-            }),
-    {
-    }
-
-    // pub proof fn lemma(self, base: nat, pte: PageTableEntry, vmem_idx: nat)
-    //     requires
-    //         self.inv(),
-    //         self.interp().mem.dom().contains(vmem_idx),
-    //         self.interp_pt_mem().contains_pair(base, pte),
-    //         between(vmem_idx * WORD_SIZE, base, base + pte.frame.size),
-    //     ensures
-    //         ({
-    //             let vaddr = vmem_idx * WORD_SIZE;
-    //             let paddr = (pte.frame.base + (vaddr - base)) as nat;
-    //             let pmem_idx = word_index_spec(paddr);
-    //             &&& self.interp().mem.index(vmem_idx) == self.system.mem.index(pmem_idx)
-    //             &&& self.interp().mem.contains_pair(vmem_idx, self.system.mem.index(pmem_idx))
-    //         })
-    // {
-    // }
-
     pub proof fn lemma_interp_manual(self, base: nat, pte: PageTableEntry, vmem_idx: nat)
         requires
             self.inv(),
@@ -474,9 +442,9 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
 }
 
 pub enum OSStep {
-    HW { step: hardware::HWStep },
-    Map    { base: nat, pte: PageTableEntry, result: MapResult },
-    Unmap  { base: nat, result: UnmapResult },
+    HW     { step: hardware::HWStep },
+    Map    { vaddr: nat, pte: PageTableEntry, result: MapResult },
+    Unmap  { vaddr: nat, result: UnmapResult },
 }
 
 impl OSStep {
@@ -484,22 +452,22 @@ impl OSStep {
         match self {
             OSStep::HW { step } =>
                 match step {
-                    hardware::HWStep::IoOp { vaddr, paddr, op, pte } => hlspec::AbstractStep::IoOp { vaddr, op, pte },
-                    hardware::HWStep::PTMemOp                        => arbitrary(),
-                    hardware::HWStep::TLBFill { base, pte }          => hlspec::AbstractStep::Stutter,
-                    hardware::HWStep::TLBEvict { base }              => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::IoOp { vaddr, paddr, op, pte }  => hlspec::AbstractStep::IoOp { vaddr, op, pte },
+                    hardware::HWStep::PTMemOp                         => arbitrary(),
+                    hardware::HWStep::TLBFill { vaddr, pte }          => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::TLBEvict { vaddr }              => hlspec::AbstractStep::Stutter,
                 },
-            OSStep::Map    { base, pte, result } => hlspec::AbstractStep::Map { base, pte, result },
-            OSStep::Unmap  { base, result } => hlspec::AbstractStep::Unmap { base, result },
+            OSStep::Map    { vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
+            OSStep::Unmap  { vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
         }
     }
 }
 
 pub open spec fn next_step(s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
-        OSStep::HW { step }              => step_HW(s1, s2, step),
-        OSStep::Map    { base, pte, result } => step_Map(s1, s2, base, pte, result),
-        OSStep::Unmap  { base, result }      => step_Unmap(s1, s2, base, result),
+        OSStep::HW     { step }               => step_HW(s1, s2, step),
+        OSStep::Map    { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
+        OSStep::Unmap  { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
     }
 }
 
@@ -535,23 +503,23 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
         OSStep::HW { step: system_step } => {
             assert(step_HW(s1, s2, system_step));
         },
-        OSStep::Map { base, pte, result } => {
+        OSStep::Map { vaddr, pte, result } => {
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
-            assert(step_Map(s1, s2, base, pte, result));
-            assert(spec_pt::step_Map(pt_s1, pt_s2, base, pte, result));
-            assert(!candidate_mapping_overlaps_existing_pmem(pt_s1.map, base, pte));
-            if candidate_mapping_overlaps_existing_vmem(pt_s1.map, base, pte) {
+            assert(step_Map(s1, s2, vaddr, pte, result));
+            assert(spec_pt::step_Map(pt_s1, pt_s2, vaddr, pte, result));
+            assert(!candidate_mapping_overlaps_existing_pmem(pt_s1.map, vaddr, pte));
+            if candidate_mapping_overlaps_existing_vmem(pt_s1.map, vaddr, pte) {
                 assert(s2.inv());
             } else {
                 assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
-                assert forall|baseprime, pteprime| s2.interp_pt_mem().contains_pair(baseprime, pteprime) implies {
+                assert forall|base, pteprime| s2.interp_pt_mem().contains_pair(base, pteprime) implies {
                     ||| pteprime.frame.size == L3_ENTRY_SIZE
                     ||| pteprime.frame.size == L2_ENTRY_SIZE
                     ||| pteprime.frame.size == L1_ENTRY_SIZE
                 } by
                 {
-                    if base == baseprime {
+                    if vaddr == base {
                         assert({
                             ||| pteprime.frame.size == L3_ENTRY_SIZE
                             ||| pteprime.frame.size == L2_ENTRY_SIZE
@@ -559,8 +527,8 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                         });
                     } else {
                         assert(s1.pt_entry_sizes_are_valid());
-                        assert(s1.interp_pt_mem().dom().contains(baseprime));
-                        assert(s1.interp_pt_mem().contains_pair(baseprime, pteprime));
+                        assert(s1.interp_pt_mem().dom().contains(base));
+                        assert(s1.interp_pt_mem().contains_pair(base, pteprime));
                         assert({
                             ||| pteprime.frame.size == L3_ENTRY_SIZE
                             ||| pteprime.frame.size == L2_ENTRY_SIZE
@@ -575,14 +543,14 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 assert(s2.inv());
             }
         },
-        OSStep::Unmap { base, result } => {
+        OSStep::Unmap { vaddr, result } => {
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
-            assert(step_Unmap(s1, s2, base, result));
-            assert(spec_pt::step_Unmap(pt_s1, pt_s2, base, result));
-            if pt_s1.map.dom().contains(base) {
+            assert(step_Unmap(s1, s2, vaddr, result));
+            assert(spec_pt::step_Unmap(pt_s1, pt_s2, vaddr, result));
+            if pt_s1.map.dom().contains(vaddr) {
                 assert(result.is_Ok());
-                assert(pt_s2.map === pt_s1.map.remove(base));
+                assert(pt_s2.map === pt_s1.map.remove(vaddr));
                 assert(s2.pt_mappings_dont_overlap_in_vmem());
                 assert forall|base2, pte2|
                     s2.system.tlb.contains_pair(base2, pte2)
@@ -751,36 +719,36 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
                 },
                 hardware::HWStep::PTMemOp => assert(false),
-                hardware::HWStep::TLBFill { base, pte } => {
+                hardware::HWStep::TLBFill { vaddr, pte } => {
                     // hlspec::AbstractStep::Stutter
                     assert(abs_s2 === abs_s1);
                 },
-                hardware::HWStep::TLBEvict { base } => {
+                hardware::HWStep::TLBEvict { vaddr } => {
                     // hlspec::AbstractStep::Stutter
                     assert(abs_s2 === abs_s1);
                 },
             }
         },
-        OSStep::Map { base, pte, result } => {
-            // hlspec::AbstractStep::Map { base, pte }
+        OSStep::Map { vaddr, pte, result } => {
+            // hlspec::AbstractStep::Map { vaddr, pte }
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
-            assert(abs_step === hlspec::AbstractStep::Map { base, pte, result });
-            assert(step_Map(s1, s2, base, pte, result));
-            assert(spec_pt::step_Map(pt_s1, pt_s2, base, pte, result));
-            assert(hlspec::step_Map_preconditions(base, pte));
-            if candidate_mapping_overlaps_existing_vmem(pt_s1.map, base, pte) {
-                assert(candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, base, pte));
-                assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, base, pte, result));
+            assert(abs_step === hlspec::AbstractStep::Map { vaddr, pte, result });
+            assert(step_Map(s1, s2, vaddr, pte, result));
+            assert(spec_pt::step_Map(pt_s1, pt_s2, vaddr, pte, result));
+            assert(hlspec::step_Map_preconditions(vaddr, pte));
+            if candidate_mapping_overlaps_existing_vmem(pt_s1.map, vaddr, pte) {
+                assert(candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, vaddr, pte));
+                assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, vaddr, pte, result));
             } else {
-                assert(!candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, base, pte));
+                assert(!candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, vaddr, pte));
                 assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
                 assert(forall|base, pte| s1.interp().mappings.contains_pair(base, pte) ==> s2.interp().mappings.contains_pair(base, pte));
                 assert(s1.interp().mappings === s1.interp_pt_mem());
                 assert(s2.interp().mappings === s2.interp_pt_mem());
                 s1.lemma_interp_other(s2);
                 assert(result.is_Ok());
-                assert(abs_s2.mappings === abs_s1.mappings.insert(base, pte));
+                assert(abs_s2.mappings === abs_s1.mappings.insert(vaddr, pte));
                 assert forall|word_idx|
                     #[trigger] abs_s1.mem.dom().contains(word_idx)
                     implies abs_s2.mem[word_idx] === abs_s1.mem[word_idx] by
@@ -789,24 +757,24 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(abs_s2.mem[word_idx] == abs_s1.mem[word_idx]);
                 };
                 assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s2.mappings));
-                assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, base, pte, result));
+                assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, vaddr, pte, result));
             }
-            assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, base, pte, result));
+            assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, vaddr, pte, result));
             assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
         },
-        OSStep::Unmap { base, result } => {
-            // hlspec::AbstractStep::Unmap { base }
+        OSStep::Unmap { vaddr, result } => {
+            // hlspec::AbstractStep::Unmap { vaddr }
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
-            assert(abs_step === hlspec::AbstractStep::Unmap { base, result });
-            assert(step_Unmap(s1, s2, base, result));
-            assert(spec_pt::step_Unmap(pt_s1, pt_s2, base, result));
-            assert(hlspec::step_Unmap_preconditions(base));
-            if pt_s1.map.dom().contains(base) {
-                assert(abs_s1.mappings.dom().contains(base));
+            assert(abs_step === hlspec::AbstractStep::Unmap { vaddr, result });
+            assert(step_Unmap(s1, s2, vaddr, result));
+            assert(spec_pt::step_Unmap(pt_s1, pt_s2, vaddr, result));
+            assert(hlspec::step_Unmap_preconditions(vaddr));
+            if pt_s1.map.dom().contains(vaddr) {
+                assert(abs_s1.mappings.dom().contains(vaddr));
                 assert(result.is_Ok());
-                assert(pt_s2.map === pt_s1.map.remove(base));
-                assert(abs_s2.mappings === abs_s1.mappings.remove(base));
+                assert(pt_s2.map === pt_s1.map.remove(vaddr));
+                assert(abs_s2.mappings === abs_s1.mappings.remove(vaddr));
 
                 assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s2.mappings));
                 s2.lemma_interp_other(s1);
@@ -817,12 +785,12 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                     assert(abs_s1.mem[word_idx] == abs_s2.mem[word_idx]);
                 };
 
-                assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, base, result));
+                assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, vaddr, result));
             } else {
-                assert(!abs_s1.mappings.dom().contains(base));
-                assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, base, result));
+                assert(!abs_s1.mappings.dom().contains(vaddr));
+                assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, vaddr, result));
             }
-            assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, base, result));
+            assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, vaddr, result));
             assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
         },
     }

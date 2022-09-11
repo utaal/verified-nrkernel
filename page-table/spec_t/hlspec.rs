@@ -32,8 +32,8 @@ pub struct AbstractVariables {
 
 pub enum AbstractStep {
     IoOp  { vaddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
-    Map   { base: nat, pte: PageTableEntry, result: MapResult },
-    Unmap { base: nat, result: UnmapResult },
+    Map   { vaddr: nat, pte: PageTableEntry, result: MapResult },
+    Unmap { vaddr: nat, result: UnmapResult },
     Stutter,
     // Resolve { vaddr: nat }, // How do we specify this?
     // TODO:
@@ -163,10 +163,10 @@ pub open spec fn step_IoOp(c: AbstractConstants, s1: AbstractVariables, s2: Abst
     }
 }
 
-pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool {
-    &&& aligned(base, pte.frame.size)
+pub open spec fn step_Map_preconditions(vaddr: nat, pte: PageTableEntry) -> bool {
+    &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
-    &&& candidate_mapping_in_bounds(base, pte)
+    &&& candidate_mapping_in_bounds(vaddr, pte)
     &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE
         ||| pte.frame.size == L2_ENTRY_SIZE
@@ -174,34 +174,34 @@ pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool 
     }
 }
 
-pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& step_Map_preconditions(base, pte)
-    &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, base, pte) {
+pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: PageTableEntry, result: MapResult) -> bool {
+    &&& step_Map_preconditions(vaddr, pte)
+    &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
         &&& result.is_ErrOverlap()
         &&& s2.mappings === s1.mappings
         &&& s2.mem === s1.mem
     } else {
         &&& result.is_Ok()
-        &&& s2.mappings === s1.mappings.insert(base, pte)
+        &&& s2.mappings === s1.mappings.insert(vaddr, pte)
         &&& (forall|idx| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
     }
 }
 
-pub open spec fn step_Unmap_preconditions(base: nat) -> bool {
-    &&& between(base, PT_BOUND_LOW, PT_BOUND_HIGH)
-    &&& { // The given base must be aligned to some valid page size
-        ||| aligned(base, L3_ENTRY_SIZE)
-        ||| aligned(base, L2_ENTRY_SIZE)
-        ||| aligned(base, L1_ENTRY_SIZE)
+pub open spec fn step_Unmap_preconditions(vaddr: nat) -> bool {
+    &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH)
+    &&& { // The given vaddr must be aligned to some valid page size
+        ||| aligned(vaddr, L3_ENTRY_SIZE)
+        ||| aligned(vaddr, L2_ENTRY_SIZE)
+        ||| aligned(vaddr, L1_ENTRY_SIZE)
     }
 }
 
-pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, base: nat, result: UnmapResult) -> bool {
-    &&& step_Unmap_preconditions(base)
-    &&& if s1.mappings.dom().contains(base) {
+pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: UnmapResult) -> bool {
+    &&& step_Unmap_preconditions(vaddr)
+    &&& if s1.mappings.dom().contains(vaddr) {
         &&& result.is_Ok()
-        &&& s2.mappings === s1.mappings.remove(base)
+        &&& s2.mappings === s1.mappings.remove(vaddr)
     } else {
         &&& result.is_ErrNoSuchMapping()
         &&& s2.mappings === s1.mappings
@@ -217,8 +217,8 @@ pub open spec fn step_Stutter(c: AbstractConstants, s1: AbstractVariables, s2: A
 pub open spec fn next_step(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, step: AbstractStep) -> bool {
     match step {
         AbstractStep::IoOp  { vaddr, op, pte }    => step_IoOp(c, s1, s2, vaddr, op, pte),
-        AbstractStep::Map   { base, pte, result } => step_Map(c, s1, s2, base, pte, result),
-        AbstractStep::Unmap { base, result }      => step_Unmap(c, s1, s2, base, result),
+        AbstractStep::Map   { vaddr, pte, result } => step_Map(c, s1, s2, vaddr, pte, result),
+        AbstractStep::Unmap { vaddr, result }      => step_Unmap(c, s1, s2, vaddr, result),
         AbstractStep::Stutter                     => step_Stutter(c, s1, s2),
     }
 }

@@ -25,8 +25,8 @@ pub struct HWVariables {
 pub enum HWStep {
     IoOp { vaddr: nat, paddr: nat, op: IoOp, pte: Option<(nat, PageTableEntry)> },
     PTMemOp,
-    TLBFill { base: nat, pte: PageTableEntry },
-    TLBEvict { base: nat},
+    TLBFill  { vaddr: nat, pte: PageTableEntry },
+    TLBEvict { vaddr: nat},
 }
 
 // Page table walker interpretation of the page table memory
@@ -96,16 +96,16 @@ pub open spec fn step_PTMemOp(s1: HWVariables, s2: HWVariables) -> bool {
     // pt_mem may change arbitrarily
 }
 
-pub open spec fn step_TLBFill(s1: HWVariables, s2: HWVariables, base: nat, pte: PageTableEntry) -> bool {
-    &&& interp_pt_mem(s1.pt_mem).contains_pair(base, pte)
-    &&& s2.tlb === s1.tlb.insert(base, pte)
+pub open spec fn step_TLBFill(s1: HWVariables, s2: HWVariables, vaddr: nat, pte: PageTableEntry) -> bool {
+    &&& interp_pt_mem(s1.pt_mem).contains_pair(vaddr, pte)
+    &&& s2.tlb === s1.tlb.insert(vaddr, pte)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
 }
 
-pub open spec fn step_TLBEvict(s1: HWVariables, s2: HWVariables, base: nat) -> bool {
-    &&& s1.tlb.dom().contains(base)
-    &&& s2.tlb === s1.tlb.remove(base)
+pub open spec fn step_TLBEvict(s1: HWVariables, s2: HWVariables, vaddr: nat) -> bool {
+    &&& s1.tlb.dom().contains(vaddr)
+    &&& s2.tlb === s1.tlb.remove(vaddr)
     &&& s2.pt_mem === s1.pt_mem
     &&& s2.mem === s1.mem
 }
@@ -113,9 +113,9 @@ pub open spec fn step_TLBEvict(s1: HWVariables, s2: HWVariables, base: nat) -> b
 pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
         HWStep::IoOp { vaddr, paddr, op, pte } => step_IoOp(s1, s2, vaddr, paddr, op, pte),
-        HWStep::PTMemOp => step_PTMemOp(s1, s2),
-        HWStep::TLBFill { base, pte } => step_TLBFill(s1, s2, base, pte),
-        HWStep::TLBEvict { base } => step_TLBEvict(s1, s2, base),
+        HWStep::PTMemOp                        => step_PTMemOp(s1, s2),
+        HWStep::TLBFill  { vaddr, pte }        => step_TLBFill(s1, s2, vaddr, pte),
+        HWStep::TLBEvict { vaddr }             => step_TLBEvict(s1, s2, vaddr),
     }
 }
 
@@ -144,9 +144,9 @@ proof fn next_preserves_inv(s1: HWVariables, s2: HWVariables)
     let step = choose|step: HWStep| next_step(s1, s2, step);
     match step {
         HWStep::IoOp { vaddr, paddr, op , pte} => (),
-        HWStep::PTMemOp => (),
-        HWStep::TLBFill { base, pte } => (),
-        HWStep::TLBEvict { base } => (),
+        HWStep::PTMemOp                        => (),
+        HWStep::TLBFill  { vaddr, pte }        => (),
+        HWStep::TLBEvict { vaddr }             => (),
     }
 }
 
