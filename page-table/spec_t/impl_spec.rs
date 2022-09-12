@@ -30,7 +30,7 @@ pub trait PTImpl {
 
     fn implspec_map_frame(&self, memory: mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory))
         requires
-            spec_pt::step_Map_preconditions(base, pte@),
+            spec_pt::step_Map_preconditions(interp_pt_mem(memory), base, pte@),
             self.implspec_inv(memory),
         ensures
             self.implspec_inv(res.1),

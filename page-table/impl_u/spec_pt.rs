@@ -38,7 +38,7 @@ pub enum PageTableStep {
 
 // TODO: discuss not-always-enabled actions unsatisfiable spec problem in thesis
 
-pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map_preconditions(map: Map<nat,PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
     &&& aligned(base, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& candidate_mapping_in_bounds(base, pte)
@@ -47,11 +47,11 @@ pub open spec fn step_Map_preconditions(base: nat, pte: PageTableEntry) -> bool 
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
+    &&& !candidate_mapping_overlaps_existing_pmem(map, base, pte)
 }
 
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& step_Map_preconditions(base, pte)
-    &&& !candidate_mapping_overlaps_existing_pmem(s1.map, base, pte)
+    &&& step_Map_preconditions(s1.map, base, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.map, base, pte) {
         &&& result.is_ErrOverlap()
         &&& s2.map === s1.map

@@ -25,8 +25,7 @@ pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
 pub const L0_ENTRY_SIZE: usize = 512 * L1_ENTRY_SIZE;
 
 pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
-    &&& PT_BOUND_LOW <= base
-    &&& base + pte.frame.size < PT_BOUND_HIGH
+    base + pte.frame.size < x86_arch.upper_vaddr(0, 0)
 }
 
 pub open spec fn candidate_mapping_overlaps_existing_vmem(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {

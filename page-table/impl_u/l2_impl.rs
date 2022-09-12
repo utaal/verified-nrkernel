@@ -724,7 +724,7 @@ impl PageTable {
         }
     }
 
-    proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir)
+    pub proof fn lemma_interp_at_facts(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir)
         requires
             self.inv_at(layer, ptr, pt),
             self.interp_at(layer, ptr, base_vaddr, pt).inv(),
