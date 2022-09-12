@@ -7,6 +7,7 @@ use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
 use crate::mem_t as mem;
+use crate::impl_u::l2_impl;
 
 verus! {
 
@@ -46,5 +47,11 @@ pub trait PTImpl {
             spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(res.1) }, base, res.0);
             // FIXME: tlb stuff
 }
+
+/// We axiomatize the page table walker with the implementation's interpretation function.
+#[verifier(external_body)]
+pub proof fn axiom_page_table_walk_interp()
+    ensures
+        forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory);
 
 }

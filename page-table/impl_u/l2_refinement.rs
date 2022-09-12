@@ -108,16 +108,16 @@ impl impl_spec::PTImpl for PageTableImpl {
             assert(self.implspec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
-            // FIXME: axiom
+            impl_spec::axiom_page_table_walk_interp();
             assume(forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory));
+            old_page_table@.interp().lemma_inv_implies_interp_inv();
+            page_table.interp().lemma_inv_implies_interp_inv();
             if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), base, pte@) {
                 assert(res.is_ErrOverlap());
-                // FIXME:
-                assume(old_page_table@ === page_table);
+                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory));
             } else {
                 assert(res.is_Ok());
-                // FIXME:
-                assume(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(base, pte@));
+                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(base, pte@));
             }
             assert(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, base, pte@, res));
         }
