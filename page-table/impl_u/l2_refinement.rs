@@ -124,10 +124,10 @@ impl impl_spec::PTImpl for PageTableImpl {
         (res, page_table.memory)
     }
 
-    // fn implspec_unmap(&self, memory: &mut mem::PageTableMemory, base: usize) -> (res: UnmapResult) {
-    //     assume(false);
-    //     UnmapResult::Ok
-    // }
+    fn implspec_unmap(&self, memory: mem::PageTableMemory, base: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
+        assume(false);
+        (UnmapResult::Ok, memory)
+    }
 }
 
 }
