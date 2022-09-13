@@ -60,7 +60,7 @@ pub proof fn ambient_lemmas1()
 }
 
 
-pub ghost struct PageTableContents {
+pub struct PageTableContents {
     pub map: Map<nat /* VAddr */, PageTableEntry>,
     pub arch: Arch,
     pub lower: nat,

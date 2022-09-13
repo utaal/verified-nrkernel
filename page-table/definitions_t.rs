@@ -334,14 +334,14 @@ impl ArchExec {
     }
 }
 
-pub ghost struct ArchLayer {
+pub struct ArchLayer {
     /// Address space size mapped by a single entry at this layer
     pub entry_size: nat,
-    /// Number of entries of at this layer
+    /// Number of entries at this layer
     pub num_entries: nat,
 }
 
-pub ghost struct Arch {
+pub struct Arch {
     pub layers: Seq<ArchLayer>,
     // [512G, 1G  , 2M  , 4K  ]
     // [512 , 512 , 512 , 512 ]
