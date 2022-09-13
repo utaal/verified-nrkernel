@@ -6,9 +6,10 @@ use map::*;
 use seq::*;
 use set_lib::*;
 
+use option::{ *, Option::* };
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, MapResult, UnmapResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, MapResult, UnmapResult, ResolveResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::mem_t::{ word_index_spec };
 use option::{ *, Option::* };
@@ -441,10 +442,17 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
+pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult) -> bool {
+    &&& hardware::step_PTMemOp(s1.system, s2.system)
+    &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, pte, result)
+}
+
+
 pub enum OSStep {
-    HW     { step: hardware::HWStep },
-    Map    { vaddr: nat, pte: PageTableEntry, result: MapResult },
-    Unmap  { vaddr: nat, result: UnmapResult },
+    HW      { step: hardware::HWStep },
+    Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
+    Unmap   { vaddr: nat, result: UnmapResult },
+    Resolve { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult },
 }
 
 impl OSStep {
@@ -457,17 +465,19 @@ impl OSStep {
                     hardware::HWStep::TLBFill { vaddr, pte }              => hlspec::AbstractStep::Stutter,
                     hardware::HWStep::TLBEvict { vaddr }                  => hlspec::AbstractStep::Stutter,
                 },
-            OSStep::Map    { vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
-            OSStep::Unmap  { vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
+            OSStep::Map     { vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
+            OSStep::Unmap   { vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
+            OSStep::Resolve { vaddr, pte, result } => hlspec::AbstractStep::Resolve { vaddr, pte, result },
         }
     }
 }
 
 pub open spec fn next_step(s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
-        OSStep::HW     { step }               => step_HW(s1, s2, step),
-        OSStep::Map    { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
-        OSStep::Unmap  { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
+        OSStep::HW      { step }               => step_HW(s1, s2, step),
+        OSStep::Map     { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
+        OSStep::Unmap   { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
+        OSStep::Resolve { vaddr, pte, result } => step_Resolve(s1, s2, vaddr, pte, result),
     }
 }
 
@@ -583,6 +593,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 assert(s2.inv());
             }
         },
+        OSStep::Resolve { vaddr, pte, result } => (),
     }
 }
 
@@ -791,6 +802,38 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, vaddr, result));
             }
             assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, vaddr, result));
+            assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
+        },
+        OSStep::Resolve { vaddr, pte, result } => {
+            // hlspec::AbstractStep::Resolve { vaddr, pte, result }
+            let pt_s1 = s1.pt_variables();
+            let pt_s2 = s2.pt_variables();
+            assert(abs_step === hlspec::AbstractStep::Resolve { vaddr, pte, result });
+            assert(step_Resolve(s1, s2, vaddr, pte, result));
+            assert(spec_pt::step_Resolve(pt_s1, pt_s2, vaddr, pte, result));
+            match pte {
+                Some((base, pte)) => {
+                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, Some((base, pte)), result));
+                },
+                None => {
+                    let vmem_idx = word_index_spec(vaddr);
+                    assert(vmem_idx * WORD_SIZE == vaddr);
+                    if hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s1.mappings).contains(vmem_idx) {
+                        assert(hlspec::mem_domain_from_mappings_contains(abs_c.phys_mem_size, vmem_idx, abs_s1.mappings));
+                        let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| {
+                            let paddr = (pte.frame.base + (vaddr - base)) as nat;
+                            let pmem_idx = word_index_spec(paddr);
+                            &&& #[trigger] abs_s1.mappings.contains_pair(base, pte)
+                            &&& between(vaddr, base, base + pte.frame.size)
+                            &&& pmem_idx < abs_c.phys_mem_size
+                        };
+                        assert(pt_s1.map.contains_pair(base, pte));
+                        assert(false);
+                    }
+                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, pte, result));
+                },
+            }
+            assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, pte, result));
             assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
         },
     }

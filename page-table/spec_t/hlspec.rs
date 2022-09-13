@@ -7,7 +7,7 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
-use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem };
+use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use option::{ *, Option::None, Option::Some };
 use crate::mem_t::{ word_index_spec };
@@ -34,8 +34,8 @@ pub enum AbstractStep {
     ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     Map       { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap     { vaddr: nat, result: UnmapResult },
+    Resolve   { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult },
     Stutter,
-    // Resolve { vaddr: nat }, // How do we specify this?
     // TODO:
     // Need to add resolve. I think if I'm careful in how I connect the hardware spec to the
     // high-level spec (i.e. when defining the abstraction function), I should be able to guarantee
@@ -209,6 +209,30 @@ pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: Abs
     &&& (forall|idx| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
 }
 
+pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult) -> bool {
+    let vmem_idx = word_index_spec(vaddr);
+    &&& s2 === s1
+    &&& aligned(vaddr, 8)
+    &&& match pte {
+        Some((base, pte)) => {
+            let paddr = (pte.frame.base + (vaddr - base)) as nat;
+            // If pte is Some, it's an existing mapping that contains vaddr..
+            &&& s1.mappings.contains_pair(base, pte)
+            &&& between(vaddr, base, base + pte.frame.size)
+            // .. and the result is the correct translation
+            &&& result.is_PAddr()
+            &&& result.get_PAddr_0() == paddr
+        },
+        None => {
+            // If pte is None, no mapping containing vaddr exists..
+            &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
+            // .. and the result is an error
+            &&& result.is_ErrUnmapped()
+        },
+    }
+}
+
+
 pub open spec fn step_Stutter(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables) -> bool {
     s1 === s2
 }
@@ -218,6 +242,7 @@ pub open spec fn next_step(c: AbstractConstants, s1: AbstractVariables, s2: Abst
         AbstractStep::ReadWrite { vaddr, op, pte }     => step_ReadWrite(c, s1, s2, vaddr, op, pte),
         AbstractStep::Map       { vaddr, pte, result } => step_Map(c, s1, s2, vaddr, pte, result),
         AbstractStep::Unmap     { vaddr, result }      => step_Unmap(c, s1, s2, vaddr, result),
+        AbstractStep::Resolve   { vaddr, pte, result } => step_Resolve(c, s1, s2, vaddr, pte, result),
         AbstractStep::Stutter                          => step_Stutter(c, s1, s2),
     }
 }

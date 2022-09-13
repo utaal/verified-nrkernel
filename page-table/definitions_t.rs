@@ -96,6 +96,12 @@ pub enum UnmapResult {
 }
 
 #[is_variant]
+pub enum ResolveResult {
+    ErrUnmapped,
+    PAddr(nat),
+}
+
+#[is_variant]
 pub enum LoadResult {
     Pagefault,
     Value(nat), // word-sized load
