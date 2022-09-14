@@ -223,6 +223,15 @@ pub struct ArchLayerExec {
     pub num_entries: usize,
 }
 
+impl Clone for ArchLayerExec {
+    fn clone(&self) -> Self {
+        ArchLayerExec {
+            entry_size: self.entry_size,
+            num_entries: self.num_entries,
+        }
+    }
+}
+
 impl ArchLayerExec {
     pub open spec fn view(self) -> ArchLayer {
         ArchLayer {
@@ -624,16 +633,35 @@ impl Arch {
 
 }
 
+#[verifier(external_body)]
+pub open spec fn x86_arch_exec_spec() -> ArchExec {
+    ArchExec {
+        layers: Vec { vec: vec![
+            ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
+            ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
+            ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
+            ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
+        ] },
+    }
+}
+
+
 // FIXME: can we get rid of this somehow?
 #[verifier(external_body)]
-pub exec const x86_arch_exec: ArchExec = ArchExec {
-    layers: Vec { vec: vec![
-        ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
-        ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
-        ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
-        ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
-    ]},
-};
+pub exec fn x86_arch_exec() -> (res: ArchExec)
+    ensures
+        res@ === x86_arch,
+        x86_arch_exec_spec()@ === x86_arch,
+{
+    ArchExec {
+        layers: Vec { vec: vec![
+            ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
+            ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
+            ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
+            ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
+        ] },
+    }
+}
 
 pub spec const x86_arch: Arch = Arch {
     layers: seq![

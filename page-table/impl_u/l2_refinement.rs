@@ -14,7 +14,7 @@ use crate::mem_t as mem;
 
 use result::{*, Result::*};
 
-use crate::definitions_t::{ x86_arch, x86_arch_exec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem };
+use crate::definitions_t::{ x86_arch, x86_arch_exec, x86_arch_exec_spec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
@@ -36,7 +36,7 @@ impl impl_spec::PTImpl for PageTableImpl {
         exists|ghost_pt: l2_impl::PTDir| {
             let page_table = l2_impl::PageTable {
                 memory: memory,
-                arch: x86_arch_exec,
+                arch: x86_arch_exec_spec(),
                 ghost_pt: Ghost::new(ghost_pt),
             };
             &&& page_table.inv()
@@ -61,7 +61,7 @@ impl impl_spec::PTImpl for PageTableImpl {
             choose|ghost_pt: l2_impl::PTDir| {
                 let page_table = l2_impl::PageTable {
                     memory: memory,
-                    arch: x86_arch_exec,
+                    arch: x86_arch_exec_spec(),
                     ghost_pt: Ghost::new(ghost_pt),
                 };
                 &&& page_table.inv()
@@ -72,15 +72,15 @@ impl impl_spec::PTImpl for PageTableImpl {
 
         let mut page_table = l2_impl::PageTable {
             memory:    memory,
-            arch:      x86_arch_exec,
+            arch:      x86_arch_exec(),
             ghost_pt:  ghost_pt,
         };
         assert(page_table.inv());
         assert(page_table.interp().inv());
 
-        assert(x86_arch_exec@ === page_table.arch@);
+        assert(x86_arch_exec_spec()@ === page_table.arch@);
         // FIXME: problem with definition
-        assume(x86_arch_exec@ === x86_arch);
+        assume(x86_arch_exec_spec()@ === x86_arch);
 
         assert(page_table.accepted_mapping(base, pte@)) by {
             reveal(l2_impl::PageTable::accepted_mapping);
