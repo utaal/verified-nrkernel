@@ -261,14 +261,14 @@ impl PageDirectoryEntry {
             }),
     {
         assert(address & MASK_ADDR == address);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | 0)           & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(0u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(7u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(1u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(2u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(3u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(4u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(63u64)) & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | 0)           & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(0u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(7u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(1u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(2u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(3u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(4u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(63u64)) & bitmask_inc!(12u64,52u64)) by(bit_vector);
     }
 
     pub fn new_page_entry(layer: usize, pte: PageTableEntryExec) -> (r: Self)
