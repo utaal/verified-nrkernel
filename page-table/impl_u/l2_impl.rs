@@ -120,17 +120,7 @@ proof fn lemma_addr_masks_facts2(address: u64)
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
 
 pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bool {
-    is_page ==> {
-        if layer == 1 {
-            addr & MASK_ADDR == addr & MASK_L1_PG_ADDR
-        } else if layer == 2 {
-            addr & MASK_ADDR == addr & MASK_L2_PG_ADDR
-        } else if layer == 3 {
-            addr & MASK_ADDR == addr & MASK_L3_PG_ADDR
-        } else {
-            true
-        }
-    }
+    addr & MASK_ADDR == addr
 }
 
 
@@ -270,7 +260,15 @@ impl PageDirectoryEntry {
                 e & MASK_ADDR == address
             }),
     {
-        assume(false);
+        assert(address & MASK_ADDR == address);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | 0)           & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(0u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(7u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(1u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(2u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(3u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(4u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64| a & bitmask_inc!(12u64,52u64) == (a | bit!(63u64)) & bitmask_inc!(12u64,52u64)) by(bit_vector);
     }
 
     pub fn new_page_entry(layer: usize, pte: PageTableEntryExec) -> (r: Self)
@@ -360,6 +358,8 @@ impl PageDirectoryEntry {
             }
             assert(if is_page { e@.is_Page() } else { e@.is_Directory() });
 
+            // FIXME
+            assume(false);
             if is_page {
                 assert_by(e.addr_is_zero_padded(), {
                     // lemma_addr_masks_facts(address);
