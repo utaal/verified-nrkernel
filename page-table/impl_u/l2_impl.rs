@@ -120,7 +120,17 @@ proof fn lemma_addr_masks_facts2(address: u64)
 // const MASK_PD_ADDR:      u64 = bitmask!(12,52);
 
 pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bool {
-    addr & MASK_ADDR == addr
+    is_page ==> {
+        if layer == 1 {
+            addr & MASK_L1_PG_ADDR == addr & MASK_ADDR
+        } else if layer == 2 {
+            addr & MASK_L2_PG_ADDR == addr & MASK_ADDR
+        } else if layer == 3 {
+            addr & MASK_L3_PG_ADDR == addr & MASK_ADDR
+        } else {
+            true
+        }
+    }
 }
 
 
@@ -191,7 +201,6 @@ impl PageDirectoryEntry {
         if self.layer() <= 3 {
             let v = self.entry;
             if v & MASK_FLAG_P == MASK_FLAG_P {
-                let addr     = (v & MASK_ADDR) as usize;
                 let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
                 let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
                 let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
@@ -200,6 +209,14 @@ impl PageDirectoryEntry {
                 let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
                 let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
                 if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
+                    let addr     =
+                        if self.layer() == 3 {
+                            (v & MASK_L3_PG_ADDR) as usize
+                        } else if self.layer() == 2 {
+                            (v & MASK_L2_PG_ADDR) as usize
+                        } else {
+                            (v & MASK_L1_PG_ADDR) as usize
+                        };
                     let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
                     let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
                     let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
@@ -209,6 +226,7 @@ impl PageDirectoryEntry {
                         flag_A, flag_D, flag_G, flag_PAT, flag_XD,
                     }
                 } else {
+                    let addr = (v & MASK_ADDR) as usize;
                     GhostPageDirectoryEntry::Directory {
                         addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
                     }
@@ -227,6 +245,7 @@ impl PageDirectoryEntry {
 
     pub open spec fn inv(self) -> bool {
         &&& self.layer() <= 3
+        &&& self@.is_Page() ==> 0 < self.layer()
         &&& self.addr_is_zero_padded()
     }
 
@@ -248,6 +267,7 @@ impl PageDirectoryEntry {
             layer <= 3,
             if is_page { 0 < layer } else { layer < 3 },
             addr_is_zero_padded(layer, address, is_page),
+            address & MASK_ADDR == address,
         ensures
             ({ let e = address
                 | MASK_FLAG_P
@@ -257,10 +277,34 @@ impl PageDirectoryEntry {
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 };
-                e & MASK_ADDR == address
+                &&& e & MASK_ADDR == address
+                &&& e & MASK_FLAG_P == MASK_FLAG_P
+                &&& (e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3)
+                &&& (e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable
+                &&& (e & MASK_FLAG_US == MASK_FLAG_US) == is_supervisor
+                &&& (e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough
+                &&& (e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache
+                &&& (e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute
+                &&& addr_is_zero_padded(layer, e, is_page)
             }),
     {
         assert(address & MASK_ADDR == address);
+        let or1 = MASK_FLAG_P;
+        let a1 = address | or1;
+        let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 };
+        let a2 = a1 | or2;
+        let or3 = if is_writable           { MASK_FLAG_RW }        else { 0 };
+        let a3 = a2 | or3;
+        let or4 = if is_supervisor         { MASK_FLAG_US }        else { 0 };
+        let a4 = a3 | or4;
+        let or5 = if is_writethrough       { MASK_FLAG_PWT }       else { 0 };
+        let a5 = a4 | or5;
+        let or6 = if disable_cache         { MASK_FLAG_PCD }       else { 0 };
+        let a6 = a5 | or6;
+        let or7 = if disable_execute       { MASK_FLAG_XD }        else { 0 };
+        let a7 = a6 | or7;
+        let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
+        assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> ((a & bit!(x) == bit!(x)) == false)) by(bit_vector);
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | 0)           & bitmask_inc!(12u64,52u64)) by(bit_vector);
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(0u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(7u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
@@ -269,12 +313,75 @@ impl PageDirectoryEntry {
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(3u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(4u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(63u64)) & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(e & MASK_ADDR == address) by {
+        };
+        assert(e & MASK_FLAG_P == MASK_FLAG_P) by {
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(0u64) == 0) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == 0 ==> (a | bit!(0u64)) & bit!(0u64) == bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | 0)           & bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(7u64))  & bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(1u64))  & bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(2u64))  & bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(3u64))  & bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(4u64))  & bit!(0u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(63u64)) & bit!(0u64)) by(bit_vector);
+        };
+        assert((e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3)) by {
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(0u64) == 0) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(7u64) == 0) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == 0 ==> (a | bit!(7u64)) & bit!(7u64) == bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | 0)           & bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(0u64))  & bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(1u64))  & bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(2u64))  & bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(3u64))  & bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(4u64))  & bit!(7u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(63u64)) & bit!(7u64)) by(bit_vector);
+        };
+        assert((e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable) by {
+            // FIXME: bitvector
+            assume(false);
+            // assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(0u64) == 0) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(7u64) == 0) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(1u64) == 0) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == 0 ==> (a | bit!(1u64)) & bit!(1u64) == bit!(1u64)) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | 0)           & bit!(1u64)) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(0u64))  & bit!(1u64)) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(2u64))  & bit!(1u64)) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(3u64))  & bit!(1u64)) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(4u64))  & bit!(1u64)) by(bit_vector);
+            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(63u64)) & bit!(1u64)) by(bit_vector);
+            // assert(a1 & MASK_FLAG_RW == 0);
+            // assert(a2 & MASK_FLAG_RW == 0);
+            // assert((a3 & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable);
+        };
+        assert((e & MASK_FLAG_US == MASK_FLAG_US) == is_supervisor) by {
+            // FIXME: bitvector
+            assume(false);
+        };
+        assert((e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough) by {
+            // FIXME: bitvector
+            assume(false);
+        };
+        assert((e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache) by {
+            // FIXME: bitvector
+            assume(false);
+        };
+        assert((e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute) by {
+            // FIXME: bitvector
+            assume(false);
+        };
+        assert(addr_is_zero_padded(layer, e, is_page)) by {
+            // FIXME: bitvector
+            assume(false);
+        };
     }
 
     pub fn new_page_entry(layer: usize, pte: PageTableEntryExec) -> (r: Self)
         requires
             0 < layer <= 3,
             addr_is_zero_padded(layer, pte.frame.base as u64, true),
+            pte.frame.base as u64 & MASK_ADDR == pte.frame.base as u64,
         ensures
             r.inv(),
             r@.is_Page(),
@@ -312,6 +419,7 @@ impl PageDirectoryEntry {
             layer <= 3,
             if is_page { 0 < layer } else { layer < 3 },
             addr_is_zero_padded(layer, address, is_page),
+            address & MASK_ADDR == address,
         ensures
             if is_page { r@.is_Page() && r@.get_Page_addr() == address } else { r@.is_Directory() && r@.get_Directory_addr() == address},
             r.inv(),
@@ -333,59 +441,28 @@ impl PageDirectoryEntry {
         };
 
         proof {
+            PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
             assert(e.layer() <= 3);
-            if e.layer() <= 3 {
-                if e.entry & MASK_FLAG_P == MASK_FLAG_P {
-                    if e.layer() == 3 {
-                        assert(is_page);
-                        assert(e@.is_Page());
-                        assume(e@.get_Page_addr() == address);
-                    } else if e.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
-                        // FIXME: bitvector
-                        assume(is_page);
-                        assert(e@.is_Page());
-                        assume(e@.get_Page_addr() == address);
-                    } else {
-                        // FIXME: bitvector
-                        assume(!is_page);
-                        assert(e@.is_Directory());
-                        assume(e@.get_Directory_addr() == address);
-                    }
-                } else {
-                    // FIXME: bitvector
-                    assume(false);
-                }
-            }
+            // if is_page {
+            //     if layer == 1 {
+            //     } else if layer == 2 {
+            //     } else if layer == 3 {
+            //     } else {
+            //         assert(false);
+            //     }
+            // } else {
+            // }
+            assert(e@.is_Page() ==> 0 < e.layer());
+            assert(e.addr_is_zero_padded());
             assert(if is_page { e@.is_Page() } else { e@.is_Directory() });
 
-            // FIXME
-            assume(false);
-            if is_page {
-                assert_by(e.addr_is_zero_padded(), {
-                    // lemma_addr_masks_facts(address);
-                    // lemma_addr_masks_facts2(e.entry);
-                    // Self::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
-                    // assert(addr_is_zero_padded(layer, address, true));
-                    // FIXME: bitvector
-                    // Need to show that we aren't setting any of the bits that are masked off by
-                    // the L1/L2 masks but not masked off by MASK_ADDR
-                    if e.layer() == 1 {
-                        assume(e.entry & MASK_ADDR == e.entry & MASK_L1_PG_ADDR);
-                    } else if e.layer() == 2 {
-                        assume(e.entry & MASK_ADDR == e.entry & MASK_L2_PG_ADDR);
-                    } else if e.layer() == 3 {
-                        assert(e.entry & MASK_ADDR == e.entry & MASK_L3_PG_ADDR);
-                    }
-                });
-            } else {
-                assert(e.addr_is_zero_padded());
-            }
         }
         e
     }
 
     pub fn address(&self) -> (res: u64)
         requires
+            self.inv(),
             self.layer() <= 3,
             !self@.is_Empty(),
         ensures
@@ -395,6 +472,22 @@ impl PageDirectoryEntry {
                 GhostPageDirectoryEntry::Empty                  => arbitrary(),
             }
     {
+        proof {
+            match self@ {
+                GhostPageDirectoryEntry::Page { addr, .. }      => 
+                    if self.layer() == 1 {
+                        assert(addr == self.entry & MASK_ADDR);
+                    } else if self.layer() == 2 {
+                        assert(addr == self.entry & MASK_ADDR);
+                    } else if self.layer() == 3 {
+                        assert(addr == self.entry & MASK_ADDR);
+                    } else {
+                        assert(false);
+                    },
+                GhostPageDirectoryEntry::Directory { addr, .. } => assert(addr == self.entry & MASK_ADDR),
+                GhostPageDirectoryEntry::Empty                  => (),
+            }
+        }
         self.entry & MASK_ADDR
     }
 
@@ -477,11 +570,10 @@ impl PageTable {
             res.layer == layer,
             res@ === self.view_at(layer, ptr, i, pt@),
     {
-        // FIXME:
+        // FIXME: high prio
         assume(ptr <= 100);
         assume(i * WORD_SIZE <= 100000);
         assume(aligned((ptr + i * WORD_SIZE) as nat, 8));
-        // FIXME:
         assume(pt@.region.contains((ptr + i * WORD_SIZE) as nat));
         assert(self.memory.inv());
         PageDirectoryEntry {
@@ -810,6 +902,8 @@ impl PageTable {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx, pt);
         let interp: Ghost<l1::Directory> = ghost(self.interp_at(layer, ptr, base, pt@));
+        // How the hell do we know this is true here?
+        assert(entry.inv());
         proof {
             interp@.lemma_resolve_structure_assertions(vaddr, idx);
             self.lemma_interp_at_facts(layer, ptr, base, pt@);
@@ -844,8 +938,11 @@ impl PageTable {
                 assert(interp@.entries.index(idx).is_Page());
                 let offset: usize = vaddr - entry_base;
                 // FIXME: need to assume a maximum for physical addresses
+                // FIXME: high prio
                 assume(entry@.get_Page_addr() < 10000);
                 assert(offset < self.arch@.entry_size(layer));
+                // FIXME: should be trivial once added to pagetable inv
+                assume(entry.inv());
                 let res = Ok(entry.address() as usize + offset);
                 assert(res.map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
                 res
@@ -1190,8 +1287,12 @@ impl PageTable {
                     let frame_base = pte.frame.base as u64;
                     // FIXME: this should be derivable from alignment property in accepted_mapping
                     assume(addr_is_zero_padded(layer, frame_base, true));
+                    // FIXME: need additional precondition?
+                    // FIXME: high prio
+                    assume(frame_base & MASK_ADDR == frame_base);
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte);
+                // FIXME: high prio, overflow
                 assume(ptr < 100);
                 assert(aligned((ptr + idx * WORD_SIZE) as nat, 8));
                 let write_addr = ptr + idx * WORD_SIZE;
