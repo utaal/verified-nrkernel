@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+set +x
+
+RUST_VERIFY=/st/verus/verif/verus/source/tools/rust-verify.sh
+
+# modules=(impl_u::indexing definitions_t impl_u::l0 impl_u::l1 impl_u::l2_impl impl_u::l2_refinement impl_u::lib impl_u::spec_pt impl_u::mem_t spec_t::hardware spec_t::hlspec spec_t::impl_spec spec_t::os)
+
+# exclamation mark ignores return code for that command
+modules=$(! "$RUST_VERIFY" --arch-word-bits 64 ../page-table/main.rs --verify-module xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
+
+for module in $modules; do
+  # echo "$module"
+  functions=$(! "$RUST_VERIFY" --arch-word-bits 64 ../page-table/main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
+
+  for function in $functions; do
+    output=$(strace -f -s99999 -e trace=execve "$RUST_VERIFY" --time --arch-word-bits 64 ../page-table/main.rs --verify-module "$module" --verify-function "$function" 2>&1)
+    # Check whether there even was a z3 query, if not we do not want to report 0ms
+    if [[ "$output" =~ .*z3.* ]]; then
+      time=$(echo "$output" | grep smt-time | tr -s ' ' | cut -d ' ' -f 3)
+      echo "$module,$function,$time"
+    else
+      echo "$module,$function,X"
+    fi
+  done
+
+done
