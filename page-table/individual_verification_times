@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+modules=(definitions_t impl_u::indexing impl_u::l0 impl_u::l1 impl_u::l1 impl_u::l2_impl impl_u::l2_refinement impl_u::lib impl_u::spec_pt impl_u::mem_t spec_t::hardware spec_t::hlspec spec_t::impl_spec spec_t::os)
+
+for module in "${modules[@]}"; do
+  # exclamation mark ignores return code for that command
+  function_names=$(! /st/verus/verif/verus/source/tools/rust-verify.sh --arch-word-bits 64 main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | awk '/       -/ { print substr($0,12,length($0)) }')
+
+  # echo "$function_names"
+
+  for function_name in $function_names; do
+    time=$(/st/verus/verif/verus/source/tools/rust-verify.sh --time --arch-word-bits 64 main.rs --verify-module "$module" --verify-function "$function_name" 2>/dev/null | grep smt-time | tr -s ' ' | cut -d ' ' -f 3)
+    echo "$module,$function_name,$time"
+  done
+
+done

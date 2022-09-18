@@ -49,6 +49,7 @@ pub trait PTImpl {
             // FIXME: tlb stuff
 
     // can't write a valid trigger for this
+    // this doesn't need to mutate memory, can just give an immutable borrow
     // fn implspec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory))
     //     requires
     //         spec_pt::step_Resolve_enabled(vaddr),
