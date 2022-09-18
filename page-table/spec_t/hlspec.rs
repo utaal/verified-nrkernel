@@ -182,7 +182,7 @@ pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: Abstr
     } else {
         &&& result.is_Ok()
         &&& s2.mappings === s1.mappings.insert(vaddr, pte)
-        &&& (forall|idx| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+        &&& (forall|idx:nat| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
     }
 }
@@ -201,12 +201,13 @@ pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: Abs
     &&& if s1.mappings.dom().contains(vaddr) {
         &&& result.is_Ok()
         &&& s2.mappings === s1.mappings.remove(vaddr)
+        &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
+        &&& (forall|idx:nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
     } else {
         &&& result.is_ErrNoSuchMapping()
         &&& s2.mappings === s1.mappings
+        &&& s2.mem === s1.mem
     }
-    &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
-    &&& (forall|idx| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
 }
 
 pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult) -> bool {

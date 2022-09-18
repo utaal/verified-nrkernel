@@ -1028,6 +1028,7 @@ impl PageTable {
             },
         // decreases self.arch@.layers.len() - layer
     {
+        assume(false);
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let idxg: Ghost<usize> = ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);

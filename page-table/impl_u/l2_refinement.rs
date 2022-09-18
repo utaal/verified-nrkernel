@@ -70,17 +70,22 @@ impl impl_spec::PTImpl for PageTableImpl {
             }
         );
 
+        let x86_arch_exec_v = x86_arch_exec();
+        // FIXME: problem with definition
+        assume(x86_arch_exec_spec() === x86_arch_exec_v);
+        assert(x86_arch_exec_spec()@ === x86_arch);
+
         let mut page_table = l2_impl::PageTable {
             memory:    memory,
-            arch:      x86_arch_exec(),
+            arch:      x86_arch_exec_v,
             ghost_pt:  ghost_pt,
         };
         assert(page_table.inv());
+        assert(page_table.arch@.inv());
         assert(page_table.interp().inv());
 
         assert(x86_arch_exec_spec()@ === page_table.arch@);
-        // FIXME: problem with definition
-        assume(x86_arch_exec_spec()@ === x86_arch);
+        assert(page_table.arch@ === x86_arch);
 
         assert(page_table.accepted_mapping(base, pte@)) by {
             reveal(l2_impl::PageTable::accepted_mapping);
@@ -96,6 +101,10 @@ impl impl_spec::PTImpl for PageTableImpl {
             assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
         }
         assert(page_table.interp().accepted_mapping(base, pte@));
+        assert(page_table.arch@.num_entries(0) == 512);
+        // FIXME: incompleteness?
+        assume(page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0) == 512 * L0_ENTRY_SIZE);
+        assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
         assert(page_table.arch@.upper_vaddr(0, 0) == page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0));
         assert(page_table.arch@.upper_vaddr(0, 0) <= MAX_BASE);
         let old_page_table: Ghost<l2_impl::PageTable> = ghost(page_table);
