@@ -40,7 +40,7 @@ pub enum PageTableStep {
 
 // TODO: discuss not-always-enabled actions unsatisfiable spec problem in thesis
 
-pub open spec fn step_Map_preconditions(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& candidate_mapping_in_bounds(vaddr, pte)
@@ -53,7 +53,7 @@ pub open spec fn step_Map_preconditions(map: Map<nat,PageTableEntry>, vaddr: nat
 }
 
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& step_Map_preconditions(s1.map, vaddr, pte)
+    &&& step_Map_enabled(s1.map, vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.map, vaddr, pte) {
         &&& result.is_ErrOverlap()
         &&& s2.map === s1.map
@@ -63,7 +63,7 @@ pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr:
     }
 }
 
-pub open spec fn step_Unmap_preconditions(vaddr: nat) -> bool {
+pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH)
     &&& { // The given vaddr must be aligned to some valid page size
         ||| aligned(vaddr, L3_ENTRY_SIZE)
@@ -73,7 +73,7 @@ pub open spec fn step_Unmap_preconditions(vaddr: nat) -> bool {
 }
 
 pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: UnmapResult) -> bool {
-    &&& step_Unmap_preconditions(vaddr)
+    &&& step_Unmap_enabled(vaddr)
     &&& if s1.map.dom().contains(vaddr) {
         &&& result.is_Ok()
         &&& s2.map === s1.map.remove(vaddr)

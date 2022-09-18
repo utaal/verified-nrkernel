@@ -31,7 +31,7 @@ pub trait PTImpl {
 
     fn implspec_map_frame(&self, memory: mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory))
         requires
-            spec_pt::step_Map_preconditions(interp_pt_mem(memory), base, pte@),
+            spec_pt::step_Map_enabled(interp_pt_mem(memory), base, pte@),
             self.implspec_inv(memory),
         ensures
             self.implspec_inv(res.1),
@@ -40,7 +40,7 @@ pub trait PTImpl {
     // FIXME: do i need to add tlb state to the spec_pt state machine?
     fn implspec_unmap(&self, memory: mem::PageTableMemory, base: usize) -> (res: (UnmapResult, mem::PageTableMemory))
         requires
-            spec_pt::step_Unmap_preconditions(base),
+            spec_pt::step_Unmap_enabled(base),
             self.implspec_inv(memory),
         ensures
             self.implspec_inv(res.1),

@@ -747,7 +747,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(abs_step === hlspec::AbstractStep::Map { vaddr, pte, result });
             assert(step_Map(s1, s2, vaddr, pte, result));
             assert(spec_pt::step_Map(pt_s1, pt_s2, vaddr, pte, result));
-            assert(hlspec::step_Map_preconditions(vaddr, pte));
+            assert(hlspec::step_Map_enabled(vaddr, pte));
             if candidate_mapping_overlaps_existing_vmem(pt_s1.map, vaddr, pte) {
                 assert(candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, vaddr, pte));
                 assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, vaddr, pte, result));
@@ -780,7 +780,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(abs_step === hlspec::AbstractStep::Unmap { vaddr, result });
             assert(step_Unmap(s1, s2, vaddr, result));
             assert(spec_pt::step_Unmap(pt_s1, pt_s2, vaddr, result));
-            assert(hlspec::step_Unmap_preconditions(vaddr));
+            assert(hlspec::step_Unmap_enabled(vaddr));
             if pt_s1.map.dom().contains(vaddr) {
                 assert(abs_s1.mappings.dom().contains(vaddr));
                 assert(result.is_Ok());

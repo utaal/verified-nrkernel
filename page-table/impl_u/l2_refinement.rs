@@ -47,7 +47,7 @@ impl impl_spec::PTImpl for PageTableImpl {
 
     fn implspec_map_frame(&self, memory: mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
         // requires
-        assert(spec_pt::step_Map_preconditions(interp_pt_mem(memory), base, pte@));
+        assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), base, pte@));
         assert(aligned(base, pte@.frame.size));
         assert(aligned(pte.frame.base, pte@.frame.size));
         assert(candidate_mapping_in_bounds(base, pte@));

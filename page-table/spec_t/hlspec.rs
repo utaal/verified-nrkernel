@@ -26,7 +26,7 @@ pub struct AbstractVariables {
     pub mem: Map<nat,nat>,
     /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
     /// flags into `map` as well and write the specification exclusively in terms of `map` but that
-    /// also makes some of the preconditions awkward, e.g. full mappings have the same flags, etc.
+    /// also makes some of the enabling conditions awkward, e.g. full mappings have the same flags, etc.
     pub mappings: Map<nat,PageTableEntry>,
 }
 
@@ -162,7 +162,7 @@ pub open spec fn step_ReadWrite(c: AbstractConstants, s1: AbstractVariables, s2:
     }
 }
 
-pub open spec fn step_Map_preconditions(vaddr: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map_enabled(vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& candidate_mapping_in_bounds(vaddr, pte)
@@ -174,7 +174,7 @@ pub open spec fn step_Map_preconditions(vaddr: nat, pte: PageTableEntry) -> bool
 }
 
 pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& step_Map_preconditions(vaddr, pte)
+    &&& step_Map_enabled(vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
         &&& result.is_ErrOverlap()
         &&& s2.mappings === s1.mappings
@@ -187,7 +187,7 @@ pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: Abstr
     }
 }
 
-pub open spec fn step_Unmap_preconditions(vaddr: nat) -> bool {
+pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH)
     &&& { // The given vaddr must be aligned to some valid page size
         ||| aligned(vaddr, L3_ENTRY_SIZE)
@@ -197,7 +197,7 @@ pub open spec fn step_Unmap_preconditions(vaddr: nat) -> bool {
 }
 
 pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: UnmapResult) -> bool {
-    &&& step_Unmap_preconditions(vaddr)
+    &&& step_Unmap_enabled(vaddr)
     &&& if s1.mappings.dom().contains(vaddr) {
         &&& result.is_Ok()
         &&& s2.mappings === s1.mappings.remove(vaddr)
