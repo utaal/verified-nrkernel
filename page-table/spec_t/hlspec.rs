@@ -34,7 +34,7 @@ pub enum AbstractStep {
     ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     Map       { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap     { vaddr: nat, result: UnmapResult },
-    Resolve   { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult },
+    Resolve   { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat> },
     Stutter,
     // TODO:
     // Need to add resolve. I think if I'm careful in how I connect the hardware spec to the
@@ -210,10 +210,14 @@ pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: Abs
     }
 }
 
-pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult) -> bool {
-    let vmem_idx = word_index_spec(vaddr);
-    &&& s2 === s1
+pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
+}
+
+pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat>) -> bool {
+    let vmem_idx = word_index_spec(vaddr);
+    &&& step_Resolve_enabled(vaddr)
+    &&& s2 === s1
     &&& match pte {
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;

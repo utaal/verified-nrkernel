@@ -20,7 +20,7 @@ use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult };
+use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult };
 use crate::spec_t::hardware::interp_pt_mem;
 
 verus! {
@@ -45,12 +45,12 @@ impl impl_spec::PTImpl for PageTableImpl {
         }
     }
 
-    fn implspec_map_frame(&self, memory: mem::PageTableMemory, base: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
+    fn implspec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
         // requires
-        assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), base, pte@));
-        assert(aligned(base, pte@.frame.size));
+        assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr, pte@));
+        assert(aligned(vaddr, pte@.frame.size));
         assert(aligned(pte.frame.base, pte@.frame.size));
-        assert(candidate_mapping_in_bounds(base, pte@));
+        assert(candidate_mapping_in_bounds(vaddr, pte@));
         assert({
             ||| pte.frame.size == L3_ENTRY_SIZE
             ||| pte.frame.size == L2_ENTRY_SIZE
@@ -87,7 +87,7 @@ impl impl_spec::PTImpl for PageTableImpl {
         assert(x86_arch_exec_spec()@ === page_table.arch@);
         assert(page_table.arch@ === x86_arch);
 
-        assert(page_table.accepted_mapping(base, pte@)) by {
+        assert(page_table.accepted_mapping(vaddr, pte@)) by {
             reveal(l2_impl::PageTable::accepted_mapping);
             if pte@.frame.size == L3_ENTRY_SIZE {
             } else if pte@.frame.size == L2_ENTRY_SIZE {
@@ -100,7 +100,7 @@ impl impl_spec::PTImpl for PageTableImpl {
             page_table.lemma_interp_at_facts(0, cr3, 0, page_table.ghost_pt@);
             assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
         }
-        assert(page_table.interp().accepted_mapping(base, pte@));
+        assert(page_table.interp().accepted_mapping(vaddr, pte@));
         assert(page_table.arch@.num_entries(0) == 512);
         // FIXME: incompleteness?
         assume(page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0) == 512 * L0_ENTRY_SIZE);
@@ -108,7 +108,7 @@ impl impl_spec::PTImpl for PageTableImpl {
         assert(page_table.arch@.upper_vaddr(0, 0) == page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0));
         assert(page_table.arch@.upper_vaddr(0, 0) <= MAX_BASE);
         let old_page_table: Ghost<l2_impl::PageTable> = ghost(page_table);
-        let res = page_table.map_frame(base, pte);
+        let res = page_table.map_frame(vaddr, pte);
         assert(page_table.inv());
         assert(page_table.interp().inv());
         // ensures
@@ -121,22 +121,28 @@ impl impl_spec::PTImpl for PageTableImpl {
             assume(forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory));
             old_page_table@.interp().lemma_inv_implies_interp_inv();
             page_table.interp().lemma_inv_implies_interp_inv();
-            if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), base, pte@) {
+            if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr, pte@) {
                 assert(res.is_ErrOverlap());
                 assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory));
             } else {
                 assert(res.is_Ok());
-                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(base, pte@));
+                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(vaddr, pte@));
             }
-            assert(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, base, pte@, res));
+            assert(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr, pte@, res));
         }
         (res, page_table.memory)
     }
 
-    fn implspec_unmap(&self, memory: mem::PageTableMemory, base: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
+    fn implspec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
         assume(false);
         (UnmapResult::Ok, memory)
     }
+
+    // fn implspec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory)) {
+    //     assume(false);
+    //     (ResolveResult::PAddr(0), memory)
+    // }
+
 }
 
 }

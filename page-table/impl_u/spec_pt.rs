@@ -34,7 +34,7 @@ impl PageTableVariables {
 pub enum PageTableStep {
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },
-    Resolve { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult },
+    Resolve { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat> },
     Stutter,
 }
 
@@ -83,9 +83,13 @@ pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vadd
     }
 }
 
-pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult) -> bool {
-    &&& s2 === s1
+pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
+}
+
+pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat>) -> bool {
+    &&& step_Resolve_enabled(vaddr)
+    &&& s2 === s1
     &&& match pte {
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;

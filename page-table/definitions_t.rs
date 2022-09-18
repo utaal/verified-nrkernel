@@ -96,9 +96,9 @@ pub enum UnmapResult {
 }
 
 #[is_variant]
-pub enum ResolveResult {
+pub enum ResolveResult<T> {
     ErrUnmapped,
-    PAddr(nat),
+    PAddr(T),
 }
 
 #[is_variant]
