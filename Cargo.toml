@@ -1,0 +1,9 @@
+[package]
+name = "verified-pt"
+version = "0.15.0"
+authors = []
+license = "MIT OR Apache-2.0"
+edition = "2018"
+
+[lib]
+path = "page-table/main.rs"
