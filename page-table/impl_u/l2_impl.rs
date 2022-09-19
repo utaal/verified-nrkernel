@@ -174,7 +174,7 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve(&self, vaddr: usize) -> Result<usize,()>
+    pub fn resolve(&self, vaddr: usize) -> Result<usize,()>
     {
         let (cr3_region, cr3) = self.memory.cr3();
         let res = self.resolve_aux(0, cr3, 0, vaddr, ());
