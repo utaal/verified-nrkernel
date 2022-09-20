@@ -1,4 +1,6 @@
 #![allow(unused_imports)]
+use core::clone::Clone;
+
 use crate::pervasive::option::{*, Option::*};
 use crate::pervasive::vec::*;
 use crate::pervasive::result::{*, Result::*};
@@ -116,7 +118,6 @@ impl ArchExec {
         res
     }
 
-    #[verifier(nonlinear)]
     pub fn entry_base(&self, layer: usize, base: usize, idx: usize) -> usize
     {
         base + idx * self.entry_size(layer)
@@ -138,11 +139,10 @@ pub const WORD_SIZE: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
 // FIXME: can we get rid of this somehow?
-#[verifier(external_body)]
 pub fn x86_arch_exec() -> ArchExec
 {
     ArchExec {
-        layers: Vec { vec: vec![
+        layers: Vec { vec: alloc::vec![
             ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
             ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
             ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
