@@ -21,7 +21,7 @@ use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
 use crate::impl_u::spec_pt;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult };
-use crate::spec_t::hardware::interp_pt_mem;
+use crate::spec_t::hardware::{interp_pt_mem,axiom_page_table_walk_interp};
 
 verus! {
 
@@ -117,7 +117,7 @@ impl impl_spec::PTImpl for PageTableImpl {
             assert(self.implspec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
-            impl_spec::axiom_page_table_walk_interp();
+            axiom_page_table_walk_interp();
             assume(forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory));
             old_page_table@.interp().lemma_inv_implies_interp_inv();
             page_table.interp().lemma_inv_implies_interp_inv();

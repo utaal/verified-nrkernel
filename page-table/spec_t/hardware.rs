@@ -10,6 +10,7 @@ use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, betwe
 use crate::spec_t::mem_t as mem;
 use crate::spec_t::mem_t::{ word_index_spec };
 use crate::impl_u::l0;
+use crate::impl_u::l2_impl;
 use option::{ *, Option::* };
 
 verus! {
@@ -31,6 +32,12 @@ pub enum HWStep {
 
 // Page table walker interpretation of the page table memory
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
+
+/// We axiomatize the page table walker with the implementation's interpretation function.
+#[verifier(external_body)]
+pub proof fn axiom_page_table_walk_interp()
+    ensures
+        forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory);
 
 pub open spec fn init(s: HWVariables) -> bool {
     &&& s.tlb.dom() === Set::empty()
