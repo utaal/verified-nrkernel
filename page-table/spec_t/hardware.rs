@@ -7,8 +7,8 @@ use map::*;
 use seq::*;
 #[allow(unused_imports)] use set::*;
 use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned };
-use crate::mem_t as mem;
-use crate::mem_t::{ word_index_spec };
+use crate::spec_t::mem_t as mem;
+use crate::spec_t::mem_t::{ word_index_spec };
 use crate::impl_u::l0;
 use option::{ *, Option::* };
 
