@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
-set +x
+# can't set these options because i don't know how to check for error code then
+# set -euo pipefail
+# set -x
 
 RUST_VERIFY=/st/verus/verif/verus/source/tools/rust-verify.sh
 PT_PATH=/st/verus/verified-nrkernel/page-table/
@@ -15,9 +16,15 @@ modules=$(! "$RUST_VERIFY" --arch-word-bits 64 $PT_PATH/main.rs --verify-module 
 for module in $modules; do
   # echo "$module"
   functions=$(! "$RUST_VERIFY" --arch-word-bits 64 $PT_PATH/main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
+  # module="impl_u::l2_impl"
 
   for function in $functions; do
+    # function="PageTable::map_frame_aux"
     output=$(strace -f -s99999 -e trace=execve "$RUST_VERIFY" --time --rlimit 200 --arch-word-bits 64 $PT_PATH/main.rs --verify-module "$module" --verify-function "$function" 2>&1)
+    if [[ $? -gt 0 ]]; then
+      echo "$module,$function,failed"
+      continue
+    fi
     # Check whether there even was a z3 query, if not we do not want to report 0ms
     if [[ "$output" =~ .*z3.* ]]; then
       time_acc1=0
