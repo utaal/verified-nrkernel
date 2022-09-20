@@ -102,7 +102,7 @@ impl PageDirectoryEntry {
                 | MASK_FLAG_P
                 | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 }
                 | if is_writable           { MASK_FLAG_RW }        else { 0 }
-                | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                | if is_supervisor         { 0 }                   else { MASK_FLAG_US }
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 }
