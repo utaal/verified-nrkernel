@@ -117,6 +117,10 @@ impl PageDirectoryEntry {
         self.entry & MASK_ADDR
     }
 
+    pub fn flags(&self) -> u64 {
+        self.entry & !MASK_ADDR
+    }
+
     pub fn is_mapping(&self) -> bool
     {
         (self.entry & MASK_FLAG_P) == MASK_FLAG_P
@@ -153,7 +157,7 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: ()) -> Result<usize, ()>
+    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: ()) -> Result<(usize, u64), ()>
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx, pt);
@@ -165,7 +169,7 @@ impl PageTable {
                 res
             } else {
                 let offset: usize = vaddr - entry_base;
-                let res = Ok(entry.address() as usize + offset);
+                let res = Ok((entry.address() as usize + offset, entry.flags()));
                 res
             }
         } else {
@@ -174,7 +178,7 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    pub fn resolve(&self, vaddr: usize) -> Result<usize,()>
+    pub fn resolve(&self, vaddr: usize) -> Result<(usize, u64),()>
     {
         let (cr3_region, cr3) = self.memory.cr3();
         let res = self.resolve_aux(0, cr3, 0, vaddr, ());
