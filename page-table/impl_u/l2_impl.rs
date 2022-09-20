@@ -269,7 +269,7 @@ impl PageTable {
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
     fn unmap_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: ())
-        -> Result<(),()>
+        -> Result<(usize, usize, u64),()>
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry = self.entry_at(layer, ptr, idx, pt);
@@ -282,9 +282,9 @@ impl PageTable {
                         if self.is_directory_empty(layer + 1, dir_addr, ()) {
                             let write_addr = ptr + idx * WORD_SIZE;
                             self.memory.write(write_addr, (), 0u64);
-                            Ok(())
+                            Ok(rec_res)
                         } else {
-                            Ok(())
+                            Ok(rec_res)
                         }
                     },
                     Err(e) => {
@@ -295,7 +295,7 @@ impl PageTable {
                 if aligned_exec(vaddr, self.arch.entry_size(layer)) {
                     let write_addr = ptr + idx * WORD_SIZE;
                     self.memory.write(write_addr, (), 0u64);
-                    Ok(())
+                    Ok((entry.address() as usize, self.arch.entry_size(layer), entry.flags()))
                 } else {
                     Err(())
                 }
@@ -310,8 +310,8 @@ impl PageTable {
     {
         let (cr3_region, cr3) = self.memory.cr3();
         match self.unmap_aux(0, cr3, 0, vaddr, ()) {
-            Ok(res) => {
-                UnmapResult::Ok
+            Ok((paddr, size, flags)) => {
+                UnmapResult::Ok(paddr, size, flags)
             },
             Err(e) => {
                 UnmapResult::ErrNoSuchMapping

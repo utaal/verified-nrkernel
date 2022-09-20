@@ -25,7 +25,7 @@ pub enum MapResult {
 
 pub enum UnmapResult {
     ErrNoSuchMapping,
-    Ok,
+    Ok(usize, usize, u64),
 }
 
 pub enum ResolveResult {
