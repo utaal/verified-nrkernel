@@ -207,7 +207,10 @@ impl PageTable {
                         },
                     }
                 }
-            } else {
+            } else if entry.address() == pte.frame.base as u64 {
+                Ok(())
+            }
+            else {
                 Err(())
             }
         } else {
