@@ -611,7 +611,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 assert(abs_s2.mappings === abs_s1.mappings.remove(vaddr));
 
                 assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s2.mappings));
-                lemma_interp_other(s1, s1);
+                lemma_interp_other(s2, s1);
                 assert forall|word_idx|
                     #[trigger] abs_s2.mem.dom().contains(word_idx)
                     implies abs_s1.mem[word_idx] === abs_s2.mem[word_idx] by
