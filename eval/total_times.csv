@@ -641,7 +641,11 @@ impl_u::l2_impl,PageTable::map_frame,rust,5672
 impl_u::l2_impl,PageTable::map_frame,vir,526
 impl_u::l2_impl,PageTable::map_frame,air,951
 impl_u::l2_impl,PageTable::map_frame,smt,42
-impl_u::l2_impl,PageTable::map_frame_aux,failed
+impl_u::l2_impl,PageTable::map_frame_aux,total,68598
+impl_u::l2_impl,PageTable::map_frame_aux,rust,5164
+impl_u::l2_impl,PageTable::map_frame_aux,vir,774
+impl_u::l2_impl,PageTable::map_frame_aux,air,941
+impl_u::l2_impl,PageTable::map_frame_aux,smt,61712
 impl_u::l2_impl,PageTable::resolve,total,6335
 impl_u::l2_impl,PageTable::resolve,rust,4996
 impl_u::l2_impl,PageTable::resolve,vir,488
