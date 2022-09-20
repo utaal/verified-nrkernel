@@ -4,22 +4,51 @@ set -euo pipefail
 set +x
 
 RUST_VERIFY=/st/verus/verif/verus/source/tools/rust-verify.sh
+PT_PATH=/st/verus/verified-nrkernel/page-table/
+NUM_RUNS=1
 
 # modules=(impl_u::indexing definitions_t impl_u::l0 impl_u::l1 impl_u::l2_impl impl_u::l2_refinement impl_u::lib impl_u::spec_pt impl_u::mem_t spec_t::hardware spec_t::hlspec spec_t::impl_spec spec_t::os)
 
 # exclamation mark ignores return code for that command
-modules=$(! "$RUST_VERIFY" --arch-word-bits 64 ../page-table/main.rs --verify-module xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
+modules=$(! "$RUST_VERIFY" --arch-word-bits 64 $PT_PATH/main.rs --verify-module xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
 
 for module in $modules; do
   # echo "$module"
-  functions=$(! "$RUST_VERIFY" --arch-word-bits 64 ../page-table/main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
+  functions=$(! "$RUST_VERIFY" --arch-word-bits 64 $PT_PATH/main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
 
   for function in $functions; do
-    output=$(strace -f -s99999 -e trace=execve "$RUST_VERIFY" --time --arch-word-bits 64 ../page-table/main.rs --verify-module "$module" --verify-function "$function" 2>&1)
+    output=$(strace -f -s99999 -e trace=execve "$RUST_VERIFY" --time --rlimit 200 --arch-word-bits 64 $PT_PATH/main.rs --verify-module "$module" --verify-function "$function" 2>&1)
     # Check whether there even was a z3 query, if not we do not want to report 0ms
     if [[ "$output" =~ .*z3.* ]]; then
-      time=$(echo "$output" | grep smt-time | tr -s ' ' | cut -d ' ' -f 3)
-      echo "$module,$function,$time"
+      time_acc1=0
+      time_acc2=0
+      time_acc3=0
+      time_acc4=0
+      time_acc5=0
+      # rerun the query to avoid slowdown due to strace
+      for i in $(seq 1 $NUM_RUNS); do
+        output=$("$RUST_VERIFY" --time --arch-word-bits 64 $PT_PATH/main.rs --verify-module "$module" --verify-function "$function" 2>&1)
+        time1=$(echo "$output" | grep total-time | tr -s ' ' | cut -d ' ' -f 2)
+        time2=$(echo "$output" | grep rust-time | tr -s ' ' | cut -d ' ' -f 3)
+        time3=$(echo "$output" | grep vir-time | tr -s ' ' | cut -d ' ' -f 3)
+        time4=$(echo "$output" | grep air-time | tr -s ' ' | cut -d ' ' -f 3)
+        time5=$(echo "$output" | grep smt-time | tr -s ' ' | cut -d ' ' -f 3)
+        time_acc1=$((time_acc1+time1))
+        time_acc2=$((time_acc2+time2))
+        time_acc3=$((time_acc3+time3))
+        time_acc4=$((time_acc4+time4))
+        time_acc5=$((time_acc5+time5))
+      done
+      time_acc1=$((time_acc1/$NUM_RUNS))
+      time_acc2=$((time_acc2/$NUM_RUNS))
+      time_acc3=$((time_acc3/$NUM_RUNS))
+      time_acc4=$((time_acc4/$NUM_RUNS))
+      time_acc5=$((time_acc5/$NUM_RUNS))
+      echo "$module,$function,total,$time_acc1"
+      echo "$module,$function,rust,$time_acc2"
+      echo "$module,$function,vir,$time_acc3"
+      echo "$module,$function,air,$time_acc4"
+      echo "$module,$function,smt,$time_acc5"
     else
       echo "$module,$function,X"
     fi
