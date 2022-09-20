@@ -6,7 +6,7 @@
 
 RUST_VERIFY=/st/verus/verif/verus/source/tools/rust-verify.sh
 PT_PATH=/st/verus/verified-nrkernel/page-table/
-NUM_RUNS=1
+NUM_RUNS=3
 
 # modules=(impl_u::indexing definitions_t impl_u::l0 impl_u::l1 impl_u::l2_impl impl_u::l2_refinement impl_u::lib impl_u::spec_pt impl_u::mem_t spec_t::hardware spec_t::hlspec spec_t::impl_spec spec_t::os)
 
