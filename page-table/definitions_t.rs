@@ -1,9 +1,9 @@
 #![allow(unused_imports)]
 use core::clone::Clone;
 
-use crate::pervasive::option::{*, Option::*};
+use crate::pervasive::option::{Option::*, *};
+use crate::pervasive::result::{Result::*, *};
 use crate::pervasive::vec::*;
-use crate::pervasive::result::{*, Result::*};
 
 // Upper bound for x86 4-level paging.
 // 512 entries, each mapping 512*1024*1024*1024 bytes
@@ -13,8 +13,7 @@ pub const L2_ENTRY_SIZE: usize = 512 * L3_ENTRY_SIZE;
 pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
 pub const L0_ENTRY_SIZE: usize = 512 * L1_ENTRY_SIZE;
 
-pub fn aligned_exec(addr: usize, size: usize) -> bool
-{
+pub fn aligned_exec(addr: usize, size: usize) -> bool {
     addr % size == 0
 }
 
@@ -33,10 +32,12 @@ pub enum ResolveResult {
     PAddr(usize),
 }
 
-pub struct MemRegionExec { pub base: usize, pub size: usize }
-
-impl MemRegionExec {
+pub struct MemRegionExec {
+    pub base: usize,
+    pub size: usize,
 }
+
+impl MemRegionExec {}
 
 pub struct Flags {
     pub is_writable: bool,
@@ -49,8 +50,7 @@ pub struct PageTableEntryExec {
     pub flags: Flags,
 }
 
-impl PageTableEntryExec {
-}
+impl PageTableEntryExec {}
 
 // Architecture
 
@@ -91,8 +91,7 @@ impl Clone for ArchLayerExec {
     }
 }
 
-impl ArchLayerExec {
-}
+impl ArchLayerExec {}
 
 pub struct ArchExec {
     // TODO: This could probably be an array, once we have support for that
@@ -100,31 +99,26 @@ pub struct ArchExec {
 }
 
 impl ArchExec {
-    pub fn entry_size(&self, layer: usize) -> usize
-    {
+    pub fn entry_size(&self, layer: usize) -> usize {
         self.layers.index(layer).entry_size
     }
 
-    pub fn num_entries(&self, layer: usize) -> usize
-    {
+    pub fn num_entries(&self, layer: usize) -> usize {
         self.layers.index(layer).num_entries
     }
 
-    pub fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> usize
-    {
+    pub fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> usize {
         let es = self.entry_size(layer);
         let offset = vaddr - base;
         let res = offset / es;
         res
     }
 
-    pub fn entry_base(&self, layer: usize, base: usize, idx: usize) -> usize
-    {
+    pub fn entry_base(&self, layer: usize, base: usize, idx: usize) -> usize {
         base + idx * self.entry_size(layer)
     }
 
-    pub fn next_entry_base(&self, layer: usize, base: usize, idx: usize) -> usize
-    {
+    pub fn next_entry_base(&self, layer: usize, base: usize, idx: usize) -> usize {
         let offset = (idx + 1) * self.entry_size(layer);
         base + offset
     }
@@ -139,14 +133,27 @@ pub const WORD_SIZE: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
 // FIXME: can we get rid of this somehow?
-pub fn x86_arch_exec() -> ArchExec
-{
+pub fn x86_arch_exec() -> ArchExec {
     ArchExec {
-        layers: Vec { vec: alloc::vec![
-            ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
-        ] },
+        layers: Vec {
+            vec: alloc::vec![
+                ArchLayerExec {
+                    entry_size: L0_ENTRY_SIZE,
+                    num_entries: 512
+                },
+                ArchLayerExec {
+                    entry_size: L1_ENTRY_SIZE,
+                    num_entries: 512
+                },
+                ArchLayerExec {
+                    entry_size: L2_ENTRY_SIZE,
+                    num_entries: 512
+                },
+                ArchLayerExec {
+                    entry_size: L3_ENTRY_SIZE,
+                    num_entries: 512
+                },
+            ],
+        },
     }
 }
