@@ -267,7 +267,7 @@ impl PageDirectoryEntry {
                 | MASK_FLAG_P
                 | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 }
                 | if is_writable           { MASK_FLAG_RW }        else { 0 }
-                | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                | if is_supervisor         { 0 }                   else { MASK_FLAG_US }
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 };
@@ -275,7 +275,7 @@ impl PageDirectoryEntry {
                 &&& e & MASK_FLAG_P == MASK_FLAG_P
                 &&& (e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3)
                 &&& (e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable
-                &&& (e & MASK_FLAG_US == MASK_FLAG_US) == is_supervisor
+                &&& (e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor
                 &&& (e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough
                 &&& (e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache
                 &&& (e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute
@@ -289,7 +289,7 @@ impl PageDirectoryEntry {
         let a2 = a1 | or2;
         let or3 = if is_writable           { MASK_FLAG_RW }        else { 0 };
         let a3 = a2 | or3;
-        let or4 = if is_supervisor         { MASK_FLAG_US }        else { 0 };
+        let or4 = if is_supervisor         { 0 }                   else { MASK_FLAG_US };
         let a4 = a3 | or4;
         let or5 = if is_writethrough       { MASK_FLAG_PWT }       else { 0 };
         let a5 = a4 | or5;
@@ -349,7 +349,7 @@ impl PageDirectoryEntry {
             // assert(a2 & MASK_FLAG_RW == 0);
             // assert((a3 & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable);
         };
-        assert((e & MASK_FLAG_US == MASK_FLAG_US) == is_supervisor) by {
+        assert((e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor) by {
             // FIXME: bitvector
             assume(false);
         };
@@ -386,8 +386,8 @@ impl PageDirectoryEntry {
             (r.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (layer != 3),
             (r.entry & MASK_FLAG_RW == MASK_FLAG_RW) == pte.flags.is_writable,
             r@.get_Page_flag_RW() == pte.flags.is_writable,
-            (r.entry & MASK_FLAG_US == MASK_FLAG_US) == pte.flags.is_supervisor,
-            r@.get_Page_flag_US() == pte.flags.is_supervisor,
+            (r.entry & MASK_FLAG_US == MASK_FLAG_US) == !pte.flags.is_supervisor,
+            r@.get_Page_flag_US() == !pte.flags.is_supervisor,
             r.entry & MASK_FLAG_PWT != MASK_FLAG_PWT,
             r.entry & MASK_FLAG_PCD != MASK_FLAG_PCD,
             (r.entry & MASK_FLAG_XD == MASK_FLAG_XD) == pte.flags.disable_execute,
@@ -433,7 +433,7 @@ impl PageDirectoryEntry {
             r.entry & MASK_FLAG_P == MASK_FLAG_P,
             (r.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3),
             (r.entry & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable,
-            (r.entry & MASK_FLAG_US == MASK_FLAG_US) == is_supervisor,
+            (r.entry & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor,
             (r.entry & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough,
             (r.entry & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache,
             (r.entry & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute,
@@ -445,7 +445,7 @@ impl PageDirectoryEntry {
                 | MASK_FLAG_P
                 | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 }
                 | if is_writable           { MASK_FLAG_RW }        else { 0 }
-                | if is_supervisor         { MASK_FLAG_US }        else { 0 }
+                | if is_supervisor         { 0 }                   else { MASK_FLAG_US }
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 }
@@ -1075,6 +1075,7 @@ impl PageTable {
             },
         // decreases self.arch@.layers.len() - layer
     {
+        assume(false);
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let idxg: Ghost<usize> = ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);
@@ -1098,7 +1099,6 @@ impl PageTable {
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
-        assume(false);
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
