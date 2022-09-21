@@ -81,7 +81,7 @@ impl PageDirectoryEntry {
     pub fn new_dir_entry(layer: usize, address: u64) -> Self
     {
         // FIXME: check what flags we want here
-        Self::new_entry(layer, address, false, true, true, false, false, false)
+        Self::new_entry(layer, address, false, true, false, false, false, false)
     }
 
     pub fn new_entry(
