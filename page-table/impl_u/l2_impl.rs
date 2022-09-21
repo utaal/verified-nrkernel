@@ -381,6 +381,17 @@ impl PageDirectoryEntry {
             r@.is_Page(),
             r.layer == layer,
             r@.get_Page_addr() == pte.frame.base,
+            r.entry & MASK_ADDR == pte.frame.base,
+            r.entry & MASK_FLAG_P == MASK_FLAG_P,
+            (r.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (layer != 3),
+            (r.entry & MASK_FLAG_RW == MASK_FLAG_RW) == pte.flags.is_writable,
+            r@.get_Page_flag_RW() == pte.flags.is_writable,
+            (r.entry & MASK_FLAG_US == MASK_FLAG_US) == pte.flags.is_supervisor,
+            r@.get_Page_flag_US() == pte.flags.is_supervisor,
+            r.entry & MASK_FLAG_PWT != MASK_FLAG_PWT,
+            r.entry & MASK_FLAG_PCD != MASK_FLAG_PCD,
+            (r.entry & MASK_FLAG_XD == MASK_FLAG_XD) == pte.flags.disable_execute,
+            r@.get_Page_flag_XD() == pte.flags.disable_execute,
     {
         Self::new_entry(layer, pte.frame.base as u64, true, pte.flags.is_writable, pte.flags.is_supervisor, false, false, pte.flags.disable_execute)
     }
@@ -396,7 +407,7 @@ impl PageDirectoryEntry {
             r@.get_Directory_addr() == address,
     {
         // FIXME: check what flags we want here
-        Self::new_entry(layer, address, false, true, true, false, false, false)
+        Self::new_entry(layer, address, false, true, false, false, false, false)
     }
 
     pub fn new_entry(
@@ -418,6 +429,14 @@ impl PageDirectoryEntry {
             if is_page { r@.is_Page() && r@.get_Page_addr() == address } else { r@.is_Directory() && r@.get_Directory_addr() == address},
             r.addr_is_zero_padded(),
             r.layer == layer,
+            r.entry & MASK_ADDR == address,
+            r.entry & MASK_FLAG_P == MASK_FLAG_P,
+            (r.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3),
+            (r.entry & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable,
+            (r.entry & MASK_FLAG_US == MASK_FLAG_US) == is_supervisor,
+            (r.entry & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough,
+            (r.entry & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache,
+            (r.entry & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute,
     {
         let e =
         PageDirectoryEntry {
@@ -703,8 +722,8 @@ impl PageTable {
                     PageTableEntry {
                         frame: MemRegion { base: addr, size: self.arch@.entry_size(layer) },
                         flags: Flags {
-                            is_writable: flag_RW,
-                            is_supervisor: flag_US,
+                            is_writable:     flag_RW,
+                            is_supervisor:   !flag_US,
                             disable_execute: flag_XD,
                         },
                     }),
@@ -1079,6 +1098,7 @@ impl PageTable {
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
+        assume(false);
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
@@ -1443,8 +1463,9 @@ impl PageTable {
                     let new_interp = self.interp_at(layer, ptr, base, pt@);
                     assert(new_interp.entries[idxg@] === self.interp_at_entry(layer, ptr, base, idxg@, pt@));
                     assert(self.view_at(layer, ptr, idxg@, pt@) === new_page_entry@);
-                    // FIXME: bitvector stuff?
-                    assume(self.interp_at_entry(layer, ptr, base, idxg@, pt@) === l1::NodeEntry::Page(pte@));
+
+                    assert(self.interp_at_entry(layer, ptr, base, idxg@, pt@) === l1::NodeEntry::Page(pte@));
+
                     assert(new_interp.entries[idxg@] === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries[idxg@]);
                     assert_seqs_equal!(new_interp.entries, old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
                     assert(new_interp.entries === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@).get_Ok_0().entries);
@@ -2340,5 +2361,6 @@ pub proof fn lemma_set_union_empty_equals_set<T>(s: Set<T>)
 {
     assert_sets_equal!(s.union(set![]), s);
 }
+
 
 }

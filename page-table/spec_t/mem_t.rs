@@ -20,22 +20,22 @@ use crate::impl_u::indexing;
 
 verus! {
 
-pub fn word_index(offset: usize) -> (res: usize)
+pub fn word_index(addr: usize) -> (res: usize)
     requires
-        aligned(offset, 8),
+        aligned(addr, 8),
     ensures
-        res as nat === word_index_spec(offset),
+        res as nat === word_index_spec(addr),
         // Prove this equivalence to use the indexing lemmas
-        res as nat === indexing::index_from_offset(offset, WORD_SIZE),
-        word_index_spec(offset) === indexing::index_from_offset(offset, WORD_SIZE),
+        res as nat === indexing::index_from_offset(addr, WORD_SIZE),
+        word_index_spec(addr) === indexing::index_from_offset(addr, WORD_SIZE),
 {
-    offset / WORD_SIZE
+    addr / WORD_SIZE
 }
 
-pub open spec fn word_index_spec(offset: nat) -> nat
-    recommends aligned(offset, 8)
+pub open spec fn word_index_spec(addr: nat) -> nat
+    recommends aligned(addr, 8)
 {
-    offset / WORD_SIZE
+    addr / WORD_SIZE
 }
 
 pub struct TLB {
@@ -59,8 +59,8 @@ impl TLB {
 // Or maybe we just specify reads to return those bits as arbitrary?
 #[verifier(external_body)]
 pub struct PageTableMemory {
-    /// `ptr` is the starting address of the physical memory linear mapping
-    ptr: *mut u64,
+    /// `phys_mem_ref` is the starting address of the physical memory linear mapping
+    phys_mem_ref: *mut u64,
 }
 
 impl PageTableMemory {
@@ -80,7 +80,6 @@ impl PageTableMemory {
             res.0@ === self.cr3_spec().0,
             res.0@.contains(res.1),
     {
-        // FIXME:
         unreached()
     }
 
@@ -103,46 +102,41 @@ impl PageTableMemory {
             forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.inv()
     {
-        // FIXME:
         unreached()
     }
 
     #[verifier(external_body)]
-    pub fn write(&mut self, offset: usize, region: Ghost<MemRegion>, value: u64)
+    pub fn write(&mut self, paddr: usize, region: Ghost<MemRegion>, value: u64)
         requires
-            aligned(offset, 8),
+            aligned(paddr, 8),
             old(self).inv(),
             old(self).regions().contains(region@),
-            region@.contains(offset),
-            word_index_spec(sub(offset, region@.base)) < 512,
+            region@.contains(paddr),
+            word_index_spec(sub(paddr, region@.base)) < 512,
         ensures
-            self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(offset, region@.base)), value),
+            self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(paddr, region@.base)), value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
             self.regions() === old(self).regions(),
     {
-        let word_offset: isize = word_index(offset) as isize;
-        unsafe {
-            self.ptr.offset(word_offset).write(value);
-        }
+        let word_offset: isize = word_index(paddr) as isize;
+        unsafe { self.phys_mem_ref.offset(word_offset).write(value); }
     }
 
     #[verifier(external_body)]
-    pub fn read(&self, offset: usize, region: Ghost<MemRegion>) -> (res: u64)
+    pub fn read(&self, paddr: usize, region: Ghost<MemRegion>) -> (res: u64)
         requires
-            aligned(offset, 8),
+            aligned(paddr, 8),
             self.regions().contains(region@),
-            word_index_spec(sub(offset, region@.base)) < 512,
+            word_index_spec(sub(paddr, region@.base)) < 512,
         ensures
-            res == self.spec_read(offset, region@)
+            res == self.spec_read(paddr, region@)
     {
-        let word_offset: isize = word_index(offset) as isize;
-        unsafe {
-            self.ptr.offset(word_offset).read()
-        }
+        let word_offset: isize = word_index(paddr) as isize;
+        unsafe { self.phys_mem_ref.offset(word_offset).read() }
     }
 
-    pub open spec fn spec_read(self, offset: nat, region: MemRegion) -> (res: u64) {
-        self.region_view(region)[word_index_spec(sub(offset, region.base))]
+    pub open spec fn spec_read(self, paddr: nat, region: MemRegion) -> (res: u64) {
+        self.region_view(region)[word_index_spec(sub(paddr, region.base))]
     }
 }
 
