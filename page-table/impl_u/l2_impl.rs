@@ -1030,6 +1030,8 @@ impl PageTable {
         self.arch@.contains_entry_size_at_index_atleast(pte.frame.size, 1)
     }
 
+    // FIXME: pub const KERNEL_BASE: u64 = 0x4000_0000_0000;
+    // use that for overflow stuff
     #[verifier(spinoff_prover)] #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
     fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pte: PageTableEntryExec, pt: Ghost<PTDir>)
         -> (res: (Result<Ghost<(PTDir,Set<MemRegion>)>,()>))
