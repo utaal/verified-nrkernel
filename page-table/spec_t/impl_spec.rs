@@ -6,7 +6,7 @@ use crate::pervasive::*;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult, PageTableEntry };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
-use crate::spec_t::mem_t as mem;
+use crate::spec_t::mem;
 use option::*;
 
 verus! {

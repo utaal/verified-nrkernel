@@ -10,7 +10,7 @@ use map::*;
 use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use option::{ *, Option::None, Option::Some };
-use crate::spec_t::mem_t::{ word_index_spec };
+use crate::spec_t::mem::{ word_index_spec };
 
 // TODO:
 // - should Unmap be able to unmap when is_supervisor is set?

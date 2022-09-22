@@ -10,7 +10,7 @@ use set::*;
 use set_lib::*;
 use seq_lib::*;
 use vec::*;
-use crate::spec_t::mem_t as mem;
+use crate::spec_t::mem;
 
 use result::{*, Result::*};
 

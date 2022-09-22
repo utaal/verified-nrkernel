@@ -20,7 +20,7 @@ verus! {
 ///! can be implemented in their own modules and simply assert their equivalence to these spec
 ///! functions to make use of the lemmas. This is mainly because the absence of overflows may use
 ///! different bounds depending on the exact context. It also has the benefit that trusted exec
-///! functions (e.g. in mem_t) are fully defined in their own modules
+///! functions (e.g. in mem) are fully defined in their own modules
 
 
 // pub fn index_from_offset(offset: usize, entry_size: usize) -> (res: usize)
