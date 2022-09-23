@@ -71,19 +71,21 @@ impl PageTableMemory {
         &&& forall|s1: MemRegion, s2: MemRegion| self.regions().contains(s1) && self.regions().contains(s2) && s1 !== s2 ==> !overlap(s1, s2)
     }
 
-    /// `cr3` returns the physical address at which the layer 0 page directory is mapped as well as
-    /// the corresponding memory region
+    /// `cr3` returns a MemRegion whose base is the address at which the layer 0 page directory is mapped
     #[verifier(external_body)]
-    pub fn cr3(&self) -> (res: (Ghost<MemRegion>, usize))
-        ensures
-            res.1 == self.cr3_spec().1,
-            res.0@ === self.cr3_spec().0,
-            res.0@.contains(res.1),
+    pub fn cr3(&self) -> (res: MemRegionExec)
+        ensures res === self.cr3_spec()
     {
         unreached()
     }
 
-    pub open spec fn cr3_spec(&self) -> (MemRegion, usize);
+    pub open spec fn cr3_spec(&self) -> MemRegionExec;
+
+    #[verifier(external_body)]
+    pub proof fn cr3_facts(&self)
+        ensures
+            aligned(self.cr3_spec().base, PAGE_SIZE),
+            self.cr3_spec().size == PAGE_SIZE;
 
     // We assume that alloc_page never fails. In practice we can just keep a buffer of 3+ pages
     // that are allocated before we use map_frame.

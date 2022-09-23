@@ -31,8 +31,8 @@ spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
     true
 }
 
-impl impl_spec::PTImpl for PageTableImpl {
-    spec fn implspec_inv(&self, memory: mem::PageTableMemory) -> bool {
+impl impl_spec::InterfaceSpec for PageTableImpl {
+    spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
         exists|ghost_pt: l2_impl::PTDir| {
             let page_table = l2_impl::PageTable {
                 memory: memory,
@@ -45,7 +45,11 @@ impl impl_spec::PTImpl for PageTableImpl {
         }
     }
 
-    fn implspec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
+    // proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory) {
+    //     assume(false);
+    // }
+
+    fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
         // requires
         assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr, pte@));
         assert(aligned(vaddr, pte@.frame.size));
@@ -56,7 +60,7 @@ impl impl_spec::PTImpl for PageTableImpl {
             ||| pte.frame.size == L2_ENTRY_SIZE
             ||| pte.frame.size == L1_ENTRY_SIZE
         });
-        assert(self.implspec_inv(memory));
+        assert(self.ispec_inv(memory));
         let ghost_pt: Ghost<l2_impl::PTDir> = ghost(
             choose|ghost_pt: l2_impl::PTDir| {
                 let page_table = l2_impl::PageTable {
@@ -96,8 +100,8 @@ impl impl_spec::PTImpl for PageTableImpl {
             }
         };
         proof {
-            let (cr3_region, cr3) = page_table.memory.cr3_spec();
-            page_table.lemma_interp_at_facts(0, cr3, 0, page_table.ghost_pt@);
+            let cr3 = page_table.memory.cr3_spec();
+            page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
             assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
         }
         assert(page_table.interp().accepted_mapping(vaddr, pte@));
@@ -114,7 +118,7 @@ impl impl_spec::PTImpl for PageTableImpl {
         // ensures
         proof {
             let page_table_post_state = page_table;
-            assert(self.implspec_inv(page_table.memory)) by {
+            assert(self.ispec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
             axiom_page_table_walk_interp();
@@ -132,12 +136,12 @@ impl impl_spec::PTImpl for PageTableImpl {
         (res, page_table.memory)
     }
 
-    fn implspec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
+    fn ispec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
         assume(false);
         (UnmapResult::Ok, memory)
     }
 
-    // fn implspec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory)) {
+    // fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory)) {
     //     assume(false);
     //     (ResolveResult::PAddr(0), memory)
     // }

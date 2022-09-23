@@ -11,41 +11,40 @@ use option::*;
 
 verus! {
 
-pub trait PTImpl {
-    spec fn implspec_inv(&self, memory: mem::PageTableMemory) -> bool;
+pub trait InterfaceSpec {
+    spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool;
 
-    proof fn implspec_init_implies_inv(&self, memory: mem::PageTableMemory)
+    proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory)
         requires
+            // TODO: add specific preconditions for an empty pt l2 inv
             spec_pt::init(spec_pt::PageTableVariables { map: interp_pt_mem(memory) })
         ensures
-            self.implspec_inv(memory);
+            self.ispec_inv(memory);
 
-    fn implspec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory))
+    fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory))
         requires
             spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr, pte@),
-            self.implspec_inv(memory),
+            self.ispec_inv(memory),
         ensures
-            self.implspec_inv(res.1),
+            self.ispec_inv(res.1),
             spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(res.1) }, vaddr, pte@, res.0);
 
-    // FIXME: do i need to add tlb state to the spec_pt state machine?
-    fn implspec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory))
+    fn ispec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory))
         requires
             spec_pt::step_Unmap_enabled(vaddr),
-            self.implspec_inv(memory),
+            self.ispec_inv(memory),
         ensures
-            self.implspec_inv(res.1),
+            self.ispec_inv(res.1),
             spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(res.1) }, vaddr, res.0);
-            // FIXME: tlb stuff
 
     // can't write a valid trigger for this
     // this doesn't need to mutate memory, can just give an immutable borrow
-    // fn implspec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory))
+    // fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory))
     //     requires
     //         spec_pt::step_Resolve_enabled(vaddr),
-    //         self.implspec_inv(memory),
+    //         self.ispec_inv(memory),
     //     ensures
-    //         self.implspec_inv(res.1),
+    //         self.ispec_inv(res.1),
     //         exists|pte:Option<(nat,PageTableEntry)>| {
     //             let rr: ResolveResult<nat> = match res.0 {
     //                 ResolveResult::PAddr(n)    => ResolveResult::PAddr(n as nat),
