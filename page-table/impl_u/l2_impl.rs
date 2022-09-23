@@ -473,6 +473,20 @@ impl PageDirectoryEntry {
         e
     }
 
+    pub fn flags(&self) -> (res: Flags)
+        requires
+            self.layer() <= 3,
+            self@.is_Page()
+        ensures
+            true
+    {
+        Flags {
+            is_writable:     self.entry & MASK_FLAG_RW == MASK_FLAG_RW,
+            is_supervisor:   self.entry & MASK_FLAG_US != MASK_FLAG_US,
+            disable_execute: self.entry & MASK_FLAG_XD == MASK_FLAG_XD,
+        }
+    }
+
     pub fn address(&self) -> (res: u64)
         requires
             self.layer() <= 3,
@@ -935,18 +949,17 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: Ghost<PTDir>) -> (res: (Result<usize, ()>))
+    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: Ghost<PTDir>) -> (res: (Result<(usize, PageTableEntryExec), ()>))
         requires
             self.inv_at(layer, ptr, pt@),
             self.interp_at(layer, ptr, base, pt@).inv(),
             self.interp_at(layer, ptr, base, pt@).interp().accepted_resolve(vaddr),
             base <= vaddr < MAX_BASE,
-            // aligned(base, self.arch@.entry_size(layer) * self.arch@.num_entries(layer)),
         ensures
             // Refinement of l1
-            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base, pt@).resolve(vaddr),
+            res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === self.interp_at(layer, ptr, base, pt@).resolve(vaddr),
             // Refinement of l0
-            res.map_ok(|v: usize| v as nat) === self.interp_at(layer, ptr, base, pt@).interp().resolve(vaddr),
+            res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === self.interp_at(layer, ptr, base, pt@).interp().resolve(vaddr),
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
@@ -980,30 +993,47 @@ impl PageTable {
                     assert(self.inv_at((layer + 1) as nat, dir_addr, dir_pt@));
                 }
                 let res = self.resolve_aux(layer + 1, dir_addr, entry_base, vaddr, dir_pt);
-                assert(res.map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr));
                 res
             } else {
                 assert(entry@.is_Page());
                 assert(interp@.entries.index(idx).is_Page());
-                let offset: usize = vaddr - entry_base;
+                // let offset: usize = vaddr - entry_base;
                 // FIXME: need to assume a maximum for physical addresses
                 // FIXME: high prio
                 assume(entry@.get_Page_addr() < 10000);
-                assert(offset < self.arch@.entry_size(layer));
-                let res = Ok(entry.address() as usize + offset);
-                assert(res.map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
+                // assert(offset < self.arch@.entry_size(layer));
+                let pte = PageTableEntryExec {
+                    frame: MemRegionExec { base: entry.address() as usize, size: self.arch.entry_size(layer) },
+                    flags: entry.flags()
+                };
+                let res = Ok((entry_base, pte));
+                // FIXME: should be postcondition of flags function
+                assume(pte.flags.is_writable == entry@.get_Page_flag_RW());
+                assume(pte.flags.is_supervisor == !entry@.get_Page_flag_US());
+                assume(pte.flags.disable_execute == entry@.get_Page_flag_XD());
+                proof {
+                if interp@.resolve(vaddr).is_Ok() {
+                    assert(interp@.entries.index(idx).get_Page_0() === interp@.resolve(vaddr).get_Ok_0().1);
+                    assert(interp@.entries.index(idx) === self.interp_at_entry(layer, ptr, base, idx, pt@));
+                }
+                }
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === interp@.resolve(vaddr).map_ok(|v| v.0));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === interp@.resolve(vaddr).map_ok(|v| v.1.frame));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === interp@.resolve(vaddr).map_ok(|v| v.1.flags));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr));
                 res
             }
         } else {
             assert(entry@.is_Empty());
             assert(interp@.entries.index(idx).is_Empty());
-            assert(Err(()).map_ok(|v: usize| v as nat) === interp@.resolve(vaddr));
+            assert(Err(()).map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr));
             Err(())
         }
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve(&self, vaddr: usize) -> (res: (Result<usize,()>))
+    fn resolve(&self, vaddr: usize) -> (res: (Result<(usize, PageTableEntryExec),()>))
         requires
             self.inv(),
             self.interp().inv(),
@@ -1011,9 +1041,9 @@ impl PageTable {
             vaddr < MAX_BASE,
         ensures
             // Refinement of l1
-            res.map_ok(|v: usize| v as nat) === self.interp().resolve(vaddr),
+            res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === self.interp().resolve(vaddr),
             // Refinement of l0
-            res.map_ok(|v: usize| v as nat) === self.interp().interp().resolve(vaddr),
+            res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === self.interp().interp().resolve(vaddr),
     {
         proof { ambient_arith(); }
         let cr3 = self.memory.cr3();
@@ -1077,6 +1107,7 @@ impl PageTable {
             },
         // decreases self.arch@.layers.len() - layer
     {
+        assume(false);
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let idxg: Ghost<usize> = ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);

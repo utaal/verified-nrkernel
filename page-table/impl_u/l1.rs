@@ -635,7 +635,7 @@ impl Directory {
     // }
 
     // TODO restore spec(checked) when recommends_by is fixed
-    pub open spec fn resolve(self, vaddr: nat) -> Result<nat,()>
+    pub open spec fn resolve(self, vaddr: nat) -> Result<(nat, PageTableEntry),()>
         recommends
             self.inv(),
             self.interp().accepted_resolve(vaddr),
@@ -648,7 +648,7 @@ impl Directory {
         match self.entries.index(entry) {
             NodeEntry::Page(pte) => {
                 let offset = vaddr - self.entry_base(entry);
-                Ok((pte.frame.base + offset) as nat)
+                Ok((self.entry_base(entry), pte))
             },
             NodeEntry::Directory(d) => {
                 d.resolve(vaddr)
@@ -848,7 +848,21 @@ impl Directory {
                     assert(d.interp().resolve(vaddr).is_Err());
                     assert(!exists|base:nat|
                            d.interp().map.dom().contains(base) &&
-                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size));
+                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size)) by
+                    {
+                        assert(!exists|base:nat, pte:PageTableEntry|
+                                    d.interp().map.contains_pair(base, pte) &&
+                                    between(vaddr, base, base + pte.frame.size));
+                        if exists|base:nat|
+                           d.interp().map.dom().contains(base) &&
+                           between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size) {
+                           let base = choose|base:nat|
+                               d.interp().map.dom().contains(base) &&
+                               between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size);
+                           let pte = d.interp().map.index(base);
+                           assert(d.interp().map.contains_pair(base, pte));
+                       }
+                    };
                     self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(vaddr, entry);
                 }
                 assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));

@@ -162,18 +162,16 @@ impl PageTableContents {
 
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
-    // #[spec] fn resolve(self, vaddr: nat) -> MemRegion {
-    pub open spec(checked) fn resolve(self, vaddr: nat) -> Result<nat,()>
+    pub open spec(checked) fn resolve(self, vaddr: nat) -> Result<(nat, PageTableEntry),()>
         recommends self.accepted_resolve(vaddr)
     {
-        if exists|base:nat|
-            self.map.dom().contains(base) &&
-            between(vaddr, base, base + (#[trigger] self.map.index(base)).frame.size) {
-            let base = choose(|base:nat|
-                           self.map.dom().contains(base) &&
-                           between(vaddr, base, base + (#[trigger] self.map.index(base)).frame.size));
-            let offset = vaddr - base;
-            Ok((self.map.index(base).frame.base + offset) as nat)
+        if exists|base:nat, pte:PageTableEntry|
+            self.map.contains_pair(base, pte) &&
+            between(vaddr, base, base + pte.frame.size)
+        {
+            let (base, pte) = choose|base:nat, pte:PageTableEntry|
+                self.map.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
+            Ok((base, pte))
         } else {
             Err(())
         }

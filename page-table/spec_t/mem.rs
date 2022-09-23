@@ -75,9 +75,7 @@ impl PageTableMemory {
     #[verifier(external_body)]
     pub fn cr3(&self) -> (res: MemRegionExec)
         ensures res === self.cr3_spec()
-    {
-        unreached()
-    }
+    { unreached() }
 
     pub open spec fn cr3_spec(&self) -> MemRegionExec;
 

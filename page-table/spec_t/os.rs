@@ -122,9 +122,9 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat>) -> bool {
+pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: ResolveResult<(nat, PageTableEntry)>) -> bool {
     &&& hardware::step_PTMemOp(s1.system, s2.system)
-    &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, pte, result)
+    &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 
@@ -132,7 +132,7 @@ pub enum OSStep {
     HW      { step: hardware::HWStep },
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },
-    Resolve { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat> },
+    Resolve { vaddr: nat, result: ResolveResult<(nat, PageTableEntry)> },
 }
 
 impl OSStep {
@@ -147,7 +147,7 @@ impl OSStep {
                 },
             OSStep::Map     { vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
             OSStep::Unmap   { vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
-            OSStep::Resolve { vaddr, pte, result } => hlspec::AbstractStep::Resolve { vaddr, pte, result },
+            OSStep::Resolve { vaddr, result }      => hlspec::AbstractStep::Resolve { vaddr, result },
         }
     }
 }
@@ -157,7 +157,7 @@ pub open spec fn next_step(s1: OSVariables, s2: OSVariables, step: OSStep) -> bo
         OSStep::HW      { step }               => step_HW(s1, s2, step),
         OSStep::Map     { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
         OSStep::Unmap   { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
-        OSStep::Resolve { vaddr, pte, result } => step_Resolve(s1, s2, vaddr, pte, result),
+        OSStep::Resolve { vaddr, result }      => step_Resolve(s1, s2, vaddr, result),
     }
 }
 

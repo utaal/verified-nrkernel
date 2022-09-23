@@ -417,7 +417,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 assert(s2.inv());
             }
         },
-        OSStep::Resolve { vaddr, pte, result } => (),
+        OSStep::Resolve { vaddr, result } => (),
     }
 }
 
@@ -627,18 +627,18 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(hlspec::step_Unmap(abs_c, abs_s1, abs_s2, vaddr, result));
             assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
         },
-        OSStep::Resolve { vaddr, pte, result } => {
-            // hlspec::AbstractStep::Resolve { vaddr, pte, result }
+        OSStep::Resolve { vaddr, result } => {
+            // hlspec::AbstractStep::Resolve { vaddr, result }
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
-            assert(abs_step === hlspec::AbstractStep::Resolve { vaddr, pte, result });
-            assert(step_Resolve(s1, s2, vaddr, pte, result));
-            assert(spec_pt::step_Resolve(pt_s1, pt_s2, vaddr, pte, result));
-            match pte {
-                Some((base, pte)) => {
-                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, Some((base, pte)), result));
+            assert(abs_step === hlspec::AbstractStep::Resolve { vaddr, result });
+            assert(step_Resolve(s1, s2, vaddr, result));
+            assert(spec_pt::step_Resolve(pt_s1, pt_s2, vaddr, result));
+            match result {
+                ResolveResult::Ok((base, pte)) => {
+                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, ResolveResult::Ok((base, pte))));
                 },
-                None => {
+                ResolveResult::ErrUnmapped => {
                     let vmem_idx = word_index_spec(vaddr);
                     assert(vmem_idx * WORD_SIZE == vaddr);
                     if hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s1.mappings).contains(vmem_idx) {
@@ -653,10 +653,10 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                         assert(pt_s1.map.contains_pair(base, pte));
                         assert(false);
                     }
-                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, pte, result));
+                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, result));
                 },
             }
-            assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, pte, result));
+            assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, result));
             assert(hlspec::next_step(abs_c, abs_s1, abs_s2, abs_step));
         },
     }

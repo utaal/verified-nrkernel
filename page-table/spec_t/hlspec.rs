@@ -34,14 +34,8 @@ pub enum AbstractStep {
     ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     Map       { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap     { vaddr: nat, result: UnmapResult },
-    Resolve   { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat> },
+    Resolve   { vaddr: nat, result: ResolveResult<(nat, PageTableEntry)> },
     Stutter,
-    // TODO:
-    // Need to add resolve. I think if I'm careful in how I connect the hardware spec to the
-    // high-level spec (i.e. when defining the abstraction function), I should be able to guarantee
-    // that the mappings in the high-level spec are the correct ones, i.e. the ones that are
-    // actually used in the system spec, which would make the spec of the resolve function here
-    // meaningful.
 }
 
 pub open spec fn init(s: AbstractVariables) -> bool {
@@ -214,25 +208,19 @@ pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
 }
 
-pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat>) -> bool {
+pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: ResolveResult<(nat, PageTableEntry)>) -> bool {
     let vmem_idx = word_index_spec(vaddr);
     &&& step_Resolve_enabled(vaddr)
     &&& s2 === s1
-    &&& match pte {
-        Some((base, pte)) => {
-            let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            // If pte is Some, it's an existing mapping that contains vaddr..
+    &&& match result {
+        ResolveResult::Ok((base, pte)) => {
+            // If result is Ok, it's an existing mapping that contains vaddr..
             &&& s1.mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
-            // .. and the result is the correct translation
-            &&& result.is_PAddr()
-            &&& result.get_PAddr_0() == paddr
         },
-        None => {
-            // If pte is None, no mapping containing vaddr exists..
+        ResolveResult::ErrUnmapped => {
+            // If result is ErrUnmapped, no mapping containing vaddr exists..
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
-            // .. and the result is an error
-            &&& result.is_ErrUnmapped()
         },
     }
 }
@@ -247,7 +235,7 @@ pub open spec fn next_step(c: AbstractConstants, s1: AbstractVariables, s2: Abst
         AbstractStep::ReadWrite { vaddr, op, pte }     => step_ReadWrite(c, s1, s2, vaddr, op, pte),
         AbstractStep::Map       { vaddr, pte, result } => step_Map(c, s1, s2, vaddr, pte, result),
         AbstractStep::Unmap     { vaddr, result }      => step_Unmap(c, s1, s2, vaddr, result),
-        AbstractStep::Resolve   { vaddr, pte, result } => step_Resolve(c, s1, s2, vaddr, pte, result),
+        AbstractStep::Resolve   { vaddr, result }      => step_Resolve(c, s1, s2, vaddr, result),
         AbstractStep::Stutter                          => step_Stutter(c, s1, s2),
     }
 }

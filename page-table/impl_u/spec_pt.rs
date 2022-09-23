@@ -34,7 +34,7 @@ impl PageTableVariables {
 pub enum PageTableStep {
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },
-    Resolve { vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat> },
+    Resolve { vaddr: nat, result: ResolveResult<(nat, PageTableEntry)> },
     Stutter,
 }
 
@@ -87,28 +87,21 @@ pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
 }
 
-pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: Option<(nat, PageTableEntry)>, result: ResolveResult<nat>) -> bool {
+pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: ResolveResult<(nat, PageTableEntry)>) -> bool {
     &&& step_Resolve_enabled(vaddr)
     &&& s2 === s1
-    &&& match pte {
-        Some((base, pte)) => {
-            let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            // If pte is Some, it's an existing mapping that contains vaddr..
+    &&& match result {
+        ResolveResult::Ok((base, pte)) => {
+            // If result is Ok, it's an existing mapping that contains vaddr..
             &&& s1.map.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
-            // .. and the result is the correct translation
-            &&& result.is_PAddr()
-            &&& result.get_PAddr_0() == paddr
         },
-        None => {
-            // If pte is None, no mapping containing vaddr exists..
+        ResolveResult::ErrUnmapped => {
+            // If result is ErrUnmapped, no mapping containing vaddr exists..
             &&& (!exists|base: nat, pte: PageTableEntry| s1.map.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size))
-            // .. and the result is an error
-            &&& result.is_ErrUnmapped()
         },
     }
 }
-
 
 
 pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
@@ -123,7 +116,7 @@ pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step:
     match step {
         PageTableStep::Map     { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
         PageTableStep::Unmap   { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
-        PageTableStep::Resolve { vaddr, pte, result } => step_Resolve(s1, s2, vaddr, pte, result),
+        PageTableStep::Resolve { vaddr, result }      => step_Resolve(s1, s2, vaddr, result),
         PageTableStep::Stutter                        => step_Stutter(s1, s2),
     }
 }
