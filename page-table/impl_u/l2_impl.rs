@@ -2015,6 +2015,50 @@ impl PageTable {
         assume(c.entries === s.entries);
     }
 
+    proof fn lemma_inv_at_doesnt_use_ghost_pt(self, other: Self, layer: nat, ptr: usize, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            other.memory === self.memory,
+            other.arch === self.arch,
+        ensures
+            other.inv_at(layer, ptr, pt),
+        decreases self.arch@.layers.len() - layer
+    {
+        assert(other.well_formed(layer, ptr));
+        assert(other.memory.inv());
+        assert(other.memory.regions().contains(pt.region));
+        assert(pt.region.base == ptr);
+        assert(pt.region.size == PAGE_SIZE);
+        assert(other.memory.region_view(pt.region).len() == pt.entries.len());
+        assert(other.layer_in_range(layer));
+        assert(pt.entries.len() == other.arch@.num_entries(layer));
+        assert(other.directories_obey_invariant_at(layer, ptr, pt)) by {
+            assert forall|i: nat| i < other.arch@.num_entries(layer) implies {
+                let entry = #[trigger] other.view_at(layer, ptr, i, pt);
+                entry.is_Directory() ==> {
+                    &&& other.inv_at(layer + 1, entry.get_Directory_addr(), pt.entries[i].get_Some_0())
+                }
+            } by
+            {
+                let entry = other.view_at(layer, ptr, i, pt);
+                assert(entry === self.view_at(layer, ptr, i, pt));
+                if entry.is_Directory() {
+                    assert(self.directories_obey_invariant_at(layer, ptr, pt));
+                    assert(self.inv_at(layer + 1, entry.get_Directory_addr(), pt.entries[i].get_Some_0()));
+                    self.lemma_inv_at_doesnt_use_ghost_pt(other, layer + 1, entry.get_Directory_addr(), pt.entries[i].get_Some_0());
+                    assert(other.inv_at(layer + 1, entry.get_Directory_addr(), pt.entries[i].get_Some_0()));
+                }
+            };
+        };
+        assume(false);
+        assert(other.ghost_pt_matches_structure(layer, ptr, pt));
+        assert(other.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
+        assert(other.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
+        assert(other.ghost_pt_region_notin_used_regions(layer, ptr, pt));
+        assert(pt.used_regions.subset_of(other.memory.regions()));
+        assert(other.entry_addrs_are_zero_padded(layer, ptr, pt));
+    }
+
     pub fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
         requires
             old(self).inv(),
@@ -2053,9 +2097,13 @@ impl PageTable {
                 let new_regions: Ghost<Set<MemRegion>> = ghost(res@.1);
                 assert(self.inv_at(0, cr3, pt_res@));
                 let self_before_pt_update: Ghost<Self> = ghost(*self);
+                let old_pt: Ghost<PTDir> = self.ghost_pt;
                 self.ghost_pt = pt_res;
                 // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
-                assume(self.inv_at(0, cr3, pt_res@));
+                proof {
+                    self_before_pt_update@.lemma_inv_at_doesnt_use_ghost_pt(*self, 0, cr3, pt_res@);
+                    assert(self.inv_at(0, cr3, pt_res@));
+                }
                 // FIXME: prove lemma that interp_at is preserved when changing self.ghost_pt
                 assume(self.interp_at(0, cr3, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3, 0, pt_res@));
                 proof {

@@ -118,7 +118,6 @@ impl impl_spec::PTImpl for PageTableImpl {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
             axiom_page_table_walk_interp();
-            assume(forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory));
             old_page_table@.interp().lemma_inv_implies_interp_inv();
             page_table.interp().lemma_inv_implies_interp_inv();
             if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr, pte@) {

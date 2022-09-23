@@ -11,15 +11,6 @@ use option::*;
 
 verus! {
 
-pub struct PTState {
-    pub memory: mem::PageTableMemory,
-}
-
-// FIXME: What's the pen-and-paper VC here? I think it's: The specification for each of the
-// operations specified here results in the corresponding state transition in the *os* state
-// machine being satisfied.
-// FIXME: do i need to add memory invariant preservation to the ensures?
-// Do i actually need it?
 pub trait PTImpl {
     spec fn implspec_inv(&self, memory: mem::PageTableMemory) -> bool;
 
