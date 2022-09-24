@@ -122,7 +122,7 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: ResolveResult<(nat, PageTableEntry)>) -> bool {
+pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: ResolveResult) -> bool {
     &&& hardware::step_PTMemOp(s1.system, s2.system)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
@@ -132,7 +132,7 @@ pub enum OSStep {
     HW      { step: hardware::HWStep },
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },
-    Resolve { vaddr: nat, result: ResolveResult<(nat, PageTableEntry)> },
+    Resolve { vaddr: nat, result: ResolveResult },
 }
 
 impl OSStep {

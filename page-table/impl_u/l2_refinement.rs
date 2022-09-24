@@ -14,13 +14,13 @@ use crate::spec_t::mem;
 
 use result::{*, Result::*};
 
-use crate::definitions_t::{ x86_arch, x86_arch_exec, x86_arch_exec_spec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem };
+use crate::definitions_t::{ MemRegionExec, Flags, x86_arch, x86_arch_exec, x86_arch_exec_spec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult };
+use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec };
 use crate::spec_t::hardware::{interp_pt_mem,axiom_page_table_walk_interp};
 
 verus! {
@@ -141,10 +141,13 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         (UnmapResult::Ok, memory)
     }
 
-    // fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory)) {
-    //     assume(false);
-    //     (ResolveResult::PAddr(0), memory)
-    // }
+    fn ispec_resolve(&self, memory: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec) {
+        assume(false);
+        ResolveResultExec::Ok(0,PageTableEntryExec { 
+            frame: MemRegionExec { base: 0, size: 0 },
+            flags: Flags { is_writable: true, is_supervisor: false, disable_execute: false },
+        })
+    }
 
 }
 

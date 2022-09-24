@@ -34,7 +34,7 @@ impl PageTableVariables {
 pub enum PageTableStep {
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },
-    Resolve { vaddr: nat, result: ResolveResult<(nat, PageTableEntry)> },
+    Resolve { vaddr: nat, result: ResolveResult },
     Stutter,
 }
 
@@ -87,11 +87,11 @@ pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
 }
 
-pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: ResolveResult<(nat, PageTableEntry)>) -> bool {
+pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: ResolveResult) -> bool {
     &&& step_Resolve_enabled(vaddr)
     &&& s2 === s1
     &&& match result {
-        ResolveResult::Ok((base, pte)) => {
+        ResolveResult::Ok(base, pte) => {
             // If result is Ok, it's an existing mapping that contains vaddr..
             &&& s1.map.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)

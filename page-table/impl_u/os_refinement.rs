@@ -635,8 +635,8 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(step_Resolve(s1, s2, vaddr, result));
             assert(spec_pt::step_Resolve(pt_s1, pt_s2, vaddr, result));
             match result {
-                ResolveResult::Ok((base, pte)) => {
-                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, ResolveResult::Ok((base, pte))));
+                ResolveResult::Ok(base, pte) => {
+                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, ResolveResult::Ok(base, pte)));
                 },
                 ResolveResult::ErrUnmapped => {
                     let vmem_idx = word_index_spec(vaddr);

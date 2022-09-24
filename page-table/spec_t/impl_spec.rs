@@ -3,7 +3,7 @@ use builtin_macros::*;
 use builtin::*;
 use crate::spec_t::hlspec;
 use crate::pervasive::*;
-use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult, PageTableEntry };
+use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult, ResolveResultExec, PageTableEntry };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
 use crate::spec_t::mem;
@@ -42,7 +42,7 @@ pub trait InterfaceSpec {
             self.ispec_inv(res.1),
             spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(res.1) }, vaddr, res.0);
 
-    fn ispec_resolve(&self, memory: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResult<(nat, PageTableEntry)>)
+    fn ispec_resolve(&self, memory: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec)
         requires
             spec_pt::step_Resolve_enabled(vaddr),
             self.ispec_inv(*memory),
@@ -51,7 +51,7 @@ pub trait InterfaceSpec {
                 spec_pt::PageTableVariables { map: interp_pt_mem(*memory) },
                 spec_pt::PageTableVariables { map: interp_pt_mem(*memory) },
                 vaddr,
-                res
+                res@
             );
 }
 

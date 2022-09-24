@@ -96,9 +96,24 @@ pub enum UnmapResult {
 }
 
 #[is_variant]
-pub enum ResolveResult<T> {
+pub enum ResolveResultExec {
     ErrUnmapped,
-    Ok(T),
+    Ok(usize, PageTableEntryExec),
+}
+
+impl ResolveResultExec {
+    pub open spec fn view(self) -> ResolveResult {
+        match self {
+            ResolveResultExec::ErrUnmapped => ResolveResult::ErrUnmapped,
+            ResolveResultExec::Ok(base, pte) => ResolveResult::Ok(base as nat, pte@),
+        }
+    }
+}
+
+#[is_variant]
+pub enum ResolveResult {
+    ErrUnmapped,
+    Ok(nat, PageTableEntry),
 }
 
 #[is_variant]
