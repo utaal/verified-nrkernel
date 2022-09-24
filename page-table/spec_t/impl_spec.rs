@@ -42,26 +42,17 @@ pub trait InterfaceSpec {
             self.ispec_inv(res.1),
             spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(res.1) }, vaddr, res.0);
 
-    // can't write a valid trigger for this
-    // this doesn't need to mutate memory, can just give an immutable borrow
-    // fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResult<usize>, mem::PageTableMemory))
-    //     requires
-    //         spec_pt::step_Resolve_enabled(vaddr),
-    //         self.ispec_inv(memory),
-    //     ensures
-    //         self.ispec_inv(res.1),
-    //         exists|pte:Option<(nat,PageTableEntry)>| {
-    //             let rr: ResolveResult<nat> = match res.0 {
-    //                 ResolveResult::PAddr(n)    => ResolveResult::PAddr(n as nat),
-    //                 ResolveResult::ErrUnmapped => ResolveResult::ErrUnmapped,
-    //             };
-    //             #[trigger] spec_pt::step_Resolve(
-    //                 spec_pt::PageTableVariables { map: interp_pt_mem(memory) },
-    //                 spec_pt::PageTableVariables { map: interp_pt_mem(res.1) },
-    //                 vaddr,
-    //                 pte,
-    //                 rr
-    //             )};
+    fn ispec_resolve(&self, memory: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResult<(nat, PageTableEntry)>)
+        requires
+            spec_pt::step_Resolve_enabled(vaddr),
+            self.ispec_inv(*memory),
+        ensures
+            spec_pt::step_Resolve(
+                spec_pt::PageTableVariables { map: interp_pt_mem(*memory) },
+                spec_pt::PageTableVariables { map: interp_pt_mem(*memory) },
+                vaddr,
+                res
+            );
 }
 
 }
