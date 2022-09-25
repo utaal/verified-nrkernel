@@ -4,6 +4,7 @@ use builtin::*;
 use builtin_macros::*;
 use map::*;
 use seq::*;
+use set::*;
 use set_lib::*;
 
 use option::{ *, Option::* };
@@ -419,6 +420,15 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
         },
         OSStep::Resolve { vaddr, result } => (),
     }
+}
+
+proof fn init_refines_hl_init(s: OSVariables)
+    requires
+        init(s)
+    ensures
+        hlspec::init(s.interp())
+{
+    assert_maps_equal!(s.interp().mem, Map::empty());
 }
 
 proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: OSStep)
