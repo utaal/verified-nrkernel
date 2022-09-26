@@ -7,7 +7,7 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 use map::*;
-use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem };
+use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use option::{ *, Option::None, Option::Some };
 use crate::spec_t::mem::{ word_index_spec };
@@ -156,7 +156,7 @@ pub open spec fn step_ReadWrite(c: AbstractConstants, s1: AbstractVariables, s2:
     }
 }
 
-pub open spec fn step_Map_enabled(vaddr: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& candidate_mapping_in_bounds(vaddr, pte)
@@ -165,10 +165,11 @@ pub open spec fn step_Map_enabled(vaddr: nat, pte: PageTableEntry) -> bool {
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
+    &&& !candidate_mapping_overlaps_existing_pmem(map, vaddr, pte)
 }
 
 pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& step_Map_enabled(vaddr, pte)
+    &&& step_Map_enabled(s1.mappings, vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
         &&& result.is_ErrOverlap()
         &&& s2.mappings === s1.mappings
