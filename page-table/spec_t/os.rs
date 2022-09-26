@@ -18,7 +18,7 @@ use crate::impl_u::lib;
 verus! {
 
 pub struct OSVariables {
-    pub system: hardware::HWVariables,
+    pub hw: hardware::HWVariables,
 }
 
 impl OSVariables {
@@ -37,7 +37,7 @@ impl OSVariables {
     }
 
     pub open spec fn tlb_is_submap_of_pt(self) -> bool {
-        forall|base, pte| self.system.tlb.contains_pair(base, pte) ==> #[trigger] self.interp_pt_mem().contains_pair(base, pte)
+        forall|base, pte| self.hw.tlb.contains_pair(base, pte) ==> #[trigger] self.interp_pt_mem().contains_pair(base, pte)
     }
 
     pub open spec fn pt_entry_sizes_are_valid(self) -> bool {
@@ -62,13 +62,13 @@ impl OSVariables {
     }
 
     pub open spec fn interp_pt_mem(self) -> Map<nat,PageTableEntry> {
-        hardware::interp_pt_mem(self.system.pt_mem)
+        hardware::interp_pt_mem(self.hw.pt_mem)
     }
 
     pub open spec fn effective_mappings(self) -> Map<nat,PageTableEntry> {
         Map::new(
-            |base: nat| self.system.tlb.dom().contains(base) || self.interp_pt_mem().dom().contains(base),
-            |base: nat| if self.system.tlb.dom().contains(base) { self.system.tlb.index(base) } else { self.interp_pt_mem().index(base) },
+            |base: nat| self.hw.tlb.dom().contains(base) || self.interp_pt_mem().dom().contains(base),
+            |base: nat| if self.hw.tlb.dom().contains(base) { self.hw.tlb.index(base) } else { self.interp_pt_mem().index(base) },
             )
     }
 
@@ -82,7 +82,7 @@ impl OSVariables {
                 let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = word_index_spec(paddr);
-                self.system.mem[pmem_idx]
+                self.hw.mem[pmem_idx]
             })
     }
 
@@ -97,33 +97,33 @@ impl OSVariables {
 
     pub open spec fn interp_constants(self) -> hlspec::AbstractConstants {
         hlspec::AbstractConstants {
-            phys_mem_size: self.system.mem.len(),
+            phys_mem_size: self.hw.mem.len(),
         }
     }
 }
 
 pub open spec fn step_HW(s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
     &&& !system_step.is_PTMemOp()
-    &&& hardware::next_step(s1.system, s2.system, system_step)
+    &&& hardware::next_step(s1.hw, s2.hw, system_step)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }
 
 pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
-    &&& hardware::step_PTMemOp(s1.system, s2.system)
+    &&& hardware::step_PTMemOp(s1.hw, s2.hw)
     &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
 
 pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
     let pte = s1.interp_pt_mem().index(base);
-    // The system step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
+    // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
-    &&& !s2.system.tlb.dom().contains(base)
-    &&& hardware::step_PTMemOp(s1.system, s2.system)
+    &&& !s2.hw.tlb.dom().contains(base)
+    &&& hardware::step_PTMemOp(s1.hw, s2.hw)
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: ResolveResult) -> bool {
-    &&& hardware::step_PTMemOp(s1.system, s2.system)
+    &&& hardware::step_PTMemOp(s1.hw, s2.hw)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
@@ -166,7 +166,7 @@ pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
 }
 
 pub open spec fn init(s: OSVariables) -> bool {
-    hardware::init(s.system)
+    hardware::init(s.hw)
 }
 
 }

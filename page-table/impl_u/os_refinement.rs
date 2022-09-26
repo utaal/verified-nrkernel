@@ -114,7 +114,7 @@ pub proof fn lemma_effective_mappings_equal_interp_pt_mem(this: OSVariables)
 {
     let eff = this.effective_mappings();
     let pt  = this.interp_pt_mem();
-    let tlb = this.system.tlb;
+    let tlb = this.hw.tlb;
     assert forall|base|
         eff.dom().contains(base)
         implies pt.dom().contains(base) by
@@ -149,14 +149,14 @@ pub proof fn lemma_effective_mappings_other(this: OSVariables, other: OSVariable
     requires
         this.tlb_is_submap_of_pt(),
         other.tlb_is_submap_of_pt(),
-        this.system.pt_mem === other.system.pt_mem,
+        this.hw.pt_mem === other.hw.pt_mem,
     ensures
         this.effective_mappings() === other.effective_mappings(),
 {
     let eff1 = this.effective_mappings();
     let eff2 = other.effective_mappings();
-    let tlb1 = this.system.tlb;
-    let tlb2 = other.system.tlb;
+    let tlb1 = this.hw.tlb;
+    let tlb2 = other.hw.tlb;
     let pt1 = this.interp_pt_mem();
     let pt2 = other.interp_pt_mem();
     assert forall|base, pte|
@@ -200,27 +200,6 @@ pub proof fn lemma_effective_mappings_other(this: OSVariables, other: OSVariable
     lib::assert_maps_equal_contains_pair::<nat,PageTableEntry>(eff1, eff2);
 }
 
-// pub proof fn lemma_interp_manual(this: OSVariables, base: nat, pte: PageTableEntry, vmem_idx: nat)
-//     requires
-//         this.inv(),
-//         this.interp_pt_mem().contains_pair(base, pte),
-//         between(vmem_idx * WORD_SIZE as nat, base, base + pte.frame.size),
-//         word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE as nat) - base)) as nat) < this.system.mem.len()
-//     ensures
-//         this.interp().mappings === this.interp_pt_mem(),
-//         this.interp().mappings === this.effective_mappings(),
-//         ({
-//             let vaddr = vmem_idx * WORD_SIZE as nat;
-//             let paddr = (pte.frame.base + (vaddr - base)) as nat;
-//             let pmem_idx = word_index_spec(paddr);
-//             &&& this.interp().mem.dom().contains(vmem_idx)
-//             &&& this.interp().mem.index(vmem_idx) == this.system.mem.index(pmem_idx)
-//             &&& this.interp().mem.contains_pair(vmem_idx, this.system.mem.index(pmem_idx))
-//         })
-// {
-//     lemma_interp(this);
-// }
-
 proof fn lemma_interp(this: OSVariables)
     requires
         this.inv()
@@ -231,8 +210,8 @@ proof fn lemma_interp(this: OSVariables)
             let vaddr = vmem_idx * WORD_SIZE as nat;
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
             let pmem_idx = word_index_spec(paddr);
-            #[trigger] this.interp_pt_mem().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size) && pmem_idx < this.system.mem.len()
-            ==> this.system.mem.index(pmem_idx) === #[trigger] this.interp().mem.index(vmem_idx)
+            #[trigger] this.interp_pt_mem().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size) && pmem_idx < this.hw.mem.len()
+            ==> this.hw.mem.index(pmem_idx) === #[trigger] this.interp().mem.index(vmem_idx)
         },
 {
     lemma_effective_mappings_equal_interp_pt_mem(this);
@@ -240,15 +219,15 @@ proof fn lemma_interp(this: OSVariables)
         let vaddr = vmem_idx * WORD_SIZE as nat;
         let paddr = (pte.frame.base + (vaddr - base)) as nat;
         let pmem_idx = word_index_spec(paddr);
-        #[trigger] this.interp_pt_mem().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size) && pmem_idx < this.system.mem.len()
-    } implies this.system.mem.index(word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE as nat) - base)) as nat)) === #[trigger] this.interp().mem.index(vmem_idx)
+        #[trigger] this.interp_pt_mem().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size) && pmem_idx < this.hw.mem.len()
+    } implies this.hw.mem.index(word_index_spec((pte.frame.base + ((vmem_idx * WORD_SIZE as nat) - base)) as nat)) === #[trigger] this.interp().mem.index(vmem_idx)
     by {
         let pt = this.interp_pt_mem();
-        let sys_mem = this.system.mem;
+        let sys_mem = this.hw.mem;
         let vaddr = vmem_idx * WORD_SIZE as nat;
         let paddr = (pte.frame.base + (vaddr - base)) as nat;
         let pmem_idx = word_index_spec(paddr);
-        if this.system.mem.index(pmem_idx) !== this.interp().mem.index(vmem_idx) {
+        if this.hw.mem.index(pmem_idx) !== this.interp().mem.index(vmem_idx) {
             assert(exists|base, pte| pt.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size));
             let (base2, pte2): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] pt.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
             if base2 == base {
@@ -266,7 +245,7 @@ proof fn lemma_interp(this: OSVariables)
 
 proof fn lemma_interp_other(this: OSVariables, other: OSVariables)
     requires
-        other.system.mem === this.system.mem,
+        other.hw.mem === this.hw.mem,
         forall|base, pte| this.effective_mappings().contains_pair(base, pte) ==> other.effective_mappings().contains_pair(base, pte),
         this.inv(),
         other.inv(),
@@ -388,10 +367,10 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 assert(pt_s2.map === pt_s1.map.remove(vaddr));
                 assert(s2.pt_mappings_dont_overlap_in_vmem());
                 assert forall|base2, pte2|
-                    s2.system.tlb.contains_pair(base2, pte2)
+                    s2.hw.tlb.contains_pair(base2, pte2)
                     implies #[trigger] s2.interp_pt_mem().contains_pair(base2, pte2) by
                 {
-                    assert(s1.system.tlb.contains_pair(base2, pte2));
+                    assert(s1.hw.tlb.contains_pair(base2, pte2));
                     assert(s1.tlb_is_submap_of_pt());
                     assert(s1.interp_pt_mem().contains_pair(base2, pte2));
                     assert(s2.interp_pt_mem().contains_pair(base2, pte2));
@@ -444,8 +423,8 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
     let abs_s1   = s1.interp();
     let abs_s2   = s2.interp();
     let abs_c    = s1.interp_constants();
-    let sys_s1   = s1.system;
-    let sys_s2   = s2.system;
+    let sys_s1   = s1.hw;
+    let sys_s2   = s2.hw;
     let pt1      = s1.interp_pt_mem();
     let pt2      = s2.interp_pt_mem();
     let abs_step = step.interp();
@@ -464,7 +443,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                             lemma_interp(s1);
                             lemma_interp(s2);
 
-                            // system
+                            // hw
                             assert(sys_s1.tlb.contains_pair(base, pte));
                             assert(between(vaddr, base, base + pte.frame.size));
                             assert(paddr === (pte.frame.base + (vaddr - base)) as nat);
@@ -510,11 +489,11 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                 assert(pt1.contains_pair(base2, pte2));
                                                 assert(between(vaddr2, base2, base2 + pte2.frame.size));
                                                 assert(pmem_idx2 < abs_c.phys_mem_size);
-                                                assert(abs_s1.mem.index(vmem_idx2) == s1.system.mem.index(pmem_idx2));
-                                                assert(abs_s2.mem.index(vmem_idx2) == s2.system.mem.index(pmem_idx2));
-                                                assert(s2.system.mem === s1.system.mem.update(pmem_idx, new_value));
-                                                assert(pmem_idx < s1.system.mem.len());
-                                                assert(pmem_idx2 < s1.system.mem.len());
+                                                assert(abs_s1.mem.index(vmem_idx2) == s1.hw.mem.index(pmem_idx2));
+                                                assert(abs_s2.mem.index(vmem_idx2) == s2.hw.mem.index(pmem_idx2));
+                                                assert(s2.hw.mem === s1.hw.mem.update(pmem_idx, new_value));
+                                                assert(pmem_idx < s1.hw.mem.len());
+                                                assert(pmem_idx2 < s1.hw.mem.len());
                                                 // FIXME:
                                                 assume(aligned(paddr, 8));
                                                 assume(aligned(paddr2, 8));
@@ -527,7 +506,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                     assert(paddr2 == (pte2.frame.base + (vaddr2 - base2)) as nat);
                                                     assert(false);
                                                 }
-                                                assert(s1.system.mem.index(pmem_idx2) == s2.system.mem.index(pmem_idx2));
+                                                assert(s1.hw.mem.index(pmem_idx2) == s2.hw.mem.index(pmem_idx2));
 
                                                 assert(abs_s2.mem.index(vmem_idx2) == abs_s1.mem.index(vmem_idx2));
                                             }
