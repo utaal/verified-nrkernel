@@ -58,13 +58,13 @@ pub proof fn ambient_lemmas2()
 // }
 
 #[is_variant]
-pub tracked enum NodeEntry {
+pub enum NodeEntry {
     Directory(Directory),
     Page(PageTableEntry),
     Empty(),
 }
 
-pub tracked struct Directory {
+pub struct Directory {
     pub entries: Seq<NodeEntry>,
     pub layer: nat,       // index into layer_sizes
     pub base_vaddr: nat,
@@ -85,11 +85,10 @@ pub tracked struct Directory {
 impl Directory {
 
     pub open spec(checked) fn well_formed(&self) -> bool {
-        true
-        && self.arch.inv()
-        && self.layer < self.arch.layers.len()
-        && aligned(self.base_vaddr, self.entry_size() * self.num_entries())
-        && self.entries.len() == self.num_entries()
+        &&& self.arch.inv()
+        &&& self.layer < self.arch.layers.len()
+        &&& aligned(self.base_vaddr, self.entry_size() * self.num_entries())
+        &&& self.entries.len() == self.num_entries()
     }
 
     pub open spec(checked) fn entry_size(&self) -> nat
@@ -156,7 +155,6 @@ impl Directory {
     {
         forall|i: nat| i < self.entries.len() && self.entries.index(i).is_Directory()
             ==> !(#[trigger] self.entries.index(i).get_Directory_0().empty())
-            // TODO: Maybe pick a more aggressive trigger?
     }
 
     pub open spec(checked) fn frames_aligned(&self) -> bool
@@ -620,19 +618,6 @@ impl Directory {
     {
         self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j);
     }
-
-    // proof fn lemma_interp_aux_subset_interp_aux_plus(self, i: nat, k: nat, v: MemRegion) {
-    //     requires([
-    //              self.inv(),
-    //              self.interp_aux(i+1).map.contains_pair(k,v),
-    //     ]);
-    //     ensures(self.interp_aux(i).map.contains_pair(k,v));
-
-    //     if i >= self.entries.len() {
-    //     } else {
-    //         self.lemma_interp_aux_disjoint(i);
-    //     }
-    // }
 
     // TODO restore spec(checked) when recommends_by is fixed
     pub open spec fn resolve(self, vaddr: nat) -> Result<(nat, PageTableEntry),()>

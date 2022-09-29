@@ -562,9 +562,6 @@ pub struct PageTable {
     pub memory: mem::PageTableMemory,
     pub arch: ArchExec,
     pub ghost_pt: Ghost<PTDir>,
-    // pub mem_structure: Ghost<Map<MemRegion,Seq<MemRegion>>>,
-    // /// Reflexive, transitive closure of `mem_structure`
-    // pub mem_rtrancl: Ghost<Map<MemRegion,Set<MemRegion>>>,
 }
 
 impl PageTable {

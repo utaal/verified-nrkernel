@@ -24,11 +24,6 @@ impl PageTableVariables {
                     MemRegion { base: b1, size: pte1.frame.size },
                     MemRegion { base: b2, size: pte2.frame.size }))
     }
-
-    // FIXME: dont think i actually need an invariant here
-    pub open spec fn inv(self) -> bool {
-        self.mappings_dont_overlap()
-    }
 }
 
 pub enum PageTableStep {
@@ -37,8 +32,6 @@ pub enum PageTableStep {
     Resolve { vaddr: nat, result: ResolveResult },
     Stutter,
 }
-
-// TODO: discuss not-always-enabled actions unsatisfiable spec problem in thesis
 
 pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
