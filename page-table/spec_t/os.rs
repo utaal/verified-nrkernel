@@ -48,10 +48,17 @@ impl OSVariables {
         }
     }
 
+    #[verifier(opaque)]
+    pub open spec fn pt_entries_aligned(self) -> bool {
+        forall|base, pte| self.interp_pt_mem().contains_pair(base, pte)
+            ==> aligned(base, 8) && aligned(pte.frame.base, 8)
+    }
+
     pub open spec fn inv(self) -> bool {
         &&& self.pt_mappings_dont_overlap_in_vmem()
         &&& self.pt_mappings_dont_overlap_in_pmem()
         &&& self.pt_entry_sizes_are_valid()
+        &&& self.pt_entries_aligned()
         &&& self.tlb_is_submap_of_pt()
     }
 

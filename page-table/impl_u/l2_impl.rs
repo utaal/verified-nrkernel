@@ -605,7 +605,6 @@ impl PageTable {
             res.addr_is_zero_padded(),
             (res@.is_Page() ==> 0 < res.layer()),
     {
-        // FIXME: high prio
         assume(ptr <= 100);
         assume(i * WORD_SIZE <= 100000);
         assume(aligned((ptr + i * WORD_SIZE) as nat, 8));
@@ -997,7 +996,6 @@ impl PageTable {
                 assert(interp@.entries.index(idx).is_Page());
                 // let offset: usize = vaddr - entry_base;
                 // FIXME: need to assume a maximum for physical addresses
-                // FIXME: high prio
                 assume(entry@.get_Page_addr() < 10000);
                 // assert(offset < self.arch@.entry_size(layer));
                 let pte = PageTableEntryExec {
@@ -1127,7 +1125,7 @@ impl PageTable {
             indexing::lemma_entry_base_from_index(base, idx, self.arch@.entry_size(layer));
             assert(entry_base <= vaddr);
         }
-        let res = if entry.is_mapping() {
+        if entry.is_mapping() {
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer, ptr, base, pt@)) === old(self).interp_at(layer, ptr, base, pt@).map_frame(vaddr, pte@));
@@ -1387,11 +1385,9 @@ impl PageTable {
                     // FIXME: this should be derivable from alignment property in accepted_mapping
                     assume(addr_is_zero_padded(layer, frame_base, true));
                     // FIXME: need additional precondition?
-                    // FIXME: high prio
                     assume(frame_base & MASK_ADDR == frame_base);
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte);
-                // FIXME: high prio, overflow
                 assume(ptr < 100);
                 assert(aligned((ptr + idx * WORD_SIZE) as nat, 8));
                 let write_addr = ptr + idx * WORD_SIZE;
@@ -1953,9 +1949,7 @@ impl PageTable {
                     },
                 }
             }
-        };
-        assume(false);
-        res
+        }
     }
 
     proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)

@@ -14,7 +14,7 @@ use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, M
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::spec_t::mem::{ word_index_spec };
 use option::{ *, Option::* };
-use crate::impl_u::lib;
+use crate::impl_u::{lib, indexing};
 use crate::spec_t::os::*;
 
 verus! {
@@ -304,7 +304,10 @@ proof fn init_implies_inv(s: OSVariables)
     requires
         init(s)
     ensures
-        s.inv();
+        s.inv()
+{
+    reveal(OSVariables::pt_entries_aligned);
+}
 
 proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
     requires
@@ -313,6 +316,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
     ensures
         s2.inv(),
 {
+    reveal(OSVariables::pt_entries_aligned);
     match step {
         OSStep::HW { step: system_step } => {
             assert(step_HW(s1, s2, system_step));
@@ -354,6 +358,39 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 assert(s2.tlb_is_submap_of_pt());
                 lemma_pt_mappings_dont_overlap_in_pmem(s1, s2);
                 assert(s2.pt_mappings_dont_overlap_in_pmem());
+                assert(s2.pt_entries_aligned()) by {
+                    assert forall|base2, pte2|
+                        s2.interp_pt_mem().contains_pair(base2, pte2)
+                        implies
+                        aligned(base2, 8) && aligned(pte2.frame.base, 8) by
+                    {
+                        if base2 === vaddr {
+                            assert(pte2 === pte);
+                            assert(aligned(vaddr, pte.frame.size));
+                            assert(aligned(pte.frame.base, pte.frame.size));
+                            if pte.frame.size == L3_ENTRY_SIZE {
+                                lib::aligned_transitive(pte.frame.base, L3_ENTRY_SIZE, 8);
+                                lib::aligned_transitive(vaddr, L3_ENTRY_SIZE, 8);
+                                assert(aligned(vaddr, 8));
+                                assert(aligned(pte.frame.base, 8));
+                            } else if pte.frame.size == L2_ENTRY_SIZE {
+                                lib::aligned_transitive(pte.frame.base, L2_ENTRY_SIZE, 8);
+                                lib::aligned_transitive(vaddr, L2_ENTRY_SIZE, 8);
+                                assert(aligned(vaddr, 8));
+                                assert(aligned(pte.frame.base, 8));
+                            } else {
+                                assert(pte.frame.size == L1_ENTRY_SIZE);
+                                assert(aligned(L1_ENTRY_SIZE, 8));
+                                lib::aligned_transitive(pte.frame.base, L1_ENTRY_SIZE, 8);
+                                lib::aligned_transitive(vaddr, L1_ENTRY_SIZE, 8);
+                                assert(aligned(vaddr, 8));
+                                assert(aligned(pte.frame.base, 8));
+                            }
+                        } else {
+                            assert(s1.interp_pt_mem().contains_pair(base2, pte2));
+                        }
+                    };
+                };
                 assert(s2.inv());
             }
         },
@@ -365,7 +402,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
             if pt_s1.map.dom().contains(vaddr) {
                 assert(result.is_Ok());
                 assert(pt_s2.map === pt_s1.map.remove(vaddr));
-                assert(s2.pt_mappings_dont_overlap_in_vmem());
+                // assert(s2.pt_mappings_dont_overlap_in_vmem());
                 assert forall|base2, pte2|
                     s2.hw.tlb.contains_pair(base2, pte2)
                     implies #[trigger] s2.interp_pt_mem().contains_pair(base2, pte2) by
@@ -392,6 +429,13 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 };
                 assert(s2.pt_entry_sizes_are_valid());
                 lemma_pt_mappings_dont_overlap_in_pmem(s1, s2);
+                assert(s2.pt_entries_aligned()) by {
+                    assert forall|base, pte|
+                        s2.interp_pt_mem().contains_pair(base, pte)
+                        implies
+                        aligned(base, 8) && aligned(pte.frame.base, 8) by
+                    { assert(s1.interp_pt_mem().contains_pair(base, pte)); };
+                };
                 assert(s2.inv());
             } else {
                 assert(s2.inv());
@@ -462,9 +506,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
 
                                         assert(abs_s1.mem.dom().contains(vmem_idx));
                                         assert(abs_s1.mem.insert(vmem_idx, new_value).dom() === abs_s1.mem.dom().insert(vmem_idx));
-                                        assume(abs_s1.mem.dom() === abs_s1.mem.dom().insert(vmem_idx));
-                                        // FIXME: ill-typed AIR
-                                        // assert_sets_equal!(abs_s1.mem.dom(), abs_s1.mem.dom().insert(vmem_idx));
+                                        assert_sets_equal!(abs_s1.mem.dom(), abs_s1.mem.dom().insert(vmem_idx));
                                         assert(abs_s1.mem.insert(vmem_idx, new_value).dom() === abs_s2.mem.dom());
                                         assert forall|vmem_idx2: nat|
                                             abs_s2.mem.dom().contains(vmem_idx2) &&
@@ -494,9 +536,23 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                 assert(s2.hw.mem === s1.hw.mem.update(pmem_idx, new_value));
                                                 assert(pmem_idx < s1.hw.mem.len());
                                                 assert(pmem_idx2 < s1.hw.mem.len());
-                                                // FIXME:
-                                                assume(aligned(paddr, 8));
-                                                assume(aligned(paddr2, 8));
+                                                lib::mod_of_mul(vmem_idx2, WORD_SIZE);
+                                                assert(aligned(paddr, 8)) by {
+                                                    reveal(OSVariables::pt_entries_aligned);
+                                                    assert(aligned(pte.frame.base, 8));
+                                                    assert(aligned(base, 8));
+                                                    assert(aligned(vaddr, 8));
+                                                    lib::subtract_mod_eq_zero(base, vaddr, 8);
+                                                    lib::mod_add_zero(pte.frame.base, sub(vaddr, base), 8);
+                                                };
+                                                assert(aligned(paddr2, 8)) by {
+                                                    reveal(OSVariables::pt_entries_aligned);
+                                                    assert(aligned(pte2.frame.base, 8));
+                                                    assert(aligned(base2, 8));
+                                                    assert(aligned(vaddr2, 8));
+                                                    lib::subtract_mod_eq_zero(base2, vaddr2, 8);
+                                                    lib::mod_add_zero(pte2.frame.base, sub(vaddr2, base2), 8);
+                                                };
                                                 if pmem_idx == pmem_idx2 {
                                                     assert(vaddr != vaddr2);
                                                     assert(pte === pte2);
