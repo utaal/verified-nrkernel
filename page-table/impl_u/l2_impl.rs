@@ -1956,7 +1956,7 @@ impl PageTable {
         }
     }
 
-    proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)
+    pub proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)
         requires
             self.well_formed(layer, ptr),
             self.memory.inv(),

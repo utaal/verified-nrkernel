@@ -557,7 +557,10 @@ pub spec const x86_arch: Arch = Arch {
 };
 
 #[verifier(nonlinear)]
-proof fn arch_inv_test() {
+pub proof fn x86_arch_inv()
+    ensures
+        x86_arch.inv()
+{
     assert(x86_arch.entry_size(3) == 4096);
     assert(x86_arch.contains_entry_size(4096));
     assert(x86_arch.layers.len() <= MAX_NUM_LAYERS);
