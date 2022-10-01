@@ -17,12 +17,10 @@ pub trait InterfaceSpec {
 
     proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory)
         requires
-            // TODO: add specific preconditions for an empty pt l2 inv
             memory.inv(),
             memory.regions() === set![memory.cr3_spec()@],
             memory.region_view(memory.cr3_spec()@).len() == 512,
             (forall|i: nat| i < 512 ==> memory.region_view(memory.cr3_spec()@)[i] == 0),
-            // spec_pt::init(spec_pt::PageTableVariables { map: interp_pt_mem(memory) })
         ensures
             self.ispec_inv(memory);
 
