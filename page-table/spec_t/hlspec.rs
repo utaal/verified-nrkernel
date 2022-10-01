@@ -39,7 +39,8 @@ pub enum AbstractStep {
 }
 
 pub open spec fn init(s: AbstractVariables) -> bool {
-    s.mem === Map::empty()
+    &&& s.mem === Map::empty()
+    &&& s.mappings === Map::empty()
 }
 
 pub open spec fn mem_domain_from_mappings_contains(phys_mem_size: nat, word_idx: nat, mappings: Map<nat, PageTableEntry>) -> bool {

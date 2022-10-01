@@ -451,6 +451,7 @@ proof fn init_refines_hl_init(s: OSVariables)
     ensures
         hlspec::init(s.interp())
 {
+    lemma_effective_mappings_equal_interp_pt_mem(s);
     assert_maps_equal!(s.interp().mem, Map::empty());
 }
 
