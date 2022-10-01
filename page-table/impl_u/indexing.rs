@@ -101,13 +101,19 @@ pub proof fn lemma_entry_base_from_index_support(base: nat, idx: nat, entry_size
         //         == entry_base_from_index(entry_base_from_index(base, idx, entry_size), nested_num, nested_es),
         // Support postconditions:
         // Ugly, ugly workaround for mixed triggers.
-        forall|base: nat, n: nat| // Used to infer lhs of next postcondition's implication
-            #[trigger] aligned(base, nat_mul(entry_size, n)) ==> aligned(base, entry_size),
         forall_arith(|a: nat, b: nat| nat_mul(a, b) == #[trigger] (a * b)),
         forall|a: nat, b: nat| nat_mul(a, b) == nat_mul(b, a),
-        forall|a: nat| #[trigger] aligned(base, nat_mul(entry_size, a)) ==> aligned(base, entry_size),
+        forall|a: nat| #[trigger] aligned(base, nat_mul(entry_size, a)) && a > 0 ==> aligned(base, entry_size),
 {
-    assume(false);
+    assert(forall_arith(|a: nat, b: nat| nat_mul(a, b) == #[trigger] (a * b))) by(nonlinear_arith);
+    assert(forall|a: nat, b: nat| nat_mul(a, b) == nat_mul(b, a)) by(nonlinear_arith);
+    assert forall|a: nat|
+        #[trigger] aligned(base, nat_mul(entry_size, a)) && a > 0
+        implies
+        aligned(base, entry_size) by
+    {
+        lib::mod_mult_zero_implies_mod_zero(base, entry_size, a);
+    };
 }
 
 pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
