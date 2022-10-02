@@ -40,16 +40,17 @@ pub trait InterfaceSpec {
             self.ispec_inv(res.1),
             spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(res.1) }, vaddr, res.0);
 
-    fn ispec_resolve(&self, memory: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec)
+    fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResultExec, mem::PageTableMemory))
         requires
             spec_pt::step_Resolve_enabled(vaddr),
-            self.ispec_inv(*memory),
+            self.ispec_inv(memory),
         ensures
+            res.1 === memory,
             spec_pt::step_Resolve(
-                spec_pt::PageTableVariables { map: interp_pt_mem(*memory) },
-                spec_pt::PageTableVariables { map: interp_pt_mem(*memory) },
+                spec_pt::PageTableVariables { map: interp_pt_mem(memory) },
+                spec_pt::PageTableVariables { map: interp_pt_mem(memory) },
                 vaddr,
-                res@
+                res.0@
             );
 }
 

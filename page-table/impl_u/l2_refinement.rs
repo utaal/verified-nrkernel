@@ -137,12 +137,48 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         (UnmapResult::Ok, memory)
     }
 
-    fn ispec_resolve(&self, memory: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec) {
+    fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResultExec, mem::PageTableMemory)) {
+        assert(self.ispec_inv(memory));
+        let ghost_pt: Ghost<l2_impl::PTDir> = ghost(
+            choose|ghost_pt: l2_impl::PTDir| {
+                let page_table = l2_impl::PageTable {
+                    memory: memory,
+                    arch: x86_arch_exec_spec(),
+                    ghost_pt: Ghost::new(ghost_pt),
+                };
+                &&& page_table.inv()
+                &&& page_table.interp().inv()
+                &&& #[trigger] dummy_trigger(ghost_pt)
+            }
+        );
+
+        let x86_arch_exec_v = x86_arch_exec();
+        // FIXME: problem with definition
+        assume(x86_arch_exec_spec() === x86_arch_exec_v);
+        assert(x86_arch_exec_spec()@ === x86_arch);
+
+        let page_table = l2_impl::PageTable {
+            memory:    memory,
+            arch:      x86_arch_exec_v,
+            ghost_pt:  ghost_pt,
+        };
+        assert(page_table.inv());
+        assert(page_table.arch@.inv());
+        assert(page_table.interp().inv());
+
+        assert(x86_arch_exec_spec()@ === page_table.arch@);
+        assert(page_table.arch@ === x86_arch);
+
+        proof {
+            let cr3 = page_table.memory.cr3_spec();
+            page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
+            assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
+        }
         assume(false);
-        ResolveResultExec::Ok(0,PageTableEntryExec { 
-            frame: MemRegionExec { base: 0, size: 0 },
-            flags: Flags { is_writable: true, is_supervisor: false, disable_execute: false },
-        })
+        match page_table.resolve(vaddr) {
+            Ok((v,pte)) => (ResolveResultExec::Ok(v,pte), page_table.memory),
+            Err(e)      => (ResolveResultExec::ErrUnmapped, page_table.memory),
+        }
     }
 }
 

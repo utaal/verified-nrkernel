@@ -1028,7 +1028,7 @@ impl PageTable {
     }
 
     #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve(&self, vaddr: usize) -> (res: (Result<(usize, PageTableEntryExec),()>))
+    pub fn resolve(&self, vaddr: usize) -> (res: (Result<(usize, PageTableEntryExec),()>))
         requires
             self.inv(),
             self.interp().inv(),
