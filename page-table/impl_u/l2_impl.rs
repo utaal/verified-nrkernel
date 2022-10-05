@@ -1013,9 +1013,9 @@ impl PageTable {
                     assert(interp@.entries.index(idx) === self.interp_at_entry(layer, ptr, base, idx, pt@));
                 }
                 }
-                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === interp@.resolve(vaddr).map_ok(|v| v.0));
-                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === interp@.resolve(vaddr).map_ok(|v| v.1.frame));
-                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === interp@.resolve(vaddr).map_ok(|v| v.1.flags));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === interp@.resolve(vaddr).map_ok(|v: (nat, PageTableEntry)| v.0));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === interp@.resolve(vaddr).map_ok(|v: (nat, PageTableEntry)| v.1.frame));
+                assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === interp@.resolve(vaddr).map_ok(|v: (nat, PageTableEntry)| v.1.flags));
                 assert(res.map_ok(|v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr));
                 res
             }

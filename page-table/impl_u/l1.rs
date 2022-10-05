@@ -1341,7 +1341,7 @@ impl Directory {
             self.accepted_mapping(base, pte),
         ensures
             self.map_frame(base, pte).is_Err() ==> self.map_frame(base, pte).get_Err_0() === self,
-            self.map_frame(base, pte).map(|d| d.interp()) === self.interp().map_frame(base, pte),
+            self.map_frame(base, pte).map(|d: Directory| d.interp()) === self.interp().map_frame(base, pte),
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();
@@ -1382,7 +1382,7 @@ impl Directory {
                     self.lemma_accepted_mapping_implies_directory_accepted_mapping(base, pte, d);
                     assert(d.accepted_mapping(base, pte));
                     d.lemma_map_frame_refines_map_frame(base, pte);
-                    assert(equal(d.map_frame(base, pte).map(|d| d.interp()), d.interp().map_frame(base, pte)));
+                    assert(equal(d.map_frame(base, pte).map(|d: Directory| d.interp()), d.interp().map_frame(base, pte)));
                     match d.map_frame(base, pte) {
                         Ok(nd)  => {
                             assert(d.map_frame(base, pte).is_Ok());
@@ -1438,7 +1438,7 @@ impl Directory {
             NodeEntry::Empty() => {
                 if self.entry_size() == pte.frame.size {
                     self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Page(pte), pte);
-                    assert(equal(self.map_frame(base, pte).map(|d| d.interp()), self.interp().map_frame(base, pte)));
+                    assert(equal(self.map_frame(base, pte).map(|d: Directory| d.interp()), self.interp().map_frame(base, pte)));
                 } else {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
                     let new_dir = self.new_empty_dir(entry);
@@ -1468,7 +1468,7 @@ impl Directory {
                     assert(equal(self.interp_of_entry(entry).map.insert(base, pte), new_dir_mapped.interp().map));
                     self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Directory(new_dir_mapped), pte);
 
-                    assert(equal(self.map_frame(base, pte).map(|d| d.interp()), self.interp().map_frame(base, pte)));
+                    assert(equal(self.map_frame(base, pte).map(|d: Directory| d.interp()), self.interp().map_frame(base, pte)));
                 }
             },
         }
@@ -1622,7 +1622,7 @@ impl Directory {
              self.accepted_unmap(base),
         ensures
             self.unmap(base).is_Err() ==> self.unmap(base).get_Err_0() === self,
-            equal(self.unmap(base).map(|d| d.interp()), self.interp().unmap(base)),
+            equal(self.unmap(base).map(|d: Directory| d.interp()), self.interp().unmap(base)),
         decreases (self.arch.layers.len() - self.layer)
     {
         ambient_lemmas1();
