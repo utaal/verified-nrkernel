@@ -27,15 +27,13 @@ TODO: we could put the actual appers here as well.
  * [A lot of papers by Sewell et al](https://www.cl.cam.ac.uk/~pes20/papers/topics.html#relaxed_all)
  * [Komodo ARM model in Dafny](https://github.com/microsoft/Komodo/blob/master/verified/ARMdef.s.dfy) Pretty detailed but models TLB in-validation with one boolean
  * [Verve](https://people.csail.mit.edu/jeanyang/papers/pldi117-yang.pdf) microkernel used for Ironclad apps
+ * [Formal Verification of a Multiprocessor Hypervisor on Arm Relaxed Memory Hardware](https://www.cs.columbia.edu/~rgu/publications/sosp21-tao.pdf)
 
 **Sail**
  * Sail is a language to express ISA semantics
  * [Project website](https://www.cl.cam.ac.uk/~pes20/sail/)
 
-**VRM**
- * [Formal Verification of a Multiprocessor Hypervisor on Arm Relaxed Memory Hardware](https://www.cs.columbia.edu/~rgu/publications/sosp21-tao.pdf)
-
 **TSO**
  * [x86-CC](https://dl.acm.org/doi/pdf/10.1145/1594834.1480929)
  * [x86-TSO](https://dl.acm.org/doi/10.1145/1785414.1785443) ([Extended version with HOL4 model](https://www.cl.cam.ac.uk/~pes20/weakmemory/x86tso-paper.pdf))
-
+ * [Formal models for uncacheable, write-combining and writethrough memory on x86](https://dl.acm.org/doi/pdf/10.1145/3498683)
