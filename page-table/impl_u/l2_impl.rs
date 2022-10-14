@@ -1064,6 +1064,7 @@ impl PageTable {
             old(self).inv_at(layer, ptr, pt@),
             old(self).interp_at(layer, ptr, base, pt@).inv(),
             old(self).memory.inv(),
+            old(self).memory.alloc_available_pages() >= 3 - layer,
             old(self).accepted_mapping(vaddr, pte@),
             old(self).interp_at(layer, ptr, base, pt@).accepted_mapping(vaddr, pte@),
             base <= vaddr < MAX_BASE,
@@ -1134,6 +1135,7 @@ impl PageTable {
                     assert(pt@.entries[idx].is_Some());
                     let dir_pt: Ghost<PTDir> = ghost(pt@.entries[idx].get_Some_0());
                     assert(self.directories_obey_invariant_at(layer, ptr, pt@));
+                    assert(self.memory.alloc_available_pages() == old(self).memory.alloc_available_pages());
                     match self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, pte, dir_pt) {
                         Ok(rec_res) => {
                             let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
@@ -1687,6 +1689,8 @@ impl PageTable {
                 assert(self.accepted_mapping(vaddr, pte@)) by {
                     reveal(Self::accepted_mapping);
                 };
+                assert(self.memory.alloc_available_pages() >= 2 - layer);
+                assert(self.memory.alloc_available_pages() >= 3 - (layer + 1));
                 match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, pte, new_dir_pt) {
                     Ok(rec_res) => {
                         let dir_pt_res: Ghost<PTDir> = ghost(rec_res@.0);
@@ -2091,6 +2095,7 @@ impl PageTable {
             old(self).inv(),
             old(self).interp().inv(),
             old(self).memory.inv(),
+            old(self).memory.alloc_available_pages() >= 3,
             old(self).accepted_mapping(vaddr, pte@),
             old(self).interp().accepted_mapping(vaddr, pte@),
             vaddr < MAX_BASE,

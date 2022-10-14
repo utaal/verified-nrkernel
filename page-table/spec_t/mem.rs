@@ -64,6 +64,7 @@ pub struct PageTableMemory {
 }
 
 impl PageTableMemory {
+    pub spec fn alloc_available_pages(self) -> nat;
     pub spec fn regions(self) -> Set<MemRegion>;
     pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
 
@@ -91,8 +92,10 @@ impl PageTableMemory {
     #[verifier(external_body)]
     pub fn alloc_page(&mut self) -> (r: MemRegionExec)
         requires
-            old(self).inv()
+            old(self).inv(),
+            0 < old(self).alloc_available_pages(),
         ensures
+            self.alloc_available_pages() == old(self).alloc_available_pages() - 1,
             r@.size == PAGE_SIZE,
             r@.base + PAGE_SIZE <= MAXPHYADDR,
             aligned(r@.base, PAGE_SIZE),
@@ -117,6 +120,7 @@ impl PageTableMemory {
             self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(paddr, region@.base)), value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
             self.regions() === old(self).regions(),
+            old(self).alloc_available_pages() == self.alloc_available_pages()
     {
         let word_offset: isize = word_index(paddr) as isize;
         unsafe { self.phys_mem_ref.offset(word_offset).write(value); }
