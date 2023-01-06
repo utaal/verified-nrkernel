@@ -47,10 +47,10 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
 
     fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
         // requires
-        assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr, pte@));
-        assert(aligned(vaddr, pte@.frame.size));
-        assert(aligned(pte.frame.base, pte@.frame.size));
-        assert(candidate_mapping_in_bounds(vaddr, pte@));
+        assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr as nat, pte@));
+        assert(aligned(vaddr as nat, pte@.frame.size));
+        assert(aligned(pte.frame.base as nat, pte@.frame.size));
+        assert(candidate_mapping_in_bounds(vaddr as nat, pte@));
         assert({
             ||| pte.frame.size == L3_ENTRY_SIZE
             ||| pte.frame.size == L2_ENTRY_SIZE
@@ -87,7 +87,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         assert(x86_arch_exec_spec()@ === page_table.arch@);
         assert(page_table.arch@ === x86_arch);
 
-        assert(page_table.accepted_mapping(vaddr, pte@)) by {
+        assert(page_table.accepted_mapping(vaddr as nat, pte@)) by {
             reveal(l2_impl::PageTable::accepted_mapping);
             if pte@.frame.size == L3_ENTRY_SIZE {
             } else if pte@.frame.size == L2_ENTRY_SIZE {
@@ -100,7 +100,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
             assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
         }
-        assert(page_table.interp().accepted_mapping(vaddr, pte@));
+        assert(page_table.interp().accepted_mapping(vaddr as nat, pte@));
         assert(page_table.arch@.num_entries(0) == 512);
         // FIXME: incompleteness?
         assume(page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0) == 512 * L0_ENTRY_SIZE);
@@ -120,14 +120,14 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             axiom_page_table_walk_interp();
             old_page_table@.interp().lemma_inv_implies_interp_inv();
             page_table.interp().lemma_inv_implies_interp_inv();
-            if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr, pte@) {
+            if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr as nat, pte@) {
                 assert(res.is_ErrOverlap());
                 assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory));
             } else {
                 assert(res.is_Ok());
-                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(vaddr, pte@));
+                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(vaddr as nat, pte@));
             }
-            assert(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr, pte@, res));
+            assert(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr as nat, pte@, res));
         }
         (res, page_table.memory)
     }
@@ -188,7 +188,7 @@ proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
         memory.inv(),
         memory.regions() === set![memory.cr3_spec()@],
         memory.region_view(memory.cr3_spec()@).len() == 512,
-        (forall|i: nat| i < 512 ==> memory.region_view(memory.cr3_spec()@)[i] == 0),
+        (forall|i: nat| i < 512 ==> memory.region_view(memory.cr3_spec()@)[i as int] == 0),
     ensures
         exists|ghost_pt: l2_impl::PTDir| {
                     let page_table = l2_impl::PageTable {

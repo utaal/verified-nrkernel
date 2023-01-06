@@ -57,11 +57,11 @@ pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr:
 }
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
-    &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH)
+    &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH as nat)
     &&& { // The given vaddr must be aligned to some valid page size
-        ||| aligned(vaddr, L3_ENTRY_SIZE)
-        ||| aligned(vaddr, L2_ENTRY_SIZE)
-        ||| aligned(vaddr, L1_ENTRY_SIZE)
+        ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
+        ||| aligned(vaddr, L2_ENTRY_SIZE as nat)
+        ||| aligned(vaddr, L1_ENTRY_SIZE as nat)
     }
 }
 

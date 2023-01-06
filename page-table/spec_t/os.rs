@@ -89,7 +89,7 @@ impl OSVariables {
                 let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry| #![auto] mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = word_index_spec(paddr);
-                self.hw.mem[pmem_idx]
+                self.hw.mem[pmem_idx as int]
             })
     }
 

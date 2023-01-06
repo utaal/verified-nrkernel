@@ -63,7 +63,7 @@ pub open spec fn step_ReadWrite(s1: HWVariables, s2: HWVariables, vaddr: nat, pa
                 RWOp::Store { new_value, result } => {
                     if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
                         &&& result.is_Ok()
-                        &&& s2.mem === s1.mem.update(pmem_idx, new_value)
+                        &&& s2.mem === s1.mem.update(pmem_idx as int, new_value)
                     } else {
                         &&& result.is_Pagefault()
                         &&& s2.mem === s1.mem
@@ -73,7 +73,7 @@ pub open spec fn step_ReadWrite(s1: HWVariables, s2: HWVariables, vaddr: nat, pa
                     &&& s2.mem === s1.mem
                     &&& if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result.is_Value()
-                        &&& result.get_Value_0() == s1.mem.index(pmem_idx)
+                        &&& result.get_Value_0() == s1.mem[pmem_idx as int]
                     } else {
                         &&& result.is_Pagefault()
                     }
