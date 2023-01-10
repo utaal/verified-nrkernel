@@ -364,7 +364,6 @@ impl PageDirectoryEntry {
             r.layer@ == layer,
             r@.get_Directory_addr() == address,
     {
-        // FIXME: check what flags we want here
         Self::new_entry(layer, address, false, true, false, false, false, false)
     }
 
@@ -414,15 +413,6 @@ impl PageDirectoryEntry {
         proof {
             PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
             assert(e.layer() <= 3);
-            // if is_page {
-            //     if layer == 1 {
-            //     } else if layer == 2 {
-            //     } else if layer == 3 {
-            //     } else {
-            //         assert(false);
-            //     }
-            // } else {
-            // }
             assert(e@.is_Page() ==> 0 < e.layer());
             assert(e.addr_is_zero_padded());
             assert(if is_page { e@.is_Page() } else { e@.is_Directory() });
@@ -1059,7 +1049,6 @@ impl PageTable {
             },
         // decreases self.arch@.layers.len() - layer
     {
-        assume(false);
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let idxg: Ghost<usize> = ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);
@@ -1083,6 +1072,7 @@ impl PageTable {
             assert(entry_base <= vaddr);
         }
         if entry.is_mapping() {
+        assume(false);
             if entry.is_dir(layer) {
                 if self.arch.entry_size(layer) == pte.frame.size {
                     assert(Err(self.interp_at(layer as nat, ptr, base as nat, pt@)) === old(self).interp_at(layer as nat, ptr, base as nat, pt@).map_frame(vaddr as nat, pte@));
@@ -1331,6 +1321,7 @@ impl PageTable {
             }
         } else {
             if self.arch.entry_size(layer) == pte.frame.size {
+        assume(false);
                 proof {
                     let layerg = layer;
                     assert(0 < layer) by {
@@ -1500,8 +1491,7 @@ impl PageTable {
 
 
                 // After writing the new empty directory entry we prove that the resulting state
-                // satisfies the invariant and TODO: probably also that the interpretation remains
-                // unchanged.
+                // satisfies the invariant and that the interpretation remains unchanged.
                 let pt_with_empty: Ghost<PTDir> = ghost(
                     PTDir {
                         region:       pt@.region,
@@ -1609,15 +1599,15 @@ impl PageTable {
                             };
                         };
 
-
                         assert(self_with_empty@.inv_at(layer as nat, ptr, pt_with_empty@));
                     };
 
-                    assert(self_with_empty@.memory.spec_read(write_addr as nat, pt_with_empty@.region) === new_dir_entry.entry);
                     assert(self_with_empty@.view_at(layer as nat, ptr, idx as nat, pt_with_empty@) === new_dir_entry@);
-                    assert(new_dir_entry@.get_Directory_addr() == new_dir_ptr);
-                    self_with_empty@.lemma_empty_at_interp_equal_l1_empty_dir(layer as nat, ptr, base as nat, idx as nat, pt_with_empty@, interp@);
+
+                    self_with_empty@.lemma_empty_at_interp_at_equal_l1_empty_dir(layer as nat, ptr, base as nat, idx as nat, pt_with_empty@);
                     let new_dir_interp: l1::Directory = self_with_empty@.interp_at((layer + 1) as nat, new_dir_ptr, entry_base as nat, new_dir_pt@);
+                    interp@.lemma_new_empty_dir(idx as nat);
+                    assert_seqs_equal!(new_dir_interp.entries, interp@.new_empty_dir(idx as nat).entries);
                     assert(new_dir_interp === interp@.new_empty_dir(idx as nat));
 
                     old(self).lemma_interp_at_aux_facts(layer as nat, ptr, base as nat, seq![], pt@);
@@ -1967,40 +1957,62 @@ impl PageTable {
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
     }
 
-    proof fn lemma_empty_at_interp_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, idx: nat, pt: PTDir, l1dir: l1::Directory)
+    proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, idx: nat, pt: PTDir)
         requires
-            // TODO: May need more preconditions
+            self.inv_at(layer, ptr, pt),
+            forall|i: nat| i < init.len() ==> init[i as int] === l1::NodeEntry::Empty(),
+            init.len() <= self.arch@.num_entries(layer),
+            idx < self.arch@.num_entries(layer),
+            self.view_at(layer, ptr, idx, pt).is_Directory(),
+            self.empty_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), pt.entries[idx as int].get_Some_0()),
+        ensures
+            ({ let res =
+                self.interp_at_aux(
+                layer + 1,
+                self.view_at(layer, ptr, idx, pt).get_Directory_addr(),
+                self.arch@.entry_base(layer, base, idx),
+                init,
+                pt.entries[idx as int].get_Some_0());
+            &&& res.len() === self.arch@.num_entries(layer)
+            &&& forall|i: nat| i < res.len() ==> res[i as int] === l1::NodeEntry::Empty()
+            })
+        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
+    {
+        assert(self.directories_obey_invariant_at(layer, ptr, pt));
+        let entry_ptr = self.view_at(layer, ptr, idx, pt).get_Directory_addr();
+        let entry_base = self.arch@.entry_base(layer, base, idx);
+        let entry_pt = pt.entries[idx as int].get_Some_0();
+
+        let res = self.interp_at_aux(layer + 1, entry_ptr, entry_base, init, entry_pt);
+        assert(self.inv_at(layer + 1, entry_ptr, entry_pt));
+
+        if init.len() >= self.arch@.num_entries(layer) {
+        } else {
+            let entry = self.interp_at_entry(layer + 1, entry_ptr, entry_base, init.len(), entry_pt);
+            assert(entry === l1::NodeEntry::Empty());
+            self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, init.add(seq![l1::NodeEntry::Empty()]), idx, pt);
+        }
+    }
+
+    proof fn lemma_empty_at_interp_at_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, idx: nat, pt: PTDir)
+        requires
             self.inv_at(layer, ptr, pt),
             idx < self.arch@.num_entries(layer),
             self.view_at(layer, ptr, idx, pt).is_Directory(),
             self.empty_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), pt.entries[idx as int].get_Some_0()),
-            l1dir.inv(),
-            l1dir.layer === layer,
-            l1dir.arch === self.arch@,
-            l1dir.base_vaddr === base,
         ensures
-            self.interp_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), self.arch@.entry_base(layer, base, idx), pt.entries[idx as int].get_Some_0())
-                === l1dir.new_empty_dir(idx)
+            ({ let res =
+                self.interp_at(
+                layer + 1,
+                self.view_at(layer, ptr, idx, pt).get_Directory_addr(),
+                self.arch@.entry_base(layer, base, idx),
+                pt.entries[idx as int].get_Some_0());
+            &&& res.entries.len() === self.arch@.num_entries(layer)
+            &&& forall|i: nat| i < res.entries.len() ==> res.entries[i as int] === l1::NodeEntry::Empty()
+            })
     {
-        // FIXME:
-        // For each entry self.interp_at_entry == l1::NodeEntry::Empty()
-        // lemma_new_empty_dir
-        let c = self.interp_at((layer + 1) as nat, self.view_at(layer, ptr, idx, pt).get_Directory_addr(), self.arch@.entry_base(layer, base, idx), pt.entries[idx as int].get_Some_0());
-        let s = l1dir.new_empty_dir(idx);
-
-        assume(false);
-        assert(self.inv_at(layer + 1, ptr, pt));
-
-        assert(c.layer == layer + 1);
-        assert(l1dir.layer == layer);
-        assert(s.layer == layer + 1);
-        assert(c.layer === s.layer);
-
-        // assert(s.arch === self.arch@);
-        assume(c.arch === s.arch);
-
-        assume(c.base_vaddr === s.base_vaddr);
-        assume(c.entries === s.entries);
+        assert(self.directories_obey_invariant_at(layer, ptr, pt));
+        self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, seq![], idx, pt);
     }
 
     proof fn lemma_inv_at_doesnt_use_ghost_pt(self, other: Self, layer: nat, ptr: usize, pt: PTDir)

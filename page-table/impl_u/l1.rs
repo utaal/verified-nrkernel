@@ -923,7 +923,7 @@ impl Directory {
         }
     }
 
-    proof fn lemma_new_empty_dir(self, entry: nat)
+    pub proof fn lemma_new_empty_dir(self, entry: nat)
         requires
             self.inv(),
             entry < self.num_entries(),
