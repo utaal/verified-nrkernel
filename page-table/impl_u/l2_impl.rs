@@ -300,71 +300,23 @@ impl PageDirectoryEntry {
         let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
         assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> ((a & bit!(x) == bit!(x)) == false)) by(bit_vector);
         assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | 0)           & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(0u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(7u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(1u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(2u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(3u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(4u64))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | bit!(63u64)) & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(e & MASK_ADDR == address) by {
-        };
-        assert(e & MASK_FLAG_P == MASK_FLAG_P) by {
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(0u64) == 0) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == 0 ==> (a | bit!(0u64)) & bit!(0u64) == bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | 0)           & bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(7u64))  & bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(1u64))  & bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(2u64))  & bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(3u64))  & bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(4u64))  & bit!(0u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(0u64) == (a | bit!(63u64)) & bit!(0u64)) by(bit_vector);
-        };
-        assert((e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3)) by {
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(0u64) == 0) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(7u64) == 0) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == 0 ==> (a | bit!(7u64)) & bit!(7u64) == bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | 0)           & bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(0u64))  & bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(1u64))  & bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(2u64))  & bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(3u64))  & bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(4u64))  & bit!(7u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bit!(7u64) == (a | bit!(63u64)) & bit!(7u64)) by(bit_vector);
-        };
-        assert((e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable) by {
-            // FIXME: bitvector
-            assume(false);
-            // assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(0u64) == 0) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(7u64) == 0) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(1u64) == 0) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == 0 ==> (a | bit!(1u64)) & bit!(1u64) == bit!(1u64)) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | 0)           & bit!(1u64)) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(0u64))  & bit!(1u64)) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(2u64))  & bit!(1u64)) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(3u64))  & bit!(1u64)) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(4u64))  & bit!(1u64)) by(bit_vector);
-            // assert(forall|a:u64| #![auto] a & bit!(1u64) == (a | bit!(63u64)) & bit!(1u64)) by(bit_vector);
-            // assert(a1 & MASK_FLAG_RW == 0);
-            // assert(a2 & MASK_FLAG_RW == 0);
-            // assert((a3 & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable);
-        };
-        assert((e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor) by {
-            // FIXME: bitvector
-            assume(false);
-        };
-        assert((e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough) by {
-            // FIXME: bitvector
-            assume(false);
-        };
-        assert((e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache) by {
-            // FIXME: bitvector
-            assume(false);
-        };
-        assert((e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute) by {
-            // FIXME: bitvector
-            assume(false);
-        };
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == (a | bit!(i))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(12u64,52u64) == (a | bit!(i))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        assert(e & MASK_ADDR == address);
+
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 64 ==> a & bit!(i) == 0 ==> (a | bit!(i)) & bit!(i) == bit!(i)) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bit!(i) == (a | 0) & bit!(i)) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bit!(i) == (a | 0) & bit!(i)) by(bit_vector);
+        assert(forall|a:u64,i:u64,j:u64| #![auto] i != j ==> a & bit!(i) == (a | bit!(j)) & bit!(i)) by(bit_vector);
+        assert(e & MASK_FLAG_P == MASK_FLAG_P);
+        assert((e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3));
+        assert((e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable);
+        assert((e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor);
+        assert((e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough);
+        assert((e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache);
+        assert((e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute);
         assert(addr_is_zero_padded(layer as nat, e, is_page)) by {
             // FIXME: bitvector
             assume(false);
