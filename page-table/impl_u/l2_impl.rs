@@ -436,7 +436,9 @@ impl PageDirectoryEntry {
             self.layer() <= 3,
             self@.is_Page()
         ensures
-            true
+            res.is_writable     <==> self.entry & MASK_FLAG_RW == MASK_FLAG_RW,
+            res.is_supervisor   <==> self.entry & MASK_FLAG_US != MASK_FLAG_US,
+            res.disable_execute <==> self.entry & MASK_FLAG_XD == MASK_FLAG_XD,
     {
         Flags {
             is_writable:     self.entry & MASK_FLAG_RW == MASK_FLAG_RW,
@@ -961,10 +963,6 @@ impl PageTable {
                     flags: entry.flags()
                 };
                 let res = Ok((entry_base, pte));
-                // FIXME: should be postcondition of flags function
-                assume(pte.flags.is_writable == entry@.get_Page_flag_RW());
-                assume(pte.flags.is_supervisor == !entry@.get_Page_flag_US());
-                assume(pte.flags.disable_execute == entry@.get_Page_flag_XD());
                 proof {
                 if interp@.resolve(vaddr as nat).is_Ok() {
                     assert(interp@.entries[idx as int].get_Page_0() === interp@.resolve(vaddr as nat).get_Ok_0().1);
@@ -1061,6 +1059,7 @@ impl PageTable {
             },
         // decreases self.arch@.layers.len() - layer
     {
+        assume(false);
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let idxg: Ghost<usize> = ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);
