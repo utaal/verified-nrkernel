@@ -310,16 +310,22 @@ impl PageDirectoryEntry {
         assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bit!(i) == (a | 0) & bit!(i)) by(bit_vector);
         assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bit!(i) == (a | 0) & bit!(i)) by(bit_vector);
         assert(forall|a:u64,i:u64,j:u64| #![auto] i != j ==> a & bit!(i) == (a | bit!(j)) & bit!(i)) by(bit_vector);
+
         assert(e & MASK_FLAG_P == MASK_FLAG_P);
         assert((e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3));
-        assert((e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable);
-        assert((e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor);
-        assert((e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough);
-        assert((e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache);
-        assert((e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute);
+        assert((e & MASK_FLAG_RW       == MASK_FLAG_RW)       == is_writable);
+        assert((e & MASK_FLAG_US       == MASK_FLAG_US)       == !is_supervisor);
+        assert((e & MASK_FLAG_PWT      == MASK_FLAG_PWT)      == is_writethrough);
+        assert((e & MASK_FLAG_PCD      == MASK_FLAG_PCD)      == disable_cache);
+        assert((e & MASK_FLAG_XD       == MASK_FLAG_XD)       == disable_execute);
+
         assert(addr_is_zero_padded(layer as nat, e, is_page)) by {
-            // FIXME: bitvector
-            assume(false);
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(30u64,52u64) == (a | 0)           & bitmask_inc!(30u64,52u64)) by(bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(30u64,52u64) == (a | bit!(i))  & bitmask_inc!(30u64,52u64)) by(bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(30u64,52u64) == (a | bit!(i))  & bitmask_inc!(30u64,52u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(21u64,52u64) == (a | 0)           & bitmask_inc!(21u64,52u64)) by(bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(21u64,52u64) == (a | bit!(i))  & bitmask_inc!(21u64,52u64)) by(bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(21u64,52u64) == (a | bit!(i))  & bitmask_inc!(21u64,52u64)) by(bit_vector);
         };
     }
 
