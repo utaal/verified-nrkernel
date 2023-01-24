@@ -1,19 +1,16 @@
 #[allow(unused_imports)]
 use builtin::*;
-use builtin_macros::*;
-mod pervasive;
-
-// use pervasive::*;
-use pervasive::map::*;
-use pervasive::seq::*;
-use pervasive::set::*;
-
+// use builtin_macros::*;
 use state_machines_macros::*;
 
-mod types;
-use types::*;
-mod utils;
-use utils::*;
+// use pervasive::*;
+use super::pervasive::map::*;
+use super::pervasive::seq::*;
+use super::pervasive::set::*;
+
+use super::types::*;
+use super::utils::*;
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -47,7 +44,7 @@ pub enum ReadReq {
 pub struct UpdateResp(pub LogIdx);
 
 state_machine! {
-    SimpleLog {
+    SimpleLog<T> {
         fields {
             /// a sequence of update operations,
             pub log: Seq<UpdateOp>,
@@ -57,6 +54,7 @@ state_machine! {
             pub readonly_reqs: Map<ReqId, ReadReq>,
             /// inflight update requests
             pub update_reqs: Map<ReqId, UpdateOp>,
+            pub foo: T,
             /// responses to update requests that haven't been returned
             pub update_resps: Map<ReqId, UpdateResp>,
         }
@@ -99,9 +97,10 @@ state_machine! {
 
 
         init!{
-            initialize() {
+            initialize(f: T) {
                 init log = Seq::empty();
                 init version = 0;
+                init foo = f;
                 init readonly_reqs = Map::empty();
                 init update_reqs = Map::empty();
                 init update_resps = Map::empty();
@@ -145,10 +144,12 @@ state_machine! {
 
         /// Read Request: Enter the read request operation into the system
         transition!{
-            start_readonly(rid: ReqId, op: ReadonlyOp) {
+            readonly_start(rid: ReqId, op: ReadonlyOp) {
                 require(!pre.readonly_reqs.dom().contains(rid));
-                require(!pre.update_reqs.dom().contains(rid));
-                require(!pre.update_resps.dom().contains(rid));
+
+                // XXX: do we actually care whether an update request has the same id as an readonly request?
+                // require(!pre.update_reqs.dom().contains(rid));
+                // require(!pre.update_resps.dom().contains(rid));
 
                 update readonly_reqs[rid] = ReadReq::Init{ op };
             }
@@ -156,7 +157,7 @@ state_machine! {
 
         /// Read Request: Read the current version of the log
         transition!{
-            read_version(rid: ReqId) {
+            readonly_read_version(rid: ReqId) {
                 require(pre.readonly_reqs.dom().contains(rid));
                 require let ReadReq::Init { op } = pre.readonly_reqs.index(rid);
 
@@ -168,7 +169,7 @@ state_machine! {
         ///
         /// This computes the state at version the request started
         transition!{
-            finish_readonly(rid: ReqId, version: LogIdx, ret: ReturnType) {
+            readonly_finish(rid: ReqId, version: LogIdx, ret: ReturnType) {
                 require(pre.readonly_reqs.dom().contains(rid));
 
                 require let ReadReq::Req { op, version: current } = pre.readonly_reqs.index(rid);
@@ -198,8 +199,9 @@ state_machine! {
 
         /// Update Request: place an update request in the system
         transition!{
-            start_update(rid: ReqId, op: UpdateOp) {
-                require(!pre.readonly_reqs.dom().contains(rid));
+            update_start(rid: ReqId, op: UpdateOp) {
+                // XXX: do we actually care whether an readonly request has the same id as an update request?
+                // require(!pre.readonly_reqs.dom().contains(rid));
                 require(!pre.update_reqs.dom().contains(rid));
                 require(!pre.update_resps.dom().contains(rid));
 
@@ -212,7 +214,7 @@ state_machine! {
         /// Collect the updates given by the sequence of requests ids and place them in the log
         /// in-order. This moves the requests from update_reqs to update_resps.
         transition!{
-            add_update_to_log(rids: Seq<ReqId>) {
+            update_add_ops_to_log(rids: Seq<ReqId>) {
                 // all request ids must be in the update requests
                 require(forall(|r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.dom().contains(r)));
                 // the request ids must be unique, the sequence defines the update order
@@ -237,7 +239,7 @@ state_machine! {
         /// The version value is monotonically increasing and must not be larger than the
         /// length of the log.
         transition!{
-            increase_version(new_version: LogIdx) {
+            update_incr_version(new_version: LogIdx) {
                 require(pre.version <= new_version <= pre.log.len());
                 update version = new_version;
             }
@@ -245,7 +247,7 @@ state_machine! {
 
         /// Update: Finish the update operation by removing it from the update responses
         transition!{
-            end_update(rid: nat) {
+            update_finish(rid: nat) {
                 require(pre.update_resps.dom().contains(rid));
                 let idx = pre.update_resps.index(rid).0;
 
@@ -268,33 +270,33 @@ state_machine! {
 
 
         ////////////////////////////////////////////////////////////////////////////////////////////
-        // Proofs
+        // Inductiveness Proofs
         ////////////////////////////////////////////////////////////////////////////////////////////
 
 
         #[inductive(initialize)]
-        fn initialize_inductive(post: Self) { }
+        fn initialize_inductive(post: Self, f: T) { }
 
-        #[inductive(start_readonly)]
-        fn start_readonly_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp) { }
+        #[inductive(readonly_start)]
+        fn readonly_start_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp) { }
 
-        #[inductive(read_version)]
-        fn read_version_inductive(pre: Self, post: Self, rid: ReqId) { }
+        #[inductive(readonly_read_version)]
+        fn readonly_read_version_inductive(pre: Self, post: Self, rid: ReqId) { }
 
-        #[inductive(finish_readonly)]
-        fn finish_readonly_inductive(pre: Self, post: Self, rid: ReqId, version: LogIdx, ret: ReturnType) { }
+        #[inductive(readonly_finish)]
+        fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, version: LogIdx, ret: ReturnType) { }
 
-        #[inductive(start_update)]
-        fn start_update_inductive(pre: Self, post: Self, rid: ReqId, op: UpdateOp) { }
+        #[inductive(update_start)]
+        fn update_start_inductive(pre: Self, post: Self, rid: ReqId, op: UpdateOp) { }
 
-        #[inductive(add_update_to_log)]
-        fn add_update_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
+        #[inductive(update_add_ops_to_log)]
+        fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
 
-        #[inductive(increase_version)]
-        fn increase_version_inductive(pre: Self, post: Self, new_version: LogIdx) { }
+        #[inductive(update_incr_version)]
+        fn update_incr_version_inductive(pre: Self, post: Self, new_version: LogIdx) { }
 
-        #[inductive(end_update)]
-        fn end_update_inductive(pre: Self, post: Self, rid: nat) { }
+        #[inductive(update_finish)]
+        fn update_finish_inductive(pre: Self, post: Self, rid: nat) { }
 
         #[inductive(no_op)]
         fn no_op_inductive(pre: Self, post: Self) { }

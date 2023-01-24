@@ -3,88 +3,80 @@
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-mod pervasive;
-use pervasive::*;
-use pervasive::seq::*;
-use pervasive::set::*;
-use pervasive::map::*;
+
+use super::pervasive::*;
+use super::pervasive::seq::*;
+use super::pervasive::set::*;
+use super::pervasive::map::*;
 
 use state_machines_macros::*;
 
+use super::types::*;
+use super::utils::*;
+use super::simple_log::SimpleLog;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+// Unbounded Log
+// =============
+//
+// ...
+//
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // for a finite set, returns a new int not in the
-#[spec]
-pub fn get_new_nat(s: Set<nat>) -> nat {
-    arbitrary() // TODO
-}
+// #[spec]
+// pub fn get_new_nat(s: Set<nat>) -> nat {
+//     arbitrary() // TODO
+// }
 
-#[proof]
-pub fn get_new_nat_not_in(s: Set<nat>) {
-    requires(s.finite());
-    ensures(!s.contains(get_new_nat(s)));
-    assume(false); // TODO
-}
+// #[proof]
+// pub fn get_new_nat_not_in(s: Set<nat>) {
+//     requires(s.finite());
+//     ensures(!s.contains(get_new_nat(s)));
+//     assume(false); // TODO
+// }
 
-// These are all arbitrary for now:
 
-pub struct ReadonlyOp {
-    u: u8,
-}
 
-pub struct UpdateOp {
-    u: u8,
-}
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Read Only Operations
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub struct ReturnType {
-    u: u8,
-}
-
-pub struct NRState {
-    u: u8,
-}
-
-#[spec]
-#[verifier(opaque)]
-pub fn read(state: NRState, op: ReadonlyOp) -> ReturnType {
-    ReturnType { u: 0 }
-}
-
-#[spec]
-#[verifier(opaque)]
-pub fn update_state(state: NRState, op: UpdateOp) -> (NRState, ReturnType) {
-    (state, ReturnType { u: 0 })
-}
-
-#[spec]
-#[verifier(opaque)]
-pub fn init_state() -> NRState {
-    NRState { u: 0 }
-}
-
-////////// ReadonlyState: used to track the progress of a read-only query.
-//
-// A readonly query, which takes place on a given node `nodeId`,
-// follows the following algorithm:
-//
-//  1. Read the global value 'version_upper_bound'.
-//  2. Wait until node-local value 'local_head' is greater than the value
-//     of 'version_upper_bound' that was read in step 1.
-//  3. Execute the query against the node-local replica and return the result.
-//
-// (In real life, the thread does not just sit around 'waiting' in step 2;
-// it might run a combiner phase in order to advance the local_head.)
-//
-// These 3 steps progress the status of the request through the cycle
-//    Init -> VersionUpperBound -> ReadyToRead -> Done
-//
-// Note that the request itself does not "care" which nodeId it takes place on;
-// we only track the nodeId to make sure that steps 2 and 3 use the same node.
-
+/// ReadonlyState: Tracking the progress of read-only queries
+///
+/// Used to track the progress of a read-only queries on the data structure.
+///
+/// A readonly query takes place on a given node (`nid`), and follows the following algorithm:
+///
+///  1. Read the global value 'version_upper_bound'.
+///  2. Wait until node-local value 'local_head' is greater than the value
+///     of 'version_upper_bound' that was read in step 1.
+///  3. Execute the query against the node-local replica and return the result.
+///
+/// (In real life, the thread does not just sit around 'waiting' in step 2;
+/// it might run a combiner phase in order to advance the local_head.)
+///
+/// These 3 steps progress the status of the request through the cycle
+///    Init -> VersionUpperBound -> ReadyToRead -> Done
+///
+/// Note that the request itself does not "care" which nodeId it takes place on;
+/// we only track the nodeId to make sure that steps 2 and 3 use the same node.
+///
 pub enum ReadonlyState {
-    Init{op: ReadonlyOp},
-    VersionUpperBound{op: ReadonlyOp, version_upper_bound: nat},
-    ReadyToRead{op: ReadonlyOp, node_id: nat, version_upper_bound: nat},
-    Done{op: ReadonlyOp, ret: ReturnType, node_id: nat, version_upper_bound: nat},
+    /// a new read request that has come in
+    Init { op: ReadonlyOp },
+    ///
+    VersionUpperBound{ op: ReadonlyOp, version_upper_bound: LogIdx },
+    ReadyToRead{ op: ReadonlyOp, nid: NodeId, version_upper_bound: LogIdx},
+    /// read request is done
+    Done{ op: ReadonlyOp, ret: ReturnType, nid: NodeId, version_upper_bound: LogIdx},
 }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Update Operation
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ////////// Updates and the combiner phase
 //
@@ -239,9 +231,32 @@ pub enum CombinerState {
     UpdatedVersion{queued_ops: Seq<nat>, global_tail: nat},
 }
 
+impl CombinerState {
+    #[spec]
+    spec fn exec_local_head(&self, node_id: NodeId) -> nat {
+        match self.combiner.index(node_id) {
+            CombinerState::Ready => {
+                self.local_heads.index(node_id)
+            }
+            CombinerState::Placed{queued_ops} => {
+                self.local_heads.index(node_id)
+            }
+            CombinerState::LoadedHead{queued_ops, lhead} => {
+                lhead
+            }
+            CombinerState::Loop{queued_ops, lhead, queue_index, global_tail} => {
+                lhead
+            }
+            CombinerState::UpdatedVersion{queued_ops, global_tail} => {
+                global_tail
+            }
+        }
+    }
+}
+
 pub struct LogEntry {
     pub op: UpdateOp,
-    pub node_id: nat,
+    pub node_id: NodeId,
 }
 
 tokenized_state_machine!{
@@ -251,52 +266,123 @@ tokenized_state_machine!{
             pub num_nodes: nat,
 
             #[sharding(map)]
-            pub log: Map<nat, LogEntry>,
+            pub log: Map<LogIdx, LogEntry>,
 
             #[sharding(variable)]
             pub global_tail: nat,
 
             #[sharding(map)]
-            pub replicas: Map<nat, NRState>,
+            pub replicas: Map<NodeId, NRState>,
 
             #[sharding(map)]
-            pub local_heads: Map<nat, nat>, // previously called "local tails"
+            pub local_heads: Map<NodeId, nat>, // previously called "local tails"
 
             #[sharding(variable)]
             pub version_upper_bound: nat, // previously called "ctail"
 
             #[sharding(map)]
-            pub local_reads: Map<nat, ReadonlyState>,
+            pub local_reads: Map<ReqId, ReadonlyState>,
 
             #[sharding(map)]
-            pub local_updates: Map<nat, UpdateState>,
+            pub local_updates: Map<ReqId, UpdateState>,
 
             #[sharding(map)]
-            pub combiner: Map<nat, CombinerState>
+            pub combiner: Map<NodeId, CombinerState>
         }
 
-        //// Lifecycle of a Readonly operation
 
-        transition!{
-            readonly_new(op: ReadonlyOp) {
-                birds_eye let rid = get_new_nat(pre.local_reads.dom());
-                add local_reads += [ rid => ReadonlyState::Init {op} ] by {
-                    get_new_nat_not_in(pre.local_reads.dom());
-                };
+        ////////////////////////////////////////////////////////////////////////////////////////////
+        // Invariant
+        ////////////////////////////////////////////////////////////////////////////////////////////
+
+        #[invariant]
+        pub fn rids_finite(&self) -> bool {
+            &&& self.local_reads.dom().finite()
+            &&& self.local_updates.dom().finite()
+        }
+
+        #[invariant]
+        pub fn combiner_local_heads_domains(&self) -> bool {
+            forall |k| self.local_heads.dom().contains(k) <==>
+                self.combiner.dom().contains(k)
+        }
+
+        #[invariant]
+        pub fn combiner_replicas_domains(&self) -> bool {
+            forall |k| self.replicas.dom().contains(k) <==>
+                self.combiner.dom().contains(k)
+        }
+
+        #[invariant]
+        pub fn version_in_range(&self) -> bool {
+            self.global_tail >= self.version_upper_bound
+        }
+
+        #[invariant]
+        pub fn version_upper_bound_heads(&self) -> bool {
+            forall |node_id| #[trigger] self.local_heads.dom().contains(node_id) ==>
+                self.local_heads.index(node_id) <= self.version_upper_bound
+        }
+
+        #[invariant]
+        pub fn log_entries_up_to_global_tail(&self) -> bool {
+            forall |idx: nat| (idx < self.global_tail) == self.log.dom().contains(idx)
+        }
+
+        #[invariant]
+        pub fn read_requests_wf(&self) -> bool {
+            forall |rid| #[trigger] self.local_reads.dom().contains(rid) ==>
+                self.wf_read(self.local_reads.index(rid))
+        }
+
+        ////////////////////////////////////////////////////////////////////////////////////////////
+        // State Machine Initialization
+        ////////////////////////////////////////////////////////////////////////////////////////////
+
+        init!{
+            initialize(number_of_nodes: nat) {
+                init num_nodes = number_of_nodes;
+                init log = Map::empty();
+                init global_tail = 0;
+                init replicas = Map::new(|n: NodeId| n < number_of_nodes, |_| NRState::init());
+                init local_heads = Map::new(|n: NodeId| n < number_of_nodes, |_| 0);
+                init version_upper_bound = 0;
+                init local_reads = Map::empty();
+                init local_updates = Map::empty();
+                init combiner = Map::new(|n: NodeId| n < number_of_nodes, |_| CombinerState::Ready);
             }
         }
 
+        ////////////////////////////////////////////////////////////////////////////////////////////
+        // Readonly Transitions
+        ////////////////////////////////////////////////////////////////////////////////////////////
+
+        /// Read Request: Enter the read request operation into the system
         transition!{
-            readonly_read_ctail(rid: nat) {
-                remove local_reads -= [ rid => let ReadonlyState::Init {op} ];
-                add local_reads += [ rid => ReadonlyState::VersionUpperBound {op, version_upper_bound: pre.version_upper_bound} ];
+            readonly_new(rid: ReqId, op: ReadonlyOp) {
+                add local_reads += [ rid => ReadonlyState::Init {op} ];
+                // birds_eye let rid = get_new_nat(pre.local_reads.dom());
+                // add local_reads += [ rid => ReadonlyState::Init {op} ]; by {
+                //     get_new_nat_not_in(pre.local_reads.dom());
+                // };
             }
         }
 
+        /// Read Request: Read the version of the log
         transition!{
-            readonly_ready_to_read(rid: nat, node_id: nat) {
-                have local_heads >= [ node_id => let local_head ];
-                remove local_reads -= [ rid => let ReadonlyState::VersionUpperBound {op, version_upper_bound} ];
+            readonly_read_ctail(rid: ReqId) {
+                remove local_reads -= [ rid => let ReadonlyState::Init { op } ];
+                add    local_reads += [ rid => ReadonlyState::VersionUpperBound {
+                                                 op, version_upper_bound: pre.version_upper_bound } ];
+            }
+        }
+
+        /// Read Request: wait until the version of the state has reached the version of the log
+        transition!{
+            readonly_ready_to_read(rid: ReqId, node_id: NodeId) {
+                have   local_heads >= [ node_id => let local_head ];
+                remove local_reads -= [ rid => let ReadonlyState::VersionUpperBound {
+                                                    op, version_upper_bound } ];
 
                 require(local_head >= version_upper_bound);
 
@@ -304,23 +390,30 @@ tokenized_state_machine!{
             }
         }
 
+        /// Read Request: perform the read request
         transition!{
-            readonly_apply(rid: nat) {
-                remove local_reads -= [ rid => let ReadonlyState::ReadyToRead{op, node_id, version_upper_bound} ];
+            readonly_apply(rid: ReqId) {
+                remove local_reads -= [ rid => let ReadonlyState::ReadyToRead {
+                                                    op, node_id, version_upper_bound } ];
                 have combiner >= [ node_id => CombinerState::Ready ];
                 have replicas >= [ node_id => let state ];
 
-                let ret = read(state, op);
+                let ret = state.read(op);
 
-                add local_reads += [ rid => ReadonlyState::Done{op, node_id, version_upper_bound, ret} ];
+                add local_reads += [ rid => ReadonlyState::Done{ op, node_id, version_upper_bound, ret } ];
             }
         }
 
+        /// Read Request: remove the read request from the
         transition!{
-            readonly_finish(rid: nat, op: ReadonlyOp, version_upper_bound: nat, node_id: nat, ret: ReturnType) {
+            readonly_finish(rid: ReqId, op: ReadonlyOp, version_upper_bound: nat, node_id: NodeId, ret: ReturnType) {
                 remove local_reads -= [ rid => ReadonlyState::Done{op, node_id, version_upper_bound, ret} ];
             }
         }
+
+        ////////////////////////////////////////////////////////////////////////////////////////////
+        // Readonly Transitions
+        ////////////////////////////////////////////////////////////////////////////////////////////
 
         //// Updates, init and finish
 
@@ -340,7 +433,7 @@ tokenized_state_machine!{
         /*
         transition!{
             advance_tail(
-                node_id: nat,
+                node_id: NodeId,
                 request_ids: Seq<nat>,
                 old_updates: Map<nat, UpdateState>,
             ) {
@@ -383,7 +476,7 @@ tokenized_state_machine!{
         */
 
         transition!{
-            exec_trivial_start(node_id: nat) {
+            exec_trivial_start(node_id: NodeId) {
                 remove combiner -= [node_id => CombinerState::Ready];
                 add combiner += [node_id => CombinerState::Placed{queued_ops: Seq::empty()}];
             }
@@ -391,8 +484,8 @@ tokenized_state_machine!{
 
         transition!{
             advance_tail_one(
-                node_id: nat,
-                rid: nat,
+                node_id: NodeId,
+                rid: ReqId,
             ) {
                 // Only allowing a single request at a time
                 // (in contrast to the seagull one which does it in bulk).
@@ -413,7 +506,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            exec_load_tail(node_id: nat) {
+            exec_load_tail(node_id: NodeId) {
                 remove combiner -= [node_id => let CombinerState::Placed{queued_ops}];
                 have local_heads >= [node_id => let lhead];
                 add combiner += [node_id => CombinerState::LoadedHead{queued_ops, lhead}];
@@ -421,7 +514,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            exec_load_local_head(node_id: nat) {
+            exec_load_local_head(node_id: NodeId) {
                 remove combiner -= [node_id => let CombinerState::Placed{queued_ops}];
                 have local_heads >= [node_id => let lhead];
                 add combiner += [node_id => CombinerState::LoadedHead{queued_ops, lhead}];
@@ -429,7 +522,7 @@ tokenized_state_machine!{
         }
 
         transition!{
-            exec_load_global_head(node_id: nat) {
+            exec_load_global_head(node_id: NodeId) {
                 remove combiner -= [node_id => let CombinerState::LoadedHead{queued_ops, lhead}];
                 add combiner += [node_id => CombinerState::Loop{
                     queued_ops,
@@ -442,7 +535,7 @@ tokenized_state_machine!{
 
         property!{
             pre_exec_dispatch_local(
-                  node_id: nat,
+                  node_id: NodeId,
             ) {
                 have combiner >= [node_id => let CombinerState::Loop{
                     queued_ops,
@@ -464,7 +557,7 @@ tokenized_state_machine!{
 
         transition!{
             exec_dispatch_local(
-                  node_id: nat,
+                  node_id: NodeId,
             ) {
                 remove combiner -= [node_id => let CombinerState::Loop{
                     queued_ops,
@@ -484,7 +577,7 @@ tokenized_state_machine!{
                 require(log_entry.node_id == node_id);
 
                 //assert(u == UpdateState::Placed{node_id, idx: lhead};
-                let (new_nr_state, ret) = update_state(old_nr_state, log_entry.op);
+                let (new_nr_state, ret) = old_nr_state.update(log_entry.op);
 
                 add combiner += [node_id => CombinerState::Loop{
                     queued_ops,
@@ -499,7 +592,7 @@ tokenized_state_machine!{
 
         transition!{
             exec_dispatch_remote(
-                  node_id: nat,
+                  node_id: NodeId,
             ) {
                 remove combiner -= [node_id => let CombinerState::Loop{
                     queued_ops,
@@ -516,7 +609,7 @@ tokenized_state_machine!{
 
                 assert(lhead < global_tail);
                 //assert(u == UpdateState::Placed{node_id, idx: lhead};
-                let (new_nr_state, ret) = update_state(old_nr_state, log_entry.op);
+                let (new_nr_state, ret) = old_nr_state.update(log_entry.op);
 
                 add combiner += [node_id => CombinerState::Loop{
                     queued_ops,
@@ -530,7 +623,7 @@ tokenized_state_machine!{
 
         transition!{
             exec_update_version_upper_bound(
-                  node_id: nat,
+                  node_id: NodeId,
             ) {
                 remove combiner -= [node_id => let CombinerState::Loop{
                     queued_ops,
@@ -558,7 +651,7 @@ tokenized_state_machine!{
 
         transition!{
             exec_goto_ready(
-                  node_id: nat,
+                  node_id: NodeId,
             ) {
                 remove combiner -= [node_id => let CombinerState::UpdatedVersion{
                     queued_ops, global_tail
@@ -572,47 +665,7 @@ tokenized_state_machine!{
 
         ////// Invariants
 
-        #[invariant]
-        pub fn rids_finite(&self) -> bool {
-            &&& self.local_reads.dom().finite()
-            &&& self.local_updates.dom().finite()
-        }
 
-        #[invariant]
-        pub fn combiner_local_heads_domains(&self) -> bool {
-            forall |k| self.local_heads.dom().contains(k) <==>
-                self.combiner.dom().contains(k)
-        }
-
-        #[invariant]
-        pub fn combiner_replicas_domains(&self) -> bool {
-            forall |k| self.replicas.dom().contains(k) <==>
-                self.combiner.dom().contains(k)
-        }
-
-
-
-        #[invariant]
-        pub fn version_in_range(&self) -> bool {
-            self.global_tail >= self.version_upper_bound
-        }
-
-        #[invariant]
-        pub fn version_upper_bound_heads(&self) -> bool {
-            forall |node_id| #[trigger] self.local_heads.dom().contains(node_id) ==>
-                self.local_heads.index(node_id) <= self.version_upper_bound
-        }
-
-        #[invariant]
-        pub fn log_entries_up_to_global_tail(&self) -> bool {
-            forall |idx: nat| (idx < self.global_tail) == self.log.dom().contains(idx)
-        }
-
-        #[invariant]
-        pub fn read_requests_wf(&self) -> bool {
-            forall |rid| #[trigger] self.local_reads.dom().contains(rid) ==>
-                self.wf_read(self.local_reads.index(rid))
-        }
 
         #[spec]
         pub closed spec fn wf_read(&self, rs: ReadonlyState) -> bool {
@@ -641,7 +694,7 @@ tokenized_state_machine!{
         }
 
         #[spec]
-        spec fn exec_local_head(&self, node_id: nat) -> nat {
+        spec fn exec_local_head(&self, node_id: NodeId) -> nat {
             match self.combiner.index(node_id) {
                 CombinerState::Ready => {
                     self.local_heads.index(node_id)
@@ -668,7 +721,7 @@ tokenized_state_machine!{
         }
 
         #[spec]
-        pub closed spec fn wf_combiner_for_node_id(&self, node_id: nat) -> bool {
+        pub closed spec fn wf_combiner_for_node_id(&self, node_id: NodeId) -> bool {
           match self.combiner.index(node_id) {
             CombinerState::Ready => {
               &&& self.local_heads.dom().contains(node_id)
@@ -734,16 +787,22 @@ tokenized_state_machine!{
                 CombinerRidsDistinctTwoNodes(self.combiner.index(node_id1), self.combiner.index(node_id2))
         }
 
-        ////// Inductiveness proof
+
+        ////////////////////////////////////////////////////////////////////////////////////////////
+        // Inductiveness Proofs
+        ////////////////////////////////////////////////////////////////////////////////////////////
+
+        #[inductive(initialize)]
+        fn initialize_inductive(post: Self, number_of_nodes: nat) { }
 
         #[inductive(readonly_new)]
-        fn readonly_new_inductive(pre: Self, post: Self, op: ReadonlyOp) { }
+        fn readonly_new_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp) { }
 
         #[inductive(readonly_read_ctail)]
-        fn readonly_read_ctail_inductive(pre: Self, post: Self, rid: nat) { }
+        fn readonly_read_ctail_inductive(pre: Self, post: Self, rid: ReqId) { }
 
         #[inductive(readonly_ready_to_read)]
-        fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: nat, node_id: nat) {
+        fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: ReqId, node_id: NodeId) {
             match post.local_reads.index(rid) {
                 ReadonlyState::ReadyToRead{op, node_id, version_upper_bound} => {
                     assert(post.combiner.dom().contains(node_id));
@@ -758,13 +817,13 @@ tokenized_state_machine!{
         }
 
         #[inductive(readonly_apply)]
-        fn readonly_apply_inductive(pre: Self, post: Self, rid: nat) { }
+        fn readonly_apply_inductive(pre: Self, post: Self, rid: ReqId) { }
 
         #[inductive(readonly_finish)]
-        fn readonly_finish_inductive(pre: Self, post: Self, rid: nat, op: ReadonlyOp, version_upper_bound: nat, node_id: nat, ret: ReturnType) { }
+        fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp, version_upper_bound: nat, node_id: NodeId, ret: ReturnType) { }
 
         #[inductive(exec_trivial_start)]
-        fn exec_trivial_start_inductive(pre: Self, post: Self, node_id: nat) {
+        fn exec_trivial_start_inductive(pre: Self, post: Self, node_id: NodeId) {
             concat_LogRangeNoNodeId_LogRangeMatchesQueue(
                 Seq::empty(), post.log, 0,
                 pre.local_heads.index(node_id),
@@ -787,7 +846,7 @@ tokenized_state_machine!{
         }
 
         #[inductive(advance_tail_one)]
-        fn advance_tail_one_inductive(pre: Self, post: Self, node_id: nat, rid: nat) {
+        fn advance_tail_one_inductive(pre: Self, post: Self, node_id: NodeId, rid: ReqId) {
             let old_queued_ops = pre.combiner.index(node_id).get_Placed_queued_ops();
 
             let op = pre.local_updates.index(rid).get_Init_op();
@@ -915,13 +974,13 @@ tokenized_state_machine!{
         }
 
         #[inductive(exec_load_tail)]
-        fn exec_load_tail_inductive(pre: Self, post: Self, node_id: nat) { }
+        fn exec_load_tail_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
         #[inductive(exec_load_local_head)]
-        fn exec_load_local_head_inductive(pre: Self, post: Self, node_id: nat) { }
+        fn exec_load_local_head_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
         #[inductive(exec_load_global_head)]
-        fn exec_load_global_head_inductive(pre: Self, post: Self, node_id: nat) {
+        fn exec_load_global_head_inductive(pre: Self, post: Self, node_id: NodeId) {
 
             /*match post.combiner.index(node_id) {
               CombinerState::Loop{queued_ops, queue_index, lhead, global_tail} => {
@@ -947,7 +1006,7 @@ tokenized_state_machine!{
         }
 
         #[inductive(exec_dispatch_local)]
-        fn exec_dispatch_local_inductive(pre: Self, post: Self, node_id: nat) {
+        fn exec_dispatch_local_inductive(pre: Self, post: Self, node_id: NodeId) {
             assert(post.wf_combiner_for_node_id(node_id)) by {
               LogRangeMatchesQueue_update_change(
                   post.combiner.index(node_id).get_Loop_queued_ops(),
@@ -984,13 +1043,13 @@ tokenized_state_machine!{
         }
 
         #[inductive(exec_dispatch_remote)]
-        fn exec_dispatch_remote_inductive(pre: Self, post: Self, node_id: nat) { }
+        fn exec_dispatch_remote_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
         #[inductive(exec_update_version_upper_bound)]
-        fn exec_update_version_upper_bound_inductive(pre: Self, post: Self, node_id: nat) { }
+        fn exec_update_version_upper_bound_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
         #[inductive(exec_goto_ready)]
-        fn exec_goto_ready_inductive(pre: Self, post: Self, node_id: nat) { }
+        fn exec_goto_ready_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
 
     }
@@ -1061,9 +1120,9 @@ decreases b - a
 proof fn append_LogRangeMatchesQueue(
       queue: Seq<nat>,
       log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
-      queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: nat,
+      queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
       updates: Map<nat, UpdateState>, new_updates: Map<nat, UpdateState>,
-      new_rid: nat, log_entry: LogEntry)
+      new_rid: ReqId, log_entry: LogEntry)
     requires
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper,
@@ -1140,9 +1199,9 @@ proof fn append_LogRangeMatchesQueue(
 proof fn append_LogRangeMatchesQueue_other_augment(
       queue: Seq<nat>,
       log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
-      queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: nat,
+      queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
       updates: Map<nat, UpdateState>, new_updates: Map<nat, UpdateState>,
-      new_rid: nat, log_entry: LogEntry)
+      new_rid: ReqId, log_entry: LogEntry)
     requires
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper,
@@ -1192,9 +1251,9 @@ proof fn append_LogRangeMatchesQueue_other_augment(
 proof fn append_LogRangeMatchesQueue_other(
       queue: Seq<nat>,
       log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
-      queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, logLen: nat, node_id: nat,
+      queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, logLen: nat, node_id: NodeId,
       updates: Map<nat, UpdateState>, new_updates: Map<nat, UpdateState>,
-      new_rid: nat, log_entry: LogEntry)
+      new_rid: ReqId, log_entry: LogEntry)
     requires
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper <= logLen,
@@ -1237,7 +1296,7 @@ proof fn append_LogRangeMatchesQueue_other(
 
 proof fn append_LogRangeNoNodeId_other(
       log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
-      logIndexLower: nat, logIndexUpper: nat, node_id: nat,
+      logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
       log_entry: LogEntry)
     requires
         logIndexLower <= logIndexUpper,
@@ -1383,28 +1442,6 @@ pub open spec fn CombinerRidsDistinctTwoNodes(c1: CombinerState, c2: CombinerSta
     seqs_disjoint(queued_ops1, queued_ops2)
   }
 }
-
-pub enum ReadReq {
-    Init{op: ReadonlyOp},
-    Req{ctail_at_start: nat, op: ReadonlyOp},
-}
-
-pub struct UpdateResp {
-    pub idx_in_log: nat,
-}
-
-spec fn state_at_version(log: Seq<UpdateOp>, version: nat) -> NRState
-recommends 0 <= version <= log.len()
-decreases version
-{
-  if version == 0 {
-    init_state()
-  } else {
-    update_state(state_at_version(log, (version - 1) as nat), log.index(version as int - 1)).0
-  }
-}
-
-
 
 
 spec fn interp_log(global_tail: nat, log: Map<nat, LogEntry>) -> Seq<UpdateOp> {
