@@ -43,8 +43,8 @@ impl NRState {
 
     #[spec]
     #[verifier(opaque)]
-    pub fn update(self, op: UpdateOp) -> Self {
-        self
+    pub fn update(self, op: UpdateOp) -> (Self, ReturnType) {
+        (self, ReturnType { u: 0 })
     }
 }
 

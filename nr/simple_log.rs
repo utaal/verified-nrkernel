@@ -44,7 +44,7 @@ pub enum ReadReq {
 pub struct UpdateResp(pub LogIdx);
 
 state_machine! {
-    SimpleLog<T> {
+    SimpleLog {
         fields {
             /// a sequence of update operations,
             pub log: Seq<UpdateOp>,
@@ -54,7 +54,6 @@ state_machine! {
             pub readonly_reqs: Map<ReqId, ReadReq>,
             /// inflight update requests
             pub update_reqs: Map<ReqId, UpdateOp>,
-            pub foo: T,
             /// responses to update requests that haven't been returned
             pub update_resps: Map<ReqId, UpdateResp>,
         }
@@ -97,10 +96,9 @@ state_machine! {
 
 
         init!{
-            initialize(f: T) {
+            initialize() {
                 init log = Seq::empty();
                 init version = 0;
-                init foo = f;
                 init readonly_reqs = Map::empty();
                 init update_reqs = Map::empty();
                 init update_resps = Map::empty();
@@ -125,7 +123,7 @@ state_machine! {
             if version == 0 {
                 NRState::init()
             } else {
-                self.nrstate_at_version((version - 1) as nat).update(self.log[version - 1])
+                self.nrstate_at_version((version - 1) as nat).update(self.log[version - 1]).0
             }
         }
 
@@ -249,10 +247,10 @@ state_machine! {
         transition!{
             update_finish(rid: nat) {
                 require(pre.update_resps.dom().contains(rid));
-                let idx = pre.update_resps.index(rid).0;
+                let uidx = pre.update_resps.index(rid).0;
 
-                require(pre.version > idx);
-                require(pre.log.len() > idx);
+                require(pre.version > uidx);
+                require(pre.log.len() > uidx);
 
                 update update_resps = pre.update_resps.remove(rid);
             }
@@ -275,7 +273,7 @@ state_machine! {
 
 
         #[inductive(initialize)]
-        fn initialize_inductive(post: Self, f: T) { }
+        fn initialize_inductive(post: Self) { }
 
         #[inductive(readonly_start)]
         fn readonly_start_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp) { }
@@ -302,5 +300,3 @@ state_machine! {
         fn no_op_inductive(pre: Self, post: Self) { }
     }
 }
-
-fn main() {}
