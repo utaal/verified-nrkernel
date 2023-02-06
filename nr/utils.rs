@@ -3,9 +3,11 @@
 use builtin::*;
 use builtin_macros::*;
 
-
+#[allow(unused_imports)]
 use super::pervasive::seq::Seq;
-
+#[allow(unused_imports)]
+use super::pervasive::set::Set;
+use super::pervasive::arbitrary;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Obtaining A new
@@ -28,5 +30,18 @@ pub open spec fn seq_disjoint<A>(s: Seq<A>, t: Seq<A>) -> bool
    forall(|i, j| 0 <= i < s.len() && 0 <= j < t.len() ==> s.index(i) !== t.index(j))
 }
 
+
+
+
+pub closed spec fn get_new_nat(s: Set<nat>) -> nat {
+    arbitrary() // TODO
+}
+
+#[proof]
+pub proof fn get_new_nat_not_in(s: Set<nat>) {
+    requires(s.finite());
+    ensures(!s.contains(get_new_nat(s)));
+    assume(false); // TODO
+}
 
 }

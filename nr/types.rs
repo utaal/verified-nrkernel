@@ -78,3 +78,9 @@ pub struct ReturnType {
 }
 
 impl Structural for ReturnType {}
+
+/// Represents an entry in the log
+pub struct LogEntry {
+    pub op: UpdateOp,
+    pub node_id: NodeId,
+}
