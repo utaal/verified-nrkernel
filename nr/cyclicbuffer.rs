@@ -1,13 +1,17 @@
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-mod pervasive;
-use pervasive::*;
-use pervasive::seq::*;
-use pervasive::set::*;
-use pervasive::map::*;
+
+use super::pervasive::map::*;
+use super::pervasive::seq::*;
+use super::pervasive::set::*;
+use super::pervasive::*;
 
 use state_machines_macros::*;
+
+use super::types::*;
+use super::utils::*;
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -16,9 +20,6 @@ use state_machines_macros::*;
 //
 // Dafny: https://github.com/secure-foundations/iron-sync/blob/concurrency-experiments/concurrency/node-replication/CyclicBuffer.i.dfy
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -37,16 +38,34 @@ type Key = int;
 pub struct StoredType { } // TODO
 
 verus!{
-pub spec fn stored_type_inv(st: StoredType, idx: int) -> bool;
+    pub spec fn stored_type_inv(st: StoredType, idx: int) -> bool;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Read Only Operations
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+///
 #[is_variant]
 pub enum ReaderState {
-    Starting { start: nat },
+    ///
+    Starting {
+        ///
+        start: LogIdx
+    },
+    /// reader in the range
     Range { start: nat, end: nat, cur: nat },
+    /// Guard
     Guard { start: nat, end: nat, cur: nat, val: StoredType },
 }
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Combiner
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// represents the combiner
 #[is_variant]
 pub enum CombinerState {
     Idle,
@@ -56,12 +75,11 @@ pub enum CombinerState {
     Appending{cur_idx: nat, tail: nat},
 }
 
-type NodeId = nat;
 
 tokenized_state_machine!{ CyclicBuffer {
     fields {
         #[sharding(constant)]
-        pub buffer_size: nat,
+        pub buffer_size: LogIdx,
 
         #[sharding(constant)]
         pub num_replicas: nat,
@@ -73,13 +91,13 @@ tokenized_state_machine!{ CyclicBuffer {
         // It's only guaranteed to be <= all the local heads.
 
         #[sharding(variable)]
-        pub head: nat,
+        pub head: LogIdx,
 
         // Logical index into the above slice at which the log ends.
         // New appends go here.
 
         #[sharding(variable)]
-        pub tail: nat,
+        pub tail: LogIdx,
 
         // Array consisting of the local head of each replica registered with the log.
         // Required for garbage collection; since replicas make progress over the log
@@ -87,8 +105,9 @@ tokenized_state_machine!{ CyclicBuffer {
         // that haven't been executed by all replicas.
 
         #[sharding(map)]
-        pub local_heads: Map<NodeId, nat>,    // previously called local_tails
+        pub local_heads: Map<NodeId, LogIdx>,    // previously called local_tails
 
+        /// the contents of the buffer/log.
         #[sharding(storage_map)]
         pub contents: Map<int, StoredType>,
 
@@ -97,11 +116,21 @@ tokenized_state_machine!{ CyclicBuffer {
         // entry is an index into the buffer (0 <= entry < LOG_SIZE)
 
         #[sharding(map)]
-        pub alive_bits: Map</* entry: */ nat, /* bit: */ bool>,
+        pub alive_bits: Map</* entry: */ LogIdx, /* bit: */ bool>,
 
         #[sharding(map)]
         pub combiner_state: Map<NodeId, CombinerState>
     }
+
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Invariant
+    ////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    ////////////////////////////////////////////////////////////////////////////////////////////
+    // Initialization
+    ////////////////////////////////////////////////////////////////////////////////////////////
 
     init!{
         initialize(buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
