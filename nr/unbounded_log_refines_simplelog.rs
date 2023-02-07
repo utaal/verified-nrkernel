@@ -88,7 +88,7 @@ spec fn interp(s: UnboundedLog::State) -> SimpleLog::State {
 
 
 #[proof]
-fn refinement(pre: UnboundedLog::State, post: UnboundedLog::State)
+fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
     requires
         pre.invariant(),
         post.invariant(),
@@ -224,6 +224,27 @@ fn refinement(pre: UnboundedLog::State, post: UnboundedLog::State)
         }
       }
     }
+}
+
+
+#[proof]
+fn refinement_init(post: UnboundedLog::State)
+    requires
+        post.invariant(),
+        UnboundedLog::State::init(post)
+    ensures
+        SimpleLog::State::init(interp(post)),
+{
+    case_on_init!{ post, UnboundedLog => {
+        initialize(number_of_nodes) => {
+            assert_maps_equal!(interp(post).readonly_reqs, Map::empty());
+            assert_maps_equal!(interp(post).update_reqs, Map::empty());
+            assert_maps_equal!(interp(post).update_resps, Map::empty());
+            assert_seqs_equal!(interp(post).log, Seq::empty());
+            SimpleLog::show::initialize(interp(post));
+        }
+    }}
+
 }
 
 } // end verus!
