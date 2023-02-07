@@ -13,7 +13,7 @@ mod simple_log;
 mod unbounded_log;
 mod unbounded_log_refines_simplelog;
 
-// mod cyclicbuffer;
+mod cyclicbuffer;
 
 
 pub fn main() {}

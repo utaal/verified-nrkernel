@@ -11,7 +11,6 @@ use super::pervasive::set::*;
 use super::types::*;
 use super::utils::*;
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Simple Log
@@ -26,11 +25,9 @@ use super::utils::*;
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Simple Log State Machine
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 
 /// Represents the state of a read-request
 pub enum ReadReq {
@@ -159,7 +156,7 @@ state_machine! {
                 require(pre.readonly_reqs.dom().contains(rid));
                 require let ReadReq::Init { op } = pre.readonly_reqs.index(rid);
 
-                update readonly_reqs[rid] = ReadReq::Req{ op, version: pre.version };
+                update readonly_reqs[rid] = ReadReq::Req { op, version: pre.version };
             }
         }
 
@@ -232,6 +229,26 @@ state_machine! {
             }
         }
 
+        /// Update Request: Add the update operations to the log
+        ///
+        /// Collect the updates given by the sequence of requests ids and place them in the log
+        /// in-order. This moves the requests from update_reqs to update_resps.
+        transition!{
+            update_add_ops_to_log_one(rid: ReqId) {
+                // all request ids must be in the update requests
+                require(pre.update_reqs.dom().contains(rid));
+
+                // add the update operations to the log
+                update log = pre.log.push(pre.update_reqs[rid]);
+
+                // remove all update requests
+                update update_reqs = pre.update_reqs.remove(rid);
+
+                // add the responses to the update requests
+                update update_resps = pre.update_resps.insert(rid, UpdateResp(pre.log.len()));
+            }
+        }
+
         /// Update: Increasing the version of the log
         ///
         /// The version value is monotonically increasing and must not be larger than the
@@ -289,6 +306,9 @@ state_machine! {
 
         #[inductive(update_add_ops_to_log)]
         fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
+
+        #[inductive(update_add_ops_to_log_one)]
+        fn update_add_ops_to_log_one_inductive(pre: Self, post: Self, rid: ReqId) { }
 
         #[inductive(update_incr_version)]
         fn update_incr_version_inductive(pre: Self, post: Self, new_version: LogIdx) { }

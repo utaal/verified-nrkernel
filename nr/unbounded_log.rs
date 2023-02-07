@@ -23,7 +23,6 @@ use super::utils::*;
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Read Only Operations
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -48,6 +47,7 @@ use super::utils::*;
 /// Note that the request itself does not "care" which nodeId it takes place on;
 /// we only track the nodeId to make sure that steps 2 and 3 use the same node.
 ///
+#[is_variant]
 pub enum ReadonlyState {
     /// a new read request that has come in
     Init { op: ReadonlyOp },
@@ -265,13 +265,12 @@ impl CombinerState {
 
 } // end verus!
 
-
-
 tokenized_state_machine! {
 UnboundedLog {
     fields {
+        /// the number of replicas
         #[sharding(constant)]
-        pub num_nodes: nat,
+        pub num_replicas: nat,
 
         #[sharding(map)]
         pub log: Map<LogIdx, LogEntry>,
@@ -312,21 +311,21 @@ UnboundedLog {
     // /// there must be a replicat for all nodes
     // #[invariant]
     // pub fn inv_replicas_complete(&self) -> bool {
-    //     forall |node_id: NodeId| 0 <= node_id < self.num_nodes <==>
+    //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
     //         self.replicas.dom().contains(node_id)
     // }
 
     // /// ther emust be a local version for all nodes
     // #[invariant]
     // pub fn inv_local_versions_complete(&self) -> bool {
-    //     forall |node_id: NodeId| 0 <= node_id < self.num_nodes <==>
+    //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
     //         self.local_versions.dom().contains(node_id)
     // }
 
     // /// there must be a combiner for all node
     // #[invariant]
     // pub fn inv_local_combiner_complete(&self) -> bool {
-    //     forall |node_id: NodeId| 0 <= node_id < self.num_nodes <==>
+    //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
     //         self.combiner.dom().contains(node_id)
     // }
 
@@ -369,7 +368,7 @@ UnboundedLog {
     }
 
     pub open spec fn wf_node_id(&self, node_id: NodeId) -> bool {
-        // 0 <= node_id < self.num_nodes
+        // 0 <= node_id < self.num_replicas
         &&& self.combiner.dom().contains(node_id)
         &&& self.local_versions.dom().contains(node_id)
         &&& self.replicas.dom().contains(node_id)
@@ -495,13 +494,39 @@ UnboundedLog {
                 ==> !self.combiner.index(node_id).queued_ops().contains(rid)
     }
 
+
+    #[spec]
+    pub open spec fn inv_local_updates_wf(&self, update: UpdateState) -> bool {
+        match update {
+            UpdateState::Init { op } => { true },
+            UpdateState::Placed { op: _, idx } => {
+                &&& self.log.dom().contains(idx)
+                &&& idx < self.version_upper_bound
+            },
+            UpdateState::Applied { ret: _, idx } => {
+                &&& self.log.dom().contains(idx)
+                &&& idx < self.version_upper_bound
+            },
+            UpdateState::Done { ret: _, idx } => {
+                &&& self.log.dom().contains(idx)
+                &&& idx < self.version_upper_bound
+            },
+        }
+    }
+
+    #[invariant]
+    pub fn inv_local_updates(&self) -> bool {
+        forall |rid| (#[trigger] self.local_updates.dom().contains(rid))
+            ==>  self.inv_local_updates_wf(self.local_updates.index(rid))
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     // State Machine Initialization
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     init!{
         initialize(number_of_nodes: nat) {
-            init num_nodes = number_of_nodes;
+            init num_replicas = number_of_nodes;
             init log = Map::empty();
             init global_tail = 0;
             init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| NRState::init());
@@ -1071,7 +1096,6 @@ UnboundedLog {
 }
 
 } // end tokenized_state_machine!
-
 
 verus! {
 

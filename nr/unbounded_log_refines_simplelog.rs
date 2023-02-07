@@ -6,6 +6,7 @@ use builtin_macros::*;
 
 use super::pervasive::map::*;
 use super::pervasive::seq::*;
+use super::pervasive::seq_lib::*;
 //use super::pervasive::set::*;
 use super::pervasive::*;
 
@@ -96,111 +97,133 @@ fn refinement(pre: UnboundedLog::State, post: UnboundedLog::State)
     ensures
         SimpleLog::State::next(interp(pre), interp(post)),
 {
-    case_on_next_strong!{pre, post, UnboundedLog => {
+    case_on_next_strong! {
+      pre, post, UnboundedLog => {
         readonly_start(op) => {
-            // let rid = get_new_nat(pre.local_reads.dom());
-            // assert_maps_equal!(
-            //     pre.local_reads.insert(rid, ReadonlyState::Init {op}),
-            //     post.local_reads
-            // );
-            // assert_maps_equal!(
-            //     interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op}),
-            //     interp(post).readonly_reqs
-            // );
+            let rid = get_new_nat(pre.local_reads.dom());
+            assert_maps_equal!(
+                pre.local_reads.insert(rid, ReadonlyState::Init {op}),
+                post.local_reads
+            );
+            assert_maps_equal!(
+                interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op}),
+                interp(post).readonly_reqs
+            );
 
-            // SimpleLog::show::readonly_start(interp(pre), interp(post), rid, op);
-            // assert(SimpleLog::State::next(interp(pre), interp(post)));
-            assume(false);
+            SimpleLog::show::readonly_start(interp(pre), interp(post), rid, op);
         }
+
         readonly_read_ctail(rid) => {
-            // assert(interp(pre).readonly_reqs.dom().contains(rid));
-            // if let SReadReq::Init { op } = interp(pre).readonly_reqs.index(rid) {
-            //     assert(interp(pre).readonly_reqs.index(rid) === SReadReq::Init{ op });
-            // } else {
-            //     assert(false);
-            // }
-            // SimpleLog::show::readonly_read_version(interp(pre), interp(post), rid);
-            // assert(SimpleLog::State::next(interp(pre), interp(post)));
-            assume(false);
+            let op = pre.local_reads.index(rid).get_Init_op();
+
+            assert_maps_equal!(
+                interp(pre).readonly_reqs.insert(rid, SReadReq::Req { op, version: pre.version_upper_bound }),
+                interp(post).readonly_reqs
+            );
+
+            SimpleLog::show::readonly_read_version(interp(pre), interp(post), rid);
         }
 
         readonly_ready_to_read(rid, node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         readonly_apply(rid) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         readonly_finish(rid, op, version_upper_bound, node_id, ret) => {
+            // corresponds toConsumeStub_Refines_End
+            // let version = 0;
+            // SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version_upper_bound, ret);
             assume(false);
-            //SimpleLog::show::finish_readonly(interp(pre), interp(post), rid, );
         }
 
         update_start(op) => {
-            assume(false);
-            // let rid = choose|rid: nat| post.local_updates === pre.local_updates.insert(rid, UpdateState::Init { op });
-            // // get the request id here..
-            // SimpleLog::show::update_start(interp(pre), interp(post), rid, op);
+            let rid = get_new_nat(pre.local_updates.dom());
+
+            assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
+            assert_maps_equal!(
+                interp(pre).update_reqs.insert(rid, op),
+                interp(post).update_reqs
+            );
+
+            SimpleLog::show::update_start(interp(pre), interp(post), rid, op);
         }
 
         update_place_ops_in_log_one(node_id, rid) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            let op = pre.local_updates.index(rid).get_Init_op();
+
+            assert_seqs_equal!(interp(pre).log.push(op), interp(post).log);
+            assert_maps_equal!(interp(pre).update_reqs.remove(rid), interp(post).update_reqs);
+            assert_maps_equal!(
+                interp(pre).update_resps.insert(rid, SUpdateResp(pre.global_tail)),
+                interp(post).update_resps
+            );
+
+            SimpleLog::show::update_add_ops_to_log_one(interp(pre), interp(post), rid);
         }
 
         update_done(rid) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
+            assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         update_finish(rid) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            let ret = pre.local_updates.index(rid).get_Done_ret();
+            let idx = pre.local_updates.index(rid).get_Done_idx();
+
+            assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+            assert_maps_equal!(interp(pre).update_resps.remove(rid), interp(post).update_resps);
+
+            SimpleLog::show::update_finish(interp(pre), interp(post), rid);
         }
 
         exec_trivial_start(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         exec_load_local_version(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
+
         exec_load_local_version(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         exec_load_global_head(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         exec_dispatch_local(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+            assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         exec_dispatch_remote(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
         exec_update_version_upper_bound(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            let global_tail = pre.combiner.index(node_id).get_Loop_global_tail();
+            let version = if pre.version_upper_bound >= global_tail{
+                pre.version_upper_bound
+            } else {
+                global_tail
+            };
+            SimpleLog::show::update_incr_version(interp(pre), interp(post), version);
         }
 
         exec_finish(node_id) => {
-            assume(false);
-            // SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post));
         }
+      }
     }
-}
 }
 
 } // end verus!
