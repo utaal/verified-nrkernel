@@ -1,14 +1,16 @@
 #[allow(unused_imports)]
 use builtin::*;
-// use builtin_macros::*;
+use builtin_macros::*;
 use state_machines_macros::*;
 
 // use pervasive::*;
 use super::pervasive::map::*;
 use super::pervasive::seq::*;
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::set::*;
 
 use super::types::*;
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -30,6 +32,7 @@ use super::utils::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Represents the state of a read-request
+#[is_variant]
 pub enum ReadReq {
     /// a new read request that has entered the system
     Init { op: ReadonlyOp },
