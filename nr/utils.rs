@@ -3,17 +3,14 @@
 use builtin::*;
 use builtin_macros::*;
 
-#[allow(unused_imports)]
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::seq::Seq;
-#[allow(unused_imports)]
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::set::Set;
+#[allow(unused_imports)] // XXX: should not be needed!
+use super::pervasive::map::Map;
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::arbitrary;
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Obtaining A new
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
 
 verus!{
 
@@ -31,6 +28,11 @@ pub open spec fn seq_disjoint<A>(s: Seq<A>, t: Seq<A>) -> bool
 }
 
 
+pub open spec fn map_contains_value<K, V>(map: Map<K, V>, val: V) -> bool
+    // where K: PartialEq + Structural
+{
+    exists|i: K| #[trigger] map.dom().contains(i) && map.index(i) == val
+}
 
 
 pub closed spec fn get_new_nat(s: Set<nat>) -> nat {
