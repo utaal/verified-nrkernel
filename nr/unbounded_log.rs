@@ -4,14 +4,16 @@
 use builtin::*;
 use builtin_macros::*;
 
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::map::*;
 use super::pervasive::seq::*;
-use super::pervasive::set::*;
+// use super::pervasive::set::*;
 // use super::pervasive::*;
 
 use state_machines_macros::*;
 
 use super::types::*;
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -501,11 +503,11 @@ UnboundedLog {
             UpdateState::Init { op } => { true },
             UpdateState::Placed { op: _, idx } => {
                 &&& self.log.dom().contains(idx)
-                &&& idx < self.version_upper_bound
+                &&& idx < self.global_tail
             },
             UpdateState::Applied { ret: _, idx } => {
                 &&& self.log.dom().contains(idx)
-                &&& idx < self.version_upper_bound
+                &&& idx < self.global_tail
             },
             UpdateState::Done { ret: _, idx } => {
                 &&& self.log.dom().contains(idx)
@@ -1008,6 +1010,8 @@ UnboundedLog {
                 _ => { }
             }
         }
+
+        assert(post.inv_local_updates_wf(post.local_updates.index(rid)));
 
         assert forall |node_id1| #[trigger] post.combiner.dom().contains(node_id1)
             && node_id1 != node_id

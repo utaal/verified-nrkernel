@@ -5,16 +5,22 @@ use builtin::*;
 use builtin_macros::*;
 
 use super::pervasive::map::*;
-use super::pervasive::seq::*;
+#[allow(unused_imports)] // XXX: should not be needed!
+use super::pervasive::seq::Seq;
 use super::pervasive::seq_lib::*;
 //use super::pervasive::set::*;
-use super::pervasive::*;
+#[allow(unused_imports)] // XXX: should not be needed!
+use super::pervasive::arbitrary;
 
 use state_machines_macros::*;
 
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::simple_log::{ReadReq as SReadReq, SimpleLog, UpdateResp as SUpdateResp};
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::types::*;
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::unbounded_log::{CombinerState, ReadonlyState, UnboundedLog, UpdateState};
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -86,13 +92,39 @@ spec fn interp(s: UnboundedLog::State) -> SimpleLog::State {
 // Refinement Proof
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#[proof]
+fn refinement_inv(vars: UnboundedLog::State)
+    requires vars.invariant()
+    ensures interp(vars).invariant()
+{
+}
+
+#[proof]
+fn refinement_init(post: UnboundedLog::State)
+    requires
+        post.invariant(),
+        UnboundedLog::State::init(post)
+    ensures
+        SimpleLog::State::init(interp(post)),
+{
+    case_on_init!{ post, UnboundedLog => {
+        initialize(number_of_nodes) => {
+            assert_maps_equal!(interp(post).readonly_reqs, Map::empty());
+            assert_maps_equal!(interp(post).update_reqs, Map::empty());
+            assert_maps_equal!(interp(post).update_resps, Map::empty());
+            assert_seqs_equal!(interp(post).log, Seq::empty());
+            SimpleLog::show::initialize(interp(post));
+        }
+    }}
+
+}
+
 
 #[proof]
 fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
     requires
         pre.invariant(),
         post.invariant(),
-        interp(pre).invariant(),
         UnboundedLog::State::next_strong(pre, post),
     ensures
         SimpleLog::State::next(interp(pre), interp(post)),
@@ -137,8 +169,27 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         readonly_finish(rid, op, version_upper_bound, node_id, ret) => {
             // corresponds toConsumeStub_Refines_End
             // let version = 0;
-            // SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version_upper_bound, ret);
-            assume(false);
+
+            assert(op == pre.local_reads.index(rid).get_Done_op());
+            assert(version_upper_bound == pre.local_reads.index(rid).get_Done_version_upper_bound());
+            assert(ret == pre.local_reads.index(rid).get_Done_ret());
+            assert(node_id == pre.local_reads.index(rid).get_Done_node_id());
+
+            assert(op == interp(pre).readonly_reqs.index(rid).get_Req_op());
+            let version = interp(pre).readonly_reqs.index(rid).get_Req_version();
+
+            assume( pre.local_reads.index(rid).get_Done_version_upper_bound() < pre.version_upper_bound);
+            assert(version < pre.version_upper_bound);
+
+            assert(version < interp(pre).version);
+            assume(ret == interp(pre).nrstate_at_version(version).read(op));
+
+
+            assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
+            assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+            assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
+
+            SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version_upper_bound, ret);
         }
 
         update_start(op) => {
@@ -224,27 +275,6 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         }
       }
     }
-}
-
-
-#[proof]
-fn refinement_init(post: UnboundedLog::State)
-    requires
-        post.invariant(),
-        UnboundedLog::State::init(post)
-    ensures
-        SimpleLog::State::init(interp(post)),
-{
-    case_on_init!{ post, UnboundedLog => {
-        initialize(number_of_nodes) => {
-            assert_maps_equal!(interp(post).readonly_reqs, Map::empty());
-            assert_maps_equal!(interp(post).update_reqs, Map::empty());
-            assert_maps_equal!(interp(post).update_resps, Map::empty());
-            assert_seqs_equal!(interp(post).log, Seq::empty());
-            SimpleLog::show::initialize(interp(post));
-        }
-    }}
-
 }
 
 } // end verus!
