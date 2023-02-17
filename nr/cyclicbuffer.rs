@@ -31,6 +31,10 @@ type LogicalLogIdx = int;
 
 type Key = int;
 
+
+pub const LOG_SIZE : usize = 1024;
+
+
 pub struct StoredType {} // TODO
 
 verus! {
@@ -76,6 +80,29 @@ pub enum CombinerState {
     AdvancingHead { idx: LogIdx, min_head: LogIdx },
     AdvancingTail { observed_head: LogIdx },
     Appending { cur_idx: LogIdx, tail: LogIdx },
+}
+
+
+impl CombinerState {
+    #[spec]
+    pub fn no_overlap_with(self, other: Self) -> bool {
+        match self {
+            CombinerState::Appending{cur_idx, tail} => {
+                match other {
+                    CombinerState::Reading(ReaderState::Guard{start, end, cur, val}) => {
+                        (cur_idx > cur)     // self is after the other
+                          || (tail <= cur)  // self is before the other
+                    }
+                    CombinerState::Appending{cur_idx: cur_idx2, tail: tail2} => {
+                        (cur_idx >= tail2)       // self is after the other
+                          || (tail <= cur_idx2)  // self is before the other
+                    }
+                    _ => { true }
+                }
+            }
+            _ => { true }
+        }
+    }
 }
 
 tokenized_state_machine! { CyclicBuffer {
@@ -133,6 +160,11 @@ tokenized_state_machine! { CyclicBuffer {
 
 
     #[invariant]
+    pub spec fn log_size(&self) -> bool {
+        self.buffer_size == LOG_SIZE
+    }
+
+    #[invariant]
     pub spec fn complete(&self) -> bool {
         &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_heads.dom().contains(i))
         &&& (forall |i| 0 <= i < self.buffer_size  <==> self.alive_bits.dom().contains(i))
@@ -160,20 +192,7 @@ tokenized_state_machine! { CyclicBuffer {
     #[invariant]
     pub spec fn ranges_no_overlap(&self) -> bool {
         (forall |i, j| self.combiner_state.dom().contains(i) && self.combiner_state.dom().contains(j) && i != j ==>
-            match self.combiner_state.index(i) {
-                CombinerState::Appending{cur_idx, tail} => {
-                    match self.combiner_state.index(j) {
-                        CombinerState::Reading(ReaderState::Guard{start, end, cur, val}) => {
-                            cur_idx > cur || tail <= cur
-                        }
-                        CombinerState::Appending{cur_idx: cur_idx2, tail: tail2} => {
-                            cur_idx <= tail2 || tail <= cur_idx2
-                        }
-                        _ => { true }
-                    }
-                }
-                _ => { true }
-            }
+            self.combiner_state[i].no_overlap_with(self.combiner_state[j])
         )
     }
 
@@ -289,6 +308,9 @@ tokenized_state_machine! { CyclicBuffer {
 
     init!{
         initialize(buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
+            require(num_replicas > 0);
+            require(buffer_size == LOG_SIZE);
+
             init buffer_size = buffer_size;
             init num_replicas = num_replicas;
             init head = 0;
@@ -296,9 +318,10 @@ tokenized_state_machine! { CyclicBuffer {
             init local_heads = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| 0);
 
             require(forall |i: int| (-buffer_size <= i < 0 <==> contents.dom().contains(i)));
+            require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i));
             init contents = contents;
 
-            init alive_bits = Map::new(|i: nat| 0 <= i < buffer_size, |i: nat| false);
+            init alive_bits = Map::new(|i: nat| 0 <= i < buffer_size, |i: nat| !log_entry_alive_value(i as int, buffer_size));
             init combiner_state = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| CombinerState::Idle);
         }
     }
@@ -342,6 +365,8 @@ tokenized_state_machine! { CyclicBuffer {
                 node_id => let CombinerState::Reading( ReaderState::Range{ start, end, cur })
             ];
 
+            require(cur < end);
+
             have alive_bits >= [ log_entry_idx(cur as int, pre.buffer_size) => log_entry_alive_value(cur as int, pre.buffer_size) ];
 
             birds_eye let val = pre.contents.index(cur as int);
@@ -349,6 +374,7 @@ tokenized_state_machine! { CyclicBuffer {
             add combiner_state += [
                 node_id => CombinerState::Reading( ReaderState::Guard{ start, end, cur, val })
             ];
+
             // assert(stored_type_inv(val, cur as int));
         }
     }
@@ -549,7 +575,9 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(initialize)]
     fn initialize_inductive(post: Self, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
-        assume(false);
+        assert forall |i| post.tail <= i < post.buffer_size implies !log_entry_is_alive(post.alive_bits, i, post.buffer_size) by {
+            int_mod_less_than_same(i, post.buffer_size as int);
+        }
     }
 
     #[inductive(advance_head_start)]
@@ -563,12 +591,14 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(advance_head_finish)]
     fn advance_head_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assume(false);
+        assert(post.local_heads.dom().contains(node_id));
     }
 
     #[inductive(advance_tail_start)]
     fn advance_tail_start_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assume(false);
+        assert forall |n| 0 <= n < post.num_replicas as nat implies post.head <= post.local_heads[n] by {
+            assert(post.local_heads.dom().contains(n));
+        }
      }
 
     #[inductive(advance_tail_abort)]
@@ -576,12 +606,59 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(advance_tail_finish)]
     fn advance_tail_finish_inductive(pre: Self, post: Self, node_id: NodeId, new_tail: nat) {
-        assume(false);
-     }
+        assert(post.local_heads.dom().contains(node_id));
+
+        let mycur_idx = post.combiner_state[node_id].get_Appending_cur_idx();
+        let mytail = post.combiner_state[node_id].get_Appending_tail();
+        assert(mycur_idx == pre.tail);
+
+        let min_local_heads = map_min_value(post.local_heads, (post.num_replicas - 1) as nat);
+        map_min_value_smallest(post.local_heads,  (post.num_replicas - 1) as nat);
+        assert(mycur_idx >= min_local_heads);
+    }
 
     #[inductive(append_flip_bit)]
     fn append_flip_bit_inductive(pre: Self, post: Self, node_id: NodeId, deposited: StoredType) {
-        assume(false);
+        assert(post.local_heads.dom().contains(node_id));
+
+        let myidx = pre.combiner_state[node_id].get_Appending_cur_idx();
+        let mytail = pre.combiner_state[node_id].get_Appending_tail();
+        assert(post.contents.contains_key(myidx as int));
+        assert(log_entry_is_alive(post.alive_bits, myidx as int, post.buffer_size));
+
+        assert(post.tail - post.buffer_size <= myidx < post.tail);
+        assert(map_min_value(pre.local_heads,(pre.num_replicas - 1) as nat) <= myidx);
+
+        let min_local_head = map_min_value(post.local_heads, (post.num_replicas - 1) as nat);
+        map_min_value_smallest(post.local_heads, (post.num_replicas - 1) as nat);
+
+        assert(min_local_head <= myidx < min_local_head + post.buffer_size);
+        assert(post.tail <= min_local_head + post.buffer_size);
+
+
+        assert(forall |i| min_local_head <= i < min_local_head + post.buffer_size && i != myidx ==>
+            log_entry_idx(i, post.buffer_size) != log_entry_idx(myidx as int, post.buffer_size)) by {
+                log_entry_idx_wrap_around(min_local_head, post.buffer_size, myidx);
+            }
+
+
+        assert(forall |i| min_local_head <= i < min_local_head + post.buffer_size && i != myidx ==>
+            log_entry_is_alive(pre.alive_bits, i, pre.buffer_size) == log_entry_is_alive(post.alive_bits, i, post.buffer_size));
+
+        // overlap check
+        assert forall |i, j| post.combiner_state.dom().contains(i) && post.combiner_state.dom().contains(j) && i != j
+            implies post.combiner_state[i].no_overlap_with(post.combiner_state[j]) by {
+            assert(pre.combiner_state[i].no_overlap_with(pre.combiner_state[j]));
+        }
+
+        // combiner state
+        assert forall |nid| #[trigger] post.combiner_state.dom().contains(nid) implies
+            post.combiner_state_valid(nid, post.combiner_state[nid]) by
+        {
+            if nid != node_id {
+                assert(pre.combiner_state[node_id].no_overlap_with(pre.combiner_state[nid]));
+            }
+        };
     }
 
     #[inductive(append_finish)]
@@ -592,22 +669,50 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(reader_enter)]
     fn reader_enter_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assume(false);
+        assert(post.local_heads.dom().contains(node_id));
     }
 
     #[inductive(reader_guard)]
     fn reader_guard_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assume(false);
+        assert(post.local_heads.dom().contains(node_id));
+        assert forall |i, j| post.combiner_state.dom().contains(i) && post.combiner_state.dom().contains(j) && i != j
+        implies post.combiner_state[i].no_overlap_with(post.combiner_state[j]) by {
+            if (j == node_id && post.combiner_state[i].is_Appending()) {
+                let cur = post.combiner_state[j].get_Reading_0().get_Guard_cur();
+                assert(log_entry_is_alive(post.alive_bits, cur as int, post.buffer_size));
+            }
+        }
     }
 
     #[inductive(reader_ungard)]
-    fn reader_ungard_inductive(pre: Self, post: Self, node_id: NodeId) {
-
-    }
+    fn reader_ungard_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
     #[inductive(reader_finish)]
     fn reader_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assume(false);
+        assert(post.local_heads.dom().contains(node_id));
+
+        let min_local_heads_pre = map_min_value(pre.local_heads, (pre.num_replicas - 1) as nat);
+        let min_local_heads_post = map_min_value(post.local_heads, (post.num_replicas - 1) as nat);
+
+        // there was a change in the minimum of the local heads, meaning the minimum was updated by us.
+        if min_local_heads_pre != min_local_heads_post {
+
+            let start = pre.combiner_state[node_id].get_Reading_0().get_Range_start();
+            let end = pre.combiner_state[node_id].get_Reading_0().get_Range_end();
+
+            map_min_value_smallest(pre.local_heads, (pre.num_replicas - 1) as nat);
+            map_min_value_smallest(post.local_heads, (post.num_replicas - 1) as nat);
+
+            assert(min_local_heads_pre < min_local_heads_post);
+
+            assert(forall |i| #[trigger] pre.local_heads.dom().contains(i) && i != node_id
+                ==> pre.local_heads[i] == post.local_heads[i]);
+
+            assert(pre.local_heads[node_id] != post.local_heads[node_id]);
+
+            log_entry_alive_wrap_around(post.alive_bits, post.buffer_size, min_local_heads_pre, min_local_heads_post );
+            log_entry_alive_wrap_around_helper(post.alive_bits, post.buffer_size, min_local_heads_pre, min_local_heads_post );
+        }
     }
 
     #[inductive(reader_abort)]
@@ -619,7 +724,7 @@ pub open spec fn min(x: nat, y: nat) -> nat {
     if x < y { x } else { y }
 }
 
-pub closed spec fn map_min_value(m: Map<NodeId, nat>, idx: nat) -> nat
+pub open spec fn map_min_value(m: Map<NodeId, nat>, idx: nat) -> nat
   decreases idx
 {
     if idx === 0 {
@@ -649,21 +754,80 @@ proof fn map_min_value_smallest(m: Map<NodeId, nat>, idx: nat)
     }
 }
 
+
+
 /// converts the logical to the physical log index
-pub open spec fn log_entry_idx(logical: LogicalLogIdx, buffer_size: nat) -> LogIdx {
+pub open spec fn log_entry_idx(logical: LogicalLogIdx, buffer_size: nat) -> LogIdx
+    recommends buffer_size == LOG_SIZE
+{
     (logical % (buffer_size as int)) as nat
 }
 
+
+pub proof fn log_entry_idx_wrap_around(start: nat, buffer_size: nat, idx: nat)
+  requires
+    buffer_size == LOG_SIZE,
+    start <= idx < start + buffer_size
+  ensures
+    forall |i| start <= i < start + buffer_size && i != idx ==>
+            log_entry_idx(i, buffer_size) != log_entry_idx(idx as int, buffer_size)
+{
+
+}
+
+
+
 /// predicate to check whether a log entry is alive
 pub open spec fn log_entry_is_alive(alive_bits: Map<LogIdx, bool>, logical: LogicalLogIdx, buffer_size: nat) -> bool
+    recommends buffer_size == LOG_SIZE
 {
-    let phys_id = logical % buffer_size as int;
+    let phys_id = log_entry_idx(logical, buffer_size);
     alive_bits[phys_id as nat] == log_entry_alive_value(logical, buffer_size)
 }
 
 /// the value the alive but must have for the entry to be alive, this flips on wrap around
-pub open spec fn log_entry_alive_value(logical: LogicalLogIdx, buffer_size: nat) -> bool {
+pub open spec fn log_entry_alive_value(logical: LogicalLogIdx, buffer_size: nat) -> bool
+    recommends buffer_size == LOG_SIZE
+{
     ((logical / buffer_size as int) % 2) == 0
+}
+
+spec fn add_buffersize(i: int, buffer_size: nat) -> int {
+    i + buffer_size
+}
+
+proof fn log_entry_alive_wrap_around(alive_bits: Map<LogIdx, bool>,  buffer_size: nat,  low: nat, high: nat)
+    requires
+        buffer_size == LOG_SIZE,
+        forall |i:nat| i < buffer_size <==> alive_bits.dom().contains(i),
+        low <= high <= low + buffer_size,
+    ensures
+        forall |i:int| low <= i < high ==>  log_entry_is_alive(alive_bits, i, buffer_size) == ! #[trigger] log_entry_is_alive(alive_bits,  add_buffersize(i, buffer_size), buffer_size)
+{
+
+}
+
+proof fn log_entry_alive_wrap_around_helper(alive_bits: Map<LogIdx, bool>, buffer_size: nat,  low: nat, high: nat)
+    requires
+        buffer_size == LOG_SIZE,
+        // forall |i:nat| i < buffer_size ==> alive_bits.dom().contains(i),
+        low <= high <= low + buffer_size,
+        forall |i:int| low <= i < high ==> ! #[trigger] log_entry_is_alive(alive_bits, add_buffersize(i, buffer_size), buffer_size)
+    ensures forall |i:int| low + buffer_size <= i < high  + buffer_size ==> ! #[trigger] log_entry_is_alive(alive_bits, i, buffer_size)
+{
+    assert forall |i:int| low + buffer_size <= i < high + buffer_size implies ! #[trigger] log_entry_is_alive(alive_bits, i, buffer_size) by {
+        let j = i - buffer_size;
+        assert(low <= j < high);
+        assert(!log_entry_is_alive(alive_bits, add_buffersize(j, buffer_size), buffer_size));
+    }
+}
+
+#[verifier(nonlinear)]
+pub proof fn log_entry_alive_value_wrap_around(i: LogicalLogIdx, buffer_size: nat)
+    requires buffer_size > 0
+    ensures log_entry_alive_value(i, buffer_size) != log_entry_alive_value(i + (buffer_size as int), buffer_size)
+{
+    assert(((i + (buffer_size as int)) / buffer_size as int) == ((i / buffer_size as int) + 1));
 }
 
 }

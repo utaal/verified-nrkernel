@@ -46,4 +46,43 @@ pub proof fn get_new_nat_not_in(s: Set<nat>) {
     assume(false); // TODO
 }
 
+
+#[verifier(nonlinear)]
+pub proof fn int_mod_less_than_same(i: int, len: int)
+    requires 0 <= i < len, len > 0
+    ensures  (i % len) == i
+
+{
+}
+
+// pub proof fn mod_range_not_same1(i: int, j: int)
+//     requires
+//       16 > 0,
+//       i < j < i + 16
+//     ensures
+//       i % 16 != j % 16
+// {
+// }
+
+// #[verifier(nonlinear)]
+// pub proof fn mod_range_not_same(i: int, j: int, N: int)
+//     requires
+//       N > 0,
+//       i < j < i + N
+//     ensures
+//       i % N != j % N
+// {
+//     let ki = i / N;
+//     let kj = j / N;
+
+//     assert(ki * N <= i < (ki + 1) * N);
+//     assert(kj * N <= j < (kj + 1) * N);
+
+//     // assert(i % N == i - ki * N);
+//     // assert(j % N == j - kj * N);
+
+//     // assert(i - ki * N != j - kj * N);
+//     assert(false);
+// }
+
 }
