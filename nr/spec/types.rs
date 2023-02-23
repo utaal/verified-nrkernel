@@ -1,11 +1,14 @@
 #[allow(unused_imports)]
 use builtin::*;
+use builtin_macros::*;
+
+verus!{
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Some Types
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// type of the node id
+/// type of the node / replica id
 pub type NodeId = nat;
 
 /// the log index
@@ -13,6 +16,9 @@ pub type LogIdx = nat;
 
 /// the request id
 pub type ReqId = nat;
+
+/// the id of a thread on a replica node
+pub type ThreadId = nat;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Nr State and its operations
@@ -24,26 +30,24 @@ pub type ReqId = nat;
 
 /// represents a replica state
 pub struct NRState {
-    u: u8,
+    pub u: u8,
 }
 
 impl NRState {
-    #[spec]
+
     #[verifier(opaque)]
-    pub fn init() -> Self {
+    pub open spec fn init() -> Self {
         NRState { u: 0 }
     }
 
     /// reads the current state of the replica
-    #[spec]
     #[verifier(opaque)]
-    pub fn read(&self, op: ReadonlyOp) -> ReturnType {
+    pub open spec fn read(&self, op: ReadonlyOp) -> ReturnType {
         ReturnType { u: 0 }
     }
 
-    #[spec]
     #[verifier(opaque)]
-    pub fn update(self, op: UpdateOp) -> (Self, ReturnType) {
+    pub open spec fn update(self, op: UpdateOp) -> (Self, ReturnType) {
         (self, ReturnType { u: 0 })
     }
 }
@@ -71,10 +75,16 @@ pub struct ReadonlyOp {
     u: u8,
 }
 
+/// the operations enum
+pub enum Request {
+    Update(UpdateOp),
+    Readonly(ReadonlyOp),
+}
+
 /// Represents the return type of the read-only operation
 #[derive(PartialEq, Eq)]
 pub struct ReturnType {
-    u: u8,
+    pub u: u8,
 }
 
 impl Structural for ReturnType {}
@@ -84,3 +94,5 @@ pub struct LogEntry {
     pub op: UpdateOp,
     pub node_id: NodeId,
 }
+
+} // verus!

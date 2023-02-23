@@ -8,18 +8,18 @@ use super::pervasive::map::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::seq::Seq;
 use super::pervasive::seq_lib::*;
-//use super::pervasive::set::*;
+use super::pervasive::set::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::arbitrary;
 
 use state_machines_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::simple_log::{ReadReq as SReadReq, SimpleLog, UpdateResp as SUpdateResp};
+use super::simple_log::{ReadReq as SReadReq, SimpleLog, UpdateResp as SUpdateResp, compute_nrstate_at_version as s_nrstate_at_version};
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::unbounded_log::{CombinerState, ReadonlyState, UnboundedLog, UpdateState};
+use super::unbounded_log::{CombinerState, ReadonlyState, UnboundedLog, UpdateState, compute_nrstate_at_version as i_nrstate_at_version};
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
@@ -132,7 +132,7 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
     case_on_next_strong! {
       pre, post, UnboundedLog => {
         readonly_start(op) => {
-            let rid = get_new_nat(pre.local_reads.dom());
+            let rid = get_new_nat(pre.local_reads.dom(), Set::empty());
             assert_maps_equal!(
                 pre.local_reads.insert(rid, ReadonlyState::Init {op}),
                 post.local_reads
@@ -166,34 +166,70 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
-        readonly_finish(rid, op, version_upper_bound, node_id, ret) => {
+        readonly_finish(rid, op, ret) => {
             // corresponds toConsumeStub_Refines_End
             // let version = 0;
 
             assert(op == pre.local_reads.index(rid).get_Done_op());
-            assert(version_upper_bound == pre.local_reads.index(rid).get_Done_version_upper_bound());
-            assert(ret == pre.local_reads.index(rid).get_Done_ret());
-            assert(node_id == pre.local_reads.index(rid).get_Done_node_id());
-
             assert(op == interp(pre).readonly_reqs.index(rid).get_Req_op());
-            let version = interp(pre).readonly_reqs.index(rid).get_Req_version();
 
-            assume( pre.local_reads.index(rid).get_Done_version_upper_bound() < pre.version_upper_bound);
-            assert(version < pre.version_upper_bound);
+            assert(pre.local_reads.index(rid).is_Done());
+            assert(ret == pre.local_reads.index(rid).get_Done_ret());
 
-            assert(version < interp(pre).version);
-            assume(ret == interp(pre).nrstate_at_version(version).read(op));
+            let version_upper_bound = pre.local_reads.index(rid).get_Done_version_upper_bound();
 
+            // assert(node_id == pre.local_reads.index(rid).get_Done_node_id());
+
+            assert(version_upper_bound <= pre.version_upper_bound);
+            assert(dummy(version_upper_bound, version_upper_bound, pre.version_upper_bound));
+            assert(exists |v| dummy(version_upper_bound, v, pre.version_upper_bound));
+
+            assert(pre.version_upper_bound  <= interp(pre).log.len());
+
+
+            assert(forall |version| 0 <= version <= pre.version_upper_bound ==> #[trigger] version_in_log(pre.log, version));
+            assert(forall |version| version_upper_bound <= version <= pre.version_upper_bound ==> #[trigger] version_in_log(pre.log, version));
+            assert(forall |v| version_upper_bound <= v <= pre.version_upper_bound <==> #[trigger] dummy(version_upper_bound, v, pre.version_upper_bound));
+
+            assert(forall |version|#[trigger]dummy(version_upper_bound, version, pre.version_upper_bound) ==> version_in_log(pre.log, version));
+
+            // assert(exists |version : nat | version_upper_bound <= version <= pre.version_upper_bound
+            // ==> VersionInLog(pre.log, version) && result_match(s.log, output, version,  s.localReads[rid].op)) by {
+
+            assert(exists |version: nat| #[trigger]dummy(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, ret, version, op)) by {
+                assert(ret == pre.local_reads[rid].get_Done_ret());
+                let v = choose(|v| #[trigger]dummy(version_upper_bound, v, pre.version_upper_bound)
+                                && pre.local_reads[rid].get_Done_ret() == i_nrstate_at_version(pre.log, v).read(pre.local_reads[rid].get_Done_op())
+                        );
+                assert(version_in_log(pre.log, v));
+                assert(result_match(pre.log, ret, v,  pre.local_reads[rid].get_Done_op()));
+            };
+
+
+            let version : nat = choose(|version| {
+                version_upper_bound <= version <= pre.version_upper_bound
+                && #[trigger] result_match(pre.log, ret, version, op)
+            });
+
+            assert(version_in_log(pre.log, version));
+            assert(version <= pre.version_upper_bound);
+            assert(version <= interp(pre).version);
+            assert(0 <= version <=  interp(pre).log.len());
+            assert(interp(pre).readonly_reqs.index(rid).get_Req_version() <= version <= interp(pre).log.len());
+
+            assert(ret == interp(pre).nrstate_at_version(version).read(op)) by {
+                state_at_version_refines(interp(pre).log, pre.log, pre.global_tail, version);
+            }
 
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
             assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
             assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
 
-            SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version_upper_bound, ret);
+            SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version, ret);
         }
 
         update_start(op) => {
-            let rid = get_new_nat(pre.local_updates.dom());
+            let rid = get_new_nat(pre.local_updates.dom(), Set::empty());
 
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
             assert_maps_equal!(
@@ -275,6 +311,45 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         }
       }
     }
+}
+
+pub open spec fn dummy(lower:nat, mid: nat, upper: nat) -> bool
+    recommends lower <= upper
+{
+    lower <= mid <= upper
+}
+
+pub open spec fn dummy2(lower:nat, mid: nat, upper: nat) -> bool
+    recommends lower < upper
+{
+    lower <= mid < upper
+}
+
+
+pub open spec fn version_in_log(log: Map<LogIdx, LogEntry>, version: LogIdx) -> bool
+{
+    forall |i| 0 <= i < version ==> log.contains_key(i)
+}
+
+pub open spec fn result_match(log: Map<LogIdx, LogEntry>,  output: ReturnType, version: LogIdx, op: ReadonlyOp) -> bool
+    recommends version_in_log(log, version)
+{
+
+    output == i_nrstate_at_version(log, version).read(op)
+}
+
+
+proof fn state_at_version_refines(s_log: Seq<UpdateOp>, i_log: Map<LogIdx, LogEntry>, gtail: nat, idx:nat)
+    requires
+      forall |i| 0 <= i < gtail ==> i_log.dom().contains(i),
+      0 <= idx <= s_log.len(),
+      idx <= gtail,
+      s_log == interp_log(gtail, i_log),
+    ensures
+      s_nrstate_at_version(s_log, idx) == i_nrstate_at_version(i_log, idx)
+{
+    assert(s_log.len() == gtail);
+    assume(false);
 }
 
 } // end verus!

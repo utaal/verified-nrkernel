@@ -7,8 +7,9 @@ use builtin_macros::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::map::*;
 use super::pervasive::seq::*;
-// use super::pervasive::set::*;
+use super::pervasive::set::*;
 // use super::pervasive::*;
+use super::pervasive::arbitrary;
 
 use state_machines_macros::*;
 
@@ -263,6 +264,11 @@ impl CombinerState {
             CombinerState::UpdatedVersion{queued_ops, ..} => queued_ops,
         }
     }
+
+    pub open spec fn queued_ops_set(&self) -> Set<ReqId> {
+        seq_to_set(self.queued_ops())
+    }
+
 }
 
 } // end verus!
@@ -324,49 +330,21 @@ UnboundedLog {
     //         self.local_versions.dom().contains(node_id)
     // }
 
-    // /// there must be a combiner for all node
-    // #[invariant]
-    // pub fn inv_local_combiner_complete(&self) -> bool {
-    //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
-    //         self.combiner.dom().contains(node_id)
-    // }
+    /// there must be a combiner for all node
+    #[invariant]
+    pub fn inv_local_combiner_complete(&self) -> bool {
+        forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
+            self.combiner.dom().contains(node_id)
+    }
 
     #[invariant]
     pub fn combiner_local_versions_domains(&self) -> bool {
-        forall |k| self.local_versions.dom().contains(k) <==>
-            self.combiner.dom().contains(k)
+        forall |k| self.local_versions.dom().contains(k) <==> self.combiner.dom().contains(k)
     }
 
     #[invariant]
     pub fn combiner_replicas_domains(&self) -> bool {
-        forall |k| self.replicas.dom().contains(k) <==>
-            self.combiner.dom().contains(k)
-    }
-
-    /// the version upper bound must be smaller or equal to the global tail
-    #[invariant]
-    pub fn inv_version_in_range(&self) -> bool {
-        self.version_upper_bound <= self.global_tail
-    }
-
-    /// all local versions are less or equal to the version upper bound
-    #[invariant]
-    pub fn inv_local_version_upper_bound_heads(&self) -> bool {
-        forall |node_id| #[trigger]  self.local_versions.dom().contains(node_id) ==>
-            self.local_versions.index(node_id) <= self.version_upper_bound
-    }
-
-    /// the log contains entries up to the global tail
-    #[invariant]
-    pub fn inv_log_complete(&self) -> bool {
-        &&& LogContainsEntriesUpToHere(self.log, self.global_tail)
-        &&& LogNoEntriesFromHere(self.log, self.global_tail)
-    }
-
-    #[invariant]
-    pub fn inv_readonly_requests_wf(&self) -> bool {
-        forall |rid| #[trigger] self.local_reads.dom().contains(rid) ==>
-            self.wf_readstate(self.local_reads.index(rid))
+        forall |k| self.replicas.dom().contains(k) <==> self.combiner.dom().contains(k)
     }
 
     pub open spec fn wf_node_id(&self, node_id: NodeId) -> bool {
@@ -376,9 +354,44 @@ UnboundedLog {
         &&& self.replicas.dom().contains(node_id)
     }
 
-    // pub open spec fn wf_local_version(&self) {}
 
-    #[spec]
+    // #[invariant]
+    // pub fn inv_queued_ops_in_local_updates(&self) -> bool {
+    //     forall |node_id, rid|
+    //         (#[trigger] self.combiner.dom().contains(node_id) && !(#[trigger] self.local_updates.dom().contains(rid)))
+    //             ==> !self.combiner[node_id].queued_ops().contains(rid)
+    // }
+
+
+
+    // && Inv_WF(s)
+    // && Inv_GlobalTailCompleteTailOrdering(s)
+
+    /// the version upper bound must be smaller or equal to the global tail
+    /// Inv_GlobalTailCompleteTailOrdering
+    #[invariant]
+    pub fn inv_version_in_range(&self) -> bool {
+        self.version_upper_bound <= self.global_tail
+    }
+
+
+    /// all local versions are less or equal to the version upper bound
+    /// Inv_CompletedTailLowerBound && Inv_GlobalTailLowerBound(s)
+    #[invariant]
+    pub fn inv_local_version_upper_bound_heads(&self) -> bool {
+        forall |node_id| (#[trigger]  self.local_versions.dom().contains(node_id))
+            ==> self.local_versions[node_id] <= self.version_upper_bound
+    }
+
+
+    /// The read request states are valid
+    /// Inv_ReadRequest_WF(s) && Inv_ReadOnlyCtailsCompleteTailOrdering(s) && Inv_ReadOnlyStateNodeIdExists(s)
+    #[invariant]
+    pub fn inv_readonly_requests_wf(&self) -> bool {
+        forall |rid| (#[trigger] self.local_reads.dom().contains(rid))
+             ==> self.wf_readstate(self.local_reads[rid])
+    }
+
     pub open spec fn wf_readstate(&self, rs: ReadonlyState) -> bool {
         match rs {
             ReadonlyState::Init{op} => {
@@ -392,7 +405,7 @@ UnboundedLog {
                 &&& version_upper_bound <= self.version_upper_bound
                 &&& version_upper_bound <= self.current_local_version(node_id)
             }
-            ReadonlyState::Done{op, ret, node_id, version_upper_bound, .. } => {
+            ReadonlyState::Done{op, ret, node_id, version_upper_bound } => {
                 &&& self.wf_node_id(node_id)
                 &&& version_upper_bound <= self.version_upper_bound
                 &&& version_upper_bound <= self.current_local_version(node_id)
@@ -400,45 +413,35 @@ UnboundedLog {
         }
     }
 
-    /// obtains the current local version for the given node depending on the combiner state
-    #[spec]
-    pub open spec fn current_local_version(&self, node_id: NodeId) -> nat {
-        match self.combiner.index(node_id) {
-            CombinerState::Ready                              => self.local_versions.index(node_id),
-            CombinerState::Placed{ .. }                       => self.local_versions.index(node_id),
-            CombinerState::LoadedLocalVersion{ lversion, .. } => lversion,
-            CombinerState::Loop { lversion, .. }              => lversion,
-            CombinerState::UpdatedVersion { global_tail, .. } => global_tail
-        }
-    }
 
+    /// the combiner states are wellformed
+    /// Inv_CombinerStateValid(s)
     #[invariant]
-    pub fn combiner_states_wf(&self) -> bool {
-        forall |node_id| #[trigger] self.combiner.dom().contains(node_id) ==>
-            self.wf_combiner_for_node_id(node_id)
+    pub open spec fn combiner_states_wf(&self) -> bool {
+        forall |node_id| (#[trigger] self.combiner.dom().contains(node_id))
+             ==> self.wf_combiner_for_node_id(node_id)
     }
 
-    #[spec]
     pub open spec fn wf_combiner_for_node_id(&self, node_id: NodeId) -> bool
         recommends self.wf_node_id(node_id)
     {
-        match self.combiner.index(node_id) {
+        match self.combiner[node_id] {
             CombinerState::Ready => {
                 // from other inv
                 // &&& self.local_versions.dom().contains(node_id)
-                // &&& self.local_versions.index(node_id) <= self.global_tail
-                &&& LogRangeNoNodeId(self.log, self.local_versions.index(node_id), self.global_tail, node_id)
+                // &&& self.local_versions[node_id] <= self.global_tail
+                &&& LogRangeNoNodeId(self.log, self.local_versions[node_id], self.global_tail, node_id)
             }
             CombinerState::Placed { queued_ops } => {
                 // &&& self.local_versions.dom().contains(node_id)
-                // &&& self.local_versions.index(node_id) <= self.global_tail
-                &&& LogRangeMatchesQueue(queued_ops, self.log, 0, self.local_versions.index(node_id), self.global_tail, node_id, self.local_updates)
+                // &&& self.local_versions[node_id] <= self.global_tail
+                &&& LogRangeMatchesQueue(queued_ops, self.log, 0, self.local_versions[node_id], self.global_tail, node_id, self.local_updates)
                 &&& QueueRidsUpdatePlaced(queued_ops, self.local_updates, 0)
                 &&& seq_unique(queued_ops)
             }
             CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
                // we've just read the local tail value, and no-one else should modify that
-                &&& lversion == self.local_versions.index(node_id)
+                &&& lversion == self.local_versions[node_id]
                 // by transitivity we have lversion <= self.version_upper_bound and self.global_tail
                 // the local tail should be smaller or equal than the ctail
                 // &&& lversion <= self.version_upper_bound
@@ -451,7 +454,7 @@ UnboundedLog {
                 // the global tail may have already advanced...
                 &&& global_tail <= self.global_tail
                 // we're advancing the local tail here
-                &&& lversion >= self.local_versions.index(node_id)
+                &&& lversion >= self.local_versions[node_id]
                 // the local tail should always be smaller or equal to the global tail
                 &&& lversion <= global_tail
                 // the log now contains all entries up to localtail
@@ -469,7 +472,7 @@ UnboundedLog {
                 // update the ctail value
                 &&& global_tail <= self.version_upper_bound
                 // the local tail should be smaller than this one here
-                &&& self.local_versions.index(node_id) <= global_tail
+                &&& self.local_versions[node_id] <= global_tail
                 // the log now contains all entries up to global_tail
                 // &&& LogContainsEntriesUpToHere(self.log, global_tail)
                 &&& LogRangeNoNodeId(self.log, global_tail, self.global_tail, node_id)
@@ -479,25 +482,26 @@ UnboundedLog {
         }
     }
 
-    #[invariant]
-    pub fn inv_combiner_rids_distinct(&self) -> bool
-    {
-      forall |node_id1, node_id2|
-          (#[trigger] self.combiner.dom().contains(node_id1)
-          && #[trigger] self.combiner.dom().contains(node_id2)
-          && node_id1 != node_id2) ==>
-            seq_disjoint(self.combiner.index(node_id1).queued_ops(), self.combiner.index(node_id2).queued_ops())
-    }
 
+    /// the log contains entries up to the global tail
+    /// Inv_LogEntriesGlobalTail(s)
+    ///
+    /// Inv_LogEntriesUpToCTailExists(s) && Inv_LogEntriesUpToLocalTailExist(s) are implied
     #[invariant]
-    pub fn inv_queued_ops(&self) -> bool {
-        forall |node_id, rid|
-            (#[trigger] self.combiner.dom().contains(node_id) && !(#[trigger] self.local_updates.dom().contains(rid)))
-                ==> !self.combiner.index(node_id).queued_ops().contains(rid)
+    pub fn inv_log_complete(&self) -> bool {
+        &&& LogContainsEntriesUpToHere(self.log, self.global_tail)
+        &&& LogNoEntriesFromHere(self.log, self.global_tail)
     }
 
 
-    #[spec]
+    /// Wellformed local update state
+    /// Inv_LocalUpdatesIdx(s)
+    #[invariant]
+    pub fn inv_local_updates(&self) -> bool {
+        forall |rid| (#[trigger] self.local_updates.dom().contains(rid))
+            ==>  self.inv_local_updates_wf(self.local_updates[rid])
+    }
+
     pub open spec fn inv_local_updates_wf(&self, update: UpdateState) -> bool {
         match update {
             UpdateState::Init { op } => { true },
@@ -505,22 +509,78 @@ UnboundedLog {
                 &&& self.log.dom().contains(idx)
                 &&& idx < self.global_tail
             },
-            UpdateState::Applied { ret: _, idx } => {
+            UpdateState::Applied { ret, idx } => {
                 &&& self.log.dom().contains(idx)
                 &&& idx < self.global_tail
             },
-            UpdateState::Done { ret: _, idx } => {
+            UpdateState::Done { ret, idx } => {
                 &&& self.log.dom().contains(idx)
                 &&& idx < self.version_upper_bound
             },
         }
     }
 
+
+    /// The results of the read operation must match
+    /// Inv_ReadOnlyResult(s)
     #[invariant]
-    pub fn inv_local_updates(&self) -> bool {
-        forall |rid| (#[trigger] self.local_updates.dom().contains(rid))
-            ==>  self.inv_local_updates_wf(self.local_updates.index(rid))
+    pub fn inv_read_results(&self) -> bool {
+        forall |rid| (#[trigger] self.local_reads.dom().contains(rid))
+            ==>  self.read_results_match(self.local_reads[rid])
     }
+
+    pub open spec fn read_results_match(&self, read: ReadonlyState) -> bool {
+        match read {
+            ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
+                exists |v: nat| (#[trigger] rangeincl(version_upper_bound, v, self.version_upper_bound))
+                    && ret == compute_nrstate_at_version(self.log, v).read(op)
+            },
+            _ => true,
+        }
+    }
+
+
+    /// The results of the updates must match
+    /// Inv_UpdateResults(s)
+    #[invariant]
+    pub fn inv_update_results(&self) -> bool {
+        forall |rid| (#[trigger] self.local_updates.dom().contains(rid))
+            ==>  self.update_results_match(self.local_updates[rid])
+    }
+
+    pub open spec fn update_results_match(&self, update: UpdateState) -> bool {
+        match update {
+            UpdateState::Applied { ret, idx } => {
+                ret == compute_nrstate_at_version(self.log, idx).update(self.log[idx].op).1
+            },
+            UpdateState::Done { ret, idx } => {
+                ret == compute_nrstate_at_version(self.log, idx).update(self.log[idx].op).1
+            },
+            _ => true,
+        }
+    }
+
+
+    /// All combiners must have distinct request ids they are working on
+    /// Inv_CombinerRidsDistinct(s)
+    #[invariant]
+    pub fn inv_combiner_rids_distinct(&self) -> bool
+    {
+      forall |node_id1, node_id2|
+          (#[trigger] self.combiner.dom().contains(node_id1)
+          && #[trigger] self.combiner.dom().contains(node_id2)
+          && node_id1 != node_id2) ==>
+            seq_disjoint(self.combiner[node_id1].queued_ops(), self.combiner[node_id2].queued_ops())
+    }
+
+
+    /// the state of the replica must match the current version of the log
+    #[invariant]
+    pub open spec fn replica_state(&self) -> bool {
+        forall |node_id| (#[trigger] self.replicas.dom().contains(node_id)) ==>
+            self.replicas[node_id] == compute_nrstate_at_version(self.log, self.current_local_version(node_id))
+    }
+
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // State Machine Initialization
@@ -547,9 +607,9 @@ UnboundedLog {
     /// Read Request: Enter the read request operation into the system
     transition!{
         readonly_start(op: ReadonlyOp) {
-            birds_eye let rid = get_new_nat(pre.local_reads.dom());
+            birds_eye let rid = get_new_nat(pre.local_reads.dom(), Set::empty());
             add local_reads += [ rid => ReadonlyState::Init {op} ] by {
-                get_new_nat_not_in(pre.local_reads.dom());
+                get_new_nat_not_in(pre.local_reads.dom(), Set::empty());
             };
         }
     }
@@ -594,8 +654,11 @@ UnboundedLog {
 
     /// Read Request: remove the read request from the request from the state machine
     transition!{
-        readonly_finish(rid: ReqId, op: ReadonlyOp, version_upper_bound: nat, node_id: NodeId, ret: ReturnType) {
-            remove local_reads -= [ rid => ReadonlyState::Done{op, node_id, version_upper_bound, ret} ];
+        readonly_finish(rid: ReqId, rop: ReadonlyOp, result: ReturnType) {
+            remove local_reads -= [ rid => let ReadonlyState::Done { op, ret, version_upper_bound, node_id } ];
+
+            require(op == op);
+            require(ret == result);
         }
     }
 
@@ -606,11 +669,34 @@ UnboundedLog {
     /// Update: A new update request enters the system
     transition!{
         update_start(op: UpdateOp) {
-            birds_eye let rid = get_new_nat(pre.local_updates.dom());
-            add local_updates += [ rid => UpdateState::Init {op } ] by {
-                get_new_nat_not_in(pre.local_updates.dom());
+
+            // have combiner >= let combiner;
+
+            // require(combiner.dom().finite());
+
+
+
+            birds_eye let combiner_reqs = Set::empty(); //combiner_request_ids(pre.combiner.dom(), pre.combiner);
+
+            // let c = combiner_request_ids(pre.combiner.dom(), pre.combiner);
+            birds_eye let rid = get_new_nat(pre.local_updates.dom(), combiner_reqs);
+            add local_updates += [ rid => UpdateState::Init { op } ] by {
+                // combainer_knows_reqid(pre.combiner.dom(), pre.combiner);
+                combiner_request_ids_finite(pre.combiner.dom(), pre.combiner);
+                get_new_nat_not_in(pre.local_updates.dom(), combiner_reqs);
             };
         }
+    }
+
+    pub proof fn bar(&self)
+    {
+        assert(combiner_request_ids(self.combiner.dom(), self.combiner).len() >= 0);
+    }
+
+    pub proof fn foo(&self)
+        requires self.invariant()
+    {
+        assert(combiner_request_ids(self.combiner.dom(), self.combiner).len() >= 0);
     }
 
     /*
@@ -622,14 +708,14 @@ UnboundedLog {
 
             let old_updates = Map::<ReqId, UpdateState>::new(
                 |rid| request_ids.contains(rid),
-                |rid| pre.local_updates.index(rid)
+                |rid| pre.local_updates[rid]
             );
 
             remove local_updates -= (old_updates);
 
              require(forall(|rid|
                  old_updates.dom().contains(rid) >>=
-                     old_updates.index(rid).is_Init() && request_ids.contains(rid)));
+                     old_updates[rid].is_Init() && request_ids.contains(rid)));
              require(forall(|i|
                  0 <= i && i < request_ids.len() >>=
                      old_updates.dom().contains(request_ids.index(i))));
@@ -647,7 +733,7 @@ UnboundedLog {
              let new_updates = Map::<nat, UpdateState>::new(
                  |rid| old_updates.dom().contains(rid),
                  |rid| UpdateState::Placed{
-                     op: old_updates.index(rid).get_Init_op(),
+                     op: old_updates[rid].get_Init_op(),
                      idx: idx_of(request_ids, rid),
                  }
              );
@@ -848,7 +934,7 @@ UnboundedLog {
 
     #[inductive(readonly_ready_to_read)]
     fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: ReqId, node_id: NodeId) {
-        match post.local_reads.index(rid) {
+        match post.local_reads[rid] {
             ReadonlyState::ReadyToRead{op, node_id, version_upper_bound} => {
                 assert(post.combiner.dom().contains(node_id));
                 assert(post.local_versions.dom().contains(node_id));
@@ -858,89 +944,62 @@ UnboundedLog {
             }
             _ => { }
         };
-        assert(post.wf_readstate(post.local_reads.index(rid)));
+        assert(post.wf_readstate(post.local_reads[rid]));
     }
 
     #[inductive(readonly_apply)]
-    fn readonly_apply_inductive(pre: Self, post: Self, rid: ReqId) { }
+    fn readonly_apply_inductive(pre: Self, post: Self, rid: ReqId) {
+        let ret = post.local_reads[rid].get_Done_ret();
+        let nid = post.local_reads[rid].get_Done_node_id();
+        let vup = post.local_reads[rid].get_Done_version_upper_bound();
+        let v = post.local_versions[nid];
+        assert(rangeincl(vup, v, post.version_upper_bound));
+    }
 
     #[inductive(readonly_finish)]
-    fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp, version_upper_bound: nat, node_id: NodeId, ret: ReturnType) { }
+    fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: ReadonlyOp, result: ReturnType) { }
 
     #[inductive(update_start)]
     fn update_start_inductive(pre: Self, post: Self, op: UpdateOp) {
         // get the rid that has been added
-        let rid = choose|rid: nat| post.local_updates === pre.local_updates.insert(rid, UpdateState::Init { op });
+        let rid = choose|rid: nat| ! #[trigger] pre.local_updates.contains_key(rid) && post.local_updates == pre.local_updates.insert(rid, UpdateState::Init { op });
 
-        assert(post.local_updates.index(rid) === UpdateState::Init { op });
+        assert(post.local_updates[rid] === UpdateState::Init { op });
+        assert(!pre.local_updates.contains_key(rid));
 
         assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
-            match post.combiner.index(node_id) {
-            CombinerState::Ready => {
-                // assert(LogRangeNoNodeId(post.log, post.local_versions.index(node_id), post.global_tail, node_id));
+            assert(post.combiner[node_id] == pre.combiner[node_id]);
+            match post.combiner[node_id] {
+                CombinerState::Placed { queued_ops } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.global_tail, node_id, pre.local_updates, post.local_updates);
+                }
+                CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
+                }
+                CombinerState::Loop{ queued_ops, idx, lversion, global_tail } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
+                }
+                _ => {
+
+                }
             }
-            CombinerState::Placed { queued_ops } => {
-                assume(false);
-                assert(!queued_ops.contains(rid));
-                assert(LogRangeMatchesQueue(queued_ops, post.log, 0, post.local_versions.index(node_id), post.global_tail, node_id, post.local_updates));
-                // assert(QueueRidsUpdatePlaced(queued_ops, post.local_updates, 0));
-                // assert(seq_unique(queued_ops));
-            }
-            CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                // assert(lversion == post.local_versions.index(node_id));
-                assume(false);
-                assert(!queued_ops.contains(rid));
-                assert(LogRangeMatchesQueue(queued_ops, post.log, 0, lversion, post.global_tail, node_id, post.local_updates));
-                // assert(QueueRidsUpdatePlaced(queued_ops, post.local_updates, 0));
-                // assert(seq_unique(queued_ops));
-            }
-            CombinerState::Loop{ queued_ops, idx, lversion, global_tail } => {
-                // assert(global_tail <= post.global_tail);
-                // assert(lversion >= post.local_versions.index(node_id));
-                // assert(lversion <= global_tail);
-                // assert(0 <= idx <= queued_ops.len());
-                assume(false);
-                assert(!queued_ops.contains(rid));
-                assert(LogRangeMatchesQueue(queued_ops, post.log, idx, lversion, global_tail, node_id, post.local_updates));
-                // assert(LogRangeNoNodeId(post.log, global_tail, post.global_tail, node_id));
-                // assert(QueueRidsUpdatePlaced(queued_ops, post.local_updates, idx));
-                // assert(QueueRidsUpdateDone(queued_ops, post.local_updates, idx));
-                // assert(seq_unique(queued_ops));
-            }
-            CombinerState::UpdatedVersion{ queued_ops, global_tail } => {
-                // assert(global_tail <= post.version_upper_bound);
-                // assert(post.local_versions.index(node_id) <= global_tail);
-                // assert(LogRangeNoNodeId(post.log, global_tail, post.global_tail, node_id));
-                // assert(!queued_ops.contains(rid));
-                // assert(QueueRidsUpdateDone(queued_ops, post.local_updates, queued_ops.len()));
-                // assert(seq_unique(queued_ops));
-            }
-        }
     }
     }
 
     #[inductive(update_done)]
     fn update_done_inductive(pre: Self, post: Self, rid: ReqId) {
         assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
-            match post.combiner.index(node_id) {
+            match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions.index(node_id), post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.global_tail, node_id, pre.local_updates, post.local_updates);
                 }
                 CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
                 }
-                CombinerState::Loop { queued_ops, lversion, global_tail, idx } => {
-                    // assume(false);
-                    assume(false);
-                    assert(!queued_ops.contains(rid));
-                    // LogRangeMatchesQueue_update_change_2(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
+                CombinerState::Loop{ queued_ops, idx, lversion, global_tail } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
                 }
-                CombinerState::UpdatedVersion { queued_ops, global_tail } => {
-                    assume(false);
-                }
-                CombinerState::Ready => {
-                    assume(false);
-                }
+                _ => {}
             }
         }
 
@@ -949,31 +1008,25 @@ UnboundedLog {
     #[inductive(update_finish)]
     fn update_finish_inductive(pre: Self, post: Self, rid: ReqId) {
         assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
-            match post.combiner.index(node_id) {
+            match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions.index(node_id), post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions[node_id], post.global_tail, node_id, pre.local_updates, post.local_updates);
                 }
                 CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
                     LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
                 }
                 CombinerState::Loop { queued_ops, idx, lversion, global_tail } => {
-                    // XXX: here we may have the problem that we're removing stuff form the updates
-                    //      for which there is still a combiner using the local_updates map.
-                    //
-                    assume(false);
-                    assert(pre.local_updates.index(rid).is_Done());
-                    assert(!queued_ops.contains(rid));
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
                 }
                 _ => {}
             }
         }
 
-        assert forall |node_id, rid|
-            (#[trigger] post.combiner.dom().contains(node_id) && !(#[trigger] post.local_updates.dom().contains(rid)))
-                implies !post.combiner.index(node_id).queued_ops().contains(rid) by {
-                    assume(false)
-                }
+        // assert forall |node_id, rid|
+        //     (#[trigger] post.combiner.dom().contains(node_id) && !(#[trigger] post.local_updates.dom().contains(rid)))
+        //         implies !post.combiner[node_id].queued_ops().contains(rid) by {
+
+        //         }
 
     }
 
@@ -981,7 +1034,7 @@ UnboundedLog {
     fn exec_trivial_start_inductive(pre: Self, post: Self, node_id: NodeId) {
         concat_LogRangeNoNodeId_LogRangeMatchesQueue(
             Seq::empty(), post.log, 0,
-            pre.local_versions.index(node_id),
+            pre.local_versions[node_id],
             pre.global_tail,
             post.global_tail,
             node_id,
@@ -996,14 +1049,14 @@ UnboundedLog {
     #[inductive(update_place_ops_in_log_one)]
     fn update_place_ops_in_log_one_inductive(pre: Self, post: Self, node_id: NodeId, rid: ReqId) {
 
-        let old_queued_ops = pre.combiner.index(node_id).get_Placed_queued_ops();
-        let op = pre.local_updates.index(rid).get_Init_op();
+        let old_queued_ops = pre.combiner[node_id].get_Placed_queued_ops();
+        let op = pre.local_updates[rid].get_Init_op();
 
         assert(post.wf_combiner_for_node_id(node_id)) by {
-            match post.combiner.index(node_id) {
+            match post.combiner[node_id] {
                 CombinerState::Placed{queued_ops} => {
                     LogRangeMatchesQueue_append(old_queued_ops, pre.log, post.log, 0,
-                        post.local_versions.index(node_id), pre.global_tail,
+                        post.local_versions[node_id], pre.global_tail,
                         node_id, pre.local_updates, post.local_updates, rid,
                         LogEntry{ op, node_id });
                 }
@@ -1011,22 +1064,22 @@ UnboundedLog {
             }
         }
 
-        assert(post.inv_local_updates_wf(post.local_updates.index(rid)));
+        assert(post.inv_local_updates_wf(post.local_updates[rid]));
 
         assert forall |node_id1| #[trigger] post.combiner.dom().contains(node_id1)
             && node_id1 != node_id
             implies post.wf_combiner_for_node_id(node_id1)
         by {
-            assert(pre.combiner.index(node_id1) === post.combiner.index(node_id1));
+            assert(pre.combiner[node_id1] === post.combiner[node_id1]);
             assert(pre.wf_combiner_for_node_id(node_id1));
-            match pre.combiner.index(node_id1) {
+            match pre.combiner[node_id1] {
                 CombinerState::Ready => {
                     LogRangeNoNodeId_append_other(pre.log, post.log,
-                        post.local_versions.index(node_id1), pre.global_tail, node_id1, LogEntry{ op, node_id });
+                        post.local_versions[node_id1], pre.global_tail, node_id1, LogEntry{ op, node_id });
                 }
                 CombinerState::Placed{queued_ops} => {
                     LogRangeMatchesQueue_append_other_augment(queued_ops, pre.log, post.log,
-                        0, post.local_versions.index(node_id1), pre.global_tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
+                        0, post.local_versions[node_id1], pre.global_tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
                 }
                 CombinerState::LoadedLocalVersion{queued_ops, lversion} => {
                     LogRangeMatchesQueue_append_other_augment(queued_ops, pre.log, post.log,
@@ -1045,6 +1098,39 @@ UnboundedLog {
                 }
             }
         }
+
+        assert forall |nid| (#[trigger] post.replicas.dom().contains(nid)) implies
+            post.replicas[nid] == compute_nrstate_at_version(post.log, post.current_local_version(nid)) by
+        {
+            compute_nrstate_at_version_preserves(pre.log, post.log, post.current_local_version(nid));
+        }
+
+        assert forall |rid| (#[trigger] post.local_updates.dom().contains(rid))
+            implies post.update_results_match(post.local_updates[rid]) by
+        {
+            match post.local_updates[rid] {
+                UpdateState::Applied { ret, idx } => {
+                    compute_nrstate_at_version_preserves(pre.log, post.log, idx);
+                },
+                UpdateState::Done { ret, idx } => {
+                    compute_nrstate_at_version_preserves(pre.log, post.log, idx);
+                },
+                _ => {},
+            }
+        }
+
+        assert forall |rid| (#[trigger] post.local_reads.dom().contains(rid))
+            implies post.read_results_match(post.local_reads[rid]) by
+        {
+            match post.local_reads[rid] {
+                ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
+                    let ver = choose(|ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound))
+                        && ret == compute_nrstate_at_version(pre.log, ver).read(op));
+                    compute_nrstate_at_version_preserves(pre.log, post.log, ver);
+                },
+                _ => {},
+            }
+        }
     }
 
 
@@ -1058,22 +1144,22 @@ UnboundedLog {
     fn exec_dispatch_local_inductive(pre: Self, post: Self, node_id: NodeId) {
         assert(post.wf_combiner_for_node_id(node_id)) by {
             LogRangeMatchesQueue_update_change(
-                post.combiner.index(node_id).get_Loop_queued_ops(),
-                post.log, post.combiner.index(node_id).get_Loop_idx(), post.combiner.index(node_id).get_Loop_lversion(),
-                pre.combiner.index(node_id).get_Loop_global_tail(), node_id, pre.local_updates, post.local_updates);
+                post.combiner[node_id].get_Loop_queued_ops(),
+                post.log, post.combiner[node_id].get_Loop_idx(), post.combiner[node_id].get_Loop_lversion(),
+                pre.combiner[node_id].get_Loop_global_tail(), node_id, pre.local_updates, post.local_updates);
         }
 
-        let c = pre.combiner.index(node_id);
+        let c = pre.combiner[node_id];
         let rid = c.get_Loop_queued_ops().index(c.get_Loop_idx() as int);
         assert forall |node_id0| #[trigger] post.combiner.dom().contains(node_id0) && node_id0 != node_id
             implies post.wf_combiner_for_node_id(node_id0)
         by {
-            match pre.combiner.index(node_id0) {
+            match pre.combiner[node_id0] {
             CombinerState::Ready => {
             }
             CombinerState::Placed{queued_ops} => {
                 LogRangeMatchesQueue_update_change_2(
-                queued_ops, post.log, 0, post.local_versions.index(node_id0), post.global_tail, node_id0, pre.local_updates, post.local_updates);
+                queued_ops, post.log, 0, post.local_versions[node_id0], post.global_tail, node_id0, pre.local_updates, post.local_updates);
             }
             CombinerState::LoadedLocalVersion{queued_ops, lversion} => {
                 LogRangeMatchesQueue_update_change_2(
@@ -1093,15 +1179,141 @@ UnboundedLog {
     fn exec_dispatch_remote_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
     #[inductive(exec_update_version_upper_bound)]
-    fn exec_update_version_upper_bound_inductive(pre: Self, post: Self, node_id: NodeId) { }
+    fn exec_update_version_upper_bound_inductive(pre: Self, post: Self, node_id: NodeId) {
+        // assert(post.log == pre.log);
+        assert(post.version_upper_bound >= pre.version_upper_bound);
+
+        assert forall |rid| (#[trigger] post.local_reads.dom().contains(rid)) implies post.read_results_match(post.local_reads[rid]) by {
+            match post.local_reads[rid] {
+                ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
+                    let ver = choose(|ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound))
+                        && ret == compute_nrstate_at_version(post.log, ver).read(op));
+                    assert(rangeincl(version_upper_bound, ver, post.version_upper_bound));
+                },
+                _ => {}
+            }
+        }
+    }
 
     #[inductive(exec_finish)]
     fn exec_finish_inductive(pre: Self, post: Self, node_id: NodeId) { }
+
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // Helper Functions
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
+    /// obtains the current local version for the given node depending on the combiner state
+    pub open spec fn current_local_version(&self, node_id: NodeId) -> nat {
+        match self.combiner[node_id] {
+            CombinerState::Ready                              => self.local_versions[node_id],
+            CombinerState::Placed{ .. }                       => self.local_versions[node_id],
+            CombinerState::LoadedLocalVersion{ lversion, .. } => lversion,
+            CombinerState::Loop { lversion, .. }              => lversion,
+            CombinerState::UpdatedVersion { global_tail, .. } => global_tail
+        }
+    }
+
+    // pub open spec fn combiners_fresh_req_id(&self, rid: ReqId) -> bool {
+    //     forall |n| self.combiner.dom().contains(n)
+    //         ==> !self.combiner[n].queued_ops().contains(rid)
+    // }
 }
 
 } // end tokenized_state_machine!
 
 verus! {
+
+
+pub open spec fn combiner_request_ids_i(combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
+    recommends combiners.dom().finite()
+{
+    combiner_request_ids(combiners.dom(), combiners)
+}
+
+pub open spec fn combiner_request_ids(node_ids: Set<NodeId>, combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
+    recommends forall |n| #[trigger] node_ids.contains(n) ==> combiners.contains_key(n),
+    decreases node_ids.len() when node_ids.len() >= 0
+{
+    if node_ids.finite() {
+        if node_ids.len() == 0 {
+            Set::empty()
+        } else {
+            let node_id = node_ids.choose();
+            combiner_request_ids(node_ids.remove(node_id), combiners)  + seq_to_set(combiners[node_id].queued_ops())
+        }
+    } else {
+        arbitrary()
+    }
+}
+
+pub proof fn combiner_request_ids_finite(node_ids: Set<NodeId>, combiners: Map<NodeId, CombinerState>)
+    requires
+        forall |n| #[trigger] node_ids.contains(n) ==> combiners.contains_key(n),
+        node_ids.finite()
+    ensures combiner_request_ids(node_ids, combiners).finite()
+    decreases node_ids.len()
+{
+    if node_ids.len() > 0 {
+        let node_id = node_ids.choose();
+        combiner_request_ids_finite(node_ids.remove(node_id), combiners);
+
+        let req_ids = combiner_request_ids(node_ids, combiners);
+        let sub_req_ids = combiner_request_ids(node_ids.remove(node_id), combiners);
+        assert(req_ids == sub_req_ids + seq_to_set(combiners[node_id].queued_ops()));
+
+        assert(combiner_request_ids(node_ids, combiners).finite()) by {
+            seq_to_set_is_finite(combiners[node_id].queued_ops());
+        }
+    }
+}
+
+
+
+// pub proof fn combainer_knows_reqid(node_ids: Set<NodeId>, combiners: Map<NodeId, CombinerState>)
+//     requires forall |n| #[trigger] node_ids.contains(n) ==> combiners.contains_key(n)
+//     ensures
+//         combiner_request_ids(node_ids, combiners).finite(),
+//         forall |n, rid| (combiners.dom().contains(n) && combiners[n].queued_ops().contains(rid))
+//             ==> combiner_request_ids(node_ids, combiners).contains(rid)
+
+//     decreases node_ids.len()
+//     // when node_ids.len() > 0
+// {
+//     assume(false);
+    // if node_id == 0 {
+
+    //     assert(seq_to_set(combiners[node_id].queued_ops()).finite()) by {
+    //         seq_to_set_is_finite(combiners[node_id].queued_ops());
+    //     }
+    //     assume(forall |rid| (#[trigger] combiners[0].queued_ops().contains(rid))
+    //         ==> combiner_request_ids(0, combiners).contains(rid));
+
+    // } else {
+    //     let rec_set = combiner_request_ids((node_id - 1) as nat, combiners);
+    //     assert(rec_set.finite()) by {
+    //         assert(seq_to_set(combiners[node_id].queued_ops()).finite()) by {
+    //             seq_to_set_is_finite(combiners[node_id].queued_ops());
+    //         }
+
+    //         seq_to_set_is_finite(combiners[node_id].queued_ops());
+    //         combainer_knows_reqid((node_id - 1) as nat, combiners);
+    //     }
+    //     let cur_set = seq_to_set(combiners[node_id].queued_ops());
+    //     assert(cur_set.finite()) by {
+    //         seq_to_set_is_finite(combiners[node_id].queued_ops());
+    //     }
+
+    //     assert((rec_set + cur_set).finite());
+
+    //     assume(forall |n, rid| (0 <= n <= node_id && combiners[n].queued_ops().contains(rid))
+    //     ==> combiner_request_ids(node_id, combiners).contains(rid));
+    // }
+// }
+
+    // forall |n, r| (0 <= n <= node_id ==> combiners.contains_key(n))
+
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Helper Functions
@@ -1199,8 +1411,8 @@ requires
     logIndexLower <= logIndexUpper,
     LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
     forall |rid| #[trigger] updates1.dom().contains(rid) ==>
-      updates1.index(rid).is_Placed() && logIndexLower <= updates1.index(rid).get_Placed_idx() < logIndexUpper ==>
-          updates2.dom().contains(rid) && updates2.index(rid) === updates1.index(rid),
+      updates1[rid].is_Placed() && logIndexLower <= updates1[rid].get_Placed_idx() < logIndexUpper ==>
+          updates2.dom().contains(rid) && updates2[rid] === updates1[rid],
 ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2)
 decreases logIndexUpper - logIndexLower
 {
@@ -1225,7 +1437,7 @@ requires
     logIndexLower <= logIndexUpper,
     LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
     forall |rid| #[trigger] updates1.dom().contains(rid) ==> queue.contains(rid) ==>
-          updates2.dom().contains(rid) && updates2.index(rid) === updates1.index(rid),
+          updates2.dom().contains(rid) && updates2[rid] === updates1[rid],
 ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2),
 decreases logIndexUpper - logIndexLower,
 {
@@ -1259,7 +1471,7 @@ proof fn LogRangeMatchesQueue_append(
         !queue.contains(new_rid),
         forall |rid| #[trigger] updates.dom().contains(rid) && rid != new_rid ==>
             new_updates.dom().contains(rid)
-            && new_updates.index(rid) === updates.index(rid),
+            && new_updates[rid] === updates[rid],
         LogRangeMatchesQueue(queue, log,
             queueIndex, logIndexLower, logIndexUpper, node_id, updates),
         new_log === log.insert(logIndexUpper, log_entry),
@@ -1331,7 +1543,7 @@ proof fn LogRangeMatchesQueue_append_other(
         !queue.contains(new_rid),
         forall |rid| #[trigger] updates.dom().contains(rid) && rid != new_rid ==>
             new_updates.dom().contains(rid)
-            && new_updates.index(rid) === updates.index(rid),
+            && new_updates[rid] === updates[rid],
         LogRangeMatchesQueue(queue, log,
             queueIndex, logIndexLower, logIndexUpper, node_id, updates),
         new_log === log.insert(logLen, log_entry),
@@ -1377,7 +1589,7 @@ proof fn LogRangeMatchesQueue_append_other_augment(
         !queue.contains(new_rid),
         forall |rid| #[trigger] updates.dom().contains(rid) && rid != new_rid ==>
             new_updates.dom().contains(rid)
-            && new_updates.index(rid) === updates.index(rid),
+            && new_updates[rid] === updates[rid],
         LogRangeMatchesQueue(queue, log,
             queueIndex, logIndexLower, logIndexUpper, node_id, updates),
         new_log === log.insert(logIndexUpper, log_entry),
@@ -1452,14 +1664,14 @@ proof fn LogRangeNoNodeId_append_other(
 pub open spec fn QueueRidsUpdateDone(queued_ops: Seq<ReqId>, localUpdates: Map<ReqId, UpdateState>, bound: nat) -> bool
     recommends 0 <= bound <= queued_ops.len(),
 {
-    // Note that use localUpdates.dom().contains(queued_ops.index(j)) as a *hypothesis*
+    // Note that use localUpdates.dom().contains(queued_ops[j]) as a *hypothesis*
     // here. This is because the model actually allows an update to "leave early"
     // before the combiner phase completes. (This is actually an instance of our
     // model being overly permissive.)
     forall |j| 0 <= j < bound ==>
-        localUpdates.dom().contains(#[trigger] queued_ops.index(j)) ==> {
-            ||| localUpdates.index(queued_ops.index(j)).is_Applied()
-            ||| localUpdates.index(queued_ops.index(j)).is_Done()
+        localUpdates.dom().contains(#[trigger] queued_ops[j]) ==> {
+            ||| localUpdates.index(queued_ops[j]).is_Applied()
+            ||| localUpdates.index(queued_ops[j]).is_Done()
         }
 }
 
@@ -1468,8 +1680,8 @@ pub open spec fn QueueRidsUpdatePlaced(queued_ops: Seq<ReqId>, localUpdates: Map
     recommends 0 <= bound <= queued_ops.len(),
 {
     forall |j| bound <= j < queued_ops.len() ==> {
-        &&& localUpdates.dom().contains(#[trigger] queued_ops.index(j))
-        &&& localUpdates.index(queued_ops.index(j)).is_Placed()
+        &&& localUpdates.dom().contains(#[trigger] queued_ops[j])
+        &&& localUpdates.index(queued_ops[j]).is_Placed()
     }
 }
 
@@ -1495,5 +1707,38 @@ decreases b - a
         nodeId, updates);
   }
 }
+
+
+/// constructs the state of the data structure at a specific version given the log
+///
+/// This function recursively applies the update operations to the initial state of the
+/// data structure and returns the state of the data structure at the given  version.
+pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version: LogIdx) -> NRState
+    recommends forall |i| 0 <= i < version ==> log.dom().contains(i)
+    decreases version
+{
+    // decreases_when(version >= 0);
+    if version == 0 {
+        NRState::init()
+    } else {
+        let ver =  (version - 1) as nat;
+        compute_nrstate_at_version(log, ver).update(log[ver].op).0
+    }
+}
+
+
+pub proof fn compute_nrstate_at_version_preserves(a: Map<LogIdx, LogEntry>, b: Map<LogIdx, LogEntry>, version: LogIdx)
+    requires
+        forall |i| 0 <= i < version ==> a.dom().contains(i),
+        forall |i| 0 <= i < version ==> a.dom().contains(i),
+        forall |i| 0 <= i < version ==> a[i] == b[i]
+    ensures compute_nrstate_at_version(a, version) == compute_nrstate_at_version(b, version)
+    decreases version
+{
+  if version > 0 {
+    compute_nrstate_at_version_preserves(a, b, (version-1) as nat );
+  }
+}
+
 
 } // end verus!

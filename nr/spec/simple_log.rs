@@ -116,15 +116,9 @@ state_machine! {
         /// This function recursively applies the update operations to the initial state of the
         /// data structure and returns the state of the data structure at the given  version.
         pub open spec fn nrstate_at_version(&self, version: LogIdx) -> NRState
-            recommends 0 <= version < self.log.len()
-            decreases version
+            recommends 0 <= version <= self.log.len()
         {
-            // decreases_when(version >= 0);
-            if version == 0 {
-                NRState::init()
-            } else {
-                self.nrstate_at_version((version - 1) as nat).update(self.log[version - 1]).0
-            }
+            compute_nrstate_at_version(self.log, version)
         }
 
         ////////////////////////////////////////////////////////////////////////////////////////////
@@ -322,4 +316,25 @@ state_machine! {
         #[inductive(no_op)]
         fn no_op_inductive(pre: Self, post: Self) { }
     }
+}
+
+
+verus!{
+
+/// constructs the state of the data structure at a specific version given the log
+///
+/// This function recursively applies the update operations to the initial state of the
+/// data structure and returns the state of the data structure at the given  version.
+pub open spec fn compute_nrstate_at_version(log: Seq<UpdateOp>, version: LogIdx) -> NRState
+    recommends 0 <= version <= log.len()
+    decreases version
+{
+    // decreases_when(version >= 0);
+    if version == 0 {
+        NRState::init()
+    } else {
+        compute_nrstate_at_version(log, (version - 1) as nat).update(log[version - 1]).0
+    }
+}
+
 }
