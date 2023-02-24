@@ -8,6 +8,7 @@ use super::pervasive::map::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::seq::Seq;
 use super::pervasive::seq_lib::*;
+#[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::set::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::arbitrary;
@@ -15,11 +16,17 @@ use super::pervasive::arbitrary;
 use state_machines_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::simple_log::{ReadReq as SReadReq, SimpleLog, UpdateResp as SUpdateResp, compute_nrstate_at_version as s_nrstate_at_version};
+use super::simple_log::{
+    ReadReq as SReadReq, SimpleLog, UpdateResp as SUpdateResp,
+    compute_nrstate_at_version as s_nrstate_at_version
+};
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::unbounded_log::{CombinerState, ReadonlyState, UnboundedLog, UpdateState, compute_nrstate_at_version as i_nrstate_at_version};
+use super::unbounded_log::{
+    CombinerState, ReadonlyState, UnboundedLog, UpdateState,
+    compute_nrstate_at_version as i_nrstate_at_version, combiner_request_id_fresh
+};
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
@@ -92,15 +99,13 @@ spec fn interp(s: UnboundedLog::State) -> SimpleLog::State {
 // Refinement Proof
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[proof]
-fn refinement_inv(vars: UnboundedLog::State)
+proof fn refinement_inv(vars: UnboundedLog::State)
     requires vars.invariant()
     ensures interp(vars).invariant()
 {
 }
 
-#[proof]
-fn refinement_init(post: UnboundedLog::State)
+proof fn refinement_init(post: UnboundedLog::State)
     requires
         post.invariant(),
         UnboundedLog::State::init(post)
@@ -116,12 +121,10 @@ fn refinement_init(post: UnboundedLog::State)
             SimpleLog::show::initialize(interp(post));
         }
     }}
-
 }
 
 
-#[proof]
-fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
+proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
     requires
         pre.invariant(),
         post.invariant(),
@@ -132,7 +135,8 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
     case_on_next_strong! {
       pre, post, UnboundedLog => {
         readonly_start(op) => {
-            let rid = get_new_nat(pre.local_reads.dom(), Set::empty());
+
+            let rid = get_fresh_nat(|rid| !pre.local_reads.dom().contains(rid));
             assert_maps_equal!(
                 pre.local_reads.insert(rid, ReadonlyState::Init {op}),
                 post.local_reads
@@ -181,8 +185,8 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             // assert(node_id == pre.local_reads.index(rid).get_Done_node_id());
 
             assert(version_upper_bound <= pre.version_upper_bound);
-            assert(dummy(version_upper_bound, version_upper_bound, pre.version_upper_bound));
-            assert(exists |v| dummy(version_upper_bound, v, pre.version_upper_bound));
+            assert(rangeincl(version_upper_bound, version_upper_bound, pre.version_upper_bound));
+            assert(exists |v| rangeincl(version_upper_bound, v, pre.version_upper_bound));
 
             assert(pre.version_upper_bound  <= interp(pre).log.len());
 
@@ -191,20 +195,12 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             assert(forall |version| version_upper_bound <= version <= pre.version_upper_bound ==> #[trigger] version_in_log(pre.log, version));
             assert(forall |v| version_upper_bound <= v <= pre.version_upper_bound <==> #[trigger] dummy(version_upper_bound, v, pre.version_upper_bound));
 
-            assert(forall |version|#[trigger]dummy(version_upper_bound, version, pre.version_upper_bound) ==> version_in_log(pre.log, version));
+            assert(forall |version|#[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) ==> version_in_log(pre.log, version));
 
             // assert(exists |version : nat | version_upper_bound <= version <= pre.version_upper_bound
             // ==> VersionInLog(pre.log, version) && result_match(s.log, output, version,  s.localReads[rid].op)) by {
 
-            assert(exists |version: nat| #[trigger]dummy(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, ret, version, op)) by {
-                assert(ret == pre.local_reads[rid].get_Done_ret());
-                let v = choose(|v| #[trigger]dummy(version_upper_bound, v, pre.version_upper_bound)
-                                && pre.local_reads[rid].get_Done_ret() == i_nrstate_at_version(pre.log, v).read(pre.local_reads[rid].get_Done_op())
-                        );
-                assert(version_in_log(pre.log, v));
-                assert(result_match(pre.log, ret, v,  pre.local_reads[rid].get_Done_op()));
-            };
-
+            assert(exists |version: nat| #[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, ret, version, op)) ;
 
             let version : nat = choose(|version| {
                 version_upper_bound <= version <= pre.version_upper_bound
@@ -229,7 +225,8 @@ fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         }
 
         update_start(op) => {
-            let rid = get_new_nat(pre.local_updates.dom(), Set::empty());
+            let rid = get_fresh_nat(|rid| !pre.local_updates.dom().contains(rid)
+                    && combiner_request_id_fresh(pre.combiner, rid));
 
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
             assert_maps_equal!(
@@ -347,9 +344,11 @@ proof fn state_at_version_refines(s_log: Seq<UpdateOp>, i_log: Map<LogIdx, LogEn
       s_log == interp_log(gtail, i_log),
     ensures
       s_nrstate_at_version(s_log, idx) == i_nrstate_at_version(i_log, idx)
+    decreases idx
 {
-    assert(s_log.len() == gtail);
-    assume(false);
+    if idx > 0 {
+        state_at_version_refines(s_log, i_log, gtail, (idx - 1) as nat);
+    }
 }
 
 } // end verus!

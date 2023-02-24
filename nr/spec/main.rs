@@ -1,24 +1,22 @@
 // the verus dependencies
 mod pervasive;
 
-// mod cyclicbuffer;
-// mod nrspec;
 mod types;
 mod utils;
 
-// // the simple log model
+// the simple log model
 mod simple_log;
 
-// //
+//
 mod unbounded_log;
-// mod unbounded_log_refines_simplelog;
+mod unbounded_log_refines_simplelog;
 
-// mod cyclicbuffer;
+mod cyclicbuffer;
 // // mod cyclicbuffer_refines_unbounded_log;
 
 // //
-// mod flat_combiner;
+mod flat_combiner;
 
-// mod rwlock;
+mod rwlock;
 
 pub fn main() {}

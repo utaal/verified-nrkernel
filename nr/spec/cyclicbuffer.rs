@@ -38,8 +38,9 @@ pub const LOG_SIZE : usize = 1024;
 pub struct StoredType {} // TODO
 
 verus! {
-    pub spec fn stored_type_inv(st: StoredType, idx: int) -> bool;
-}
+
+pub spec fn stored_type_inv(st: StoredType, idx: int) -> bool;
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Read Only Operations
@@ -84,8 +85,7 @@ pub enum CombinerState {
 
 
 impl CombinerState {
-    #[spec]
-    pub fn no_overlap_with(self, other: Self) -> bool {
+    pub open spec fn no_overlap_with(self, other: Self) -> bool {
         match self {
             CombinerState::Appending{cur_idx, tail} => {
                 match other {
@@ -719,7 +719,6 @@ tokenized_state_machine! { CyclicBuffer {
     fn reader_abort_inductive(pre: Self, post: Self, node_id: NodeId) { }
 }}
 
-verus! {
 pub open spec fn min(x: nat, y: nat) -> nat {
     if x < y { x } else { y }
 }
@@ -830,4 +829,4 @@ pub proof fn log_entry_alive_value_wrap_around(i: LogicalLogIdx, buffer_size: na
     assert(((i + (buffer_size as int)) / buffer_size as int) == ((i / buffer_size as int) + 1));
 }
 
-}
+} // verus!

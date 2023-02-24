@@ -150,9 +150,7 @@ pub open spec fn map_contains_value<K, V>(map: Map<K, V>, val: V) -> bool
 }
 
 
-pub closed spec fn get_new_nat(s: Set<nat>, t: Set<nat>) -> nat {
-    arbitrary() // TODO
-}
+
 
 pub open spec fn range(low: nat, mid: nat, high:nat) -> bool {
     low <= mid && mid < high
@@ -163,19 +161,19 @@ pub open spec fn rangeincl(low: nat, mid: nat, high:nat) -> bool {
 }
 
 
-pub proof fn get_new_nat_not_in(s: Set<nat>,t: Set<nat>,) {
-    requires([
-        s.finite(),
-        t.finite(),
-    ]);
 
+pub closed spec fn get_fresh_nat(f: FnSpec(nat) -> bool) -> nat {
+    arbitrary() // TODO
+}
+
+pub proof fn get_fresh_nat_not_in(f: FnSpec(nat) -> bool) {
     ensures([
-        !s.contains(get_new_nat(s, t)),
-        !t.contains(get_new_nat(s, t)),
+        f(get_fresh_nat(f))
     ]);
 
     assume(false); // TODO
 }
+
 
 
 #[verifier(nonlinear)]
