@@ -29,7 +29,7 @@ pub open spec fn seq_disjoint<A>(s: Seq<A>, t: Seq<A>) -> bool
 
 
 /// recursive definition of seq to set conversion
-pub open spec fn seq_to_set_rec<A>(seq: Seq<A>) -> Set<A>
+spec fn seq_to_set_rec<A>(seq: Seq<A>) -> Set<A>
     decreases seq.len() when seq.len() >= 0
 {
     if seq.len() == 0 {
@@ -40,7 +40,7 @@ pub open spec fn seq_to_set_rec<A>(seq: Seq<A>) -> Set<A>
 }
 
 /// shows that the recursive definition of set_to_seq produces a finite set
-pub proof fn seq_to_set_rec_is_finite<A>(seq: Seq<A>)
+proof fn seq_to_set_rec_is_finite<A>(seq: Seq<A>)
     ensures seq_to_set_rec(seq).finite()
     decreases seq.len()
 {
@@ -53,7 +53,7 @@ pub proof fn seq_to_set_rec_is_finite<A>(seq: Seq<A>)
 }
 
 /// shows that the resulting set contains all elements of the sequence
-pub proof fn seq_to_set_rec_contains<A>(seq: Seq<A>)
+proof fn seq_to_set_rec_contains<A>(seq: Seq<A>)
     ensures forall |a| #[trigger] seq.contains(a) <==> seq_to_set_rec(seq).contains(a)
     decreases seq.len()
 {
@@ -76,12 +76,7 @@ pub proof fn seq_to_set_rec_contains<A>(seq: Seq<A>)
     }
 }
 
-pub open spec fn seq_to_set<A>(seq: Seq<A>) -> Set<A>
-{
-    Set::new(|a: A| seq.contains(a))
-}
-
-pub proof fn seq_to_set_equal_rec<A>(seq: Seq<A>)
+proof fn seq_to_set_equal_rec<A>(seq: Seq<A>)
     ensures seq_to_set(seq) == seq_to_set_rec(seq)
 {
     assert(forall |n| #[trigger] seq.contains(n) <==> seq_to_set_rec(seq).contains(n)) by {
@@ -91,6 +86,10 @@ pub proof fn seq_to_set_equal_rec<A>(seq: Seq<A>)
     assert(seq_to_set(seq).ext_equal(seq_to_set_rec(seq)));
 }
 
+pub open spec fn seq_to_set<A>(seq: Seq<A>) -> Set<A>
+{
+    Set::new(|a: A| seq.contains(a))
+}
 
 pub proof fn seq_to_set_is_finite<A>(seq: Seq<A>)
     ensures seq_to_set(seq).finite()
@@ -100,10 +99,6 @@ pub proof fn seq_to_set_is_finite<A>(seq: Seq<A>)
         seq_to_set_rec_is_finite(seq);
     }
 }
-
-
-
-
 
 pub open spec fn map_new_rec<V>(dom: nat, val: V) -> Map<nat, V>
     decreases dom when dom >= 0
@@ -150,8 +145,6 @@ pub open spec fn map_contains_value<K, V>(map: Map<K, V>, val: V) -> bool
 }
 
 
-
-
 pub open spec fn range(low: nat, mid: nat, high:nat) -> bool {
     low <= mid && mid < high
 }
@@ -161,21 +154,6 @@ pub open spec fn rangeincl(low: nat, mid: nat, high:nat) -> bool {
 }
 
 
-
-pub closed spec fn get_fresh_nat(f: FnSpec(nat) -> bool) -> nat {
-    arbitrary() // TODO
-}
-
-pub proof fn get_fresh_nat_not_in(f: FnSpec(nat) -> bool) {
-    ensures([
-        f(get_fresh_nat(f))
-    ]);
-
-    assume(false); // TODO
-}
-
-
-
 #[verifier(nonlinear)]
 pub proof fn int_mod_less_than_same(i: int, len: int)
     requires 0 <= i < len, len > 0
@@ -183,40 +161,5 @@ pub proof fn int_mod_less_than_same(i: int, len: int)
 
 {
 }
-
-
-
-
-
-
-// pub proof fn mod_range_not_same1(i: int, j: int)
-//     requires
-//       16 > 0,
-//       i < j < i + 16
-//     ensures
-//       i % 16 != j % 16
-// {
-// }
-
-// #[verifier(nonlinear)]
-// pub proof fn mod_range_not_same(i: int, j: int, N: int)
-//     requires
-//       N > 0,
-//       i < j < i + N
-//     ensures
-//       i % N != j % N
-// {
-//     let ki = i / N;
-//     let kj = j / N;
-
-//     assert(ki * N <= i < (ki + 1) * N);
-//     assert(kj * N <= j < (kj + 1) * N);
-
-//     // assert(i % N == i - ki * N);
-//     // assert(j % N == j - kj * N);
-
-//     // assert(i - ki * N != j - kj * N);
-//     assert(false);
-// }
 
 }

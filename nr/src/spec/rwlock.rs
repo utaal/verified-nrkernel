@@ -198,5 +198,3 @@ tokenized_state_machine!(RwLock {
         assert(equal(pre.storage, Option::Some(x)));
     }
 });
-
-fn main() { }

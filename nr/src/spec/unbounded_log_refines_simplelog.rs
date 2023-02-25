@@ -25,7 +25,8 @@ use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::unbounded_log::{
     CombinerState, ReadonlyState, UnboundedLog, UpdateState,
-    compute_nrstate_at_version as i_nrstate_at_version, combiner_request_id_fresh
+    compute_nrstate_at_version as i_nrstate_at_version, combiner_request_id_fresh,
+    get_fresh_nat,
 };
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
@@ -136,7 +137,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
       pre, post, UnboundedLog => {
         readonly_start(op) => {
 
-            let rid = get_fresh_nat(|rid| !pre.local_reads.dom().contains(rid));
+            let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
             assert_maps_equal!(
                 pre.local_reads.insert(rid, ReadonlyState::Init {op}),
                 post.local_reads
@@ -225,8 +226,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         }
 
         update_start(op) => {
-            let rid = get_fresh_nat(|rid| !pre.local_updates.dom().contains(rid)
-                    && combiner_request_id_fresh(pre.combiner, rid));
+            let rid = get_fresh_nat(pre.local_updates.dom(), pre.combiner);
 
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
             assert_maps_equal!(

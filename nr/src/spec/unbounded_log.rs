@@ -5,15 +5,15 @@ use builtin::*;
 use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::map::*;
-use super::pervasive::seq::*;
+use super::pervasive::set::Set;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::set::*;
-// use super::pervasive::*;
+use super::pervasive::map::Map;
+use super::pervasive::seq::Seq;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::arbitrary;
 
 use state_machines_macros::*;
+// use crate::assert_maps_equal;
 
 use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
@@ -612,10 +612,10 @@ UnboundedLog {
     /// Read Request: Enter the read request operation into the system
     transition!{
         readonly_start(op: ReadonlyOp) {
-            birds_eye let rid_fn = |rid| !pre.local_reads.dom().contains(rid);
-            birds_eye let rid = get_fresh_nat(rid_fn);
+            //birds_eye let rid_fn = |rid| !pre.local_reads.dom().contains(rid);
+            birds_eye let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
             add local_reads += [ rid => ReadonlyState::Init {op} ] by {
-                get_fresh_nat_not_in(rid_fn);
+                get_fresh_nat_not_in(pre.local_reads.dom(), pre.combiner);
             };
         }
     }
@@ -679,13 +679,13 @@ UnboundedLog {
             birds_eye let combiner = pre.combiner;
             birds_eye let rid_fn = |rid| !pre.local_updates.dom().contains(rid)
                             && combiner_request_id_fresh(combiner, rid);
-            birds_eye let rid = get_fresh_nat(rid_fn);
+            birds_eye let rid = get_fresh_nat(pre.local_updates.dom(), combiner);
             add local_updates += [ rid => UpdateState::Init { op } ] by {
-                get_fresh_nat_not_in(rid_fn);
+                get_fresh_nat_not_in(pre.local_updates.dom(), combiner);
             };
 
             assert(combiner_request_id_fresh(combiner, rid)) by {
-                get_fresh_nat_not_in(rid_fn);
+                get_fresh_nat_not_in(pre.local_updates.dom(), combiner);
             };
         }
     }
@@ -943,7 +943,8 @@ UnboundedLog {
         assert(forall |n| #[trigger]cmap.dom().contains(n) ==> cmap[n] == CombinerState::Ready) by {
             map_new_rec_dom_finite(max_dom, CombinerState::Ready);
         }
-        assert_maps_equal!(post.combiner, cmap);
+        assert(post.combiner.ext_equal(cmap));
+        // assert_maps_equal!(post.combiner, cmap);
     }
 
     #[inductive(readonly_start)]
@@ -1236,41 +1237,91 @@ UnboundedLog {
 
 verus! {
 
-pub open spec fn combiner_request_ids(node_ids: Set<NodeId>, combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
-    recommends (forall |n| (#[trigger] node_ids.contains(n)) ==> combiners.contains_key(n))
-    decreases node_ids.len() when (node_ids.finite() && node_ids.len() >= 0)
+// pub open spec fn combiner_request_ids(node_ids: Set<NodeId>, combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
+//     recommends (forall |n| (#[trigger] node_ids.contains(n)) ==> #[trigger]combiners.contains_key(n))
+//     decreases node_ids.len() when (node_ids.finite() && node_ids.len() >= 0)
+// {
+//     if node_ids.finite() {
+//         if node_ids.len() == 0 {
+//             Set::empty()
+//         } else {
+//             let node_id = node_ids.choose();
+//             combiner_request_ids(node_ids.remove(node_id), combiners) + seq_to_set(combiners[node_id].queued_ops())
+//         }
+//     } else {
+//         arbitrary()
+//     }
+// }
+
+pub open spec fn combiner_request_ids(combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
+    decreases combiners.dom().len()  when (combiners.dom().finite() && combiners.dom().len() >= 0)
 {
-    if node_ids.finite() {
-        if node_ids.len() == 0 {
+    if combiners.dom().finite() {
+        if combiners.dom().len() == 0 {
             Set::empty()
         } else {
-            let node_id = node_ids.choose();
-            combiner_request_ids(node_ids.remove(node_id), combiners) + seq_to_set(combiners[node_id].queued_ops())
+            let node_id = combiners.dom().choose();
+            let req_ids = combiner_request_ids(combiners.remove(node_id));
+            req_ids + seq_to_set(combiners[node_id].queued_ops())
         }
     } else {
         arbitrary()
     }
 }
 
+pub proof fn combiner_request_ids_proof(combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
+    requires combiners.dom().finite()
+    decreases combiners.dom().len()
+{
+    if combiners.dom().len() == 0 {
+        Set::empty()
+    } else {
+        let node_id = combiners.dom().choose();
+        let s1 = combiner_request_ids_proof(combiners.remove(node_id));
+        s1 + seq_to_set(combiners[node_id].queued_ops())
+        // combiner_request_ids_proof(combiners.remove(node_id)) + seq_to_set(combiners[node_id].queued_ops())
+    }
+}
+
+
 pub open spec fn combiner_request_id_fresh(combiners: Map<NodeId, CombinerState>, rid: ReqId) -> bool
 {
     forall |n| (#[trigger] combiners.dom().contains(n)) ==> !combiners[n].queued_ops().contains(rid)
 }
 
-
-pub proof fn combiner_request_ids_finite(node_ids: Set<NodeId>, combiners: Map<NodeId, CombinerState>)
-    requires
-        forall |n| #[trigger] node_ids.contains(n) ==> combiners.contains_key(n),
-        node_ids.finite()
-    ensures combiner_request_ids(node_ids, combiners).finite()
-    decreases node_ids.len()
+pub proof fn combiner_request_ids_not_contains(combiners: Map<NodeId, CombinerState>, rid: ReqId)
+    requires combiners.dom().finite()
+    ensures combiner_request_id_fresh(combiners,rid) <==> !combiner_request_ids(combiners).contains(rid)
+    decreases combiners.dom().len()
 {
-    if node_ids.len() == 0 {
-        assert(combiner_request_ids(node_ids, combiners).finite())
+    if !combiners.dom().ext_equal(Set::empty()) {
+        let node_id = combiners.dom().choose();
+        combiner_request_ids_not_contains(combiners.remove(node_id), rid);
+        assert(combiner_request_id_fresh(combiners.remove(node_id),rid) <==> !combiner_request_ids(combiners.remove(node_id)).contains(rid));
+
+        if !combiners[node_id].queued_ops().contains(rid) {
+            if combiner_request_id_fresh(combiners.remove(node_id),rid) {
+                assert forall |n| (#[trigger] combiners.dom().contains(n)) implies !combiners[n].queued_ops().contains(rid) by {
+                    if n != node_id {
+                        assert(combiners.remove(node_id).dom().contains(n));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub proof fn combiner_request_ids_finite(combiners: Map<NodeId, CombinerState>)
+    requires combiners.dom().finite()
+    ensures combiner_request_ids(combiners).finite()
+    decreases combiners.dom().len()
+{
+    if combiners.dom().len() == 0 {
+        assert(combiner_request_ids(combiners).finite())
     } else {
-        let node_id = node_ids.choose();
-        assert(combiner_request_ids(node_ids.remove(node_id), combiners).finite()) by {
-            combiner_request_ids_finite(node_ids.remove(node_id), combiners);
+        let node_id = combiners.dom().choose();
+        assert(combiner_request_ids(combiners.remove(node_id)).finite()) by {
+            combiner_request_ids_finite(combiners.remove(node_id));
         }
 
         assert(seq_to_set(combiners[node_id].queued_ops()).finite()) by {
@@ -1279,11 +1330,81 @@ pub proof fn combiner_request_ids_finite(node_ids: Set<NodeId>, combiners: Map<N
     }
 }
 
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Helper Functions
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+pub closed spec fn get_fresh_nat(reqs: Set<ReqId>, combiner: Map<NodeId, CombinerState>) -> nat
+    recommends reqs.finite() && combiner.dom().finite()
+{
+    choose |n| !reqs.contains(n) && combiner_request_id_fresh(combiner, n)
+}
+
+
+
+
+
+proof fn max_of_set(s:Set<nat>) -> (r:nat)
+requires s.finite(),
+ensures forall |x:nat| #[trigger] s.contains(x) ==> x <= r
+decreases s.len(),
+{
+  if s.is_empty() {
+      0
+  } else {
+      let v1 = s.choose();
+      let v2 = max_of_set(s.remove(v1));
+      assert (forall |x:nat| #[trigger] s.contains(x) && x != v1 ==> s.remove(v1).contains(x));
+      if v1 >= v2 {
+          v1
+      } else {
+          v2
+      }
+  }
+}
+
+proof fn element_outside_set(s:Set<nat>) -> (r:nat)
+requires s.finite(),
+ensures !s.contains(r),
+{
+  max_of_set(s) + 1
+}
+
+
+pub proof fn get_fresh_nat_not_in(reqs: Set<ReqId>, combiner: Map<NodeId, CombinerState>)
+    requires
+        reqs.finite(),
+        combiner.dom().finite()
+    ensures
+        !reqs.contains(get_fresh_nat(reqs, combiner)),
+        combiner_request_id_fresh(combiner, get_fresh_nat(reqs, combiner))
+
+{
+    let rid = get_fresh_nat(reqs, combiner);
+    let combiner_req_ids = combiner_request_ids(combiner);
+    assert(!combiner_req_ids.contains(rid) == combiner_request_id_fresh(combiner, rid)) by {
+        combiner_request_ids_not_contains(combiner, rid);
+    }
+    assert(combiner_req_ids.finite()) by {
+        combiner_request_ids_finite(combiner);
+    }
+
+    let req_ids = reqs + combiner_req_ids;
+    assert(req_ids.finite());
+
+    let r = element_outside_set(req_ids);
+
+    // let r = choose |r| !req_ids.contains(r);
+    assert(!reqs.contains(r));
+    assert(!combiner_req_ids.contains(r) );
+    assert(combiner_request_id_fresh(combiner, r)) by {
+        combiner_request_ids_not_contains(combiner, r);
+    }
+
+    assert(exists |n| !reqs.contains(n) && combiner_request_id_fresh(combiner, n));
+}
+
 
 /// the log contains all entries up to, but not including the provided end
 pub open spec fn LogContainsEntriesUpToHere(log: Map<LogIdx, LogEntry>, end: LogIdx) -> bool {
@@ -1708,3 +1829,4 @@ pub proof fn compute_nrstate_at_version_preserves(a: Map<LogIdx, LogEntry>, b: M
 
 
 } // end verus!
+
