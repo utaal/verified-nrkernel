@@ -1254,7 +1254,7 @@ verus! {
 // }
 
 pub open spec fn combiner_request_ids(combiners: Map<NodeId, CombinerState>) -> Set<ReqId>
-    decreases combiners.dom().len()  when (combiners.dom().finite() && combiners.dom().len() >= 0)
+    decreases combiners.dom().len()  when (combiners.dom().finite() && combiners.dom().len() >= 0) via combiner_request_ids_decreases
 {
     if combiners.dom().finite() {
         if combiners.dom().len() == 0 {
@@ -1266,6 +1266,18 @@ pub open spec fn combiner_request_ids(combiners: Map<NodeId, CombinerState>) -> 
         }
     } else {
         arbitrary()
+    }
+}
+
+#[via_fn]
+proof fn combiner_request_ids_decreases(combiners: Map<NodeId, CombinerState>) {
+    if combiners.dom().finite() {
+        if combiners.dom().len() == 0 {
+        } else {
+            let node_id = combiners.dom().choose();
+            assume(combiners.remove(node_id).dom().len() < combiners.dom().len());
+        }
+    } else {
     }
 }
 
