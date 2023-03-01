@@ -1275,7 +1275,8 @@ proof fn combiner_request_ids_decreases(combiners: Map<NodeId, CombinerState>) {
         if combiners.dom().len() == 0 {
         } else {
             let node_id = combiners.dom().choose();
-            assume(combiners.remove(node_id).dom().len() < combiners.dom().len());
+            assume(combiners.remove(node_id).dom().len() < combiners.dom().len()); // INCOMPLETENESS weird incompleteness
+
         }
     } else {
     }
