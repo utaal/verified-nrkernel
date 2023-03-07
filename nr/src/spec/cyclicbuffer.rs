@@ -136,7 +136,7 @@ tokenized_state_machine! { CyclicBuffer {
         // that haven't been executed by all replicas.
 
         #[sharding(map)]
-        pub local_heads: Map<NodeId, LogIdx>,    // previously called local_tails
+        pub local_versions: Map<NodeId, LogIdx>,    // previously called local_tails
 
         /// the contents of the buffer/log.
         #[sharding(storage_map)]
@@ -166,7 +166,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[invariant]
     pub spec fn complete(&self) -> bool {
-        &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_heads.dom().contains(i))
+        &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_versions.dom().contains(i))
         &&& (forall |i| 0 <= i < self.buffer_size  <==> self.alive_bits.dom().contains(i))
         &&& (forall |i| 0 <= i < self.num_replicas <==> self.combiner_state.dom().contains(i))
         &&& (forall |i| self.contents.dom().contains(i) ==> -self.buffer_size <= i < self.tail)
@@ -175,18 +175,18 @@ tokenized_state_machine! { CyclicBuffer {
     #[invariant]
     pub spec fn pointer_ordering(&self) -> bool {
         &&& self.head <= self.tail
-        &&& (forall |i| #[trigger] self.local_heads.dom().contains(i) ==>
-            self.head <= self.local_heads.index(i) <= self.tail)
-        &&& (forall |i| #[trigger] self.local_heads.dom().contains(i) ==>
-            self.tail <= self.local_heads.index(i) +  self.buffer_size)
+        &&& (forall |i| #[trigger] self.local_versions.dom().contains(i) ==>
+            self.head <= self.local_versions.index(i) <= self.tail)
+        &&& (forall |i| #[trigger] self.local_versions.dom().contains(i) ==>
+            self.tail <= self.local_versions.index(i) +  self.buffer_size)
     }
 
     #[invariant]
     pub spec fn pointer_differences(&self) -> bool {
-        forall |i| self.local_heads.dom().contains(i) ==>
-            self.local_heads.index(i)
+        forall |i| self.local_versions.dom().contains(i) ==>
+            self.local_versions.index(i)
             <= self.tail
-            <= self.local_heads.index(i) + self.buffer_size
+            <= self.local_versions.index(i) + self.buffer_size
     }
 
     #[invariant]
@@ -198,7 +198,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[invariant]
     pub spec fn upcoming_bits_are_not_alive(&self) -> bool {
-        let min_local_head = map_min_value(self.local_heads, (self.num_replicas - 1) as nat);
+        let min_local_head = map_min_value(self.local_versions, (self.num_replicas - 1) as nat);
         forall |i|
             self.tail <= i < min_local_head + self.buffer_size
             ==> !log_entry_is_alive(self.alive_bits, i, self.buffer_size)
@@ -208,7 +208,7 @@ tokenized_state_machine! { CyclicBuffer {
     pub spec fn inv_buffer_contents(&self) -> bool {
         &&& (forall |i: int| self.tail - self.buffer_size <= i < self.tail ==> (
             (log_entry_is_alive(self.alive_bits, i, self.buffer_size) ||
-                i < map_min_value(self.local_heads, (self.num_replicas - 1) as nat))
+                i < map_min_value(self.local_versions, (self.num_replicas - 1) as nat))
             <==>
             #[trigger] self.contents.dom().contains(i)
         ))
@@ -231,11 +231,11 @@ tokenized_state_machine! { CyclicBuffer {
         match rs {
             ReaderState::Starting{start} => {
                 // the starting value should match the local tail
-                &&& start == self.local_heads[node_id]
+                &&& start == self.local_versions[node_id]
             }
             ReaderState::Range{start, end, cur} => {
                 // the start must be our local tail
-                &&& self.local_heads[node_id] == start
+                &&& self.local_versions[node_id] == start
                 // the start must be before the end, can be equial if ltail == gtail
                 &&& start <= end
                 // we've read the tail, but the tail may have moved
@@ -249,7 +249,7 @@ tokenized_state_machine! { CyclicBuffer {
             }
             ReaderState::Guard{start, end, cur, val} => {
                 // the start must be our local tail
-                &&& self.local_heads[node_id] == start
+                &&& self.local_versions[node_id] == start
                 // the start must be before the end, can be equial if ltail == gtail
                 &&& start <= end
                 // we've read the tail, but the tail may have moved
@@ -281,15 +281,15 @@ tokenized_state_machine! { CyclicBuffer {
                 // the index is always within the defined replicas
                 &&& idx <= self.num_replicas as nat
                 // forall replicas we'e seen, min_head is smaller than all localTails
-                &&& (forall |n| 0 <= n < idx ==> min_head <= self.local_heads[n])
+                &&& (forall |n| 0 <= n < idx ==> min_head <= self.local_versions[n])
             }
             CombinerState::AdvancingTail{observed_head} => {
                 // the observed head is smaller than all local tails
-                &&& (forall |n| 0 <= n < self.num_replicas as nat ==> observed_head <= self.local_heads[n])
+                &&& (forall |n| 0 <= n < self.num_replicas as nat ==> observed_head <= self.local_versions[n])
             }
             CombinerState::Appending{cur_idx, tail} => {
                 // the current index is between local tails and tail.
-                &&& self.local_heads[node_id] <= cur_idx <= tail
+                &&& self.local_versions[node_id] <= cur_idx <= tail
                 // the read tail is smaller or equal to the current tail.
                 &&& tail <= self.tail
                 //
@@ -315,7 +315,7 @@ tokenized_state_machine! { CyclicBuffer {
             init num_replicas = num_replicas;
             init head = 0;
             init tail = 0;
-            init local_heads = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| 0);
+            init local_versions = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| 0);
 
             require(forall |i: int| (-buffer_size <= i < 0 <==> contents.dom().contains(i)));
             require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i));
@@ -337,7 +337,7 @@ tokenized_state_machine! { CyclicBuffer {
     /// start the reader on the provided node, the combiner must be in idle state.
     transition!{
         reader_start(node_id: NodeId) {
-            have   local_heads    >= [ node_id => let local_head ];
+            have   local_versions    >= [ node_id => let local_head ];
 
             remove combiner_state -= [ node_id => CombinerState::Idle ];
             add    combiner_state += [
@@ -409,8 +409,8 @@ tokenized_state_machine! { CyclicBuffer {
             ];
             add    combiner_state += [ node_id => CombinerState::Idle ];
 
-            remove local_heads -= [ node_id => let _ ];
-            add    local_heads += [ node_id => end ];
+            remove local_versions -= [ node_id => let _ ];
+            add    local_versions += [ node_id => end ];
 
             require(cur == end);
         }
@@ -437,7 +437,7 @@ tokenized_state_machine! { CyclicBuffer {
     /// start the advancing of the head by reading the local head of node 0
     transition!{
         advance_head_start(node_id: NodeId) {
-            have   local_heads >= [ 0 => let local_head_0 ];
+            have   local_versions >= [ 0 => let local_head_0 ];
             remove combiner_state -= [ node_id => CombinerState::Idle ];
             add    combiner_state += [ node_id => CombinerState::AdvancingHead { idx: 1, min_head: local_head_0,} ];
         }
@@ -448,7 +448,7 @@ tokenized_state_machine! { CyclicBuffer {
         advance_head_next(node_id: NodeId) {
             remove combiner_state -= [ node_id => let CombinerState::AdvancingHead { idx, min_head } ];
 
-            have   local_heads    >= [ idx => let local_head_at_idx ];
+            have   local_versions    >= [ idx => let local_head_at_idx ];
             require(idx < pre.num_replicas);
 
             let new_min = min(min_head, local_head_at_idx);
@@ -515,9 +515,9 @@ tokenized_state_machine! { CyclicBuffer {
                     implies
                     pre.contents.dom().contains(i)
                 by {
-                    let min_local_head = map_min_value(pre.local_heads, (pre.num_replicas - 1) as nat);
-                    map_min_value_smallest(pre.local_heads,  (pre.num_replicas - 1) as nat);
-                    assert(map_contains_value(pre.local_heads, min_local_head));
+                    let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
+                    map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
+                    assert(map_contains_value(pre.local_versions, min_local_head));
                     assert(observed_head <= min_local_head);
                 }
             };
@@ -554,7 +554,7 @@ tokenized_state_machine! { CyclicBuffer {
             require(stored_type_inv(deposited, cur_idx as int));
 
             deposit contents += [ cur_idx as int => deposited ] by {
-                map_min_value_smallest(pre.local_heads,  (pre.num_replicas - 1) as nat);
+                map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
             };
         }
     }
@@ -591,13 +591,13 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(advance_head_finish)]
     fn advance_head_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_heads.dom().contains(node_id));
+        assert(post.local_versions.dom().contains(node_id));
     }
 
     #[inductive(advance_tail_start)]
     fn advance_tail_start_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert forall |n| 0 <= n < post.num_replicas as nat implies post.head <= post.local_heads[n] by {
-            assert(post.local_heads.dom().contains(n));
+        assert forall |n| 0 <= n < post.num_replicas as nat implies post.head <= post.local_versions[n] by {
+            assert(post.local_versions.dom().contains(n));
         }
      }
 
@@ -606,20 +606,20 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(advance_tail_finish)]
     fn advance_tail_finish_inductive(pre: Self, post: Self, node_id: NodeId, new_tail: nat) {
-        assert(post.local_heads.dom().contains(node_id));
+        assert(post.local_versions.dom().contains(node_id));
 
         let mycur_idx = post.combiner_state[node_id].get_Appending_cur_idx();
         let mytail = post.combiner_state[node_id].get_Appending_tail();
         assert(mycur_idx == pre.tail);
 
-        let min_local_heads = map_min_value(post.local_heads, (post.num_replicas - 1) as nat);
-        map_min_value_smallest(post.local_heads,  (post.num_replicas - 1) as nat);
-        assert(mycur_idx >= min_local_heads);
+        let min_local_versions = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
+        map_min_value_smallest(post.local_versions,  (post.num_replicas - 1) as nat);
+        assert(mycur_idx >= min_local_versions);
     }
 
     #[inductive(append_flip_bit)]
     fn append_flip_bit_inductive(pre: Self, post: Self, node_id: NodeId, deposited: StoredType) {
-        assert(post.local_heads.dom().contains(node_id));
+        assert(post.local_versions.dom().contains(node_id));
 
         let myidx = pre.combiner_state[node_id].get_Appending_cur_idx();
         let mytail = pre.combiner_state[node_id].get_Appending_tail();
@@ -627,10 +627,10 @@ tokenized_state_machine! { CyclicBuffer {
         assert(log_entry_is_alive(post.alive_bits, myidx as int, post.buffer_size));
 
         assert(post.tail - post.buffer_size <= myidx < post.tail);
-        assert(map_min_value(pre.local_heads,(pre.num_replicas - 1) as nat) <= myidx);
+        assert(map_min_value(pre.local_versions,(pre.num_replicas - 1) as nat) <= myidx);
 
-        let min_local_head = map_min_value(post.local_heads, (post.num_replicas - 1) as nat);
-        map_min_value_smallest(post.local_heads, (post.num_replicas - 1) as nat);
+        let min_local_head = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
+        map_min_value_smallest(post.local_versions, (post.num_replicas - 1) as nat);
 
         assert(min_local_head <= myidx < min_local_head + post.buffer_size);
         assert(post.tail <= min_local_head + post.buffer_size);
@@ -669,12 +669,12 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(reader_enter)]
     fn reader_enter_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_heads.dom().contains(node_id));
+        assert(post.local_versions.dom().contains(node_id));
     }
 
     #[inductive(reader_guard)]
     fn reader_guard_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_heads.dom().contains(node_id));
+        assert(post.local_versions.dom().contains(node_id));
         assert forall |i, j| post.combiner_state.dom().contains(i) && post.combiner_state.dom().contains(j) && i != j
         implies post.combiner_state[i].no_overlap_with(post.combiner_state[j]) by {
             if (j == node_id && post.combiner_state[i].is_Appending()) {
@@ -689,29 +689,29 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(reader_finish)]
     fn reader_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_heads.dom().contains(node_id));
+        assert(post.local_versions.dom().contains(node_id));
 
-        let min_local_heads_pre = map_min_value(pre.local_heads, (pre.num_replicas - 1) as nat);
-        let min_local_heads_post = map_min_value(post.local_heads, (post.num_replicas - 1) as nat);
+        let min_local_versions_pre = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
+        let min_local_versions_post = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
 
         // there was a change in the minimum of the local heads, meaning the minimum was updated by us.
-        if min_local_heads_pre != min_local_heads_post {
+        if min_local_versions_pre != min_local_versions_post {
 
             let start = pre.combiner_state[node_id].get_Reading_0().get_Range_start();
             let end = pre.combiner_state[node_id].get_Reading_0().get_Range_end();
 
-            map_min_value_smallest(pre.local_heads, (pre.num_replicas - 1) as nat);
-            map_min_value_smallest(post.local_heads, (post.num_replicas - 1) as nat);
+            map_min_value_smallest(pre.local_versions, (pre.num_replicas - 1) as nat);
+            map_min_value_smallest(post.local_versions, (post.num_replicas - 1) as nat);
 
-            assert(min_local_heads_pre < min_local_heads_post);
+            assert(min_local_versions_pre < min_local_versions_post);
 
-            assert(forall |i| #[trigger] pre.local_heads.dom().contains(i) && i != node_id
-                ==> pre.local_heads[i] == post.local_heads[i]);
+            assert(forall |i| #[trigger] pre.local_versions.dom().contains(i) && i != node_id
+                ==> pre.local_versions[i] == post.local_versions[i]);
 
-            assert(pre.local_heads[node_id] != post.local_heads[node_id]);
+            assert(pre.local_versions[node_id] != post.local_versions[node_id]);
 
-            log_entry_alive_wrap_around(post.alive_bits, post.buffer_size, min_local_heads_pre, min_local_heads_post );
-            log_entry_alive_wrap_around_helper(post.alive_bits, post.buffer_size, min_local_heads_pre, min_local_heads_post );
+            log_entry_alive_wrap_around(post.alive_bits, post.buffer_size, min_local_versions_pre, min_local_versions_post );
+            log_entry_alive_wrap_around_helper(post.alive_bits, post.buffer_size, min_local_versions_pre, min_local_versions_post );
         }
     }
 
