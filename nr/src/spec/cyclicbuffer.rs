@@ -6,6 +6,7 @@ use super::pervasive::map::*;
 // use super::pervasive::seq::*;
 // use super::pervasive::set::*;
 // use super::pervasive::*;
+use crate::pervasive::cell::{PCell, PermissionOpt};
 
 use state_machines_macros::*;
 
@@ -35,7 +36,7 @@ type Key = int;
 pub const LOG_SIZE : usize = 1024;
 
 
-pub struct StoredType {} // TODO
+pub type StoredType = PermissionOpt<LogEntry>;
 
 verus! {
 

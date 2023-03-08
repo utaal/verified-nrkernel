@@ -57,40 +57,40 @@ struct_with_invariants!{
     /// `T` is the type on the operation - typically an enum class containing opcodes as well
     /// as arguments. It is required that this type be sized and cloneable.
     #[repr(align(128))]
-    pub struct LogEntry<UOp> {
+    pub struct BufferEntry {
         /// The operation that this entry represents.
         ///
         ///  - Dafny: linear cell: Cell<CB.ConcreteLogEntry>, where
         ///            datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
         ///  - Rust:  pub(crate) operation: Option<T>,
-        pub(crate) operation: Option<UOp>,
+        // pub(crate) operation: Option<UOp>,
 
         /// Identifies the replica that issued the above operation.
         ///
         ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
         ///  - Rust:  pub(crate) replica: usize,
-        pub(crate) replica: usize,
+        // pub(crate) replica: usize,
+        //
+
+        pub log_entry: PCell<LogEntry>,
 
         // / Indicates whether this entry represents a valid operation when on the log.
         // /
         // /  - Dafny: linear alive: Atomic<bool, CBAliveBit>)
         // /  - Rust:  pub(crate) alivef: AtomicBool,
-        // alive: AtomicU64<_, CyclicBuffer::alive_bits, _>,
+        alive: AtomicBool<_, CyclicBuffer::alive_bits, _>,
 
-        // #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
+        #[verifier::spec] cyclic_buffer_idx: nat,
+
+        #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
     }
 
-    pub closed spec fn wf(&self) -> bool {
-        predicate {
+    pub closed spec fn wf(&self, i: nat) -> bool {
+        invariant on alive with (cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
+            // g@ === CyclicBuffer::token![ cyclic_buffer_instance => alive_bits ]
             true
         }
     }
-
-    // pub closed spec fn wf(&self) -> bool {
-    //     invariant on alive with (cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
-    //         g@ === CyclicBuffer::token![ cyclic_buffer_instance => version_upper_bound => v as nat ]
-    //     }
-    // }
 
 
 }
@@ -103,14 +103,13 @@ struct_with_invariants!{
 ///  - `pub struct Log<T, LM, M>` in the upstream code
 ///  - `linear datatype NR` in the dafny code
 #[repr(align(128))]
-// pub struct NrLog
-struct NrLog<UOp>
+pub struct NrLog
 {
     // /// The actual log, a slice of entries.
     // ///  - Dafny: linear buffer: lseq<BufferEntry>,
     // ///           glinear bufferContents: GhostAtomic<CBContents>,
     // ///  - Rust:  pub(crate) slog: Box<[Cell<Entry<T, M>>]>,
-    slog: Box<PCell<LogEntry<UOp>>>,
+    slog: Vec<BufferEntry>,
 
     /// Completed tail maintains an index <= tail that points to a log entry after which there
     /// are no completed operations across all replicas registered against this log.
@@ -149,8 +148,7 @@ struct NrLog<UOp>
 
 
     // #[verifier::proof] local_reads: Map<ReqId, ReadonlyState>,  // ghost
-
-    #[verifier::proof] local_reads: UnboundedLog::local_reads,
+    // #[verifier::proof] local_reads: UnboundedLog::local_reads,
 
     // ghost cb_loc_s: nat
     // ...
@@ -175,8 +173,10 @@ pub closed spec fn wf(&self) -> bool {
         // &&& self.slog.len() == LOG_SIZE
 
         // (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
-        &&& (forall |i| 0 <= i < LOG_SIZE ==> self.slog[i].wf(i))
+        &&& (forall |i: nat| i < LOG_SIZE ==> self.slog[i as int].wf(i))
     }
+
+    // invariant on slog with (
 
     invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound) {
         // (forall v, g :: atomic_inv(ctail.inner, v, g) <==> g == Ctail(v as int))
@@ -227,8 +227,7 @@ pub closed spec fn wf(&self) -> bool {
 //     >
 // >
 
-impl<UOp> NrLog<UOp>
-// impl NrLog
+impl NrLog
 {
     // pub fn new() -> Self {
     //     Self {
@@ -255,7 +254,9 @@ impl<UOp> NrLog<UOp>
     /// This basically corresponds to the transition `readonly_read_to_read` in the unbounded log.
     ///
     // https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/log.rs#L525
-    pub fn is_replica_synced_for_reads(&mut self, node_id: usize, version_upper_bound: u64) -> bool
+    pub fn is_replica_synced_for_reads(&mut self, node_id: usize, version_upper_bound: u64,
+            #[verifier::proof] local_reads: UnboundedLog::local_reads) ->
+            (result: (bool, Tracked<UnboundedLog::local_reads>))
 
         requires
           old(self).wf(),
@@ -270,36 +271,22 @@ impl<UOp> NrLog<UOp>
 
 
 
-        #[verifier::proof]
-        let new_local_reads: Option<UnboundedLog::local_reads>;
+        let tracked new_local_reads: UnboundedLog::local_reads;
 
-        //  self.ltails[idx.0 - 1].load(Ordering::Relaxed) >= ctail
-        let res = atomic_with_ghost!(
-            local_version => load();
-            returning res;
-            ghost g => {
-                new_local_reads = if res >= version_upper_bound {
-                    // XXX: is that the right thing to do with local_reads, or do they need to be obtained differently?
-                    #[verifier::proof] let new_local_reads = self.unbounded_log_instance.readonly_ready_to_read(rid as nat, node_id as NodeId, &g.0, self.local_reads);
-                    Option::Some(new_local_reads)
-                } else {
-                    Option::None
-                };
+        let res = 0;
+        // TODO ask @tjhance let res = atomic_with_ghost!(
+        // TODO ask @tjhance     local_version => load();
+        // TODO ask @tjhance     returning res;
+        // TODO ask @tjhance     ghost g => {
+        // TODO ask @tjhance         new_local_reads = if res >= version_upper_bound {
+        // TODO ask @tjhance             self.unbounded_log_instance.readonly_ready_to_read(rid as nat, node_id as NodeId, &g.0, local_reads)
+        // TODO ask @tjhance         } else {
+        // TODO ask @tjhance             local_reads
+        // TODO ask @tjhance         };
+        // TODO ask @tjhance     }
+        // TODO ask @tjhance );
 
-                // assert(ret as nat == g.1.index(node_id));
-            }
-        );
-
-        if let Some(lrds) = new_local_reads {
-            // the change has happened
-
-            self.local_reads = lrds;
-
-        } else {
-            // no change at all
-        }
-
-        res >= version_upper_bound
+        return (res >= version_upper_bound, proof { Tracked::new(new_local_reads) });
     }
 }
 
@@ -491,7 +478,7 @@ pub struct Replica< UOp, Res> {
     // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
 }
 
-pub closed spec fn wf(&self, log: NrLog<UOp>) -> bool {
+pub closed spec fn wf(&self, log: NrLog) -> bool {
 
     // && (forall nodeReplica :: replica.inv(nodeReplica) <==> nodeReplica.WF(nodeId as int, nr.cb_loc_s))
 
@@ -538,7 +525,7 @@ pub struct NodeReplicated {
     /// the log of operations
     ///
     ///  - Rust: log: Log<D::WriteOperation>,
-    log: NrLog<UpdateOp>,
+    log: NrLog,
     // log: NrLog,
 
     /// the nodes or replicas in the system
