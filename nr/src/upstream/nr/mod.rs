@@ -410,24 +410,9 @@ where
             affinity_mngr,
         })
     }
+
 }
 
-impl<D> NodeReplicated<D>
-where
-    D: Clone + Dispatch + Sized + Sync,
-{
-    /// Same as [`NodeReplicated::new`], but provide the initial data-structure
-    /// `ds` (which may not have a [`Default`] constructor).
-    ///
-    /// `ds` will be cloned for each replica.
-    pub fn with_data(
-        _num_replicas: NonZeroUsize,
-        _chg_mem_affinity: impl Fn(AffinityChange) -> usize + Send + Sync + 'static,
-        _ds: D,
-    ) -> Result<Self, NodeReplicatedError> {
-        unimplemented!("complete me")
-    }
-}
 
 impl<D> NodeReplicated<D>
 where
@@ -706,37 +691,6 @@ where
         }
     }
 
-    /// Executes a mutable operation asynchronously on a replica, and returns
-    /// the response in `resp`
-    ///
-    /// # Note
-    /// Currently a trivial "async" implementation as we just call the blocking
-    /// call [`NodeReplicated::execute`] and wrap it in `async`.
-    #[cfg(feature = "async")]
-    pub async fn async_execute_mut<'a>(
-        &'a self,
-        op: <D as Dispatch>::WriteOperation,
-        tkn: ThreadToken,
-        resp: &mut ReusableBoxFuture<'a, <D as Dispatch>::Response>,
-    ) {
-        resp.set(async move { self.execute_mut(op, tkn) });
-    }
-
-    /// Executes an immutable operation asynchronously on a replica, and returns
-    /// the response in `resp`.
-    ///
-    /// # Note
-    /// Currently a trivial "async" implementation as we just call the blocking
-    /// call [`NodeReplicated::execute`] and wrap it in `async`.
-    #[cfg(feature = "async")]
-    pub fn async_execute<'a, 'rop: 'a>(
-        &'a self,
-        op: <D as Dispatch>::ReadOperation<'rop>,
-        tkn: ThreadToken,
-        resp: &mut ReusableBoxFuture<'a, <D as Dispatch>::Response>,
-    ) {
-        resp.set(async move { self.execute(op, tkn) });
-    }
 
     #[doc(hidden)]
     pub fn sync(&self, tkn: ThreadToken) {

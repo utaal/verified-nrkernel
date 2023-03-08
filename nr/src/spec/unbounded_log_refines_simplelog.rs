@@ -87,7 +87,7 @@ spec fn interp_update_resps(local_updates: Map<nat, UpdateState>) -> Map<ReqId, 
 
 spec fn interp(s: UnboundedLog::State) -> SimpleLog::State {
     SimpleLog::State {
-        log: interp_log(s.global_tail, s.log),
+        log: interp_log(s.tail, s.log),
         version: s.version_upper_bound,
         readonly_reqs: interp_readonly_reqs(s.local_reads),
         update_reqs: interp_update_reqs(s.local_updates),
@@ -215,7 +215,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             assert(interp(pre).readonly_reqs.index(rid).get_Req_version() <= version <= interp(pre).log.len());
 
             assert(ret == interp(pre).nrstate_at_version(version).read(op)) by {
-                state_at_version_refines(interp(pre).log, pre.log, pre.global_tail, version);
+                state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
             }
 
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
@@ -243,7 +243,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             assert_seqs_equal!(interp(pre).log.push(op), interp(post).log);
             assert_maps_equal!(interp(pre).update_reqs.remove(rid), interp(post).update_reqs);
             assert_maps_equal!(
-                interp(pre).update_resps.insert(rid, SUpdateResp(pre.global_tail)),
+                interp(pre).update_resps.insert(rid, SUpdateResp(pre.tail)),
                 interp(post).update_resps
             );
 
@@ -294,7 +294,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         }
 
         exec_update_version_upper_bound(node_id) => {
-            let global_tail = pre.combiner.index(node_id).get_Loop_global_tail();
+            let global_tail = pre.combiner.index(node_id).get_Loop_tail();
             let version = if pre.version_upper_bound >= global_tail{
                 pre.version_upper_bound
             } else {

@@ -94,12 +94,12 @@ pub enum ReadonlyState {
 // The combiner works as follows (keep in mind this is abstracted a bit from the
 // real implementation).
 //
-//  1. Advance the 'global_tail' value by 1 for each update in the collection.
+//  1. Advance the 'tail' value by 1 for each update in the collection.
 //     This creates a "LogEntry" for the given op at the given index.
 //     It also updates the update from UpdateState::Init to UpdateState::Placed.
 //
 //      Note: This always appends to the log; there are never any "holes" in the log,
-//      and the 'global_tail' always marks the end of the log. The log is unbounded
+//      and the 'tail' always marks the end of the log. The log is unbounded
 //      and not garbage-collected.
 //      Keep in mind that the 'log' here is just an abstraction, and the "cyclic buffer"
 //      that physically stores the log entries in real life has additional complexities.
@@ -109,7 +109,7 @@ pub enum ReadonlyState {
 //      entries one at a time, once for each update. This means the log entries might
 //      interleave with those of another thread.
 //      This is more permissive than the real implementation, which advances the
-//      'global_tail' with a single CAS operation, meaning that all the log entries
+//      'tail' with a single CAS operation, meaning that all the log entries
 //      for the cycle will be contiguous in the log.
 //      In the original Linear Dafny NR project, we modeled this step as a bulk update,
 //      matching the implemenation. However, it turned out that:
@@ -120,13 +120,13 @@ pub enum ReadonlyState {
 //
 //  2. Read the 'local_head' value for the given node.
 //
-//  3. Read the global 'global_tail' value.
+//  3. Read the global 'tail' value.
 //
-//  4. Process all log entries in the range local_head..global_tail.
+//  4. Process all log entries in the range local_head..tail.
 //     (This should include both the log entries we just creates, plus maybe some other
 //     log entries from other nodes.)
 //
-//      NOTE: the global 'global_tail' value might change over the course of execution,
+//      NOTE: the global 'tail' value might change over the course of execution,
 //      but we're going to stick with the local copy that we just read
 //      (i.e., the value on the stack).
 //
@@ -166,12 +166,12 @@ pub enum ReadonlyState {
 //   The RequestIds in `queued_ops`, sliced from queue_index .. queued_ops.len()
 //   match
 //   The RequestIds in the log that are local, sliced from
-//          local_head .. global_tail
+//          local_head .. tail
 // (Note that queue_index and local_head are the cursors that advance throughout the loop,
-// while global_tail is the one recorded in step 3, so it's fixed.)
+// while tail is the one recorded in step 3, so it's fixed.)
 // Furthermore:
 //   There are no local operations in the log between
-//   the recorded global_tail and the global global_tail.
+//   the recorded tail and the global tail.
 // See the invariant `wf_combiner_for_node_id`, as well as the predicates
 // `LogRangeMatchesQueue` and `LogRangeNoNodeId`.
 //
@@ -180,7 +180,7 @@ pub enum ReadonlyState {
 // and '(N, x)' means a log entry with node id N that corresponds to request id x.)
 //
 //       CombinerState                                           CombinerState   global
-//       local_head                                              global_tail     global_tail
+//       local_head                                              tail     tail
 //          |                                                              |               |
 //       ===================================================================================
 //          |          |       |       |        |       |          |       |       |       |
@@ -204,7 +204,7 @@ pub enum ReadonlyState {
 //
 // In the example, `LogRangeMatchesQueue` is the relation that shows that (b, c, d)
 // agree between the queued_ops and the log; whereas `LogRangeNoNodeId` shows that there
-// are no more local entries between the Combiner global_tail and the global global_tail.
+// are no more local entries between the Combiner tail and the global tail.
 //
 // And again, in the real implementation, b, c, d will actually be contiguous in the log,
 // but the state shown above is permitted by the model here.
@@ -246,11 +246,11 @@ pub enum CombinerState {
         /// index into the queued ops
         idx: nat,
         /// the global tail we'v read
-        global_tail: LogIdx,
+        tail: LogIdx,
     },
     UpdatedVersion {
         queued_ops: Seq<ReqId>,
-        global_tail: LogIdx,
+        tail: LogIdx,
     },
 }
 
@@ -286,7 +286,7 @@ UnboundedLog {
         pub log: Map<LogIdx, LogEntry>,
 
         #[sharding(variable)]
-        pub global_tail: nat,
+        pub tail: nat,
 
         #[sharding(map)]
         pub replicas: Map<NodeId, NRState>,
@@ -374,7 +374,7 @@ UnboundedLog {
     /// Inv_GlobalTailCompleteTailOrdering
     #[invariant]
     pub fn inv_version_in_range(&self) -> bool {
-        self.version_upper_bound <= self.global_tail
+        self.version_upper_bound <= self.tail
     }
 
 
@@ -432,53 +432,53 @@ UnboundedLog {
             CombinerState::Ready => {
                 // from other inv
                 // &&& self.local_versions.dom().contains(node_id)
-                // &&& self.local_versions[node_id] <= self.global_tail
-                &&& LogRangeNoNodeId(self.log, self.local_versions[node_id], self.global_tail, node_id)
+                // &&& self.local_versions[node_id] <= self.tail
+                &&& LogRangeNoNodeId(self.log, self.local_versions[node_id], self.tail, node_id)
             }
             CombinerState::Placed { queued_ops } => {
                 // &&& self.local_versions.dom().contains(node_id)
-                // &&& self.local_versions[node_id] <= self.global_tail
-                &&& LogRangeMatchesQueue(queued_ops, self.log, 0, self.local_versions[node_id], self.global_tail, node_id, self.local_updates)
+                // &&& self.local_versions[node_id] <= self.tail
+                &&& LogRangeMatchesQueue(queued_ops, self.log, 0, self.local_versions[node_id], self.tail, node_id, self.local_updates)
                 &&& QueueRidsUpdatePlaced(queued_ops, self.local_updates, 0)
                 &&& seq_unique(queued_ops)
             }
             CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
                // we've just read the local tail value, and no-one else should modify that
                 &&& lversion == self.local_versions[node_id]
-                // by transitivity we have lversion <= self.version_upper_bound and self.global_tail
+                // by transitivity we have lversion <= self.version_upper_bound and self.tail
                 // the local tail should be smaller or equal than the ctail
                 // &&& lversion <= self.version_upper_bound
-                // &&& lversion <= self.global_tail
-                &&& LogRangeMatchesQueue(queued_ops, self.log, 0, lversion, self.global_tail, node_id, self.local_updates)
+                // &&& lversion <= self.tail
+                &&& LogRangeMatchesQueue(queued_ops, self.log, 0, lversion, self.tail, node_id, self.local_updates)
                 &&& QueueRidsUpdatePlaced(queued_ops, self.local_updates, 0)
                 &&& seq_unique(queued_ops)
             }
-            CombinerState::Loop{ queued_ops, idx, lversion, global_tail } => {
+            CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
                 // the global tail may have already advanced...
-                &&& global_tail <= self.global_tail
+                &&& tail <= self.tail
                 // we're advancing the local tail here
                 &&& lversion >= self.local_versions[node_id]
                 // the local tail should always be smaller or equal to the global tail
-                &&& lversion <= global_tail
+                &&& lversion <= tail
                 // the log now contains all entries up to localtail
                 // &&& LogContainsEntriesUpToHere(self.log, lversion)
                 &&& 0 <= idx <= queued_ops.len()
-                &&& LogRangeMatchesQueue(queued_ops, self.log, idx, lversion, global_tail, node_id, self.local_updates)
-                &&& LogRangeNoNodeId(self.log, global_tail, self.global_tail, node_id)
+                &&& LogRangeMatchesQueue(queued_ops, self.log, idx, lversion, tail, node_id, self.local_updates)
+                &&& LogRangeNoNodeId(self.log, tail, self.tail, node_id)
                 &&& QueueRidsUpdatePlaced(queued_ops, self.local_updates, idx)
                 &&& QueueRidsUpdateDone(queued_ops, self.local_updates, idx)
                 &&& seq_unique(queued_ops)
             }
-            CombinerState::UpdatedVersion{ queued_ops, global_tail } => {
+            CombinerState::UpdatedVersion{ queued_ops, tail } => {
                 // the global tail may have already advanced...
-                // global_tail <= self.global_tail // by transitivity: self.version_upper_bound <= self.global_tail
+                // tail <= self.tail // by transitivity: self.version_upper_bound <= self.tail
                 // update the ctail value
-                &&& global_tail <= self.version_upper_bound
+                &&& tail <= self.version_upper_bound
                 // the local tail should be smaller than this one here
-                &&& self.local_versions[node_id] <= global_tail
-                // the log now contains all entries up to global_tail
-                // &&& LogContainsEntriesUpToHere(self.log, global_tail)
-                &&& LogRangeNoNodeId(self.log, global_tail, self.global_tail, node_id)
+                &&& self.local_versions[node_id] <= tail
+                // the log now contains all entries up to tail
+                // &&& LogContainsEntriesUpToHere(self.log, tail)
+                &&& LogRangeNoNodeId(self.log, tail, self.tail, node_id)
                 &&& QueueRidsUpdateDone(queued_ops, self.local_updates, queued_ops.len())
                 &&& seq_unique(queued_ops)
             }
@@ -492,8 +492,8 @@ UnboundedLog {
     /// Inv_LogEntriesUpToCTailExists(s) && Inv_LogEntriesUpToLocalTailExist(s) are implied
     #[invariant]
     pub fn inv_log_complete(&self) -> bool {
-        &&& LogContainsEntriesUpToHere(self.log, self.global_tail)
-        &&& LogNoEntriesFromHere(self.log, self.global_tail)
+        &&& LogContainsEntriesUpToHere(self.log, self.tail)
+        &&& LogNoEntriesFromHere(self.log, self.tail)
     }
 
 
@@ -510,11 +510,11 @@ UnboundedLog {
             UpdateState::Init { op } => { true },
             UpdateState::Placed { op: _, idx } => {
                 &&& self.log.dom().contains(idx)
-                &&& idx < self.global_tail
+                &&& idx < self.tail
             },
             UpdateState::Applied { ret, idx } => {
                 &&& self.log.dom().contains(idx)
-                &&& idx < self.global_tail
+                &&& idx < self.tail
             },
             UpdateState::Done { ret, idx } => {
                 &&& self.log.dom().contains(idx)
@@ -595,7 +595,7 @@ UnboundedLog {
 
             init num_replicas = number_of_nodes;
             init log = Map::empty();
-            init global_tail = 0;
+            init tail = 0;
             init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| NRState::init());
             init local_versions = Map::new(|n: NodeId| n < number_of_nodes, |n| 0);
             init version_upper_bound = 0;
@@ -721,7 +721,7 @@ UnboundedLog {
              remove combiner -= [node_id => Combiner::Ready];
 
              let new_log = Map::<nat, LogEntry>::new(
-                 |n| pre.global_tail <= n && n < pre.global_tail + request_ids.len(),
+                 |n| pre.tail <= n && n < pre.tail + request_ids.len(),
                  |n| LogEntry{
                      op: old_updates.index(request_ids.index(n)).get_Init_op(),
                      node_id: node_id,
@@ -738,7 +738,7 @@ UnboundedLog {
              add log += (new_log);
              add local_updates += (new_updates);
              add combiner += [node_id => Combiner::Placed{queued_ops: request_ids}];
-             update global_tail = pre.global_tail + request_ids.len();
+             update tail = pre.tail + request_ids.len();
         }
     }
     */
@@ -752,9 +752,9 @@ UnboundedLog {
             remove combiner      -= [ node_id => let CombinerState::Placed{ queued_ops } ];
             remove local_updates -= [ rid => let UpdateState::Init{ op }];
 
-            update global_tail = pre.global_tail + 1;
-            add log           += [ pre.global_tail => LogEntry{ op, node_id }];
-            add local_updates += [ rid => UpdateState::Placed{ op, idx: pre.global_tail }];
+            update tail = pre.tail + 1;
+            add log           += [ pre.tail => LogEntry{ op, node_id }];
+            add local_updates += [ rid => UpdateState::Placed{ op, idx: pre.tail }];
             add combiner      += [ node_id => CombinerState::Placed { queued_ops: queued_ops.push(rid) } ];
         }
     }
@@ -808,21 +808,21 @@ UnboundedLog {
         exec_load_global_head(node_id: NodeId) {
             remove combiner -= [ node_id => let CombinerState::LoadedLocalVersion { queued_ops, lversion } ];
 
-            add    combiner += [ node_id => CombinerState::Loop { queued_ops, lversion, idx: 0, global_tail: pre.global_tail } ];
+            add    combiner += [ node_id => CombinerState::Loop { queued_ops, lversion, idx: 0, tail: pre.tail } ];
         }
     }
 
     /// Combiner: Safety condition, the queue index must be within bounds
     property!{
         pre_exec_dispatch_local(node_id: NodeId) {
-            have combiner >= [ node_id => let CombinerState::Loop{ queued_ops, lversion, global_tail, idx } ];
+            have combiner >= [ node_id => let CombinerState::Loop{ queued_ops, lversion, tail, idx } ];
             have log      >= [ lversion => let log_entry ];
 
             require(log_entry.node_id == node_id);
-            require(lversion < global_tail);
+            require(lversion < tail);
             assert(idx < queued_ops.len()) by {
                 // assert(pre.wf_combiner_for_node_id(node_id));
-                // assert(lversion < global_tail);
+                // assert(lversion < tail);
                 // assert(pre.log.index(lversion).node_id == node_id);
             };
         }
@@ -831,7 +831,7 @@ UnboundedLog {
     /// Combiner: dispatch a local update and apply it to the local replica and record the outcome of the update
     transition!{
         exec_dispatch_local(node_id: NodeId) {
-            remove combiner      -= [ node_id => let CombinerState::Loop { queued_ops, lversion, global_tail, idx } ];
+            remove combiner      -= [ node_id => let CombinerState::Loop { queued_ops, lversion, tail, idx } ];
             remove replicas      -= [ node_id => let old_nr_state ];
             let rid = queued_ops.index(idx as int);
             remove local_updates -= [ rid => let u ];
@@ -839,43 +839,43 @@ UnboundedLog {
             have log >= [lversion => let log_entry];
 
             // apply all updates between lhead and global tail that were enqueued from local node
-            require(lversion < global_tail);
+            require(lversion < tail);
             require(log_entry.node_id == node_id);
             let (new_nr_state, ret) = old_nr_state.update(log_entry.op);
 
             add local_updates += [ rid => UpdateState::Applied { ret, idx: lversion }];
             add replicas      += [ node_id => new_nr_state];
-            add combiner      += [ node_id => CombinerState::Loop { queued_ops, lversion: lversion + 1, global_tail, idx: idx + 1}];
+            add combiner      += [ node_id => CombinerState::Loop { queued_ops, lversion: lversion + 1, tail, idx: idx + 1}];
         }
     }
 
     /// Combiner: dispatch a remote update and apply it to the local replica
     transition!{
         exec_dispatch_remote(node_id: NodeId) {
-            remove combiner -= [ node_id => let CombinerState:: Loop { queued_ops, lversion, global_tail, idx } ];
+            remove combiner -= [ node_id => let CombinerState:: Loop { queued_ops, lversion, tail, idx } ];
             remove replicas -= [ node_id => let old_nr_state ];
 
             have   log      >= [ lversion => let log_entry ];
 
             // apply all updates between lhead and global tail that were enqueued from remote nodes
-            require(lversion < global_tail);
+            require(lversion < tail);
             require(log_entry.node_id != node_id);
             let (new_nr_state, ret) = old_nr_state.update(log_entry.op);
 
             add replicas    += [ node_id => new_nr_state ];
-            add combiner    += [ node_id => CombinerState::Loop { queued_ops, lversion: lversion + 1, global_tail, idx}];
+            add combiner    += [ node_id => CombinerState::Loop { queued_ops, lversion: lversion + 1, tail, idx}];
         }
     }
 
     /// Combiner: Safety condition, if we applied all updates, idx must be the length of the list
     property!{
         pre_exec_update_version_upper_bound(node_id: NodeId) {
-            have combiner >= [ node_id => let CombinerState::Loop{ queued_ops, lversion, global_tail, idx } ];
+            have combiner >= [ node_id => let CombinerState::Loop{ queued_ops, lversion, tail, idx } ];
 
-            require(lversion == global_tail);
+            require(lversion == tail);
             assert(idx == queued_ops.len()) by {
                 // assert(pre.wf_combiner_for_node_id(node_id));
-                // assert(lversion == global_tail);
+                // assert(lversion == tail);
             };
         }
     }
@@ -883,33 +883,33 @@ UnboundedLog {
     /// Combiner: update the version upper bound when all updates have been applied to the local replica
     transition!{
         exec_update_version_upper_bound(node_id: NodeId) {
-            remove combiner -= [ node_id => let CombinerState::Loop { queued_ops, lversion, global_tail, idx, }];
+            remove combiner -= [ node_id => let CombinerState::Loop { queued_ops, lversion, tail, idx, }];
 
             // we applied all updates up to the global tail we've read
-            require(lversion == global_tail);
+            require(lversion == tail);
 
             // assert(idx == queued_ops.len()) by {
             //     //assert(pre.wf_combiner_for_node_id(node_id));
             // };
 
-            update version_upper_bound = if pre.version_upper_bound >= global_tail {
+            update version_upper_bound = if pre.version_upper_bound >= tail {
                 pre.version_upper_bound
             } else {
-                global_tail
+                tail
             };
-            add combiner += [ node_id => CombinerState::UpdatedVersion { queued_ops, global_tail } ];
+            add combiner += [ node_id => CombinerState::UpdatedVersion { queued_ops, tail } ];
         }
     }
 
     /// Combiner: is done, bump the local version and combiner returns to ready state
     transition!{
         exec_finish(node_id: NodeId) {
-            remove combiner       -= [ node_id => let CombinerState::UpdatedVersion { queued_ops, global_tail } ];
+            remove combiner       -= [ node_id => let CombinerState::UpdatedVersion { queued_ops, tail } ];
             remove local_versions -= [ node_id => let old_local_head ];
 
             // here have the local updates updated to done.
 
-            add    local_versions += [ node_id => global_tail ];
+            add    local_versions += [ node_id => tail ];
             add    combiner       += [ node_id => CombinerState::Ready ];
         }
     }
@@ -991,13 +991,13 @@ UnboundedLog {
             assert(post.combiner[node_id] == pre.combiner[node_id]);
             match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
                 }
                 CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
                 }
-                CombinerState::Loop{ queued_ops, idx, lversion, global_tail } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
+                CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
                 }
                 _ => {
 
@@ -1011,13 +1011,13 @@ UnboundedLog {
         assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
             match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
                 }
                 CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
                 }
-                CombinerState::Loop{ queued_ops, idx, lversion, global_tail } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
+                CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
                 }
                 _ => {}
             }
@@ -1030,13 +1030,13 @@ UnboundedLog {
         assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
             match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions[node_id], post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
                 }
                 CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, lversion, post.global_tail, node_id, pre.local_updates, post.local_updates);
+                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
                 }
-                CombinerState::Loop { queued_ops, idx, lversion, global_tail } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, global_tail, node_id, pre.local_updates, post.local_updates);
+                CombinerState::Loop { queued_ops, idx, lversion, tail } => {
+                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
                 }
                 _ => {}
             }
@@ -1048,8 +1048,8 @@ UnboundedLog {
         concat_LogRangeNoNodeId_LogRangeMatchesQueue(
             Seq::empty(), post.log, 0,
             pre.local_versions[node_id],
-            pre.global_tail,
-            post.global_tail,
+            pre.tail,
+            post.tail,
             node_id,
             post.local_updates);
 
@@ -1069,7 +1069,7 @@ UnboundedLog {
             match post.combiner[node_id] {
                 CombinerState::Placed{queued_ops} => {
                     LogRangeMatchesQueue_append(old_queued_ops, pre.log, post.log, 0,
-                        post.local_versions[node_id], pre.global_tail,
+                        post.local_versions[node_id], pre.tail,
                         node_id, pre.local_updates, post.local_updates, rid,
                         LogEntry{ op, node_id });
                 }
@@ -1088,26 +1088,26 @@ UnboundedLog {
             match pre.combiner[node_id1] {
                 CombinerState::Ready => {
                     LogRangeNoNodeId_append_other(pre.log, post.log,
-                        post.local_versions[node_id1], pre.global_tail, node_id1, LogEntry{ op, node_id });
+                        post.local_versions[node_id1], pre.tail, node_id1, LogEntry{ op, node_id });
                 }
                 CombinerState::Placed{queued_ops} => {
                     LogRangeMatchesQueue_append_other_augment(queued_ops, pre.log, post.log,
-                        0, post.local_versions[node_id1], pre.global_tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
+                        0, post.local_versions[node_id1], pre.tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
                 }
                 CombinerState::LoadedLocalVersion{queued_ops, lversion} => {
                     LogRangeMatchesQueue_append_other_augment(queued_ops, pre.log, post.log,
-                        0, lversion, pre.global_tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
+                        0, lversion, pre.tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
                 }
-                CombinerState::Loop{queued_ops, lversion, idx, global_tail} => {
+                CombinerState::Loop{queued_ops, lversion, idx, tail} => {
                     LogRangeMatchesQueue_append_other(queued_ops, pre.log, post.log,
-                        idx, lversion, global_tail, pre.global_tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
+                        idx, lversion, tail, pre.tail, node_id1, pre.local_updates, post.local_updates, rid, LogEntry{ op, node_id });
                     LogRangeNoNodeId_append_other(pre.log, post.log,
-                        global_tail, pre.global_tail,
+                        tail, pre.tail,
                         node_id1, LogEntry{ op, node_id });
                 }
-                CombinerState::UpdatedVersion{queued_ops, global_tail} => {
+                CombinerState::UpdatedVersion{queued_ops, tail} => {
                     LogRangeNoNodeId_append_other(pre.log, post.log,
-                        global_tail, pre.global_tail, node_id1, LogEntry{ op, node_id });
+                        tail, pre.tail, node_id1, LogEntry{ op, node_id });
                 }
             }
         }
@@ -1159,7 +1159,7 @@ UnboundedLog {
             LogRangeMatchesQueue_update_change(
                 post.combiner[node_id].get_Loop_queued_ops(),
                 post.log, post.combiner[node_id].get_Loop_idx(), post.combiner[node_id].get_Loop_lversion(),
-                pre.combiner[node_id].get_Loop_global_tail(), node_id, pre.local_updates, post.local_updates);
+                pre.combiner[node_id].get_Loop_tail(), node_id, pre.local_updates, post.local_updates);
         }
 
         let c = pre.combiner[node_id];
@@ -1172,17 +1172,17 @@ UnboundedLog {
             }
             CombinerState::Placed{queued_ops} => {
                 LogRangeMatchesQueue_update_change_2(
-                queued_ops, post.log, 0, post.local_versions[node_id0], post.global_tail, node_id0, pre.local_updates, post.local_updates);
+                queued_ops, post.log, 0, post.local_versions[node_id0], post.tail, node_id0, pre.local_updates, post.local_updates);
             }
             CombinerState::LoadedLocalVersion{queued_ops, lversion} => {
                 LogRangeMatchesQueue_update_change_2(
-                queued_ops, post.log, 0, lversion, post.global_tail, node_id0, pre.local_updates, post.local_updates);
+                queued_ops, post.log, 0, lversion, post.tail, node_id0, pre.local_updates, post.local_updates);
             }
-            CombinerState::Loop{queued_ops, idx, lversion, global_tail} => {
+            CombinerState::Loop{queued_ops, idx, lversion, tail} => {
                 LogRangeMatchesQueue_update_change_2(
-                queued_ops, post.log, idx, lversion, global_tail, node_id0, pre.local_updates, post.local_updates);
+                queued_ops, post.log, idx, lversion, tail, node_id0, pre.local_updates, post.local_updates);
             }
-            CombinerState::UpdatedVersion{queued_ops, global_tail} => {
+            CombinerState::UpdatedVersion{queued_ops, tail} => {
             }
             }
         }
@@ -1223,7 +1223,7 @@ UnboundedLog {
             CombinerState::Placed{ .. }                       => self.local_versions[node_id],
             CombinerState::LoadedLocalVersion{ lversion, .. } => lversion,
             CombinerState::Loop { lversion, .. }              => lversion,
-            CombinerState::UpdatedVersion { global_tail, .. } => global_tail
+            CombinerState::UpdatedVersion { tail, .. } => tail
         }
     }
 

@@ -236,7 +236,7 @@ tokenized_state_machine! { CyclicBuffer {
             ReaderState::Range{start, end, cur} => {
                 // the start must be our local tail
                 &&& self.local_versions[node_id] == start
-                // the start must be before the end, can be equial if ltail == gtail
+                // the start must be before the end, can be equial if ltail == tail
                 &&& start <= end
                 // we've read the tail, but the tail may have moved
                 &&& (self.tail as int) - (self.buffer_size as int) <= end <= (self.tail as int)
@@ -250,7 +250,7 @@ tokenized_state_machine! { CyclicBuffer {
             ReaderState::Guard{start, end, cur, val} => {
                 // the start must be our local tail
                 &&& self.local_versions[node_id] == start
-                // the start must be before the end, can be equial if ltail == gtail
+                // the start must be before the end, can be equial if ltail == tail
                 &&& start <= end
                 // we've read the tail, but the tail may have moved
                 &&& (self.tail as int) - (self.buffer_size as int) <= end <= (self.tail as int)
