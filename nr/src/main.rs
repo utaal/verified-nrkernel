@@ -92,7 +92,11 @@ struct_with_invariants!{
         }
     }
 
-
+    // pub closed spec fn wf(&self) -> bool {
+    //     invariant on alive with (cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
+    //         g@ === CyclicBuffer::token![ cyclic_buffer_instance => version_upper_bound => v as nat ]
+    //     }
+    // }
 }
 
 
@@ -139,7 +143,7 @@ pub struct NrLog
     ///  - Rust:  pub(crate) ltails: [CachePadded<AtomicUsize>; MAX_REPLICAS_PER_LOG],
     ///
     /// XXX: should we make this an array as well
-    local_versions: Vec<CachePadded<AtomicU64<_, (UnboundedLog::local_versions, CyclicBuffer::local_versions), _>>>,  // NodeInfo is padded
+    pub(crate) local_versions: Vec<CachePadded<AtomicU64<_, (UnboundedLog::local_versions, CyclicBuffer::local_versions), _>>>,  // NodeInfo is padded
 
 
     // The upstream Rust version also contains:
@@ -164,16 +168,15 @@ pub closed spec fn wf(&self) -> bool {
         // TODO &&& (forall|i: int| 0 <= i && i < self.buffer@.len() as int ==>
         // TODO     self.instance.backing_cells().index(i) ===
         // TODO         self.buffer@.index(i).id())
-        true
 
         // |node_info| == NUM_REPLICAS as int
         &&& self.local_versions.len() == NUM_REPLICAS
 
         // |buffer| == LOG_SIZE as int
-        // &&& self.slog.len() == LOG_SIZE
+        &&& self.slog.len() == LOG_SIZE
 
         // (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
-        &&& (forall |i: nat| i < LOG_SIZE ==> self.slog[i as int].wf(i))
+        &&& (forall |i: nat| i < LOG_SIZE ==> #[trigger] self.slog[i as int].wf(i))
     }
 
     // invariant on slog with (
@@ -254,12 +257,16 @@ impl NrLog
     /// This basically corresponds to the transition `readonly_read_to_read` in the unbounded log.
     ///
     // https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/log.rs#L525
-    pub fn is_replica_synced_for_reads(&mut self, node_id: usize, version_upper_bound: u64,
-            #[verifier::proof] local_reads: UnboundedLog::local_reads) ->
-            (result: (bool, Tracked<UnboundedLog::local_reads>))
+    pub fn is_replica_synced_for_reads(&self, node_id: usize, version_upper_bound: u64,
+            tracked local_reads: UnboundedLog::local_reads) ->
+            // (bool,  UnboundedLog::local_reads)
+            // (bool, Tracked<UnboundedLog::local_reads>)
+            bool
+
 
         requires
-          old(self).wf(),
+          self.wf(),
+          node_id < self.local_versions.len()
         //   old(self).unbounded_log_instance.local_reads[]
         // TODO: more stuff here
     {
@@ -270,8 +277,9 @@ impl NrLog
         let rid : u64 = 0; // XXX: where to get that from?
 
 
-
-        let tracked new_local_reads: UnboundedLog::local_reads;
+        proof {
+            let tracked new_local_reads: UnboundedLog::local_reads;
+        }
 
         let res = 0;
         // TODO ask @tjhance let res = atomic_with_ghost!(
@@ -286,8 +294,13 @@ impl NrLog
         // TODO ask @tjhance     }
         // TODO ask @tjhance );
 
-        return (res >= version_upper_bound, proof { Tracked::new(new_local_reads) });
+        // (res >= version_upper_bound, local_reads);
+        res >= version_upper_bound
     }
+
+
+
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -295,13 +308,20 @@ impl NrLog
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // TODO:
-struct RwLock<D>
+pub struct RwLock<D>
 {
     foo: Option<D>
 }
 
 
-pub struct ThreadToken {}
+/// the thread token identifies a thread of a given replica
+pub struct ThreadToken {
+    /// the replica id this thread uses
+    pub(crate) rid: ReplicaId,
+    /// identifies the thread within the replica
+    pub(crate) tid: ReplicaToken,
+}
+
 pub struct LogToken {
     id: usize
 }
@@ -384,30 +404,30 @@ pub closed spec fn wf(&self, i: nat) -> bool {
 // The Replica Node
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
 /// A token handed out to threads that replicas with replicas.
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct ReplicaToken {
-    pub(crate) tid: ThreadIdx,
-}
+// #[derive(Copy, Clone, Eq, PartialEq)]
+// pub struct ReplicaToken {
+//     pub(crate) tid: ThreadIdx,
+// }
+
+pub type ReplicaToken = ThreadIdx;
 
 
 /// Ghost state that is protected by the combiner lock
 ///
 ///  - Dafny: glinear datatype CombinerLockState
 ///  - Rust:  N/A
-pub struct CombinerLockStateGhost<UOp, Res> {
+pub struct CombinerLockStateGhost {
     // TODO
     // glinear flatCombiner: FCCombiner,
 
     /// Stores the token to access the op_buffer in the replica
     ///  - Dafny: glinear gops: LC.LCellContents<seq<nrifc.UpdateOp>>,
-    op_buffer_token: Tracked<PermissionOpt<Vec<UOp>>>,
+    op_buffer_token: Tracked<PermissionOpt<Vec<UpdateOp>>>,
 
     /// Stores the token to access the responses in teh Replica
     ///  - Dafny: glinear gresponses: LC.LCellContents<seq<nrifc.ReturnType>>,
-    responses_token: Tracked<PermissionOpt<Vec<Res>>>,
+    responses_token: Tracked<PermissionOpt<Vec<ReturnType>>>,
 }
 
 struct_with_invariants!{
@@ -417,8 +437,7 @@ struct_with_invariants!{
 ///  - Dafny:   linear datatype Node
 ///  - Rust:    pub struct Replica<D>
 #[repr(align(128))]
-// pub struct Replica<D, UOp, Res> {   // XXX: why unconstrained type parameter?
-pub struct Replica< UOp, Res> {
+pub struct Replica {
     /// An identifier that we got from the Log when the replica was registered
     /// against the shared-log ([`Log::register()`]). Required to pass to the
     /// log when consuming operations from the log.
@@ -433,7 +452,7 @@ pub struct Replica< UOp, Res> {
     ///
     ///  - Dafny: linear combiner_lock: CachePadded<Atomic<uint64, glOption<CombinerLockState>>>,
     ///  - Rust:  combiner: CachePadded<AtomicUsize>,
-    combiner: CachePadded<AtomicU64<_, Option<CombinerLockStateGhost<UOp, Res>>, _>>,
+    combiner: CachePadded<AtomicU64<_, Option<CombinerLockStateGhost>, _>>,
 
     /// List of per-thread contexts. Threads buffer write operations here when
     /// they cannot perform flat combining (because another thread might already
@@ -441,7 +460,7 @@ pub struct Replica< UOp, Res> {
     ///
     ///  - Dafny: linear contexts: lseq<Context>,
     ///  - Rust:  contexts: Vec<Context<<D as Dispatch>::WriteOperation, <D as Dispatch>::Response>>,
-    contexts: Vec<Context<UOp, Res>>,
+    contexts: Vec<Context<UpdateOp, ReturnType>>,
 
     /// A buffer of operations for flat combining.
     ///
@@ -449,7 +468,7 @@ pub struct Replica< UOp, Res> {
     ///
     ///  - Dafny: linear ops: LC.LinearCell<seq<nrifc.UpdateOp>>,
     ///  - Rust:  buffer: RefCell<Vec<<D as Dispatch>::WriteOperation>>,
-    op_buffer: PCell<Vec<UOp>>,
+    op_buffer: PCell<Vec<UpdateOp>>,
 
     /// A buffer of results collected after flat combining. With the help of
     /// `inflight`, the combiner enqueues these results into the appropriate
@@ -459,7 +478,7 @@ pub struct Replica< UOp, Res> {
     ///
     ///  - Dafny: linear responses: LC.LinearCell<seq<nrifc.ReturnType>>,
     ///  - Rust:  result: RefCell<Vec<<D as Dispatch>::Response>>,
-    responses: PCell<Vec<Res>>,
+    responses: PCell<Vec<ReturnType>>,
 
 
     // The underlying data structure. This is shared among all threads that are
@@ -468,7 +487,7 @@ pub struct Replica< UOp, Res> {
     //
     //   - Dafny: linear replica: RwLock,
     //   - Rust:  data: CachePadded<RwLock<D>>,
-    // data: CachePadded<RwLock<D>>,
+    data: CachePadded<RwLock<NRState>>,
 
 
     // /// Thread index that will be handed out to the next thread that registers
@@ -476,9 +495,12 @@ pub struct Replica< UOp, Res> {
     // next: CachePadded<AtomicUsize>,
     // /// Number of operations collected by the combiner from each thread at any
     // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
+
+    #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
+    #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
 }
 
-pub closed spec fn wf(&self, log: NrLog) -> bool {
+pub closed spec fn wf(&self, log: &NrLog) -> bool {
 
     // && (forall nodeReplica :: replica.inv(nodeReplica) <==> nodeReplica.WF(nodeId as int, nr.cb_loc_s))
 
@@ -488,14 +510,14 @@ pub closed spec fn wf(&self, log: NrLog) -> bool {
 
     predicate {
         // && (forall i | 0 <= i < |contexts| :: i in contexts && contexts[i].WF(i, fc_loc))
-        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> self.contexts[i as int].wf(i))
+        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].wf(i))
         // && |contexts| == MAX_THREADS_PER_REPLICA as int
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
         // && 0 <= nodeId as int < NUM_REPLICAS as int
         &&& 0 <= self.log_tkn.id < NUM_REPLICAS
     }
 
-    invariant on combiner specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost <UOp, Res>>) {
+    invariant on combiner specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
 
         // && (forall v, g :: atomic_inv(combiner_lock.inner, v, g) <==> CombinerLockInv(v, g, fc_loc, ops, responses))
         if v == 0 {
@@ -510,6 +532,171 @@ pub closed spec fn wf(&self, log: NrLog) -> bool {
 
 } // struct_with_invariants!
 
+
+impl Replica  {
+
+    /// Try to become acquire the combiner lock here. If this fails, then return None.
+    ///
+    ///  - Dafny: part of method try_combine
+    #[inline(always)]
+    fn acquire_combiner_lock(&self) -> Option<CombinerLockStateGhost> {
+        // OPT: try to check whether the lock is already present
+        // for _ in 0..4 {
+        //     if self.combiner.load(Ordering::Relaxed) != 0 { return None; }
+        // }
+
+        // Step 1: perform cmpxchg to acquire the combiner lock
+        // if self.combiner.compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Acquire) != Ok(0) {
+        //     None
+        // } else {
+        //     Some(CombinerLock { replica: self })
+        // }
+        assert(false);
+        None
+    }
+
+    /// Appends an operation to the log and attempts to perform flat combining.
+    /// Accepts a thread `tid` as an argument. Required to acquire the combiner lock.
+    ///
+    /// https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/nr/replica.rs#L788
+    fn try_combine(&self, slog: &NrLog) {
+        // Step 1: try to take the combiner lock to become combiner
+        // let combiner_lock = self.acquire_combiner_lock();
+
+        // Step 2: if we are the combiner then perform flat combining, else return
+        // if let Some(combiner_lock) = combiner_lock {
+        //     self.combine(slog, combiner_lock)
+        // } else {
+        //     // just return, that means another thread is combining already
+        //     Ok(())
+        // }
+
+        // release the combiner lock
+    }
+
+    /// Performs one round of flat combining. Collects, appends and executes operations.
+    ///
+    /// https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/nr/replica.rs#L835
+    fn combine(&self, slog: &NrLog, tracked combiner_lock: CombinerLockStateGhost)  {
+        // Step 1: collect the operations from the threads
+        // self.collect_thread_ops(&mut buffer, operations.as_mut_slice());
+
+        // Step 2: Append all operations to the log
+
+        // Step 3: Take the R/W lock on the data structure
+
+        // Step 3: Execute all operations
+
+        // Step 4: release the R/W lock on the data structure
+
+        // Step 5: collect the results
+
+
+    }
+
+    ///
+    /// - Dafny: combine_collect()
+    #[inline(always)]
+    fn collect_thread_ops(&self, buffer: &mut Vec<UpdateOp>, operations: &mut [usize]) {
+        // let num_registered_threads = self.next.load(Ordering::Relaxed);
+
+        // // Collect operations from each thread registered with this replica.
+        // for i in 1..num_registered_threads {
+        //     let ctxt_iter = self.contexts[i - 1].iter();
+        //     operations[i - 1] = ctxt_iter.len();
+        //     // meta-data is (), throw it away
+        //     buffer.extend(ctxt_iter.map(|op| op.0));
+        // }
+    }
+
+    ///
+    /// - Dafny: combine_respond
+    fn distrubute_thread_resps(&self, buffer: &mut Vec<ReturnType>, operations: &mut [usize]) {
+        // let (mut s, mut f) = (0, 0);
+        // for i in 1..num_registered_threads {
+        //     if operations[i - 1] == 0 {
+        //         continue;
+        //     };
+
+        //     f += operations[i - 1];
+        //     self.contexts[i - 1].enqueue_resps(&results[s..f]);
+        //     s += operations[i - 1];
+        //     operations[i - 1] = 0;
+        // }
+    }
+
+    /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
+    /// registration was successfull. None if the registration failed.
+    pub fn register(&self) -> Option<ReplicaToken> {
+        assert(false);
+        None
+    }
+
+    /// Executes an immutable operation against this replica and returns a
+    /// response.
+    ///
+    /// In Dafny this refers to do_operation
+    pub fn execute(&self, slog: &NrLog, op: ReadonlyOp, idx: ReplicaToken) -> Result<ReturnType, () /* ReplicaError */>
+        requires
+          self.wf(slog),
+          slog.wf(),
+    {
+        proof {
+            // start the read transaction, get the ticket
+            let tracked ticket = self.unbounded_log_instance.readonly_start(op);
+        }
+
+        // Step 1: Read the local tail value
+        // let ctail = slog.get_ctail();
+
+        // Step 2: wait until the replica is synced for reads, try to combine in mean time
+        // while !slog.is_replica_synced_for_reads(&self.log_tkn, ctail) {
+        //     if let Err(e) = self.try_combine(slog) {
+        //         return Err((e, op));
+        //     }
+        //     spin_loop();
+        // }
+
+        // Step 3: Take the read-only lock, and read the value
+        // let res = self.data.read(idx.tid() - 1).dispatch(op)
+
+
+        // Step 4: Finish the read-only transaction, return result
+        // self.unbounded_log_instance.readonly_finish(rid, op, res);
+
+        assert(false);
+        Err(())
+    }
+
+    /// Executes a mutable operation against this replica and returns a
+    /// response.
+    ///
+    /// In Dafny this refers to do_operation
+    pub fn execute_mut(&self, slog: &NrLog, op: UpdateOp, idx: ReplicaToken) -> Result<ReturnType, () /* ReplicaError */>
+        requires
+            slog.wf(),
+            self.wf(slog)
+            // something about the idx
+    {
+        proof {
+            let tracked ticket = self.unbounded_log_instance.update_start(op);
+        }
+
+        // Step 1: Enqueue the operation onto the thread local batch
+        // while !self.make_pending(op.clone(), idx.tid()) {}
+
+        // Step 2: Try to do flat combining to appy the update to the data structure
+        // self.try_combine(slog)?;
+
+        // Step 3: Obtain the result form the responses
+
+        // Return the response to the caller function.
+        // self.get_response(slog, idx.tid())
+        assert(false);
+        Err(())
+    }
+
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -532,11 +719,33 @@ pub struct NodeReplicated {
     ///
     ///  - Rust: replicas: Vec<Box<Replica<D>>>,
     // replicas: Vec<Box<Replica<NRState, UpdateOp, ReturnType>>>,
-    replicas: Vec<Box<Replica<UpdateOp, ReturnType>>>,
+    replicas: Vec<Box<Replica>>,
+
+    /// something that creates new request ids, or do we
+    // #[verifier::proof] request_id: ReqId,
+
+    #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
+    #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
 }
 
 
-//impl<D> NodeReplicated<D> {
+
+/// Proof blocks for the NodeReplicate data structure
+impl NodeReplicated {
+    pub closed spec fn wf(&self) -> bool {
+        &&& self.log.wf()
+        &&& self.unbounded_log_instance == self.log.unbounded_log_instance
+        &&& self.cyclic_buffer_instance == self.log.cyclic_buffer_instance
+
+        &&& forall |i| 0 <= i < self.replicas.len() ==> {
+            &&& #[trigger] self.replicas[i].wf(&self.log)
+            &&& self.replicas[i].unbounded_log_instance == self.unbounded_log_instance
+            &&& self.replicas[i].cyclic_buffer_instance == self.cyclic_buffer_instance
+        }
+    }
+}
+
+
 impl NodeReplicated {
     // /// Creates a new, replicated data-structure from a single-threaded
     // /// data-structure that implements [`Dispatch`]. It uses the [`Default`]
@@ -571,9 +780,11 @@ impl NodeReplicated {
     /// XXX: in the dafny version, we don't have this. Instead, we pre-allocate all
     ///      threads for the replicas etc.
     ///
-    ///  - Dafny: n/a?
+    ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken> {
+    pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
+        requires self.wf()
+    {
         assert(false);
         None
     }
@@ -583,22 +794,37 @@ impl NodeReplicated {
     ///  - Dafny:
     ///  - Rust:  pub fn execute_mut(&self, op: <D as Dispatch>::WriteOperation, tkn: ThreadToken)
     ///             -> <D as Dispatch>::Response
-    pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> ReturnType {
-        // This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-        assert(false);
-        ReturnType { u: 0 }
+    ///
+    /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
+    pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> Result<ReturnType, ()>
+        requires
+          self.wf()
+    {
+        if tkn.rid < self.replicas.len() {
+            // get the replica/node, execute it with the log and provide the thread id.
+            self.replicas.index(tkn.rid).execute_mut(&self.log, op, tkn.tid)
+        } else {
+            Err(())
+        }
     }
 
 
     /// Executes a immutable operation against the data-structure.
     ///
-    ///  - Dafny:
+    ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn execute(&self, op: <D as Dispatch>::ReadOperation<'_>, tkn: ThreadToken,)
-    ///             -> <D as Dispatch>::Response {
-    pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> ReturnType {
-        // This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-        assert(false);
-        ReturnType { u: 0 }
+    ///             -> <D as Dispatch>::Response
+    ///
+    /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
+    pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> Result<ReturnType, ()>
+        requires self.wf()
+    {
+        if tkn.rid < self.replicas.len() {
+            // get the replica/node, execute it with the log and provide the thread id.
+            self.replicas.index(tkn.rid).execute(&self.log, op, tkn.tid)
+        } else {
+            Err(())
+        }
     }
 }
 
