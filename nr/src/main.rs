@@ -46,7 +46,7 @@ pub const LOG_SIZE: usize = 1024;
 pub const MAX_THREADS_PER_REPLICA: usize = 256;
 
 
-verus!{
+verus_old_todo_no_ghost_blocks!{
 
 
 struct_with_invariants!{
@@ -113,26 +113,26 @@ pub struct NrLog
     // ///  - Dafny: linear buffer: lseq<BufferEntry>,
     // ///           glinear bufferContents: GhostAtomic<CBContents>,
     // ///  - Rust:  pub(crate) slog: Box<[Cell<Entry<T, M>>]>,
-    slog: Vec<BufferEntry>,
+    pub slog: Vec<BufferEntry>,
 
     /// Completed tail maintains an index <= tail that points to a log entry after which there
     /// are no completed operations across all replicas registered against this log.
     ///
     ///  - Dafny: linear ctail: CachePadded<Atomic<uint64, Ctail>>,
     ///  - Rust:  pub(crate) ctail: CachePadded<AtomicUsize>,
-    version_upper_bound: CachePadded<AtomicU64<_, UnboundedLog::version_upper_bound, _>>,
+    pub version_upper_bound: CachePadded<AtomicU64<_, UnboundedLog::version_upper_bound, _>>,
 
     /// Logical index into the above slice at which the log starts.
     ///
     ///  - Dafny: linear head: CachePadded<Atomic<uint64, CBHead>>,
     ///  - Rust:  pub(crate) head: CachePadded<AtomicUsize>,
-    head: CachePadded<AtomicU64<_, CyclicBuffer::head, _>>,
+    pub head: CachePadded<AtomicU64<_, CyclicBuffer::head, _>>,
 
     /// Logical index into the above slice at which the log ends. New appends go here.
     ///
     ///  - Dafny: linear globalTail: CachePadded<Atomic<uint64, GlobalTailTokens>>,
     ///  - Rust:  pub(crate) tail: CachePadded<AtomicUsize>,
-    tail: CachePadded<AtomicU64<_, (UnboundedLog::tail, CyclicBuffer::tail), _>>,
+    pub tail: CachePadded<AtomicU64<_, (UnboundedLog::tail, CyclicBuffer::tail), _>>,
 
     /// Array consisting of the local tail of each replica registered with the log.
     /// Required for garbage collection; since replicas make progress over the log
@@ -157,8 +157,8 @@ pub struct NrLog
     // ghost cb_loc_s: nat
     // ...
 
-    #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
-    #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
 }
 
 pub closed spec fn wf(&self) -> bool {
@@ -183,18 +183,18 @@ pub closed spec fn wf(&self) -> bool {
 
     invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound) {
         // (forall v, g :: atomic_inv(ctail.inner, v, g) <==> g == Ctail(v as int))
-        g@ === UnboundedLog::token![ unbounded_log_instance => version_upper_bound => v as nat ]
+        g@ === UnboundedLog::token![ unbounded_log_instance@ => version_upper_bound => v as nat ]
     }
 
     invariant on head with (cyclic_buffer_instance) specifically (self.head.0) is (v: u64, g: CyclicBuffer::head) {
         // (forall v, g :: atomic_inv(head.inner, v, g) <==> g == CBHead(v as int, cb_loc_s))
-        g@ === CyclicBuffer::token![ cyclic_buffer_instance => head => v as nat ]
+        g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => head => v as nat ]
     }
 
     invariant on tail with (cyclic_buffer_instance, unbounded_log_instance) specifically (self.tail.0) is (v: u64, g: (UnboundedLog::tail, CyclicBuffer::tail)) {
         // (forall v, g :: atomic_inv(globalTail.inner, v, g) <==> GlobalTailInv(v, g, cb_loc_s))
-        &&& g.0@ === UnboundedLog::token![ unbounded_log_instance => tail => v as nat ]
-        &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance => tail => v as nat ]
+        &&& g.0@ === UnboundedLog::token![ unbounded_log_instance@ => tail => v as nat ]
+        &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance@ => tail => v as nat ]
     }
 
 
@@ -206,8 +206,8 @@ pub closed spec fn wf(&self) -> bool {
         is (v: u64, g: (UnboundedLog::local_versions, CyclicBuffer::local_versions)) {
 
 
-        &&& g.0@ === UnboundedLog::token![ unbounded_log_instance => local_versions => i as nat => v as nat ]
-        &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance => local_versions => i as nat => v as nat ]
+        &&& g.0@ === UnboundedLog::token![ unbounded_log_instance@ => local_versions => i as nat => v as nat ]
+        &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance@ => local_versions => i as nat => v as nat ]
         &&& 0 <= v < 0xffff_ffff_f000_0000
     }
 
@@ -258,44 +258,35 @@ impl NrLog
     ///
     // https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/log.rs#L525
     pub fn is_replica_synced_for_reads(&self, node_id: usize, version_upper_bound: u64,
-            tracked local_reads: UnboundedLog::local_reads) ->
-            // (bool,  UnboundedLog::local_reads)
-            // (bool, Tracked<UnboundedLog::local_reads>)
-            bool
-
-
+            local_reads: Tracked<UnboundedLog::local_reads>) ->
+            (bool, Tracked<UnboundedLog::local_reads>)
         requires
           self.wf(),
-          node_id < self.local_versions.len()
-        //   old(self).unbounded_log_instance.local_reads[]
-        // TODO: more stuff here
+          node_id < self.local_versions.len(),
+          local_reads@@.instance == self.unbounded_log_instance@,
+          local_reads@@.value.is_VersionUpperBound() && local_reads@@.value.get_VersionUpperBound_version_upper_bound() == version_upper_bound
+        // old(self).unbounded_log_instance.local_reads[]
     {
         // obtain the local version
         let local_version = &self.local_versions.index(node_id).0;
 
-        // #[verifier::proof]
-        let rid : u64 = 0; // XXX: where to get that from?
+        let rid : Ghost<nat> = ghost(local_reads@@.key);
 
+        let tracked new_local_reads: UnboundedLog::local_reads;
 
-        proof {
-            let tracked new_local_reads: UnboundedLog::local_reads;
-        }
+        let res = atomic_with_ghost!(
+            local_version => load();
+            returning res;
+            ghost g => {
+                new_local_reads = if res >= version_upper_bound {
+                    self.unbounded_log_instance.borrow().readonly_ready_to_read(rid.view(), node_id as NodeId, &g.0, local_reads.get())
+                } else {
+                    local_reads.get()
+                };
+            }
+        );
 
-        let res = 0;
-        // TODO ask @tjhance let res = atomic_with_ghost!(
-        // TODO ask @tjhance     local_version => load();
-        // TODO ask @tjhance     returning res;
-        // TODO ask @tjhance     ghost g => {
-        // TODO ask @tjhance         new_local_reads = if res >= version_upper_bound {
-        // TODO ask @tjhance             self.unbounded_log_instance.readonly_ready_to_read(rid as nat, node_id as NodeId, &g.0, local_reads)
-        // TODO ask @tjhance         } else {
-        // TODO ask @tjhance             local_reads
-        // TODO ask @tjhance         };
-        // TODO ask @tjhance     }
-        // TODO ask @tjhance );
-
-        // (res >= version_upper_bound, local_reads);
-        res >= version_upper_bound
+        (res >= version_upper_bound, tracked(new_local_reads))
     }
 
 
@@ -444,7 +435,7 @@ pub struct Replica {
     ///
     ///  - Dafny: nodeId: uint64,
     ///  - Rust:  log_tkn: LogToken,
-    log_tkn: LogToken,
+    pub log_tkn: LogToken,
 
     /// Stores the index of the thread currently doing flat combining. Field is
     /// zero if there isn't any thread actively performing flat-combining.
@@ -452,7 +443,7 @@ pub struct Replica {
     ///
     ///  - Dafny: linear combiner_lock: CachePadded<Atomic<uint64, glOption<CombinerLockState>>>,
     ///  - Rust:  combiner: CachePadded<AtomicUsize>,
-    combiner: CachePadded<AtomicU64<_, Option<CombinerLockStateGhost>, _>>,
+    pub combiner: CachePadded<AtomicU64<_, Option<CombinerLockStateGhost>, _>>,
 
     /// List of per-thread contexts. Threads buffer write operations here when
     /// they cannot perform flat combining (because another thread might already
@@ -460,7 +451,7 @@ pub struct Replica {
     ///
     ///  - Dafny: linear contexts: lseq<Context>,
     ///  - Rust:  contexts: Vec<Context<<D as Dispatch>::WriteOperation, <D as Dispatch>::Response>>,
-    contexts: Vec<Context<UpdateOp, ReturnType>>,
+    pub contexts: Vec<Context<UpdateOp, ReturnType>>,
 
     /// A buffer of operations for flat combining.
     ///
@@ -468,7 +459,7 @@ pub struct Replica {
     ///
     ///  - Dafny: linear ops: LC.LinearCell<seq<nrifc.UpdateOp>>,
     ///  - Rust:  buffer: RefCell<Vec<<D as Dispatch>::WriteOperation>>,
-    op_buffer: PCell<Vec<UpdateOp>>,
+    pub op_buffer: PCell<Vec<UpdateOp>>,
 
     /// A buffer of results collected after flat combining. With the help of
     /// `inflight`, the combiner enqueues these results into the appropriate
@@ -478,7 +469,7 @@ pub struct Replica {
     ///
     ///  - Dafny: linear responses: LC.LinearCell<seq<nrifc.ReturnType>>,
     ///  - Rust:  result: RefCell<Vec<<D as Dispatch>::Response>>,
-    responses: PCell<Vec<ReturnType>>,
+    pub responses: PCell<Vec<ReturnType>>,
 
 
     // The underlying data structure. This is shared among all threads that are
@@ -487,7 +478,7 @@ pub struct Replica {
     //
     //   - Dafny: linear replica: RwLock,
     //   - Rust:  data: CachePadded<RwLock<D>>,
-    data: CachePadded<RwLock<NRState>>,
+    pub data: CachePadded<RwLock<NRState>>,
 
 
     // /// Thread index that will be handed out to the next thread that registers
@@ -496,8 +487,8 @@ pub struct Replica {
     // /// Number of operations collected by the combiner from each thread at any
     // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
 
-    #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
-    #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
 }
 
 pub closed spec fn wf(&self, log: &NrLog) -> bool {
@@ -643,7 +634,7 @@ impl Replica  {
     {
         proof {
             // start the read transaction, get the ticket
-            let tracked ticket = self.unbounded_log_instance.readonly_start(op);
+            let tracked ticket = self.unbounded_log_instance.borrow().readonly_start(op);
         }
 
         // Step 1: Read the local tail value
@@ -679,7 +670,7 @@ impl Replica  {
             // something about the idx
     {
         proof {
-            let tracked ticket = self.unbounded_log_instance.update_start(op);
+            let tracked ticket = self.unbounded_log_instance.borrow().update_start(op);
         }
 
         // Step 1: Enqueue the operation onto the thread local batch
