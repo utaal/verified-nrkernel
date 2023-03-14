@@ -69,33 +69,26 @@ struct_with_invariants!{
         ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
         ///  - Rust:  pub(crate) replica: usize,
         // pub(crate) replica: usize,
-        //
 
         pub log_entry: PCell<LogEntry>,
 
-        // / Indicates whether this entry represents a valid operation when on the log.
-        // /
-        // /  - Dafny: linear alive: Atomic<bool, CBAliveBit>)
-        // /  - Rust:  pub(crate) alivef: AtomicBool,
+        /// Indicates whether this entry represents a valid operation when on the log.
+        ///
+        ///  - Dafny: linear alive: Atomic<bool, CBAliveBit>)
+        ///  - Rust:  pub(crate) alivef: AtomicBool,
         alive: AtomicBool<_, CyclicBuffer::alive_bits, _>,
 
+        /// the index into the cyclic buffer of this entry into the cyclig buffer.
         #[verifier::spec] cyclic_buffer_idx: nat,
 
-        #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
+        pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
     }
 
-    pub closed spec fn wf(&self, i: nat) -> bool {
-        invariant on alive with (cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
-            // g@ === CyclicBuffer::token![ cyclic_buffer_instance => alive_bits ]
-            true
+    pub closed spec fn wf(&self) -> bool {
+        invariant on alive with (cyclic_buffer_instance, cyclic_buffer_idx) is (v: bool, g: CyclicBuffer::alive_bits) {
+            g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => alive_bits => cyclic_buffer_idx => v ]
         }
     }
-
-    // pub closed spec fn wf(&self) -> bool {
-    //     invariant on alive with (cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
-    //         g@ === CyclicBuffer::token![ cyclic_buffer_instance => version_upper_bound => v as nat ]
-    //     }
-    // }
 }
 
 
@@ -150,23 +143,12 @@ pub struct NrLog
     //  - pub(crate) lmasks: [CachePadded<Cell<bool>>; MAX_REPLICAS_PER_LOG], tracking of alivebits
 
 
-    // #[verifier::proof] local_reads: Map<ReqId, ReadonlyState>,  // ghost
-    // #[verifier::proof] local_reads: UnboundedLog::local_reads,
-
-    // ghost cb_loc_s: nat
-    // ...
-
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
 }
 
 pub closed spec fn wf(&self) -> bool {
     predicate {
-        // TODO from example, replace
-        // TODO &&& self.instance.backing_cells().len() == self.buffer@.len()
-        // TODO &&& (forall|i: int| 0 <= i && i < self.buffer@.len() as int ==>
-        // TODO     self.instance.backing_cells().index(i) ===
-        // TODO         self.buffer@.index(i).id())
 
         // |node_info| == NUM_REPLICAS as int
         &&& self.local_versions.len() == NUM_REPLICAS
@@ -175,7 +157,7 @@ pub closed spec fn wf(&self) -> bool {
         &&& self.slog.len() == LOG_SIZE
 
         // (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
-        &&& (forall |i: nat| i < LOG_SIZE ==> #[trigger] self.slog[i as int].wf(i))
+        &&& (forall |i: nat| i < LOG_SIZE ==> #[trigger] self.slog[i as int].wf())
     }
 
     // invariant on slog with (
@@ -209,25 +191,9 @@ pub closed spec fn wf(&self) -> bool {
         &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance@ => local_versions => i as nat => v as nat ]
         &&& 0 <= v < 0xffff_ffff_f000_0000
     }
-
-    // invariant on local_reads with (unbounded_log_instance)
-    //     forall |i: int|
-    //     where (0 <= i < self.local_reads@.contains())
-    //     is (v: Map<ReqId, ReadonlyState>, g: UnboundedLog::local_reads) {
-    //     g@ === UnboundedLog::token![ unbounded_log_instance => local_reads => v ]
-    // }
-
 }
 } // struct_with_invariants!{
 
-
-// CachePadded<
-//     pervasive::atomic_ghost::AtomicU64<
-//         (spec::unbounded_log::UnboundedLog::Instance, spec::cyclicbuffer::CyclicBuffer::Instance, builtin::int),
-//         (spec::unbounded_log::UnboundedLog::local_versions, spec::cyclicbuffer::CyclicBuffer::local_versions),
-//         InvariantPredicate_auto_NrLog_local_versions
-//     >
-// >
 
 impl NrLog
 {
@@ -302,6 +268,16 @@ impl NrLog
 pub struct RwLock<D>
 {
     foo: Option<D>
+}
+
+impl<D> RwLock<D> {
+    pub open spec fn internal_inv(&self) -> bool {
+        true
+    }
+
+    pub open spec fn inv(&self) -> bool {
+        true
+    }
 }
 
 
@@ -396,6 +372,9 @@ pub struct Context {
 
     /// ghost
     pub thread_id_g: Tracked<ThreadToken>,
+
+    /// get the flat combiner instance
+    pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
 }
 
 pub closed spec fn wf(&self) -> bool {
@@ -547,6 +526,7 @@ impl Context {
 
 /// A token handed out to threads that replicas with replicas.
 // #[derive(Copy, Clone, Eq, PartialEq)]
+// HERE
 // pub struct ReplicaToken {
 //     pub(crate) tid: ThreadIdx,
 // }
@@ -561,6 +541,8 @@ struct_with_invariants!{
 ///  - Dafny: glinear datatype CombinerLockState
 ///  - Rust:  N/A
 pub struct CombinerLockStateGhost {
+
+    /// whether the combiner lock has been taken
     pub taken: bool,
 
     // TODO
@@ -576,17 +558,38 @@ pub struct CombinerLockStateGhost {
     pub responses_token: Tracked<PermissionOpt<Vec<ReturnType>>>,
 }
 
-
+// pub open spec fn inv(&self, taken: bool, )
 pub closed spec fn inv(&self) -> bool {
     predicate {
-        // if the lock is taken, then the combiner is collecting
+        // if the lock is taken, then the combiner is collecting, and we can't make statements
         &&& self.taken ==> {
             &&& true
         }
         // if the lock is not taken, then the combiner is idling, here collecting with len 0
         &&& !self.taken ==> {
+            // && g.value.flatCombiner.state == FC.FCCombinerCollecting([])
             &&& self.combiner@@.value.is_Collecting()
             &&& self.combiner@@.value.get_Collecting_0().len() == 0
+
+            // && g.value.flatCombiner.loc_s == fc_loc
+            // &&& self.combiner@.instance == ???
+
+            // && g.value.gops.v.Some?
+            &&& self.op_buffer_token@@.value.is_Some()
+
+            // && g.value.gops.lcell == ops
+
+            // && |g.value.gops.v.value| == MAX_THREADS_PER_REPLICA as int
+            &&& self.op_buffer_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
+
+            // && g.value.gresponses.v.Some?
+            &&& self.responses_token@@.value.is_Some()
+
+            // && g.value.gresponses.lcell == responses
+            // self.responses_token@@.pcell == responses.id()
+
+            // && |g.value.gresponses.v.value| == MAX_THREADS_PER_REPLICA as int
+            &&& self.responses_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
         }
     }
 }} // struct_with_invariants!
@@ -631,7 +634,6 @@ pub struct Replica {
     ///  - Rust:  contexts: Vec<Context<<D as Dispatch>::WriteOperation, <D as Dispatch>::Response>>,
     pub contexts: Vec<Context>,
 
-
     /// A buffer of operations for flat combining.
     ///
     /// Safety: Protected by the cominer lock.
@@ -660,10 +662,12 @@ pub struct Replica {
     pub data: CachePadded<RwLock<NRState>>,
 
 
-    // /// Thread index that will be handed out to the next thread that registers
-    // /// with the replica when calling [`Replica::register()`].
-    // next: CachePadded<AtomicUsize>,
+    /// Thread index that will be handed out to the next thread that registers
+    // with the replica when calling [`Replica::register()`].
+    // next: CachePadded<AtomicU64<_, FlatCombiner::num_threads, _>>,
+
     // /// Number of operations collected by the combiner from each thread at any
+    // we just have one inflight operation per thread
     // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
 
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
@@ -683,25 +687,40 @@ pub closed spec fn wf(&self) -> bool {
         // && (forall i | 0 <= i < |contexts| :: i in contexts && contexts[i].WF(i, fc_loc))
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].wf())
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].get_thread_id() == i)
+        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].flat_combiner_instance == self.flat_combiner_instance)
 
         // && |contexts| == MAX_THREADS_PER_REPLICA as int
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
         // && 0 <= nodeId as int < NUM_REPLICAS as int
         &&& 0 <= self.log_tkn.id < NUM_REPLICAS
+        // && replica.InternalInv()
+        &&& self.data.0.internal_inv()
+
+        // What is that one here???
+        //&& (forall nodeReplica :: replica.inv(nodeReplica) <==> nodeReplica.WF(nodeId as int, nr.cb_loc_s))
     }
 
+    // (forall v, g :: atomic_inv(combiner_lock.inner, v, g) <==> CombinerLockInv(v, g, fc_loc, ops, responses))
     invariant on combiner specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
+        // v != means lock is not taken,
         &&& (v == 0) <==> g.is_Some()
-        // && (forall v, g :: atomic_inv(combiner_lock.inner, v, g) <==> CombinerLockInv(v, g, fc_loc, ops, responses))
         &&& if v == 0 {
             &&& g.is_Some()  // the lock is not taken, the ghost state is Some
             &&& g.get_Some_0().inv()
-            &&& g.get_Some_0().taken
-           // &&& g.get_Some_0().combiner@@.instance == self.flat_combiner_instance
+            &&& !g.get_Some_0().taken
+            // &&& g.get_Some_0().combiner@@.instance == self.flat_combiner_instance
+            // g.get_Some_0().responses_token@@.pcell == self.responses.id()
+            // g.get_Some_0().op_buffer_token@@.pcell == self.op_buffer.id()
+
         } else {
             &&& g.is_None()  // the lock is taken, the ghost state is None
         }
     }
+
+    // invariant on next specifically (self.next.0) is (v: u64, g: FlatCombiner::num_threads) {
+    //     &&& 0 <= v < MAX_THREADS_PER_REPLICA
+    //     &&& v == g
+    // }
 }
 
 } // struct_with_invariants!
