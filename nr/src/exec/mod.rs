@@ -1,72 +1,174 @@
-// pub mod nr;
+use builtin_macros::verus_old_todo_no_ghost_blocks;
 
+use crate::spec::cyclicbuffer::*;
+use crate::spec::types::*;
+use crate::spec::unbounded_log::*;
 
-// the verus dependencies
-// #[macro_use]
-// mod pervasive;
 use crate::pervasive::prelude::*;
-use crate::pervasive::atomic_ghost::*;
-use crate::pervasive::struct_with_invariants;
 use crate::pervasive::vec::Vec;
 
+mod log;
+mod cachepadded;
+mod replica;
+mod rwlock;
+mod context;
 
-use crate::spec::types::*;
-// use crate::spec::unbounded_log::*;
-// use crate::spec::cyclicbuffer::*;
-use crate::spec::unbounded_log::UnboundedLog;
-use crate::spec::cyclicbuffer::CyclicBuffer;
+/// Unique identifier for the given replicas (e.g., its NUMA node)
+pub type ReplicaId = usize;
 
-// use crate::_spec_unbounded_logUnboundedLog_token_internal;
-// use crate::_spec_cyclicbufferCyclicBuffer_token_internal;
+/// A (monotoically increasing) number that uniquely identifies a thread that's
+/// registered with the replica.
+pub type ThreadIdx = usize;
+
+/// the maximum number of replicas
+pub const MAX_REPLICAS_PER_LOG: usize = 16;
+
+/// the number of replicas we have
+pub const NUM_REPLICAS: usize = 4;
+
+/// the size of the log in bytes
+pub const DEFAULT_LOG_BYTES: usize = 2 * 1024 * 1024;
+
+pub const LOG_SIZE: usize = 1024;
+
+/// maximum number of threads per replica
+pub const MAX_THREADS_PER_REPLICA: usize = 256;
+
+
+pub use context::ThreadToken;
+pub use replica::Replica;
+pub use log::NrLog;
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// The Public Interface
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+verus_old_todo_no_ghost_blocks! {
+
+
+/// The "main" type of NR which users interact with.
+///
+///  - Dafny: N/A
+///  - Rust:  pub struct NodeReplicated<D: Dispatch + Sync>
+pub struct NodeReplicated {
+    /// the log of operations
+    ///
+    ///  - Rust: log: Log<D::WriteOperation>,
+    log: NrLog,
+    // log: NrLog,
+
+    /// the nodes or replicas in the system
+    ///
+    ///  - Rust: replicas: Vec<Box<Replica<D>>>,
+    // replicas: Vec<Box<Replica<NRState, UpdateOp, ReturnType>>>,
+    replicas: Vec<Box<Replica>>,
+
+    /// something that creates new request ids, or do we
+    // #[verifier::proof] request_id: ReqId,
+
+    #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
+    #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
+}
 
 
 
-#[repr(align(128))]
-pub struct CachePadded<T>(T);
-
-struct_with_invariants!{
-    struct NR {
-        version_upper_bound: CachePadded<AtomicU64<_, UnboundedLog::version_upper_bound, _>>,
-        head: CachePadded<AtomicU64<_, CyclicBuffer::head, _>>,
-        // globalTail: CachePadded<Atomic<u64, GlobalTailTokens>>,
-        node_info: Vec<CachePadded<AtomicU64<_, (UnboundedLog::local_versions, CyclicBuffer::local_heads), _>>>,  // NodeInfo is padded
-
-        // buffer: lseq<BufferEntry>,
-        // bufferContents: GhostAtomic<CBContents>, // !ghost
-
-        // ghost cb_loc_s: nat
-        // ...
-
-        #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
-        #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
-    }
-
+/// Proof blocks for the NodeReplicate data structure
+impl NodeReplicated {
     pub closed spec fn wf(&self) -> bool {
-        predicate {
-            // TODO from example, replace
-            // TODO &&& self.instance.backing_cells().len() == self.buffer@.len()
-            // TODO &&& (forall|i: int| 0 <= i && i < self.buffer@.len() as int ==>
-            // TODO     self.instance.backing_cells().index(i) ===
-            // TODO         self.buffer@.index(i).id())
-            true
-        }
+        &&& self.log.wf()
+        &&& self.unbounded_log_instance == self.log.unbounded_log_instance
+        &&& self.cyclic_buffer_instance == self.log.cyclic_buffer_instance
 
-        invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound) {
-            g@ === crate::spec::unbounded_log::UnboundedLog::token![ unbounded_log_instance => version_upper_bound => v as nat ]
-        }
-
-        invariant on head with (cyclic_buffer_instance) specifically (self.head.0) is (v: u64, g: CyclicBuffer::head) {
-            g@ === CyclicBuffer::token![ cyclic_buffer_instance => head => v as nat ]
-        }
-
-        invariant on node_info with (unbounded_log_instance, cyclic_buffer_instance)
-            forall |i: int|
-            where (0 <= i < self.node_info@.len())
-            specifically (self.node_info@[i].0)
-            is (v: u64, g: (UnboundedLog::local_versions, CyclicBuffer::local_heads)) {
-
-            &&& g.0@ === UnboundedLog::token![ unbounded_log_instance => local_versions => i as nat => v as nat ]
-            &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance => local_heads => i as nat => v as nat ]
+        &&& forall |i| 0 <= i < self.replicas.len() ==> {
+            &&& #[trigger] self.replicas[i].wf()
+            &&& self.replicas[i].unbounded_log_instance == self.unbounded_log_instance
+            &&& self.replicas[i].cyclic_buffer_instance == self.cyclic_buffer_instance
         }
     }
 }
+
+
+impl NodeReplicated {
+    // /// Creates a new, replicated data-structure from a single-threaded
+    // /// data-structure that implements [`Dispatch`]. It uses the [`Default`]
+    // /// constructor to create a initial data-structure for `D` on all replicas.
+    // ///
+    // ///  - Dafny: n/a ?
+    // ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
+    // pub fn init(num_replicas: usize) -> Self
+    //     requires num_replicas > 0
+    // {
+
+    //     // This is basically a wrapper around the `init` of the interface defined in Dafny
+
+    //     // allocate a new log
+
+    //     // register the replicas with the log
+
+    //     // add the replica to the list of replicas
+    //     // unimplemented!()
+    //     assert(false);
+
+    //     NodeReplicated {
+    //         log: NrLog::new(),
+    //         replicas: Vec::new(),
+    //     }
+    // }
+
+    /// Registers a thread with a given replica in the [`NodeReplicated`]
+    /// data-structure. Returns an Option containing a [`ThreadToken`] if the
+    /// registration was successful. None if the registration failed.
+    ///
+    /// XXX: in the dafny version, we don't have this. Instead, we pre-allocate all
+    ///      threads for the replicas etc.
+    ///
+    ///  - Dafny: N/A (in c++ code?)
+    ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
+    pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
+        requires self.wf()
+    {
+        assert(false);
+        None
+    }
+
+    /// Executes a mutable operation against the data-structure.
+    ///
+    ///  - Dafny:
+    ///  - Rust:  pub fn execute_mut(&self, op: <D as Dispatch>::WriteOperation, tkn: ThreadToken)
+    ///             -> <D as Dispatch>::Response
+    ///
+    /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
+    pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> Result<ReturnType, ()>
+        requires
+          self.wf()
+    {
+        if tkn.rid < self.replicas.len() {
+            // get the replica/node, execute it with the log and provide the thread id.
+            self.replicas.index(tkn.rid).execute_mut(&self.log, op, tkn.tid)
+        } else {
+            Err(())
+        }
+    }
+
+
+    /// Executes a immutable operation against the data-structure.
+    ///
+    ///  - Dafny: N/A (in c++ code?)
+    ///  - Rust:  pub fn execute(&self, op: <D as Dispatch>::ReadOperation<'_>, tkn: ThreadToken,)
+    ///             -> <D as Dispatch>::Response
+    ///
+    /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
+    pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> Result<ReturnType, ()>
+        requires self.wf()
+    {
+        if tkn.rid < self.replicas.len() {
+            // get the replica/node, execute it with the log and provide the thread id.
+            self.replicas.index(tkn.rid).execute(&self.log, op, tkn.tid)
+        } else {
+            Err(())
+        }
+    }
+}
+
+} // verus_old_todo_no_ghost_blocks!

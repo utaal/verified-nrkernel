@@ -97,7 +97,7 @@ FlatCombiner {
         pub clients: Map<ThreadId, ClientState>,
 
         #[sharding(map)]
-        pub slots: Map<nat, SlotState>,
+        pub slots: Map<ThreadId, SlotState>,
 
         #[sharding(variable)]
         pub combiner: CombinerState,
