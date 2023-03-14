@@ -3,7 +3,7 @@
 mod pervasive;
 use pervasive::prelude::*;
 
-use pervasive::cell::{PCell, PermissionOpt};
+use pervasive::cell::{PCell, PermissionOpt, CellId};
 use pervasive::map::Map;
 use pervasive::option::Option;
 use pervasive::vec::Vec;
@@ -541,11 +541,6 @@ struct_with_invariants!{
 ///  - Dafny: glinear datatype CombinerLockState
 ///  - Rust:  N/A
 pub struct CombinerLockStateGhost {
-
-    /// whether the combiner lock has been taken
-    pub taken: bool,
-
-    // TODO
     // glinear flatCombiner: FCCombiner,
     pub combiner: Tracked<FlatCombiner::combiner>,
 
@@ -559,38 +554,37 @@ pub struct CombinerLockStateGhost {
 }
 
 // pub open spec fn inv(&self, taken: bool, )
-pub closed spec fn inv(&self) -> bool {
+pub closed spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses_id: CellId, op_buffer_id: CellId) -> bool {
     predicate {
-        // if the lock is taken, then the combiner is collecting, and we can't make statements
-        &&& self.taken ==> {
-            &&& true
-        }
-        // if the lock is not taken, then the combiner is idling, here collecting with len 0
-        &&& !self.taken ==> {
-            // && g.value.flatCombiner.state == FC.FCCombinerCollecting([])
-            &&& self.combiner@@.value.is_Collecting()
-            &&& self.combiner@@.value.get_Collecting_0().len() == 0
+        // REMOVE? // if the lock is taken, then the combiner is collecting, and we can't make statements
+        // REMOVE? &&& self.taken ==> {
+        // REMOVE?     &&& true
+        // REMOVE? }
+        // REMOVE? // if the lock is not taken, then the combiner is idling, here collecting with len 0
+        // REMOVE? &&& !self.taken ==> {
+        // && g.value.flatCombiner.state == FC.FCCombinerCollecting([])
+        &&& self.combiner@@.value.is_Collecting()
+        &&& self.combiner@@.value.get_Collecting_0().len() == 0
 
-            // && g.value.flatCombiner.loc_s == fc_loc
-            // &&& self.combiner@.instance == ???
+        // && g.value.flatCombiner.loc_s == fc_loc
+        &&& self.combiner@@.instance == combiner_instance
 
-            // && g.value.gops.v.Some?
-            &&& self.op_buffer_token@@.value.is_Some()
+        // && g.value.gops.v.Some?
+        &&& self.op_buffer_token@@.value.is_Some()
 
-            // && g.value.gops.lcell == ops
+        // && g.value.gops.lcell == ops
+        &&& self.responses_token@@.pcell == responses_id
+        // && g.value.gresponses.lcell == responses
+        &&& self.op_buffer_token@@.pcell == op_buffer_id
 
-            // && |g.value.gops.v.value| == MAX_THREADS_PER_REPLICA as int
-            &&& self.op_buffer_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
+        // && |g.value.gops.v.value| == MAX_THREADS_PER_REPLICA as int
+        &&& self.op_buffer_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
 
-            // && g.value.gresponses.v.Some?
-            &&& self.responses_token@@.value.is_Some()
+        // && g.value.gresponses.v.Some?
+        &&& self.responses_token@@.value.is_Some()
 
-            // && g.value.gresponses.lcell == responses
-            // self.responses_token@@.pcell == responses.id()
-
-            // && |g.value.gresponses.v.value| == MAX_THREADS_PER_REPLICA as int
-            &&& self.responses_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
-        }
+        // && |g.value.gresponses.v.value| == MAX_THREADS_PER_REPLICA as int
+        &&& self.responses_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
     }
 }} // struct_with_invariants!
 
@@ -701,19 +695,12 @@ pub closed spec fn wf(&self) -> bool {
     }
 
     // (forall v, g :: atomic_inv(combiner_lock.inner, v, g) <==> CombinerLockInv(v, g, fc_loc, ops, responses))
-    invariant on combiner specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
+    invariant on combiner with (flat_combiner_instance, responses, op_buffer) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
         // v != means lock is not taken,
         &&& (v == 0) <==> g.is_Some()
-        &&& if v == 0 {
-            &&& g.is_Some()  // the lock is not taken, the ghost state is Some
-            &&& g.get_Some_0().inv()
-            &&& !g.get_Some_0().taken
-            // &&& g.get_Some_0().combiner@@.instance == self.flat_combiner_instance
-            // g.get_Some_0().responses_token@@.pcell == self.responses.id()
-            // g.get_Some_0().op_buffer_token@@.pcell == self.op_buffer.id()
-
-        } else {
-            &&& g.is_None()  // the lock is taken, the ghost state is None
+        &&& g.is_Some() ==> {
+            // &&& g.is_Some()  // the lock is not taken, the ghost state is Some
+            &&& g.get_Some_0().inv(flat_combiner_instance@, responses.id(), op_buffer.id())
         }
     }
 
