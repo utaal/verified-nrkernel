@@ -306,6 +306,10 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         exec_finish(node_id) => {
             SimpleLog::show::no_op(interp(pre), interp(post));
         }
+
+        exec_finish_no_change(node_id) => {
+            SimpleLog::show::no_op(interp(pre), interp(post));
+        }
       }
     }
 }

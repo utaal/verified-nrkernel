@@ -90,6 +90,8 @@ pub struct ReturnType {
 impl Structural for ReturnType {}
 
 /// Represents an entry in the log
+///
+/// datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
 pub struct LogEntry {
     pub op: UpdateOp,
     pub node_id: NodeId,

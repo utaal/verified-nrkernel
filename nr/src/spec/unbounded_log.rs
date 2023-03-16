@@ -914,6 +914,17 @@ UnboundedLog {
         }
     }
 
+    /// Combiner: is done, without any change
+    transition!{
+        exec_finish_no_change(node_id: NodeId) {
+            remove combiner -= [ node_id => let CombinerState::LoadedLocalVersion { queued_ops, lversion } ];
+
+            require(lversion == pre.tail);
+
+            add    combiner += [ node_id => CombinerState::Ready];
+        }
+    }
+
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Inductiveness Proofs
@@ -1211,6 +1222,8 @@ UnboundedLog {
     #[inductive(exec_finish)]
     fn exec_finish_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
+    #[inductive(exec_finish_no_change)]
+    fn exec_finish_no_change_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Helper Functions

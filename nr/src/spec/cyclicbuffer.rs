@@ -6,6 +6,7 @@ use super::pervasive::map::*;
 // use super::pervasive::seq::*;
 // use super::pervasive::set::*;
 // use super::pervasive::*;
+#[allow(unused_imports)] // XXX: should not be needed!
 use crate::pervasive::cell::{PCell, PermissionOpt};
 
 use state_machines_macros::*;
@@ -28,14 +29,13 @@ use super::utils::*;
 
 // rust_verify/tests/example.rs ignore
 
+pub const LOG_SIZE : usize = 1024;
+
 type LogicalLogIdx = int;
 
 type Key = int;
 
-
-pub const LOG_SIZE : usize = 1024;
-
-
+///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
 pub type StoredType = PermissionOpt<LogEntry>;
 
 verus! {
@@ -79,7 +79,7 @@ pub enum ReaderState {
 pub enum CombinerState {
     Idle,
     Reading(ReaderState),
-    AdvancingHead { idx: LogIdx, min_head: LogIdx },
+    AdvancingHead { idx: LogIdx, min_local_version: LogIdx },
     AdvancingTail { observed_head: LogIdx },
     Appending { cur_idx: LogIdx, tail: LogIdx },
 }
@@ -151,7 +151,7 @@ tokenized_state_machine! { CyclicBuffer {
         pub alive_bits: Map</* entry: */ LogIdx, /* bit: */ bool>,
 
         #[sharding(map)]
-        pub combiner_state: Map<NodeId, CombinerState>
+        pub combiner: Map<NodeId, CombinerState>
     }
 
 
@@ -169,7 +169,7 @@ tokenized_state_machine! { CyclicBuffer {
     pub spec fn complete(&self) -> bool {
         &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_versions.dom().contains(i))
         &&& (forall |i| 0 <= i < self.buffer_size  <==> self.alive_bits.dom().contains(i))
-        &&& (forall |i| 0 <= i < self.num_replicas <==> self.combiner_state.dom().contains(i))
+        &&& (forall |i| 0 <= i < self.num_replicas <==> self.combiner.dom().contains(i))
         &&& (forall |i| self.contents.dom().contains(i) ==> -self.buffer_size <= i < self.tail)
     }
 
@@ -192,8 +192,8 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[invariant]
     pub spec fn ranges_no_overlap(&self) -> bool {
-        (forall |i, j| self.combiner_state.dom().contains(i) && self.combiner_state.dom().contains(j) && i != j ==>
-            self.combiner_state[i].no_overlap_with(self.combiner_state[j])
+        (forall |i, j| self.combiner.dom().contains(i) && self.combiner.dom().contains(j) && i != j ==>
+            self.combiner[i].no_overlap_with(self.combiner[j])
         )
     }
 
@@ -224,8 +224,8 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[invariant]
     pub spec fn all_reader_state_valid(&self) -> bool {
-        forall |node_id| #[trigger] self.combiner_state.dom().contains(node_id) && self.combiner_state[node_id].is_Reading() ==>
-          self.reader_state_valid(node_id, self.combiner_state[node_id].get_Reading_0())
+        forall |node_id| #[trigger] self.combiner.dom().contains(node_id) && self.combiner[node_id].is_Reading() ==>
+          self.reader_state_valid(node_id, self.combiner[node_id].get_Reading_0())
     }
 
     pub closed spec fn reader_state_valid(&self, node_id: NodeId, rs: ReaderState) -> bool {
@@ -269,20 +269,20 @@ tokenized_state_machine! { CyclicBuffer {
     }
 
     #[invariant]
-    pub spec fn all_combiner_state_valid(&self) -> bool {
-        forall |node_id| #[trigger] self.combiner_state.dom().contains(node_id) ==>
-          self.combiner_state_valid(node_id, self.combiner_state[node_id])
+    pub spec fn all_combiner_valid(&self) -> bool {
+        forall |node_id| #[trigger] self.combiner.dom().contains(node_id) ==>
+          self.combiner_valid(node_id, self.combiner[node_id])
     }
 
-    pub closed spec fn combiner_state_valid(&self, node_id: NodeId, cs: CombinerState) -> bool {
+    pub closed spec fn combiner_valid(&self, node_id: NodeId, cs: CombinerState) -> bool {
         match cs {
             CombinerState::Idle => true,
             CombinerState::Reading(_) => true, // see reader_state_valid instead
-            CombinerState::AdvancingHead{idx, min_head} => {
+            CombinerState::AdvancingHead{idx, min_local_version} => {
                 // the index is always within the defined replicas
                 &&& idx <= self.num_replicas as nat
-                // forall replicas we'e seen, min_head is smaller than all localTails
-                &&& (forall |n| 0 <= n < idx ==> min_head <= self.local_versions[n])
+                // forall replicas we'e seen, min_local_version is smaller than all localTails
+                &&& (forall |n| 0 <= n < idx ==> min_local_version <= self.local_versions[n])
             }
             CombinerState::AdvancingTail{observed_head} => {
                 // the observed head is smaller than all local tails
@@ -323,7 +323,7 @@ tokenized_state_machine! { CyclicBuffer {
             init contents = contents;
 
             init alive_bits = Map::new(|i: nat| 0 <= i < buffer_size, |i: nat| !log_entry_alive_value(i as int, buffer_size));
-            init combiner_state = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| CombinerState::Idle);
+            init combiner = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| CombinerState::Idle);
         }
     }
 
@@ -340,8 +340,8 @@ tokenized_state_machine! { CyclicBuffer {
         reader_start(node_id: NodeId) {
             have   local_versions    >= [ node_id => let local_head ];
 
-            remove combiner_state -= [ node_id => CombinerState::Idle ];
-            add    combiner_state += [
+            remove combiner -= [ node_id => CombinerState::Idle ];
+            add    combiner += [
                 node_id => CombinerState::Reading(ReaderState::Starting { start: local_head })
             ];
         }
@@ -350,10 +350,10 @@ tokenized_state_machine! { CyclicBuffer {
     /// enter the reading phase
     transition!{
         reader_enter(node_id: NodeId) {
-            remove combiner_state -= [
+            remove combiner -= [
                 node_id => let CombinerState::Reading(ReaderState::Starting { start })
             ];
-            add combiner_state += [
+            add combiner += [
                 node_id => CombinerState::Reading(ReaderState::Range { start, end: pre.tail, cur: start })
             ];
         }
@@ -362,7 +362,7 @@ tokenized_state_machine! { CyclicBuffer {
     /// read the value of the current entry to process it
     transition!{
         reader_guard(node_id: NodeId) {
-            remove combiner_state -= [
+            remove combiner -= [
                 node_id => let CombinerState::Reading( ReaderState::Range{ start, end, cur })
             ];
 
@@ -372,7 +372,7 @@ tokenized_state_machine! { CyclicBuffer {
 
             birds_eye let val = pre.contents.index(cur as int);
 
-            add combiner_state += [
+            add combiner += [
                 node_id => CombinerState::Reading( ReaderState::Guard{ start, end, cur, val })
             ];
 
@@ -383,7 +383,7 @@ tokenized_state_machine! { CyclicBuffer {
     /// the value of the log must not change while we're processing it
     property!{
         guard_guards(node_id: NodeId) {
-            have combiner_state >= [
+            have combiner >= [
                 node_id => let CombinerState::Reading( ReaderState::Guard{ start, end, cur, val })
             ];
             guard contents >= [ cur as int => val ];
@@ -393,10 +393,10 @@ tokenized_state_machine! { CyclicBuffer {
     /// finish processing the entry, increase current pointer
     transition!{
         reader_ungard(node_id: NodeId) {
-            remove combiner_state -= [
+            remove combiner -= [
                 node_id => let CombinerState::Reading(ReaderState::Guard{ start, end, cur, val })
             ];
-            add combiner_state += [
+            add combiner += [
                 node_id => CombinerState::Reading(ReaderState::Range{ start, end, cur: cur + 1 })
             ];
         }
@@ -405,10 +405,10 @@ tokenized_state_machine! { CyclicBuffer {
     /// finish the reading whith, place the combiner into the idle state
     transition!{
         reader_finish(node_id: NodeId) {
-            remove combiner_state -= [
+            remove combiner -= [
                 node_id => let CombinerState::Reading(ReaderState::Range{ start, end, cur })
             ];
-            add    combiner_state += [ node_id => CombinerState::Idle ];
+            add    combiner += [ node_id => CombinerState::Idle ];
 
             remove local_versions -= [ node_id => let _ ];
             add    local_versions += [ node_id => end ];
@@ -420,8 +420,8 @@ tokenized_state_machine! { CyclicBuffer {
     /// abort reading, place the combiner back into the idle state
     transition!{
         reader_abort(node_id: NodeId) {
-            remove combiner_state -= [ node_id => let CombinerState::Reading(r) ];
-            add    combiner_state += [ node_id => CombinerState::Idle ];
+            remove combiner -= [ node_id => let CombinerState::Reading(r) ];
+            add    combiner += [ node_id => CombinerState::Idle ];
 
             require(r.is_Starting() || r.is_Range());
         }
@@ -439,30 +439,30 @@ tokenized_state_machine! { CyclicBuffer {
     transition!{
         advance_head_start(node_id: NodeId) {
             have   local_versions >= [ 0 => let local_head_0 ];
-            remove combiner_state -= [ node_id => CombinerState::Idle ];
-            add    combiner_state += [ node_id => CombinerState::AdvancingHead { idx: 1, min_head: local_head_0,} ];
+            remove combiner -= [ node_id => CombinerState::Idle ];
+            add    combiner += [ node_id => CombinerState::AdvancingHead { idx: 1, min_local_version: local_head_0,} ];
         }
     }
 
     /// read the next local head
     transition!{
         advance_head_next(node_id: NodeId) {
-            remove combiner_state -= [ node_id => let CombinerState::AdvancingHead { idx, min_head } ];
+            remove combiner -= [ node_id => let CombinerState::AdvancingHead { idx, min_local_version } ];
 
             have   local_versions    >= [ idx => let local_head_at_idx ];
             require(idx < pre.num_replicas);
 
-            let new_min = min(min_head, local_head_at_idx);
-            add combiner_state += [ node_id => CombinerState::AdvancingHead { idx: idx + 1, min_head: new_min } ];
+            let new_min = min(min_local_version, local_head_at_idx);
+            add combiner += [ node_id => CombinerState::AdvancingHead { idx: idx + 1, min_local_version: new_min } ];
         }
     }
 
     /// update the head value with the current collected miniumu
     transition!{
         advance_head_finish(node_id: NodeId) {
-            remove combiner_state -= [ node_id => let CombinerState::AdvancingHead { idx, min_head } ];
-            add    combiner_state += [ node_id => CombinerState::Idle ];
-            update head            = min_head;
+            remove combiner -= [ node_id => let CombinerState::AdvancingHead { idx, min_local_version } ];
+            add    combiner += [ node_id => CombinerState::Idle ];
+            update head      = min_local_version;
 
             require(idx == pre.num_replicas);
         }
@@ -471,8 +471,8 @@ tokenized_state_machine! { CyclicBuffer {
     /// stop the advancing head transition without uppdating the head
     transition!{
         advance_head_abort(node_id: NodeId) {
-            remove combiner_state -= [ node_id => let CombinerState::AdvancingHead { .. } ];
-            add    combiner_state += [ node_id => CombinerState::Idle ];
+            remove combiner -= [ node_id => let CombinerState::AdvancingHead { .. } ];
+            add    combiner += [ node_id => CombinerState::Idle ];
         }
     }
 
@@ -488,16 +488,16 @@ tokenized_state_machine! { CyclicBuffer {
     /// start the advancing of the head tail by reading the head value
     transition!{
         advance_tail_start(node_id: NodeId) {
-            remove combiner_state -= [ node_id => CombinerState::Idle ];
-            add    combiner_state += [ node_id => CombinerState::AdvancingTail { observed_head: pre.head } ];
+            remove combiner -= [ node_id => CombinerState::Idle ];
+            add    combiner += [ node_id => CombinerState::AdvancingTail { observed_head: pre.head } ];
         }
     }
 
     /// advance the tail to the new value
     transition!{
         advance_tail_finish(node_id: NodeId, new_tail: nat) {
-            remove combiner_state -= [ node_id => let CombinerState::AdvancingTail { observed_head } ];
-            add    combiner_state += [ node_id => CombinerState::Appending { cur_idx: pre.tail, tail: new_tail } ];
+            remove combiner -= [ node_id => let CombinerState::AdvancingTail { observed_head } ];
+            add    combiner += [ node_id => CombinerState::Appending { cur_idx: pre.tail, tail: new_tail } ];
             update tail            = new_tail;
 
             // only allow advances and must not overwrite still active entries
@@ -532,8 +532,8 @@ tokenized_state_machine! { CyclicBuffer {
     /// aborts the advancing tail transitions
     transition!{
         advance_tail_abort(node_id: NodeId) {
-            remove combiner_state -= [ node_id => let CombinerState::AdvancingTail { .. } ];
-            add    combiner_state += [ node_id => CombinerState::Idle ];
+            remove combiner -= [ node_id => let CombinerState::AdvancingTail { .. } ];
+            add    combiner += [ node_id => CombinerState::Idle ];
         }
     }
 
@@ -545,8 +545,8 @@ tokenized_state_machine! { CyclicBuffer {
 
     transition!{
         append_flip_bit(node_id: NodeId, deposited: StoredType) {
-            remove combiner_state -= [ node_id => let CombinerState::Appending { cur_idx, tail } ];
-            add    combiner_state += [ node_id => CombinerState::Appending { cur_idx: cur_idx + 1, tail } ];
+            remove combiner -= [ node_id => let CombinerState::Appending { cur_idx, tail } ];
+            add    combiner += [ node_id => CombinerState::Appending { cur_idx: cur_idx + 1, tail } ];
 
             remove alive_bits -= [ log_entry_idx(cur_idx as int, pre.buffer_size) => let bit ];
             add    alive_bits += [ log_entry_idx(cur_idx as int, pre.buffer_size) => log_entry_alive_value(cur_idx  as int, pre.buffer_size) ];
@@ -563,8 +563,8 @@ tokenized_state_machine! { CyclicBuffer {
     /// finish the appending parts
     transition!{
         append_finish(node_id: NodeId) {
-            remove combiner_state -= [ node_id => let CombinerState::Appending { cur_idx, tail } ];
-            add    combiner_state += [ node_id => CombinerState::Idle ];
+            remove combiner -= [ node_id => let CombinerState::Appending { cur_idx, tail } ];
+            add    combiner += [ node_id => CombinerState::Idle ];
 
             require(cur_idx == tail);
         }
@@ -609,8 +609,8 @@ tokenized_state_machine! { CyclicBuffer {
     fn advance_tail_finish_inductive(pre: Self, post: Self, node_id: NodeId, new_tail: nat) {
         assert(post.local_versions.dom().contains(node_id));
 
-        let mycur_idx = post.combiner_state[node_id].get_Appending_cur_idx();
-        let mytail = post.combiner_state[node_id].get_Appending_tail();
+        let mycur_idx = post.combiner[node_id].get_Appending_cur_idx();
+        let mytail = post.combiner[node_id].get_Appending_tail();
         assert(mycur_idx == pre.tail);
 
         let min_local_versions = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
@@ -622,8 +622,8 @@ tokenized_state_machine! { CyclicBuffer {
     fn append_flip_bit_inductive(pre: Self, post: Self, node_id: NodeId, deposited: StoredType) {
         assert(post.local_versions.dom().contains(node_id));
 
-        let myidx = pre.combiner_state[node_id].get_Appending_cur_idx();
-        let mytail = pre.combiner_state[node_id].get_Appending_tail();
+        let myidx = pre.combiner[node_id].get_Appending_cur_idx();
+        let mytail = pre.combiner[node_id].get_Appending_tail();
         assert(post.contents.contains_key(myidx as int));
         assert(log_entry_is_alive(post.alive_bits, myidx as int, post.buffer_size));
 
@@ -647,17 +647,17 @@ tokenized_state_machine! { CyclicBuffer {
             log_entry_is_alive(pre.alive_bits, i, pre.buffer_size) == log_entry_is_alive(post.alive_bits, i, post.buffer_size));
 
         // overlap check
-        assert forall |i, j| post.combiner_state.dom().contains(i) && post.combiner_state.dom().contains(j) && i != j
-            implies post.combiner_state[i].no_overlap_with(post.combiner_state[j]) by {
-            assert(pre.combiner_state[i].no_overlap_with(pre.combiner_state[j]));
+        assert forall |i, j| post.combiner.dom().contains(i) && post.combiner.dom().contains(j) && i != j
+            implies post.combiner[i].no_overlap_with(post.combiner[j]) by {
+            assert(pre.combiner[i].no_overlap_with(pre.combiner[j]));
         }
 
         // combiner state
-        assert forall |nid| #[trigger] post.combiner_state.dom().contains(nid) implies
-            post.combiner_state_valid(nid, post.combiner_state[nid]) by
+        assert forall |nid| #[trigger] post.combiner.dom().contains(nid) implies
+            post.combiner_valid(nid, post.combiner[nid]) by
         {
             if nid != node_id {
-                assert(pre.combiner_state[node_id].no_overlap_with(pre.combiner_state[nid]));
+                assert(pre.combiner[node_id].no_overlap_with(pre.combiner[nid]));
             }
         };
     }
@@ -676,10 +676,10 @@ tokenized_state_machine! { CyclicBuffer {
     #[inductive(reader_guard)]
     fn reader_guard_inductive(pre: Self, post: Self, node_id: NodeId) {
         assert(post.local_versions.dom().contains(node_id));
-        assert forall |i, j| post.combiner_state.dom().contains(i) && post.combiner_state.dom().contains(j) && i != j
-        implies post.combiner_state[i].no_overlap_with(post.combiner_state[j]) by {
-            if (j == node_id && post.combiner_state[i].is_Appending()) {
-                let cur = post.combiner_state[j].get_Reading_0().get_Guard_cur();
+        assert forall |i, j| post.combiner.dom().contains(i) && post.combiner.dom().contains(j) && i != j
+        implies post.combiner[i].no_overlap_with(post.combiner[j]) by {
+            if (j == node_id && post.combiner[i].is_Appending()) {
+                let cur = post.combiner[j].get_Reading_0().get_Guard_cur();
                 assert(log_entry_is_alive(post.alive_bits, cur as int, post.buffer_size));
             }
         }
@@ -698,8 +698,8 @@ tokenized_state_machine! { CyclicBuffer {
         // there was a change in the minimum of the local heads, meaning the minimum was updated by us.
         if min_local_versions_pre != min_local_versions_post {
 
-            let start = pre.combiner_state[node_id].get_Reading_0().get_Range_start();
-            let end = pre.combiner_state[node_id].get_Reading_0().get_Range_end();
+            let start = pre.combiner[node_id].get_Reading_0().get_Range_start();
+            let end = pre.combiner[node_id].get_Reading_0().get_Range_end();
 
             map_min_value_smallest(pre.local_versions, (pre.num_replicas - 1) as nat);
             map_min_value_smallest(post.local_versions, (post.num_replicas - 1) as nat);

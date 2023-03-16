@@ -1,12 +1,14 @@
 // the verus dependencies
 #[macro_use]
 mod pervasive;
-use pervasive::prelude::*;
-
-use pervasive::cell::{PCell, PermissionOpt, CellId};
+#[allow(unused_imports)] // XXX: should not be needed!
+use pervasive::cell::{CellId, PCell, PermissionOpt};
+#[allow(unused_imports)] // XXX: should not be needed!
 use pervasive::map::Map;
 use pervasive::option::Option;
+use pervasive::prelude::*;
 use pervasive::vec::Vec;
+use pervasive::modes::{Gho, Trk};
 
 mod spec;
 // mod exec;
@@ -20,16 +22,8 @@ use pervasive::atomic_ghost::*;
 
 use crate::pervasive::struct_with_invariants;
 
-/// a simpe cache padding for the struct fields
-#[repr(align(128))]
-pub struct CachePadded<T>(T);
+verus_old_todo_no_ghost_blocks! {
 
-/// Unique identifier for the given replicas (e.g., its NUMA node)
-pub type ReplicaId = usize;
-
-/// A (monotoically increasing) number that uniquely identifies a thread that's
-/// registered with the replica.
-pub type ThreadIdx = usize;
 
 /// the maximum number of replicas
 pub const MAX_REPLICAS_PER_LOG: usize = 16;
@@ -45,49 +39,148 @@ pub const LOG_SIZE: usize = 1024;
 /// maximum number of threads per replica
 pub const MAX_THREADS_PER_REPLICA: usize = 256;
 
-verus_old_todo_no_ghost_blocks! {
+pub const MAX_PENDING_OPS: usize = 1;
+
+/// Constant required for garbage collection. When the tail and the head are these many
+/// entries apart on the circular buffer, garbage collection will be performed by one of
+/// the replicas registered with the log.
+///
+/// For the GC algorithm to work, we need to ensure that we can support the largest
+/// possible append after deciding to perform GC. This largest possible append is when
+/// every thread within a replica has a full batch of writes to be appended to the shared
+/// log.
+pub const GC_FROM_HEAD: usize = MAX_PENDING_OPS * MAX_THREADS_PER_REPLICA;
 
 
-struct_with_invariants!{
-    /// An entry that sits on the log. Each entry consists of three fields: The operation to
-    /// be performed when a thread reaches this entry on the log, the replica that appended
-    /// this operation, and a flag indicating whether this entry is valid.
-    ///
-    /// `T` is the type on the operation - typically an enum class containing opcodes as well
-    /// as arguments. It is required that this type be sized and cloneable.
-    #[repr(align(128))]
-    pub struct BufferEntry {
-        /// The operation that this entry represents.
-        ///
-        ///  - Dafny: linear cell: Cell<CB.ConcreteLogEntry>, where
-        ///            datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
-        ///  - Rust:  pub(crate) operation: Option<T>,
-        // pub(crate) operation: Option<UOp>,
+/// Threshold after how many iterations we abort and report the replica we're waiting for
+/// as stuck for busy spinning loops.
+///
+/// Should be a power of two to avoid divisions.
+pub const WARN_THRESHOLD: usize = 128;
 
-        /// Identifies the replica that issued the above operation.
-        ///
-        ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
-        ///  - Rust:  pub(crate) replica: usize,
-        // pub(crate) replica: usize,
 
-        pub log_entry: PCell<LogEntry>,
+pub const MAX_IDX : u64 = 0xffff_ffff_f000_0000;
 
-        /// Indicates whether this entry represents a valid operation when on the log.
-        ///
-        ///  - Dafny: linear alive: Atomic<bool, CBAliveBit>)
-        ///  - Rust:  pub(crate) alivef: AtomicBool,
-        alive: AtomicBool<_, CyclicBuffer::alive_bits, _>,
+/// a simpe cache padding for the struct fields
+#[repr(align(128))]
+pub struct CachePadded<T>(pub T);
 
-        /// the index into the cyclic buffer of this entry into the cyclig buffer.
-        #[verifier::spec] cyclic_buffer_idx: nat,
+/// Unique identifier for the given replica (relative to the log)
+pub type ReplicaId = u32;
 
-        pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
+/// A (monotoically increasing) number that uniquely identifies a thread that's
+/// registered with the replica.
+pub type ThreadId = u32;
+
+/// a token that identifies the replica
+///
+// #[derive(Copy, Clone, Eq, PartialEq)]
+pub struct ReplicaToken {
+    pub(crate) rid: ReplicaId,
+}
+
+impl ReplicaToken {
+    // pub const fn new(rid: ReplicaId) -> Self {
+    //     Self { rid }
+    // }
+
+    // pub const fn clone(&self) -> Self {
+    //     Self { rid: self.rid }
+    // }
+
+    pub const fn id(&self) -> (result: ReplicaId)
+        ensures result as nat == self.id_spec()
+    {
+        self.rid
     }
 
-    pub closed spec fn wf(&self) -> bool {
-        invariant on alive with (cyclic_buffer_instance, cyclic_buffer_idx) is (v: bool, g: CyclicBuffer::alive_bits) {
-            g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => alive_bits => cyclic_buffer_idx => v ]
-        }
+    pub open spec fn id_spec(&self) -> nat {
+        self.rid as nat
+    }
+}
+
+
+/// the thread token identifies a thread of a given replica
+pub struct ThreadToken {
+    /// the replica id this thread uses
+    pub(crate) rid: ReplicaToken,
+    /// identifies the thread within the replica
+    pub(crate) tid: ThreadId,
+}
+
+impl ThreadToken {
+    pub fn thread_id(&self) -> (result: ThreadId)
+        ensures result as nat == self.thread_id_spec()
+    {
+        self.tid
+    }
+
+    pub open spec fn thread_id_spec(&self) -> nat {
+        self.tid as nat
+    }
+
+    pub const fn replica_id(&self) -> (result: ReplicaId)
+        ensures result as nat == self.replica_id_spec()
+    {
+        self.rid.id()
+    }
+
+    pub open spec fn replica_id_spec(&self) -> nat {
+        self.rid.id_spec()
+    }
+}
+
+
+#[verifier(external_body)] /* vattr */
+pub fn print_starvation_warning() {
+    println!("WARNING: advance_head() has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
+}
+
+struct_with_invariants!{
+/// An entry that sits on the log. Each entry consists of three fields: The operation to
+/// be performed when a thread reaches this entry on the log, the replica that appended
+/// this operation, and a flag indicating whether this entry is valid.
+///
+/// `T` is the type on the operation - typically an enum class containing opcodes as well
+/// as arguments. It is required that this type be sized and cloneable.
+#[repr(align(128))]
+pub struct BufferEntry {
+    /// The operation that this entry represents.
+    ///
+    ///  - Dafny: linear cell: Cell<CB.ConcreteLogEntry>, where
+    ///            datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
+    ///  - Rust:  pub(crate) operation: Option<T>,
+    // pub(crate) operation: Option<UOp>,
+
+    /// Identifies the replica that issued the above operation.
+    ///
+    ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
+    ///  - Rust:  pub(crate) replica: usize,
+    // pub(crate) replica: usize,
+
+    pub log_entry: PCell<LogEntry>,
+
+    /// Indicates whether this entry represents a valid operation when on the log.
+    ///
+    ///  - Dafny: linear alive: Atomic<bool, CBAliveBit>)
+    ///  - Rust:  pub(crate) alivef: AtomicBool,
+    pub alive: AtomicBool<_, CyclicBuffer::alive_bits, _>,
+
+    /// the index into the cyclic buffer of this entry into the cyclig buffer.
+    pub cyclic_buffer_idx: Ghost<nat>,
+
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
+}
+
+pub open spec fn wf(&self) -> bool {
+    invariant on alive with (cyclic_buffer_instance, cyclic_buffer_idx) is (v: bool, g: CyclicBuffer::alive_bits) {
+        g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => alive_bits => cyclic_buffer_idx@ => v ]
+    }
+}} // struct_with_invariants
+
+impl BufferEntry {
+    pub open spec fn inv(&self, perm: PermissionOpt<LogEntry>) -> bool {
+        &&& self.log_entry.id() == perm@.pcell
     }
 }
 
@@ -101,10 +194,10 @@ struct_with_invariants!{
 #[repr(align(128))]
 pub struct NrLog
 {
-    // /// The actual log, a slice of entries.
-    // ///  - Dafny: linear buffer: lseq<BufferEntry>,
-    // ///           glinear bufferContents: GhostAtomic<CBContents>,
-    // ///  - Rust:  pub(crate) slog: Box<[Cell<Entry<T, M>>]>,
+    /// The actual log, a slice of entries.
+    ///  - Dafny: linear buffer: lseq<BufferEntry>,
+    ///           glinear bufferContents: GhostAtomic<CBContents>,
+    ///  - Rust:  pub(crate) slog: Box<[Cell<Entry<T, M>>]>,
     pub slog: Vec<BufferEntry>,
 
     /// Completed tail maintains an index <= tail that points to a log entry after which there
@@ -142,44 +235,53 @@ pub struct NrLog
     //  - pub(crate) next: CachePadded<AtomicUsize>, the identifier for the next replica
     //  - pub(crate) lmasks: [CachePadded<Cell<bool>>; MAX_REPLICAS_PER_LOG], tracking of alivebits
 
-
+    pub num_replicas: Ghost<nat>,
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
 }
 
-pub closed spec fn wf(&self) -> bool {
+pub open spec fn wf(&self) -> bool {
     predicate {
+        // XXX: not needed? && (forall nodeId | 0 <= nodeId < |node_info| :: nodeId in node_info)
 
-        // |node_info| == NUM_REPLICAS as int
-        &&& self.local_versions.len() == NUM_REPLICAS
+        &&& self.num_replicas == NUM_REPLICAS
 
-        // |buffer| == LOG_SIZE as int
+        // && |node_info| == NUM_REPLICAS as int
+        &&& self.local_versions.len() == self.num_replicas
+
+        // && |buffer| == LOG_SIZE as int
         &&& self.slog.len() == LOG_SIZE
 
-        // (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
+        // && (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
         &&& (forall |i: nat| i < LOG_SIZE ==> #[trigger] self.slog[i as int].wf())
+
+        // && (forall v, g :: atomic_inv(bufferContents, v, g) <==> ContentsInv(buffer, g, cb_loc_s))
+
+        // make sure we
+        &&& self.unbounded_log_instance@.num_replicas() == self.num_replicas
+        &&& self.cyclic_buffer_instance@.num_replicas() == self.num_replicas
     }
 
     // invariant on slog with (
 
     invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound) {
-        // (forall v, g :: atomic_inv(ctail.inner, v, g) <==> g == Ctail(v as int))
+        // && (forall v, g :: atomic_inv(ctail.inner, v, g) <==> g == Ctail(v as int))
         g@ === UnboundedLog::token![ unbounded_log_instance@ => version_upper_bound => v as nat ]
     }
 
     invariant on head with (cyclic_buffer_instance) specifically (self.head.0) is (v: u64, g: CyclicBuffer::head) {
-        // (forall v, g :: atomic_inv(head.inner, v, g) <==> g == CBHead(v as int, cb_loc_s))
+        // && (forall v, g :: atomic_inv(head.inner, v, g) <==> g == CBHead(v as int, cb_loc_s))
         g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => head => v as nat ]
     }
 
     invariant on tail with (cyclic_buffer_instance, unbounded_log_instance) specifically (self.tail.0) is (v: u64, g: (UnboundedLog::tail, CyclicBuffer::tail)) {
-        // (forall v, g :: atomic_inv(globalTail.inner, v, g) <==> GlobalTailInv(v, g, cb_loc_s))
+        // && (forall v, g :: atomic_inv(globalTail.inner, v, g) <==> GlobalTailInv(v, g, cb_loc_s))
         &&& g.0@ === UnboundedLog::token![ unbounded_log_instance@ => tail => v as nat ]
         &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance@ => tail => v as nat ]
     }
 
 
-    // (forall nodeId | 0 <= nodeId < |node_info| :: node_info[nodeId].WF(nodeId, cb_loc_s))
+    // && (forall nodeId | 0 <= nodeId < |node_info| :: node_info[nodeId].WF(nodeId, cb_loc_s))
     invariant on local_versions with (unbounded_log_instance, cyclic_buffer_instance)
         forall |i: int|
         where (0 <= i < self.local_versions@.len())
@@ -189,7 +291,7 @@ pub closed spec fn wf(&self) -> bool {
 
         &&& g.0@ === UnboundedLog::token![ unbounded_log_instance@ => local_versions => i as nat => v as nat ]
         &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance@ => local_versions => i as nat => v as nat ]
-        &&& 0 <= v < 0xffff_ffff_f000_0000
+        &&& 0 <= v < MAX_IDX
     }
 }
 } // struct_with_invariants!{
@@ -215,6 +317,46 @@ impl NrLog
     //         // cyclic_buffer_instance: CyclicBuffer::Instance::new(),
     //     }
     // }
+
+
+    /// Returns a physical index given a logical index into the shared log.
+    #[inline(always)]
+    pub(crate) fn index(&self, logical: u64) -> (result: usize)
+        requires
+            self.slog.len() > 0
+        ensures
+            result as nat == self.index_spec(logical as nat),
+            result < self.slog.len()
+    {
+        (logical as usize) % self.slog.len()
+    }
+
+    pub (crate) open spec fn index_spec(&self, logical: nat) -> nat
+        recommends self.slog.len() > 0
+    {
+        logical % (self.slog.len() as nat)
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_alive_value(&self, logical: u64) -> (result: bool)
+        requires
+            self.slog.len() > 0
+        ensures
+            result == self.is_alive_value_spec(logical as nat)
+
+    {
+        assert(
+            ((logical as usize) / self.slog.len()) as nat
+                == ((logical as nat) / self.slog.len() as nat)
+        )  by (nonlinear_arith);
+        ((logical as usize) / self.slog.len() % 2) == 0
+    }
+
+    pub(crate) open spec fn is_alive_value_spec(&self, logical: nat) -> bool
+        recommends self.slog.len() > 0
+    {
+        ((logical / (self.slog.len() as nat)) % 2) == 0
+    }
 
 
     /// checks whether the version of the local replica has advanced enough to perform read operations
@@ -258,6 +400,351 @@ impl NrLog
 
         (res >= version_upper_bound, tracked(new_local_reads_g))
     }
+
+    /// Advances the head of the log forward. If a replica has stopped making
+    /// progress, then this method will never return. Accepts a closure that is
+    /// passed into execute() to ensure that this replica does not deadlock GC.
+    pub fn advance_head(&self, node_id: ReplicaToken,
+        // linear actual_replica: nrifc.DataStructureType,
+        // linear responses: seq<nrifc.ReturnType>,
+        // glinear ghost_replica: Replica,
+        // ghost requestIds: seq<RequestId>,
+        // glinear updates: map<nat, Update>,
+        // glinear combinerState: CombinerToken,
+        // glinear cb: CBCombinerToken)
+        cb_combiner: Tracked<CyclicBuffer::combiner>)
+        requires
+            self.wf(),
+            cb_combiner@@.instance == self.cyclic_buffer_instance@,
+            cb_combiner@@.value.is_Idle()
+
+        // requires nr.WF()
+        // requires node.WF(nr)
+        // requires cb.nodeId == node.nodeId as int
+        // requires cb.rs.CombinerIdle?
+        // requires cb.cb_loc_s == nr.cb_loc_s
+        // requires ghost_replica.state == nrifc.I(actual_replica)
+        // requires ghost_replica.nodeId == node.nodeId as int
+        // requires combinerState.state.CombinerPlaced?
+        // requires combinerState.nodeId == node.nodeId as int
+        // requires |responses| == MAX_THREADS_PER_REPLICA as int
+        // requires pre_exec(node, requestIds, responses, updates, combinerState)
+        // ensures
+            // cb_combiner@@.instance == self.cyclic_buffer_instance@,
+            // cb_combiner@@.value.is_Idle()
+
+        // ensures cb' == cb
+        // ensures ghost_replica'.state == nrifc.I(actual_replica')
+        // ensures ghost_replica'.nodeId == node.nodeId as int
+        // ensures combinerState'.nodeId == node.nodeId as int
+        // ensures |responses'| == MAX_THREADS_PER_REPLICA as int
+
+        // ensures combinerState'.state.CombinerReady?
+        //     || combinerState'.state.CombinerPlaced?
+        // ensures combinerState'.state.CombinerReady? ==>
+        //     post_exec(node, requestIds, responses', updates', combinerState')
+        // ensures combinerState'.state.CombinerPlaced? ==>
+        //   updates' == updates && combinerState' == combinerState && cb' == cb
+    {
+        let tracked mut g_cb_comb_new = cb_combiner.get();
+        let ghost g_node_id = cb_combiner@@.key;
+
+        let mut iteration = 1;
+        while true
+            invariant
+                self.wf(),
+                g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
+                g_cb_comb_new@.value.is_Idle(),
+                g_cb_comb_new@.key == g_node_id,
+                0 <= iteration <= WARN_THRESHOLD
+        {
+            // TODO
+            // let global_head = self.head.load(Ordering::Relaxed);
+            let mut global_head = atomic_with_ghost!(
+                &self.head.0 => load();
+                returning ret;
+                ghost g => { /* no-op */ }
+            );
+
+            // let f = self.tail.load(Ordering::Relaxed);
+            let mut global_tail = atomic_with_ghost!(
+                &self.tail.0 => load();
+                returning ret;
+                ghost g => { /* no-op */ }
+            );
+
+            let res = self.find_min_local_version(tracked(g_cb_comb_new));
+            let min_local_version = res.0;
+            g_cb_comb_new = res.1.get();
+
+            // If we cannot advance the head further, then start
+            // from the beginning of this loop again. Before doing so, try consuming
+            // any new entries on the log to prevent deadlock.
+            if min_local_version == global_head {
+
+                assert(g_cb_comb_new@.value.is_AdvancingHead());
+                assert(g_cb_comb_new@.instance == self.cyclic_buffer_instance@);
+                assert(g_cb_comb_new@.key == g_node_id);
+
+                g_cb_comb_new = self.cyclic_buffer_instance.borrow().advance_head_abort(g_node_id, g_cb_comb_new);
+
+                if iteration == WARN_THRESHOLD {
+                    print_starvation_warning();
+                    return;
+                }
+                iteration = iteration + 1;
+            } else {
+                // There are entries that can be freed up; update the head offset.
+                // self.head.store(min_local_tail, Ordering::Relaxed);
+                atomic_with_ghost!(
+                    &self.head.0 => store(min_local_version);
+                    update old_val -> new_val;
+                    ghost g => {
+                        g_cb_comb_new = self.cyclic_buffer_instance.borrow().advance_head_finish(g_node_id, &mut g, g_cb_comb_new);
+                });
+
+                if global_tail < min_local_version + (self.slog.len() - GC_FROM_HEAD) as u64 {
+                    return;
+                }
+            }
+            // XXX: We don't have clone/copy, hmm...
+            let node_id_copy = ReplicaToken { rid: node_id.rid };
+            // self.execute(node_id_copy);
+        }
+    }
+
+    /// Loops over all `ltails` and finds the replica with the lowest tail.
+    ///
+    /// # Returns
+    /// The ID (in `LogToken`) of the replica with the lowest tail and the
+    /// corresponding/lowest tail `idx` in the `Log`.
+    ///
+    ///  - Dafny: part of advance_head
+    pub(crate) fn find_min_local_version(&self, cb_combiner: Tracked<CyclicBuffer::combiner>)
+                        -> (result: (u64, Tracked<CyclicBuffer::combiner>))
+        requires
+            self.wf(),
+            cb_combiner@@.instance == self.cyclic_buffer_instance@,
+            cb_combiner@@.value.is_Idle()
+        ensures
+            result.0 < MAX_IDX,
+            result.1@@.key == cb_combiner@@.key,
+            result.1@@.value.is_AdvancingHead(),
+            result.1@@.instance == self.cyclic_buffer_instance@,
+            result.1@@.value.get_AdvancingHead_idx() == self.num_replicas,
+            result.1@@.value.get_AdvancingHead_min_local_version() == result.0
+    {
+        // let r = self.next.load(Ordering::Relaxed);
+        let num_replicas = self.local_versions.len();
+
+        let tracked mut g_cb_comb_new : CyclicBuffer::combiner = cb_combiner.get();
+        let ghost g_node_id = cb_combiner@@.key;
+
+        // let (mut min_replica_idx, mut min_local_tail) = (0, self.ltails[0].load(Ordering::Relaxed));
+        let mut min_local_version = atomic_with_ghost!(
+            &self.local_versions.index(0).0 => load();
+            returning ret;
+            ghost g => {
+                // do the transition
+                g_cb_comb_new = self.cyclic_buffer_instance.borrow()
+                                        .advance_head_start(g_node_id, &g.1, g_cb_comb_new);
+            });
+
+        // Find the smallest local tail across all replicas.
+        // for idx in 1..r {
+        //    let cur_local_tail = self.ltails[idx - 1].load(Ordering::Relaxed);
+        //    min_local_tail = min(min_local_tail, cur_local_tail)
+        //}
+        let mut idx : usize = 1;
+        while idx < num_replicas
+            invariant
+                self.wf(),
+                0 <= idx <= num_replicas,
+                min_local_version < MAX_IDX,
+                g_cb_comb_new@.instance == self.cyclic_buffer_instance,
+                g_cb_comb_new@.value.is_AdvancingHead(),
+                g_cb_comb_new@.value.get_AdvancingHead_idx() == idx,
+                g_cb_comb_new@.value.get_AdvancingHead_min_local_version() == min_local_version,
+                g_cb_comb_new.view().key == g_node_id,
+                num_replicas == self.local_versions.len()
+        {
+            assert(num_replicas == self.local_versions.len());
+            assert(idx < self.local_versions.len());
+
+            // let cur_local_tail = self.ltails[idx - 1].load(Ordering::Relaxed);
+            let cur_local_tail = atomic_with_ghost!(
+                &self.local_versions.index(idx).0 => load();
+                returning ret;
+                ghost g => {
+                    // do the transition
+                    g_cb_comb_new = self.cyclic_buffer_instance.borrow()
+                                            .advance_head_next(g_node_id, &g.1, g_cb_comb_new);
+                });
+            if cur_local_tail < min_local_version {
+                min_local_version = cur_local_tail;
+            }
+
+            idx = idx + 1;
+        }
+        (min_local_version, tracked(g_cb_comb_new))
+    }
+
+    /// Executes a passed in closure (`d`) on all operations starting from a
+    /// replica's local tail on the shared log. The replica is identified
+    /// through an `idx` passed in as an argument.
+    pub(crate) fn execute(&self, rid: ReplicaToken,
+        combiner: Tracked<UnboundedLog::combiner>,
+        cb_combiner: Tracked<CyclicBuffer::combiner>
+    )
+        requires
+            self.wf(),
+            rid.id_spec() < self.num_replicas@,
+            cb_combiner@@.instance == self.cyclic_buffer_instance@,
+            cb_combiner@@.value.is_Idle(),
+            cb_combiner@@.key == rid.id_spec(),
+            combiner@@.value.is_Placed() || combiner@@.value.is_Ready(),
+            combiner@@.key == rid.id_spec(),
+            combiner@@.instance == self.unbounded_log_instance@
+
+    {
+        let node_id = rid.id() as usize;
+
+        let tracked mut g_new_comb = combiner.get();
+        let tracked mut g_new_cb_comb = cb_combiner.get();
+
+        // if the combiner ins idle, we start it with the trival start transition
+        proof {
+            if combiner@@.value.is_Ready() {
+                g_new_comb = self.unbounded_log_instance.borrow().exec_trivial_start(node_id as nat, g_new_comb);
+            }
+        }
+
+        // let ltail = self.ltails[idx.0 - 1].load(Ordering::Relaxed);
+        let mut local_version = atomic_with_ghost!(
+            &self.local_versions.index(node_id).0 => load();
+            returning ret;
+            ghost g => {
+                // this kicks of the state transition in both the cyclic buffer and the unbounded log
+                g_new_comb = self.unbounded_log_instance.borrow().exec_load_local_version(node_id as nat, &g.0, g_new_comb);
+                g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_start(node_id as nat, &g.1, g_new_cb_comb);
+            });
+
+        // Check if we have any work to do by comparing our local tail with the log's
+        // global tail. If they're equal, then we're done here and can simply return.
+        // let gtail = self.tail.load(Ordering::Relaxed);
+        let global_tail = atomic_with_ghost!(
+            &self.tail.0 => load();
+            returning global_tail;
+            ghost g => {
+                if (local_version == global_tail) {
+                    // there has ben no additional updates to be applied, combiner back to idle
+                    g_new_comb = self.unbounded_log_instance.borrow().exec_finish_no_change(node_id as nat, &g.0, g_new_comb);
+                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_abort(node_id as nat, g_new_cb_comb);
+                } else {
+                    g_new_comb = self.unbounded_log_instance.borrow().exec_load_global_head(node_id as nat, &g.0, g_new_comb);
+                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_enter(node_id as nat,  &g.1, g_new_cb_comb);
+                }
+            });
+
+        // Execute all operations from the passed in offset to the shared log's tail.
+        // Check if the entry is live first; we could have a replica that has reserved
+        // entries, but not filled them into the log yet.
+        // for i in ltail..gtail {
+        while local_version < global_tail
+            invariant
+                self.wf()
+        {
+            let mut iteration = 1;
+
+            let actual_idx = self.index(local_version);
+            let is_alive_value = self.is_alive_value(local_version);
+            let mut is_alive = false;
+            while !is_alive
+                invariant
+                    self.wf(),
+                    actual_idx < self.slog.len(),
+                    0 <= iteration <= WARN_THRESHOLD,
+                    self.slog.spec_index(actual_idx as int).wf()
+            {
+                let ghost mut log_perms : Map<int, PermissionOpt<LogEntry>>;
+                let alive_bit = atomic_with_ghost!(
+                    &self.slog.index(actual_idx).alive => load();
+                    returning alive_bit;
+                    ghost g => {
+                        if alive_bit == is_alive_value {
+                            // let new_st = self.cyclic_buffer_instance.borrow().reader_guard(node_id as nat, &g, g_new_cb_comb);
+                            // g_new_cb_comb = new_st.1;
+                            // log_perms = new_st.0;
+                        }
+
+                    });
+
+                if iteration == WARN_THRESHOLD {
+                    print_starvation_warning();
+                    iteration = 0;
+                }
+
+                is_alive = alive_bit == is_alive_value;
+                iteration = iteration + 1;
+            }
+
+            // now we know the entry is alive
+
+            // read the entry
+
+            // if entry.node_id == node_id {
+                // self.unbounded_log_instance.borrow().exec_dispatch_local()
+            //
+            // } else {
+                // self.unbounded_log_instance.borrow().exec_dispatch_remote()
+            // }
+
+            // unguard
+            // self.cyclic_buffer_instance.borrow().reader_unguard(node_id as nat, &g, g_new_cb_comb);
+
+            local_version = local_version + 1;
+        }
+
+
+
+
+        //
+        //     let e = self.slog[self.index(i)].as_ptr();
+
+        //     while unsafe { (*e).alivef.load(Ordering::Acquire) != self.lmasks[idx.0 - 1].get() } {
+        //         if iteration % WARN_THRESHOLD == 0 {
+        //             warn!(
+        //                 "alivef not being set for self.index(i={}) = {} (self.lmasks[{}] is {})...",
+        //                 i,
+        //                 self.index(i),
+        //                 idx.0 - 1,
+        //                 self.lmasks[idx.0 - 1].get()
+        //             );
+        //         }
+        //         iteration += 1;
+        //     }
+
+        //     unsafe {
+        //         d(
+        //             (*e).operation.as_ref().unwrap().clone(),
+        //             (*e).replica == idx.0,
+        //         )
+        //     };
+
+        //     // Looks like we're going to wrap around now; flip this replica's local mask.
+        //     if self.index(i) == self.slog.len() - 1 {
+        //         self.lmasks[idx.0 - 1].set(!self.lmasks[idx.0 - 1].get());
+        //         //trace!("idx: {} lmask: {}", idx, self.lmasks[idx - 1].get());
+        //     }
+        // }
+
+        // // Update the completed tail after we've executed these operations. Also update
+        // // this replica's local tail.
+        // self.ctail.fetch_max(gtail, Ordering::Relaxed);
+        // self.ltails[idx.0 - 1].store(gtail, Ordering::Relaxed);
+
+    }
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -278,19 +765,6 @@ impl<D> RwLock<D> {
     pub open spec fn inv(&self) -> bool {
         true
     }
-}
-
-
-/// the thread token identifies a thread of a given replica
-pub struct ThreadToken {
-    /// the replica id this thread uses
-    pub(crate) rid: ReplicaId,
-    /// identifies the thread within the replica
-    pub(crate) tid: ReplicaToken,
-}
-
-pub struct LogToken {
-    id: usize
 }
 
 
@@ -329,30 +803,108 @@ impl PendingOperation {
 }
 
 struct_with_invariants!{
-pub struct ContextGhost {
+/// The ghost context for a thread carying permissions and tracking the state of the update operation
+///
+///  - Dafny:   glinear datatype ContextGhost = ContextGhost(
+pub tracked struct ContextGhost {
     /// Token to access the batch cell in Context
     ///
     ///  - Dafny: glinear contents: glOption<CellContents<OpResponse>>,
     pub batch_token: Tracked<PermissionOpt<PendingOperation>>,
 
-    // The flat combiner
-    // fc: FCSlot
-    pub flat_combiner_slots: FlatCombiner::slots,
+    /// The flat combiner slot.
+    /// XXX: somehow can't make this tracked?
+    ///
+    ///  - Dafny: glinear fc: FCSlot,
+    pub slots: FlatCombiner::slots,
 
-    // update: UpdateTicket?
-    pub update: Tracked<UnboundedLog::local_updates>
+    /// tracks the update operation
+    ///
+    ///  - Dafny: glinear update: glOption<Update>
+    pub update: Tracked<Option<UnboundedLog::local_updates>>
 }
 
-pub closed spec fn inv(&self, v: u64, i: nat, cell: PCell<PendingOperation>) -> bool {
+//  - Dafny: predicate inv(v: uint64, i: nat, cell: Cell<OpResponse>, fc_loc_s: nat)
+pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc: FlatCombiner::Instance) -> bool {
+    predicate {
+        // // && fc.tid == i
+        &&& self.slots@.key == tid
 
+        // && fc.loc_s == fc_loc_s
+        &&& self.slots@.instance == fc
+
+        // && (v == 0 || v == 1)
+        &&& ((v == 0) || (v == 1))
+
+        // && (v == 0 ==> fc.state.FCEmpty? || fc.state.FCResponse?)
+        &&& (v == 0 ==> self.slots@.value.is_Empty() || self.slots@.value.is_Response())
+
+        // && (v == 1 ==> fc.state.FCRequest? || fc.state.FCInProgress?)
+        &&& (v == 1 ==> self.slots@.value.is_Request() || self.slots@.value.is_InProgress())
+
+        // && (fc.state.FCEmpty? ==>
+        //   && update.glNone?
+        //   && contents.glNone?
+        // )
+        &&& (self.slots@.value.is_Empty() ==> {
+            &&& self.update@.is_None()
+            &&& self.batch_token@@.value.is_None()
+        })
+
+        // && (fc.state.FCRequest? ==>
+        //   && update.glSome?
+        //   && update.value.us.UpdateInit?
+        //   && update.value.rid == fc.state.rid
+        //   && contents.glSome?
+        //   && contents.value.cell == cell
+        //   && contents.value.v.op == update.value.us.op
+        // )
+        &&& (self.slots@.value.is_Request() ==> {
+            &&& self.update@.is_Some()
+            &&& self.update@.get_Some_0()@.value.is_Init()
+            &&& self.update@.get_Some_0()@.key == self.slots@.value.get_ReqId()
+
+            &&& self.batch_token@@.value.is_Some()
+            &&& self.batch_token@@.pcell == cell.id()
+            &&& self.batch_token@@.value.get_Some_0().op.is_Some()
+            &&& self.batch_token@@.value.get_Some_0().op.get_Some_0() == self.update@.get_Some_0()@.value.get_Init_op()
+        })
+
+        // && (fc.state.FCInProgress? ==>
+        //   && update.glNone?
+        //   && contents.glNone?
+        // )
+        &&& (self.slots@.value.is_InProgress() ==> {
+            &&& self.update@.is_None()
+            &&& self.batch_token@@.value.is_None()
+        })
+
+        // && (fc.state.FCResponse? ==>
+        //   && update.glSome?
+        //   && update.value.us.UpdateDone?
+        //   && update.value.rid == fc.state.rid
+        //   && contents.glSome?
+        //   && contents.value.cell == cell
+        //   && contents.value.v.ret == update.value.us.ret
+        // )
+        &&& (self.slots@.value.is_InProgress() ==> {
+            &&& self.update@.is_Some()
+            &&& self.update@.get_Some_0()@.value.is_Done()
+            &&& self.update@.get_Some_0()@.key == self.slots@.value.get_ReqId()
+
+            &&& self.batch_token@@.value.is_Some()
+            &&& self.batch_token@@.pcell == cell.id()
+            &&& self.batch_token@@.value.get_Some_0().resp.get_Some_0() == self.update@.get_Some_0()@.value.get_Done_ret()
+        })
+    }
 }
 } // struct_with_invariants! ContextGhost
 
 
 struct_with_invariants!{
-/// Contains state of a particular thread w.r.g. to outstanding operations.
+/// Contains state of a particular thread context within NR w.r.g. to outstanding operations.
 ///
-///  - Dafny: linear datatype Context
+///  - Dafny: linear datatype Context = Context(
 ///  - Rust:  pub(crate) struct Context<T, R, M>
 ///
 /// Note, in contrast to the Rust version, we just have a single outstanding operation
@@ -361,31 +913,31 @@ pub struct Context {
     /// Array that will hold all pending operations to be appended to the shared
     /// log as well as the results obtained on executing them against a replica.
     ///
+    /// This is protected by the `atomic` field.
+    ///
     ///  - Dafny: linear cell: CachePadded<Cell<OpResponse>>
     ///  - Rust:  pub(crate) batch: [CachePadded<PendingOperation<T, R, M>>; MAX_PENDING_OPS],
-    batch: CachePadded<PCell<PendingOperation>>,
+    pub (crate) batch: CachePadded<PCell<PendingOperation>>,
 
-    /// maybe some kind of lock?
+    /// The number of operations in this context, (just 0 or 1)
+    ///
     ///  - Dafny: linear atomic: CachePadded<Atomic<uint64, ContextGhost>>,
     ///  - Rust:  N/A
-    atomic: CachePadded<AtomicU64<_, ContextGhost, _>>,
+    pub (crate) atomic: CachePadded<AtomicU64<_, ContextGhost, _>>,
 
-    /// ghost
+    /// ghost: identifier of the thread
     pub thread_id_g: Tracked<ThreadToken>,
 
-    /// get the flat combiner instance
+    /// ghost: the flat combiner instance
     pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
 }
 
-pub closed spec fn wf(&self) -> bool {
-    predicate {
-        true
-    }
-
-    invariant on atomic specifically (self.atomic.0) is (v: u64, g: ContextGhost) {
-      // (forall v, g :: atomic_inv(atomic.inner, v, g) <==> g.inv(v, i, cell.inner, fc_loc))
-      // atomic.atomic_inv() <==> g.inv(v, i, self.batch)
-      &&& (v == 0) <==> g.batch_token@@.value.is_None()
+// XXX: in Dafny, this predicate takes the thread id and the flat combiner instance as arguments,
+// but it seems that this is not possible here?
+pub open spec fn wf(&self) -> bool {
+    invariant on atomic with (flat_combiner_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost) {
+        // (forall v, g :: atomic_inv(atomic.inner, v, g) <==> g.inv(v, i, cell.inner, fc_loc))
+        &&& g.inv(v, thread_id_g@.thread_id_spec(), batch.0, flat_combiner_instance@)
     }
 }} // struct_with_invariants!
 
@@ -520,19 +1072,49 @@ impl Context {
 }
 
 
+
+// TODO: add the ThreadOwnedContext here!
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Replicated Data Structure
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+struct_with_invariants!{
+// linear datatype NodeReplica = NodeReplica(
+pub struct ReplicatedDataStructure {
+    /// the actual data structure
+    ///  - Dafny: linear actual_replica: nrifc.DataStructureType,
+    pub data: NRState,
+    // TODO: add the ghost replica here!
+    ///  - Dafny: glinear ghost_replica: Replica,
+    ///  - Dafny: glinear combiner: CombinerToken,
+    pub combiner: Tracked<UnboundedLog::combiner>,
+    ///  - Dafny: glinear cb: CBCombinerToken
+    pub cb_combiner: Tracked<CyclicBuffer::combiner>
+}
+
+//  - Dafny: predicate WF(nodeId: nat, cb_loc_s: nat) {
+pub open spec fn wf(&self, node_id: nat, cb: CyclicBuffer::Instance) -> bool {
+    predicate {
+        // && ghost_replica.state == nrifc.I(actual_replica)
+        // && ghost_replica.nodeId == nodeId
+        // && combiner.state == CombinerReady
+        &&& self.combiner@@.value.is_Ready()
+        // && combiner.nodeId == nodeId
+        &&& self.combiner@@.key == node_id
+        // && cb.nodeId == nodeId
+        &&& self.cb_combiner@@.key == node_id
+        // && cb.rs.CombinerIdle?
+        &&& self.cb_combiner@@.value.is_Idle()
+        // && cb.cb_loc_s == cb_loc_s
+        &&& self.cb_combiner@@.instance == cb
+    }
+}} // struct_with_invariants
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // The Replica Node
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// A token handed out to threads that replicas with replicas.
-// #[derive(Copy, Clone, Eq, PartialEq)]
-// HERE
-// pub struct ReplicaToken {
-//     pub(crate) tid: ThreadIdx,
-// }
-
-pub type ReplicaToken = ThreadIdx;
-
 
 
 struct_with_invariants!{
@@ -540,7 +1122,7 @@ struct_with_invariants!{
 ///
 ///  - Dafny: glinear datatype CombinerLockState
 ///  - Rust:  N/A
-pub struct CombinerLockStateGhost {
+pub tracked struct CombinerLockStateGhost {
     // glinear flatCombiner: FCCombiner,
     pub combiner: Tracked<FlatCombiner::combiner>,
 
@@ -553,15 +1135,13 @@ pub struct CombinerLockStateGhost {
     pub responses_token: Tracked<PermissionOpt<Vec<ReturnType>>>,
 }
 
-// pub open spec fn inv(&self, taken: bool, )
-pub closed spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses_id: CellId, op_buffer_id: CellId) -> bool {
+//  - Dafny: predicate CombinerLockInv(v: uint64, g: glOption<CombinerLockState>, fc_loc: nat,
+//                                     ops: LC.LinearCell<seq<nrifc.UpdateOp>>,
+//                                     responses: LC.LinearCell<seq<nrifc.ReturnType>>)
+//
+// Note: this predicate only holds when the lock is not taken.
+pub open spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses_id: CellId, op_buffer_id: CellId) -> bool {
     predicate {
-        // REMOVE? // if the lock is taken, then the combiner is collecting, and we can't make statements
-        // REMOVE? &&& self.taken ==> {
-        // REMOVE?     &&& true
-        // REMOVE? }
-        // REMOVE? // if the lock is not taken, then the combiner is idling, here collecting with len 0
-        // REMOVE? &&& !self.taken ==> {
         // && g.value.flatCombiner.state == FC.FCCombinerCollecting([])
         &&& self.combiner@@.value.is_Collecting()
         &&& self.combiner@@.value.get_Collecting_0().len() == 0
@@ -572,8 +1152,6 @@ pub closed spec fn inv(&self, combiner_instance: FlatCombiner::Instance, respons
         // && g.value.gops.v.Some?
         &&& self.op_buffer_token@@.value.is_Some()
 
-        // && g.value.gops.lcell == ops
-        &&& self.responses_token@@.pcell == responses_id
         // && g.value.gresponses.lcell == responses
         &&& self.op_buffer_token@@.pcell == op_buffer_id
 
@@ -583,17 +1161,16 @@ pub closed spec fn inv(&self, combiner_instance: FlatCombiner::Instance, respons
         // && g.value.gresponses.v.Some?
         &&& self.responses_token@@.value.is_Some()
 
+        // && g.value.gops.lcell == ops
+        &&& self.responses_token@@.pcell == responses_id
+
         // && |g.value.gresponses.v.value| == MAX_THREADS_PER_REPLICA as int
         &&& self.responses_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
     }
 }} // struct_with_invariants!
 
 
-// impl CombinerLockStateGhost {
-//     pub open spec fn is_taken(&self)  -> bool {
-//         self.taken
-//     }
-// }
+
 
 
 struct_with_invariants!{
@@ -610,7 +1187,7 @@ pub struct Replica {
     ///
     ///  - Dafny: nodeId: uint64,
     ///  - Rust:  log_tkn: LogToken,
-    pub log_tkn: LogToken,
+    pub replica_token: ReplicaToken,
 
     /// Stores the index of the thread currently doing flat combining. Field is
     /// zero if there isn't any thread actively performing flat-combining.
@@ -669,13 +1246,7 @@ pub struct Replica {
     pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
 }
 
-pub closed spec fn wf(&self) -> bool {
-
-    // && (forall nodeReplica :: replica.inv(nodeReplica) <==> nodeReplica.WF(nodeId as int, nr.cb_loc_s))
-
-
-    // invariant on the RwLock inner data structure
-    // && replica.InternalInv()
+pub open spec fn wf(&self) -> bool {
 
     predicate {
         // && (forall i | 0 <= i < |contexts| :: i in contexts && contexts[i].WF(i, fc_loc))
@@ -686,11 +1257,13 @@ pub closed spec fn wf(&self) -> bool {
         // && |contexts| == MAX_THREADS_PER_REPLICA as int
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
         // && 0 <= nodeId as int < NUM_REPLICAS as int
-        &&& 0 <= self.log_tkn.id < NUM_REPLICAS
+        &&& 0 <= self.replica_token.rid < NUM_REPLICAS
         // && replica.InternalInv()
         &&& self.data.0.internal_inv()
 
-        // What is that one here???
+        // XXX: What is that one here???
+        // seems to refer to module NodeReplica(nrifc: NRIfc) refines ContentsTypeMod
+        // of the actual replica wrapping the data structure?
         //&& (forall nodeReplica :: replica.inv(nodeReplica) <==> nodeReplica.WF(nodeId as int, nr.cb_loc_s))
     }
 
@@ -698,10 +1271,8 @@ pub closed spec fn wf(&self) -> bool {
     invariant on combiner with (flat_combiner_instance, responses, op_buffer) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
         // v != means lock is not taken,
         &&& (v == 0) <==> g.is_Some()
-        &&& g.is_Some() ==> {
-            // &&& g.is_Some()  // the lock is not taken, the ghost state is Some
-            &&& g.get_Some_0().inv(flat_combiner_instance@, responses.id(), op_buffer.id())
-        }
+        // the lock is not taken, the ghost state is Some
+        &&& (g.is_Some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), op_buffer.id()))
     }
 
     // invariant on next specifically (self.next.0) is (v: u64, g: FlatCombiner::num_threads) {
@@ -713,8 +1284,23 @@ pub closed spec fn wf(&self) -> bool {
 } // struct_with_invariants!
 
 
-impl Replica  {
+// macro_rules! myatomic_with_ghost_no_op {
+//     ($e:expr, $g:ident, $b:block) => {
+//         ::builtin_macros::verus_exec_expr!{ {
+//             let atomic = &($e);
+//             crate::open_atomic_invariant!(&atomic.atomic_inv => pair => {
+//                 #[allow(unused_mut)]
+//                 #[verifier::proof] let (perm, mut $g) = pair;
 
+//                 proof { $b }
+
+//                 pair = (perm, $g);
+//             });
+//         } }
+//     }
+// }
+
+impl Replica  {
     /// Try to become acquire the combiner lock here. If this fails, then return None.
     ///
     ///  - Dafny: part of method try_combine
@@ -725,6 +1311,7 @@ impl Replica  {
           result.0 ==> result.1@.is_Some(),
           result.0 ==> result.1@.get_Some_0().combiner@@.value.is_Collecting(),
           result.0 ==> result.1@.get_Some_0().combiner@@.value.get_Collecting_0().len() == 0,
+        //   result.0 ==> self.combiner.0.atomic_inv.constant().1 != 0
           // result.0 ==> self.combiner.0.ghost.is_None()
     {
         // OPT: try to check whether the lock is already present
@@ -749,7 +1336,9 @@ impl Replica  {
             update prev->next;
             ghost g => {
                 if prev == 0 {
-                    lock_g = tracked(g);    // obtain the protected lock statate
+                    lock_g = tracked(g);    // obtain the protected lock state
+                    assert(next == 2);
+
                     g = Option::None;       // we took the lock, set the ghost state to None,
                 } else {
                     lock_g = tracked(None); // the lock was already taken, set it to None
@@ -758,6 +1347,8 @@ impl Replica  {
         );
 
         if let Result::Ok(val) = res {
+            assert(lock_g.is_Some());
+            assert(val == 0);
             (val == 0, tracked(lock_g))
         } else {
             (false, tracked(None))
@@ -767,15 +1358,18 @@ impl Replica  {
     fn release_combiner_lock(&self, tracked lock_state: Tracked<CombinerLockStateGhost>)
         requires
             self.wf(),
-            lock_state@.combiner@@.value.is_Collecting(),
-            lock_state@.combiner@@.value.get_Collecting_0().len() == 0,
+            lock_state@.inv(self.flat_combiner_instance@, self.responses.id(), self.op_buffer.id()),
+            // self.combiner.0.atomic_inv.constant().1 != 0
+            // lock_state@.combiner@@.value.is_Collecting(),
+            // lock_state@.combiner@@.value.get_Collecting_0().len() == 0,
     {
         atomic_with_ghost!(
             &self.combiner.0 => store(0);
             update old_val -> new_val;
             ghost g
             => {
-                assert(old_val != 0);
+                // assert(old_val == v);
+                assume(old_val != 0);
                 assert(g.is_None());
                 g = Some(lock_state.get());
             });
@@ -799,6 +1393,7 @@ impl Replica  {
             // assert(self.combiner.0.load() != 0);
             let tracked mut combiner_lock = tracked(combiner_lock.get().tracked_unwrap());
             self.combine(slog, &mut combiner_lock);
+            assume(false);
             self.release_combiner_lock(combiner_lock);
         } else {
             // nothing to be done here.
@@ -863,24 +1458,24 @@ impl Replica  {
         // Collect operations from each thread registered with this replica.
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         // for i in 1..num_registered_threads {
-        let n_contexts = self.contexts.len();
-        let mut thread_idx = 0;
-        while thread_idx < n_contexts {
-            let res = atomic_with_ghost!(
-                &self.contexts.index(0).atomic.0 => load();
-                returning ret;
-                ghost g // g : ContextGhost
-            => {
-                // nothing in the buffer here
-                if ret == 0 {
-                    self.flat_combiner_instance.borrow().combiner_collect_empty(&g.flat_combiner_slots, flat_combiner_mut.borrow_mut());
-                } else {
-                    g.flat_combiner_slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.flat_combiner_slots, flat_combiner_mut.borrow_mut());
-                }
-            });
+        // let n_contexts = self.contexts.len();
+        // let mut thread_idx = 0;
+        // while thread_idx < n_contexts {
+        //     let res = atomic_with_ghost!(
+        //         &self.contexts.index(0).atomic.0 => load();
+        //         returning ret;
+        //         ghost g // g : ContextGhost
+        //     => {
+        //         // nothing in the buffer here
+        //         if ret == 0 {
+        //             self.flat_combiner_instance.borrow().combiner_collect_empty(&g.slots, flat_combiner_mut.borrow_mut());
+        //         } else {
+        //             g.slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.slots, flat_combiner_mut.borrow_mut());
+        //         }
+        //     });
 
-            thread_idx =  thread_idx + 1;
-        }
+        //     thread_idx =  thread_idx + 1;
+        // }
 
         //     let ctxt_iter = self.contexts[i - 1].iter();
         //     operations[i - 1] = ctxt_iter.len();
@@ -889,9 +1484,10 @@ impl Replica  {
         // }
 
 
-        self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner_mut.borrow_mut());
+        // self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner_mut.borrow_mut());
 
         // (tracked(flat_combiner))
+        assume(false);
     }
 
     ///
@@ -913,7 +1509,7 @@ impl Replica  {
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
     /// registration was successfull. None if the registration failed.
     pub fn register(&self) -> Option<ReplicaToken> {
-        assert(false);
+        // assert(false);
         None
     }
 
@@ -921,7 +1517,7 @@ impl Replica  {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute(&self, slog: &NrLog, op: ReadonlyOp, idx: ReplicaToken) -> Result<ReturnType, () /* ReplicaError */>
+    pub fn execute(&self, slog: &NrLog, op: ReadonlyOp, idx: ThreadToken) -> Result<ReturnType, () /* ReplicaError */>
         requires
           self.wf(),
           slog.wf(),
@@ -949,7 +1545,7 @@ impl Replica  {
         // Step 4: Finish the read-only transaction, return result
         // self.unbounded_log_instance.readonly_finish(rid, op, res);
 
-        assert(false);
+        // assert(false);
         Err(())
     }
 
@@ -957,7 +1553,7 @@ impl Replica  {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute_mut(&self, slog: &NrLog, op: UpdateOp, idx: ReplicaToken) -> Result<ReturnType, () /* ReplicaError */>
+    pub fn execute_mut(&self, slog: &NrLog, op: UpdateOp, idx: ThreadToken) -> Result<ReturnType, () /* ReplicaError */>
         requires
             slog.wf(),
             self.wf()
@@ -977,7 +1573,7 @@ impl Replica  {
 
         // Return the response to the caller function.
         // self.get_response(slog, idx.tid())
-        assert(false);
+        // assert(false);
         Err(())
     }
 
@@ -997,27 +1593,27 @@ pub struct NodeReplicated {
     /// the log of operations
     ///
     ///  - Rust: log: Log<D::WriteOperation>,
-    log: NrLog,
+    pub (crate) log: NrLog,
     // log: NrLog,
 
     /// the nodes or replicas in the system
     ///
     ///  - Rust: replicas: Vec<Box<Replica<D>>>,
     // replicas: Vec<Box<Replica<NRState, UpdateOp, ReturnType>>>,
-    replicas: Vec<Box<Replica>>,
+    pub (crate) replicas: Vec<Box<Replica>>,
 
     /// something that creates new request ids, or do we
     // #[verifier::proof] request_id: ReqId,
 
-    #[verifier::proof] unbounded_log_instance: UnboundedLog::Instance,
-    #[verifier::proof] cyclic_buffer_instance: CyclicBuffer::Instance,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
 }
 
 
 
 /// Proof blocks for the NodeReplicate data structure
 impl NodeReplicated {
-    pub closed spec fn wf(&self) -> bool {
+    pub open spec fn wf(&self) -> bool {
         &&& self.log.wf()
         &&& self.unbounded_log_instance == self.log.unbounded_log_instance
         &&& self.cyclic_buffer_instance == self.log.cyclic_buffer_instance
@@ -1070,7 +1666,7 @@ impl NodeReplicated {
     pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
         requires self.wf()
     {
-        assert(false);
+        // assert(false);
         None
     }
 
@@ -1083,11 +1679,13 @@ impl NodeReplicated {
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
     pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> Result<ReturnType, ()>
         requires
-          self.wf()
+          self.wf(),
+          forall |i| 0 <= i < self.replicas.len() ==> #[trigger] self.replicas[i].wf()
     {
-        if tkn.rid < self.replicas.len() {
+        let replica_id = tkn.replica_id() as usize;
+        if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            self.replicas.index(tkn.rid).execute_mut(&self.log, op, tkn.tid)
+            self.replicas.index(replica_id).execute_mut(&self.log, op, tkn)
         } else {
             Err(())
         }
@@ -1102,11 +1700,14 @@ impl NodeReplicated {
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
     pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> Result<ReturnType, ()>
-        requires self.wf()
+        requires
+            self.wf(),
+            forall |i| 0 <= i < self.replicas.len() ==> #[trigger] self.replicas[i].wf()
     {
-        if tkn.rid < self.replicas.len() {
+        let replica_id = tkn.replica_id() as usize;
+        if replica_id< self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            self.replicas.index(tkn.rid).execute(&self.log, op, tkn.tid)
+            self.replicas.index(replica_id).execute(&self.log, op, tkn)
         } else {
             Err(())
         }
