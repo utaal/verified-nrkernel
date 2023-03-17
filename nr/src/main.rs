@@ -8,12 +8,12 @@ use pervasive::map::Map;
 use pervasive::option::Option;
 use pervasive::prelude::*;
 use pervasive::vec::Vec;
-use pervasive::modes::{Gho, Trk};
+use pervasive::modes::{Gho, Trk, tracked_exec_borrow};
 
 mod spec;
 // mod exec;
 
-use spec::cyclicbuffer::CyclicBuffer;
+use spec::cyclicbuffer::{CyclicBuffer, StoredType};
 use spec::flat_combiner::FlatCombiner;
 use spec::types::*;
 use spec::unbounded_log::UnboundedLog;
@@ -132,8 +132,13 @@ impl ThreadToken {
 
 
 #[verifier(external_body)] /* vattr */
-pub fn print_starvation_warning() {
-    println!("WARNING: advance_head() has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
+pub fn print_starvation_warning(line: u32) {
+    println!("WARNING({line}): has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
+}
+
+#[verifier(external_body)] /* vattr */
+pub fn panic_with_head_too_big() {
+    panic!("WARNING: Head value exceeds the maximum value of u64.");
 }
 
 struct_with_invariants!{
@@ -365,7 +370,7 @@ impl NrLog
     ///
     // https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/log.rs#L525
     pub fn is_replica_synced_for_reads(&self, node_id: usize, version_upper_bound: u64,
-                                       tracked local_reads: Tracked<UnboundedLog::local_reads>)
+                                       local_reads: Tracked<UnboundedLog::local_reads>)
             -> (result: (bool, Tracked<UnboundedLog::local_reads>))
         requires
             self.wf(),
@@ -401,50 +406,159 @@ impl NrLog
         (res >= version_upper_bound, tracked(new_local_reads_g))
     }
 
+
+
+    /// Inserts a slice of operations into the log.
+    pub fn append(&self, ops: &Vec<UpdateOp>, rid: ReplicaToken,
+        cb_combiner: Tracked<CyclicBuffer::combiner>
+    )
+        requires
+            self.wf(),
+            cb_combiner@@.instance == self.cyclic_buffer_instance@,
+            cb_combiner@@.value.is_Idle(),
+            cb_combiner@@.key == rid.id_spec()
+
+    {
+        let node_id = rid.id() as usize;
+
+        // TODO!
+        let nops = ops.len();
+
+        let mut iteration = 1;
+        let mut waitgc = 1;
+
+        let tracked mut g_cb_comb_new = cb_combiner.get();
+
+        while true
+            invariant
+                self.wf(),
+                0 <= iteration <= WARN_THRESHOLD,
+                g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
+                g_cb_comb_new@.key == node_id as nat,
+                g_cb_comb_new@.value.is_Idle()
+        {
+            if iteration == WARN_THRESHOLD {
+                print_starvation_warning(line!());
+                return;
+            }
+
+            iteration = iteration + 1;
+
+            // let tail = self.tail.load(Ordering::Relaxed);
+            let tail = atomic_with_ghost!(
+                &self.tail.0 => load();
+                returning tail;
+                ghost g => { }
+            );
+
+            // let head = self.head.load(Ordering::Relaxed);
+            let head = atomic_with_ghost!(
+                &self.head.0 => load();
+                returning tail;
+                ghost g => {
+                    g_cb_comb_new = self.cyclic_buffer_instance
+                        .borrow()
+                        .advance_tail_start(node_id as nat, &g, g_cb_comb_new);
+                }
+            );
+
+            // capture the warning here
+            if head >= MAX_IDX {
+                panic_with_head_too_big();
+            }
+
+
+            // If there are fewer than `GC_FROM_HEAD` entries on the log, then just
+            // try again. The replica that reserved entry (h + self.slog.len() - GC_FROM_HEAD)
+            // is currently trying to advance the head of the log. Keep refreshing the
+            // replica against the log to make sure that it isn't deadlocking GC.
+            // if tail > head + self.slog.len() - GC_FROM_HEAD  {  }
+            if tail > head + ((self.slog.len() - GC_FROM_HEAD) as u64) {
+                if waitgc == WARN_THRESHOLD {
+                    print_starvation_warning(line!());
+                    waitgc = 0;
+                }
+
+                proof {
+                    g_cb_comb_new = self.cyclic_buffer_instance
+                            .borrow()
+                            .advance_tail_abort(node_id as nat, g_cb_comb_new);
+                }
+
+                // TODO:
+                // self.execute(idx, &mut s);
+
+                // self.advance_head(idx, &mut s)?;
+                let rid_copy = ReplicaToken { rid: rid.rid };
+                let adv_head_result = self.advance_head(rid_copy, tracked(g_cb_comb_new));
+                g_cb_comb_new = adv_head_result.get();
+                // XXX: that one here doesn't seem to work. `error: cannot call function with mode exec`
+                // g_cb_comb_new = self.advance_head(rid_copy, tracked(g_cb_comb_new)).get();
+                // continue;
+            } else {
+                let new_tail = tail + (nops as u64);
+
+                // If on adding in the above entries there would be fewer than `GC_FROM_HEAD`
+                // entries left on the log, then we need to advance the head of the log.
+                let advance = new_tail > head + (self.slog.len() - GC_FROM_HEAD) as u64 ;
+
+                // Try reserving slots for the operations. If that fails, then restart
+                // from the beginning of this loop.
+                // if self.tail.compare_exchange_weak(tail, tail + nops, Ordering::Acquire, Ordering::Acquire)
+
+                let tracked adv_tail_finish_result : (
+                    Gho<Map<int, StoredType>>,
+                    Trk<Map<int, StoredType>>,
+                    Trk<CyclicBuffer::combiner>,
+                );
+
+
+                let result = atomic_with_ghost!(
+                    &self.tail.0 => compare_exchange(tail, new_tail);
+                    update prev -> next;
+                    returning result;
+                    ghost g => {
+                        if matches!(result, Result::Ok(tail)) {
+                            let tracked (inf_tail, mut cb_tail) = g;
+
+                            // place the updates in the log:
+                            // self.unbouned_log_instance.borrow().update_place_ops_in_log_one()
+
+                            adv_tail_finish_result = self.cyclic_buffer_instance.borrow()
+                                .advance_tail_finish(node_id as nat, new_tail as nat, &mut cb_tail, g_cb_comb_new);
+
+                            g_cb_comb_new = adv_tail_finish_result.2.0;
+                            g = (inf_tail, cb_tail);
+
+                        } else {
+                            // no transition, abandon advance tail
+                            g_cb_comb_new = self.cyclic_buffer_instance.borrow()
+                                                    .advance_tail_abort(node_id as nat, g_cb_comb_new);
+                        }
+                    }
+                );
+
+                if matches!(result, Result::Ok(tail)) {
+
+                }
+            }
+        }
+    }
+
+
     /// Advances the head of the log forward. If a replica has stopped making
     /// progress, then this method will never return. Accepts a closure that is
     /// passed into execute() to ensure that this replica does not deadlock GC.
-    pub fn advance_head(&self, node_id: ReplicaToken,
-        // linear actual_replica: nrifc.DataStructureType,
-        // linear responses: seq<nrifc.ReturnType>,
-        // glinear ghost_replica: Replica,
-        // ghost requestIds: seq<RequestId>,
-        // glinear updates: map<nat, Update>,
-        // glinear combinerState: CombinerToken,
-        // glinear cb: CBCombinerToken)
+    pub fn advance_head(&self, rid: ReplicaToken,
         cb_combiner: Tracked<CyclicBuffer::combiner>)
+         -> (result: Tracked<CyclicBuffer::combiner>)
         requires
             self.wf(),
             cb_combiner@@.instance == self.cyclic_buffer_instance@,
             cb_combiner@@.value.is_Idle()
-
-        // requires nr.WF()
-        // requires node.WF(nr)
-        // requires cb.nodeId == node.nodeId as int
-        // requires cb.rs.CombinerIdle?
-        // requires cb.cb_loc_s == nr.cb_loc_s
-        // requires ghost_replica.state == nrifc.I(actual_replica)
-        // requires ghost_replica.nodeId == node.nodeId as int
-        // requires combinerState.state.CombinerPlaced?
-        // requires combinerState.nodeId == node.nodeId as int
-        // requires |responses| == MAX_THREADS_PER_REPLICA as int
-        // requires pre_exec(node, requestIds, responses, updates, combinerState)
-        // ensures
-            // cb_combiner@@.instance == self.cyclic_buffer_instance@,
-            // cb_combiner@@.value.is_Idle()
-
-        // ensures cb' == cb
-        // ensures ghost_replica'.state == nrifc.I(actual_replica')
-        // ensures ghost_replica'.nodeId == node.nodeId as int
-        // ensures combinerState'.nodeId == node.nodeId as int
-        // ensures |responses'| == MAX_THREADS_PER_REPLICA as int
-
-        // ensures combinerState'.state.CombinerReady?
-        //     || combinerState'.state.CombinerPlaced?
-        // ensures combinerState'.state.CombinerReady? ==>
-        //     post_exec(node, requestIds, responses', updates', combinerState')
-        // ensures combinerState'.state.CombinerPlaced? ==>
-        //   updates' == updates && combinerState' == combinerState && cb' == cb
+        ensures
+            result@@.instance == self.cyclic_buffer_instance@,
+            result@@.value.is_Idle()
     {
         let tracked mut g_cb_comb_new = cb_combiner.get();
         let ghost g_node_id = cb_combiner@@.key;
@@ -481,16 +595,11 @@ impl NrLog
             // from the beginning of this loop again. Before doing so, try consuming
             // any new entries on the log to prevent deadlock.
             if min_local_version == global_head {
-
-                assert(g_cb_comb_new@.value.is_AdvancingHead());
-                assert(g_cb_comb_new@.instance == self.cyclic_buffer_instance@);
-                assert(g_cb_comb_new@.key == g_node_id);
-
                 g_cb_comb_new = self.cyclic_buffer_instance.borrow().advance_head_abort(g_node_id, g_cb_comb_new);
 
                 if iteration == WARN_THRESHOLD {
-                    print_starvation_warning();
-                    return;
+                    print_starvation_warning(line!());
+                    return tracked(g_cb_comb_new);
                 }
                 iteration = iteration + 1;
             } else {
@@ -504,16 +613,204 @@ impl NrLog
                 });
 
                 if global_tail < min_local_version + (self.slog.len() - GC_FROM_HEAD) as u64 {
-                    return;
+                    return tracked(g_cb_comb_new);
                 }
             }
             // XXX: We don't have clone/copy, hmm...
-            let node_id_copy = ReplicaToken { rid: node_id.rid };
-            // self.execute(node_id_copy);
+            // let node_id_copy = ReplicaToken { rid: rid.rid };
+            // g_cb_comb_new =  self.execute(node_id_copy);
+
         }
+        tracked(g_cb_comb_new)
     }
 
-    /// Loops over all `ltails` and finds the replica with the lowest tail.
+
+    /// Executes a passed in closure (`d`) on all operations starting from a
+    /// replica's local tail on the shared log. The replica is identified
+    /// through an `idx` passed in as an argument.
+    pub(crate) fn execute(&self, rid: ReplicaToken,
+        local_updates: Tracked::<UnboundedLog::local_updates>,
+        replica: Tracked<UnboundedLog::replicas>,
+        combiner: Tracked<UnboundedLog::combiner>,
+        cb_combiner: Tracked<CyclicBuffer::combiner>
+    )
+        requires
+            self.wf(),
+            rid.id_spec() < self.num_replicas@,
+            replica@@.instance == self.unbounded_log_instance@,
+            replica@@.key == rid.id_spec(),
+            cb_combiner@@.instance == self.cyclic_buffer_instance@,
+            cb_combiner@@.value.is_Idle(),
+            cb_combiner@@.key == rid.id_spec(),
+            combiner@@.value.is_Placed() || combiner@@.value.is_Ready(),
+            combiner@@.key == rid.id_spec(),
+            combiner@@.instance == self.unbounded_log_instance@
+
+    {
+        let node_id = rid.id() as usize;
+
+        let tracked mut g_new_replica = replica.get();
+        let tracked mut g_new_comb = combiner.get();
+        let tracked mut g_new_cb_comb = cb_combiner.get();
+        let tracked mut g_new_local_updates = local_updates.get();
+
+        // if the combiner ins idle, we start it with the trival start transition
+        proof {
+            if combiner@@.value.is_Ready() {
+                g_new_comb = self.unbounded_log_instance.borrow().exec_trivial_start(node_id as nat, g_new_comb);
+            }
+        }
+
+        // let ltail = self.ltails[idx.0 - 1].load(Ordering::Relaxed);
+        let mut local_version = atomic_with_ghost!(
+            &self.local_versions.index(node_id).0 => load();
+            returning ret;
+            ghost g => {
+                // this kicks of the state transition in both the cyclic buffer and the unbounded log
+                g_new_comb = self.unbounded_log_instance.borrow().exec_load_local_version(node_id as nat, &g.0, g_new_comb);
+                g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_start(node_id as nat, &g.1, g_new_cb_comb);
+            });
+
+        // Check if we have any work to do by comparing our local tail with the log's
+        // global tail. If they're equal, then we're done here and can simply return.
+        // let gtail = self.tail.load(Ordering::Relaxed);
+        let global_tail = atomic_with_ghost!(
+            &self.tail.0 => load();
+            returning global_tail;
+            ghost g => {
+                if (local_version == global_tail) {
+                    // there has ben no additional updates to be applied, combiner back to idle
+                    g_new_comb = self.unbounded_log_instance.borrow().exec_finish_no_change(node_id as nat, &g.0, g_new_comb);
+                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_abort(node_id as nat, g_new_cb_comb);
+                } else {
+                    g_new_comb = self.unbounded_log_instance.borrow().exec_load_global_head(node_id as nat, &g.0, g_new_comb);
+                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_enter(node_id as nat,  &g.1, g_new_cb_comb);
+                }
+            });
+
+        // Execute all operations from the passed in offset to the shared log's tail.
+        // Check if the entry is live first; we could have a replica that has reserved
+        // entries, but not filled them into the log yet.
+        // for i in ltail..gtail {
+        while local_version < global_tail
+            invariant
+                self.wf()
+        {
+            let mut iteration = 1;
+
+            let actual_idx = self.index(local_version);
+            let is_alive_value = self.is_alive_value(local_version);
+
+            let mut is_alive = false;
+            while !is_alive
+                invariant
+                    self.wf(),
+                    actual_idx < self.slog.len(),
+                    0 <= iteration <= WARN_THRESHOLD,
+                    self.slog.spec_index(actual_idx as int).wf()
+            {
+                let tracked reader_guard_result : (Gho<Map<int, StoredType>>,Trk<CyclicBuffer::combiner>);
+                let alive_bit = atomic_with_ghost!(
+                    &self.slog.index(actual_idx).alive => load();
+                    returning alive_bit;
+                    ghost g => {
+                        if alive_bit == is_alive_value {
+                            reader_guard_result = self.cyclic_buffer_instance.borrow().reader_guard(node_id as nat, &g, g_new_cb_comb);
+                            g_new_cb_comb = reader_guard_result.1.0;
+                        }
+                    });
+
+                if iteration == WARN_THRESHOLD {
+                    print_starvation_warning(line!());
+                    iteration = 0;
+                }
+
+                is_alive = alive_bit == is_alive_value;
+                iteration = iteration + 1;
+            }
+
+            // now we know the entry is alive
+
+            let tracked stored_entry : &StoredType;
+            proof {
+                stored_entry = self.cyclic_buffer_instance.borrow().guard_guards(node_id as nat, &g_new_cb_comb);
+            }
+
+            // read the entry
+            let log_entry = self.slog.index(actual_idx).log_entry.borrow(tracked_exec_borrow(&stored_entry.cell_perms));
+
+            // actual_replica', ret := nrifc.do_update(actual_replica', log_entry.op);
+
+            proof {
+                if log_entry.node_id == node_id as nat {
+                    self.unbounded_log_instance.borrow().pre_exec_dispatch_local(node_id as nat, &stored_entry.log_entry, &g_new_comb);
+
+                    let tracked exec_dispatch_result = self.unbounded_log_instance.borrow()
+                        .exec_dispatch_local(node_id as nat, &stored_entry.log_entry, g_new_replica, g_new_local_updates, g_new_comb);
+
+                    g_new_replica = exec_dispatch_result.0.0;
+                    g_new_local_updates = exec_dispatch_result.1.0;
+                    g_new_comb = exec_dispatch_result.2.0;
+
+                } else {
+                    // unbounded_log::log
+
+                    // param_token_2_log:&log,
+                    // param_token_1_replicas: replicas,
+                    let tracked exec_dispatch_result = self.unbounded_log_instance.borrow().exec_dispatch_remote(node_id as nat, &stored_entry.log_entry, g_new_replica, g_new_comb);
+                    g_new_replica = exec_dispatch_result.0.0;
+                    g_new_comb = exec_dispatch_result.1.0;
+                }
+
+                // unguard
+                g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_unguard(node_id as nat, g_new_cb_comb);
+            }
+
+            local_version = local_version + 1;
+        }
+
+
+
+
+        //
+        //     let e = self.slog[self.index(i)].as_ptr();
+
+        //     while unsafe { (*e).alivef.load(Ordering::Acquire) != self.lmasks[idx.0 - 1].get() } {
+        //         if iteration % WARN_THRESHOLD == 0 {
+        //             warn!(
+        //                 "alivef not being set for self.index(i={}) = {} (self.lmasks[{}] is {})...",
+        //                 i,
+        //                 self.index(i),
+        //                 idx.0 - 1,
+        //                 self.lmasks[idx.0 - 1].get()
+        //             );
+        //         }
+        //         iteration += 1;
+        //     }
+
+        //     unsafe {
+        //         d(
+        //             (*e).operation.as_ref().unwrap().clone(),
+        //             (*e).replica == idx.0,
+        //         )
+        //     };
+
+        //     // Looks like we're going to wrap around now; flip this replica's local mask.
+        //     if self.index(i) == self.slog.len() - 1 {
+        //         self.lmasks[idx.0 - 1].set(!self.lmasks[idx.0 - 1].get());
+        //         //trace!("idx: {} lmask: {}", idx, self.lmasks[idx - 1].get());
+        //     }
+        // }
+
+        // // Update the completed tail after we've executed these operations. Also update
+        // // this replica's local tail.
+        // self.ctail.fetch_max(gtail, Ordering::Relaxed);
+        // self.ltails[idx.0 - 1].store(gtail, Ordering::Relaxed);
+
+    }
+
+
+    /// Loops over all `local_versions` and finds the replica with the lowest version.
     ///
     /// # Returns
     /// The ID (in `LogToken`) of the replica with the lowest tail and the
@@ -587,162 +884,6 @@ impl NrLog
             idx = idx + 1;
         }
         (min_local_version, tracked(g_cb_comb_new))
-    }
-
-    /// Executes a passed in closure (`d`) on all operations starting from a
-    /// replica's local tail on the shared log. The replica is identified
-    /// through an `idx` passed in as an argument.
-    pub(crate) fn execute(&self, rid: ReplicaToken,
-        combiner: Tracked<UnboundedLog::combiner>,
-        cb_combiner: Tracked<CyclicBuffer::combiner>
-    )
-        requires
-            self.wf(),
-            rid.id_spec() < self.num_replicas@,
-            cb_combiner@@.instance == self.cyclic_buffer_instance@,
-            cb_combiner@@.value.is_Idle(),
-            cb_combiner@@.key == rid.id_spec(),
-            combiner@@.value.is_Placed() || combiner@@.value.is_Ready(),
-            combiner@@.key == rid.id_spec(),
-            combiner@@.instance == self.unbounded_log_instance@
-
-    {
-        let node_id = rid.id() as usize;
-
-        let tracked mut g_new_comb = combiner.get();
-        let tracked mut g_new_cb_comb = cb_combiner.get();
-
-        // if the combiner ins idle, we start it with the trival start transition
-        proof {
-            if combiner@@.value.is_Ready() {
-                g_new_comb = self.unbounded_log_instance.borrow().exec_trivial_start(node_id as nat, g_new_comb);
-            }
-        }
-
-        // let ltail = self.ltails[idx.0 - 1].load(Ordering::Relaxed);
-        let mut local_version = atomic_with_ghost!(
-            &self.local_versions.index(node_id).0 => load();
-            returning ret;
-            ghost g => {
-                // this kicks of the state transition in both the cyclic buffer and the unbounded log
-                g_new_comb = self.unbounded_log_instance.borrow().exec_load_local_version(node_id as nat, &g.0, g_new_comb);
-                g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_start(node_id as nat, &g.1, g_new_cb_comb);
-            });
-
-        // Check if we have any work to do by comparing our local tail with the log's
-        // global tail. If they're equal, then we're done here and can simply return.
-        // let gtail = self.tail.load(Ordering::Relaxed);
-        let global_tail = atomic_with_ghost!(
-            &self.tail.0 => load();
-            returning global_tail;
-            ghost g => {
-                if (local_version == global_tail) {
-                    // there has ben no additional updates to be applied, combiner back to idle
-                    g_new_comb = self.unbounded_log_instance.borrow().exec_finish_no_change(node_id as nat, &g.0, g_new_comb);
-                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_abort(node_id as nat, g_new_cb_comb);
-                } else {
-                    g_new_comb = self.unbounded_log_instance.borrow().exec_load_global_head(node_id as nat, &g.0, g_new_comb);
-                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_enter(node_id as nat,  &g.1, g_new_cb_comb);
-                }
-            });
-
-        // Execute all operations from the passed in offset to the shared log's tail.
-        // Check if the entry is live first; we could have a replica that has reserved
-        // entries, but not filled them into the log yet.
-        // for i in ltail..gtail {
-        while local_version < global_tail
-            invariant
-                self.wf()
-        {
-            let mut iteration = 1;
-
-            let actual_idx = self.index(local_version);
-            let is_alive_value = self.is_alive_value(local_version);
-            let mut is_alive = false;
-            while !is_alive
-                invariant
-                    self.wf(),
-                    actual_idx < self.slog.len(),
-                    0 <= iteration <= WARN_THRESHOLD,
-                    self.slog.spec_index(actual_idx as int).wf()
-            {
-                let ghost mut log_perms : Map<int, PermissionOpt<LogEntry>>;
-                let alive_bit = atomic_with_ghost!(
-                    &self.slog.index(actual_idx).alive => load();
-                    returning alive_bit;
-                    ghost g => {
-                        if alive_bit == is_alive_value {
-                            // let new_st = self.cyclic_buffer_instance.borrow().reader_guard(node_id as nat, &g, g_new_cb_comb);
-                            // g_new_cb_comb = new_st.1;
-                            // log_perms = new_st.0;
-                        }
-
-                    });
-
-                if iteration == WARN_THRESHOLD {
-                    print_starvation_warning();
-                    iteration = 0;
-                }
-
-                is_alive = alive_bit == is_alive_value;
-                iteration = iteration + 1;
-            }
-
-            // now we know the entry is alive
-
-            // read the entry
-
-            // if entry.node_id == node_id {
-                // self.unbounded_log_instance.borrow().exec_dispatch_local()
-            //
-            // } else {
-                // self.unbounded_log_instance.borrow().exec_dispatch_remote()
-            // }
-
-            // unguard
-            // self.cyclic_buffer_instance.borrow().reader_unguard(node_id as nat, &g, g_new_cb_comb);
-
-            local_version = local_version + 1;
-        }
-
-
-
-
-        //
-        //     let e = self.slog[self.index(i)].as_ptr();
-
-        //     while unsafe { (*e).alivef.load(Ordering::Acquire) != self.lmasks[idx.0 - 1].get() } {
-        //         if iteration % WARN_THRESHOLD == 0 {
-        //             warn!(
-        //                 "alivef not being set for self.index(i={}) = {} (self.lmasks[{}] is {})...",
-        //                 i,
-        //                 self.index(i),
-        //                 idx.0 - 1,
-        //                 self.lmasks[idx.0 - 1].get()
-        //             );
-        //         }
-        //         iteration += 1;
-        //     }
-
-        //     unsafe {
-        //         d(
-        //             (*e).operation.as_ref().unwrap().clone(),
-        //             (*e).replica == idx.0,
-        //         )
-        //     };
-
-        //     // Looks like we're going to wrap around now; flip this replica's local mask.
-        //     if self.index(i) == self.slog.len() - 1 {
-        //         self.lmasks[idx.0 - 1].set(!self.lmasks[idx.0 - 1].get());
-        //         //trace!("idx: {} lmask: {}", idx, self.lmasks[idx - 1].get());
-        //     }
-        // }
-
-        // // Update the completed tail after we've executed these operations. Also update
-        // // this replica's local tail.
-        // self.ctail.fetch_max(gtail, Ordering::Relaxed);
-        // self.ltails[idx.0 - 1].store(gtail, Ordering::Relaxed);
-
     }
 
 }

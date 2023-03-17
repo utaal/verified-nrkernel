@@ -3,6 +3,7 @@ use builtin::*;
 use builtin_macros::*;
 
 use super::pervasive::map::*;
+use super::pervasive::option::Option;
 // use super::pervasive::seq::*;
 // use super::pervasive::set::*;
 // use super::pervasive::*;
@@ -11,6 +12,7 @@ use crate::pervasive::cell::{PCell, PermissionOpt};
 
 use state_machines_macros::*;
 
+use super::unbounded_log::UnboundedLog;
 use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
@@ -35,10 +37,16 @@ type LogicalLogIdx = int;
 
 type Key = int;
 
-///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
-pub type StoredType = PermissionOpt<LogEntry>;
 
 verus! {
+
+    // pub type StoredType = PermissionOpt<LogEntry>;
+
+///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
+pub struct StoredType {
+    pub cell_perms: PermissionOpt<LogEntry>,
+    pub log_entry: UnboundedLog::log //Option<UnboundedLog::log>
+}
 
 pub spec fn stored_type_inv(st: StoredType, idx: int) -> bool;
 
@@ -392,7 +400,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     /// finish processing the entry, increase current pointer
     transition!{
-        reader_ungard(node_id: NodeId) {
+        reader_unguard(node_id: NodeId) {
             remove combiner -= [
                 node_id => let CombinerState::Reading(ReaderState::Guard{ start, end, cur, val })
             ];
@@ -685,8 +693,8 @@ tokenized_state_machine! { CyclicBuffer {
         }
     }
 
-    #[inductive(reader_ungard)]
-    fn reader_ungard_inductive(pre: Self, post: Self, node_id: NodeId) { }
+    #[inductive(reader_unguard)]
+    fn reader_unguard_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
     #[inductive(reader_finish)]
     fn reader_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
