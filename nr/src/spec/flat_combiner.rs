@@ -6,12 +6,11 @@ use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::map::*;
-use super::pervasive::seq::*;
 use super::pervasive::option::Option;
+use super::pervasive::seq::*;
 // use super::pervasive::set::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::arbitrary;
-
 
 use state_machines_macros::*;
 
@@ -19,8 +18,7 @@ use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
-
-verus!{
+verus! {
 
 /// represents the state of a client thread
 #[is_variant]
@@ -119,8 +117,8 @@ FlatCombiner {
     // && Complete(x)
     #[invariant]
     pub fn inv_client_slot_empty(&self) -> bool {
-        forall |i:nat| #[trigger] self.clients.contains_key(i) && self.clients[i].is_Idle()
-            ==> self.slots[i].is_Empty()
+        forall |i:nat| #[trigger] self.clients.contains_key(i)
+            ==>  (self.clients[i].is_Idle() <==> self.slots[i].is_Empty())
     }
 
     #[invariant]
@@ -129,46 +127,8 @@ FlatCombiner {
             ==> self.clients[i].get_Waiting_0() == self.slots[i].get_ReqId()
     }
 
-    pub open spec fn slot_in_progress(slots: Map<nat, SlotState>, tid: nat) -> bool
-        recommends slots.contains_key(tid)
-    {
-        slots[tid].is_InProgress()
-    }
-
     #[invariant]
     pub fn inv_combiner_elements(&self) -> bool {
-        match self.combiner {
-            CombinerState::Collecting(elems) => {
-                // fff
-                &&& (forall |i: nat| 0 <= i < elems.len()
-                    ==> (elems[i as int].is_None() <==> !#[trigger] Self::slot_in_progress(self.slots, i)))
-                // everything above is not in progress
-                &&& (forall |i: nat| elems.len() <= i < self.num_threads ==> !self.slots[i].is_InProgress())
-            },
-            CombinerState::Responding(elems, idx) => {
-                &&& (forall |i: nat| 0 <= i < elems.len()
-                    ==> (elems[i as int].is_None() <==> !#[trigger] Self::slot_in_progress(self.slots, i)))
-                &&& (forall |i: nat| 0 <= i < idx ==> !self.slots[i].is_InProgress())
-            },
-        }
-    }
-
-    #[invariant]
-    pub fn inv_combiner_slots_not_in_progress(&self) -> bool {
-        match self.combiner {
-            CombinerState::Collecting(elems) => {
-                forall |i:nat| (0 <= i < elems.len() && elems[i as int].is_Some())
-                    ==> #[trigger] self.slots[i].get_InProgress_0() == elems[i as int ].get_Some_0()
-            },
-            CombinerState::Responding(elems, idx) => {
-                forall |i:nat| idx <= i < elems.len() && elems[i as int].is_Some()
-                   ==> #[trigger] self.slots[i].get_InProgress_0() == elems[i as int].get_Some_0()
-            },
-        }
-    }
-
-    #[invariant]
-    pub fn inv_combiner(&self) -> bool {
         match self.combiner {
             CombinerState::Collecting(elems) => {
                 elems.len() <= self.num_threads
@@ -179,6 +139,46 @@ FlatCombiner {
             },
         }
     }
+
+    pub open spec fn slot_in_progress(slots: Map<nat, SlotState>, tid: nat) -> bool
+        recommends slots.contains_key(tid)
+    {
+        slots[tid].is_InProgress()
+    }
+
+    #[invariant]
+    pub fn inv_combiner_slots_not_in_progress(&self) -> bool {
+        match self.combiner {
+            CombinerState::Collecting(elems) => {
+                // fff
+                &&& (forall |i: nat| 0 <= i < elems.len() && elems[i as int].is_None()
+                    ==> !(#[trigger] self.slots[i]).is_InProgress()) //Self::slot_in_progress(self.slots, i)))
+                // everything above is not in progress
+                &&& (forall |i: nat| elems.len() <= i < self.num_threads ==> !self.slots[i].is_InProgress())
+            },
+            CombinerState::Responding(elems, idx) => {
+                &&& (forall |i: nat| 0 <= i < elems.len() && elems[i as int].is_None()
+                    ==> !(#[trigger] self.slots[i]).is_InProgress()) //Self::slot_in_progress(self.slots, i)))
+                &&& (forall |i: nat| 0 <= i < idx ==> !self.slots[i].is_InProgress())
+            },
+        }
+    }
+
+    #[invariant]
+    pub fn inv_combiner_request_ids(&self) -> bool {
+        match self.combiner {
+            CombinerState::Collecting(elems) => {
+                forall |i:nat| (0 <= i < elems.len() && elems[i as int].is_Some())
+                    ==> (#[trigger] self.slots[i]).is_InProgress() && self.slots[i].get_InProgress_0() == elems[i as int ].get_Some_0()
+            },
+            CombinerState::Responding(elems, idx) => {
+                forall |i:nat| idx <= i < elems.len() && elems[i as int].is_Some()
+                   ==> (#[trigger] self.slots[i]).is_InProgress() && self.slots[i].get_InProgress_0() == elems[i as int].get_Some_0()
+            },
+        }
+    }
+
+
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -211,8 +211,6 @@ FlatCombiner {
             let tid = pre.combiner.get_Collecting_0().len();
 
             have slots >= [ tid => let (SlotState::Empty { .. } | SlotState::Response { .. }) ];
-
-            require(tid < pre.num_threads);
 
             update combiner = CombinerState::Collecting(pre.combiner.get_Collecting_0().push(Option::None));
         }
@@ -270,7 +268,7 @@ FlatCombiner {
             let tid = pre.combiner.get_Responding_1();
 
             require(tid < pre.num_threads);
-            require(pre.combiner.req_is_none(tid));
+            require(!pre.combiner.req_is_none(tid));
 
             update combiner = CombinerState::Responding(pre.combiner.get_Responding_0(), tid + 1);
             remove slots -= [ tid => let SlotState::InProgress(rid) ];
@@ -353,14 +351,7 @@ FlatCombiner {
     }
 
     #[inductive(combiner_responding_result)]
-    fn combiner_responding_result_inductive(pre: Self, post: Self) {
-        match post.combiner {
-            CombinerState::Responding(elems, idx) => {
-                assert(!Self::slot_in_progress(pre.slots, (idx - 1) as nat));
-            },
-            _ => {}
-        }
-    }
+    fn combiner_responding_result_inductive(pre: Self, post: Self) { }
 
     #[inductive(combiner_responding_done)]
     fn combiner_responding_done_inductive(pre: Self, post: Self) { }
