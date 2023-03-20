@@ -5,15 +5,16 @@ mod pervasive;
 use pervasive::cell::{CellId, PCell, PermissionOpt};
 #[allow(unused_imports)] // XXX: should not be needed!
 use pervasive::map::Map;
+use pervasive::modes::{tracked_exec_borrow, Gho, Trk};
 use pervasive::option::Option;
 use pervasive::prelude::*;
 use pervasive::vec::Vec;
-use pervasive::modes::{Gho, Trk, tracked_exec_borrow};
+use pervasive::slice::slice_index_set;
 
 mod spec;
 // mod exec;
 
-use spec::cyclicbuffer::{CyclicBuffer, StoredType};
+use spec::cyclicbuffer::{self, CyclicBuffer, StoredType};
 use spec::flat_combiner::FlatCombiner;
 use spec::types::*;
 use spec::unbounded_log::UnboundedLog;
@@ -60,6 +61,21 @@ pub const WARN_THRESHOLD: usize = 128;
 
 
 pub const MAX_IDX : u64 = 0xffff_ffff_f000_0000;
+pub const MAX_OPS : u64 = 0x0000_0000_00ff_ffff;
+
+
+
+#[verifier(external_body)] /* vattr */
+pub fn print_starvation_warning(line: u32) {
+    println!("WARNING({line}): has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
+}
+
+#[verifier(external_body)] /* vattr */
+pub fn panic_with_head_too_big() {
+    panic!("WARNING: Head value exceeds the maximum value of u64.");
+}
+
+
 
 /// a simpe cache padding for the struct fields
 #[repr(align(128))]
@@ -130,16 +146,10 @@ impl ThreadToken {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// NR Log
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[verifier(external_body)] /* vattr */
-pub fn print_starvation_warning(line: u32) {
-    println!("WARNING({line}): has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
-}
-
-#[verifier(external_body)] /* vattr */
-pub fn panic_with_head_too_big() {
-    panic!("WARNING: Head value exceeds the maximum value of u64.");
-}
 
 struct_with_invariants!{
 /// An entry that sits on the log. Each entry consists of three fields: The operation to
@@ -162,7 +172,6 @@ pub struct BufferEntry {
     ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
     ///  - Rust:  pub(crate) replica: usize,
     // pub(crate) replica: usize,
-
     pub log_entry: PCell<LogEntry>,
 
     /// Indicates whether this entry represents a valid operation when on the log.
@@ -173,20 +182,37 @@ pub struct BufferEntry {
 
     /// the index into the cyclic buffer of this entry into the cyclig buffer.
     pub cyclic_buffer_idx: Ghost<nat>,
-
-    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>
 }
 
-pub open spec fn wf(&self) -> bool {
-    invariant on alive with (cyclic_buffer_instance, cyclic_buffer_idx) is (v: bool, g: CyclicBuffer::alive_bits) {
-        g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => alive_bits => cyclic_buffer_idx@ => v ]
+pub open spec fn wf(&self, cb_inst: Tracked<CyclicBuffer::Instance>) -> bool {
+    // QUESTION: is that the right way to go??
+    predicate {
+        self.cyclic_buffer_instance@ == cb_inst@
+    }
+    invariant on alive with (cyclic_buffer_idx, cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
+        &&& g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => alive_bits => cyclic_buffer_idx@ => v ]
     }
 }} // struct_with_invariants
 
 impl BufferEntry {
-    pub open spec fn inv(&self, perm: PermissionOpt<LogEntry>) -> bool {
-        &&& self.log_entry.id() == perm@.pcell
-    }
+    // pub open spec fn inv(&self, t: StoredType) -> bool {
+    //     &&& self.log_entry.id() == t.cell_perms@.pcell
+    //     &&& match t.cell_perms@.value {
+    //         Some(v) => {
+    //             &&& v.
+    //         }
+    //         None => false
+    //     }
+    // }
+
+    // && t.cellContents.cell == buffer[i % LOG_SIZE as int].cell
+    // && (i >= 0 ==>
+    //   && t.logEntry.glSome?
+    //   && t.logEntry.value.op == t.cellContents.v.op
+    //   && t.logEntry.value.node_id == t.cellContents.v.node_id as int
+    //   && t.logEntry.value.idx == i
+    // )
 }
 
 
@@ -257,8 +283,14 @@ pub open spec fn wf(&self) -> bool {
         // && |buffer| == LOG_SIZE as int
         &&& self.slog.len() == LOG_SIZE
 
+        &&& self.slog.len() == self.cyclic_buffer_instance.view().buffer_size()
+
         // && (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
-        &&& (forall |i: nat| i < LOG_SIZE ==> #[trigger] self.slog[i as int].wf())
+        &&& (forall |i: nat| i < LOG_SIZE ==> #[trigger] self.slog[i as int].wf(self.cyclic_buffer_instance))
+
+        // &&& (forall |i:nat| i < LOG_SIZE ==> self.slog[i as int].inv(
+        //     self.cyclic_buffer_instance@.state.contents[i].cell_perms
+        // ))
 
         // && (forall v, g :: atomic_inv(bufferContents, v, g) <==> ContentsInv(buffer, g, cb_loc_s))
 
@@ -271,18 +303,21 @@ pub open spec fn wf(&self) -> bool {
 
     invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound) {
         // && (forall v, g :: atomic_inv(ctail.inner, v, g) <==> g == Ctail(v as int))
-        g@ === UnboundedLog::token![ unbounded_log_instance@ => version_upper_bound => v as nat ]
+        &&& g@ === UnboundedLog::token![ unbounded_log_instance@ => version_upper_bound => v as nat ]
+        &&& 0 <= v <= MAX_IDX
     }
 
     invariant on head with (cyclic_buffer_instance) specifically (self.head.0) is (v: u64, g: CyclicBuffer::head) {
         // && (forall v, g :: atomic_inv(head.inner, v, g) <==> g == CBHead(v as int, cb_loc_s))
-        g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => head => v as nat ]
+        &&& g@ === CyclicBuffer::token![ cyclic_buffer_instance@ => head => v as nat ]
+        &&& 0 <= v <= MAX_IDX
     }
 
     invariant on tail with (cyclic_buffer_instance, unbounded_log_instance) specifically (self.tail.0) is (v: u64, g: (UnboundedLog::tail, CyclicBuffer::tail)) {
         // && (forall v, g :: atomic_inv(globalTail.inner, v, g) <==> GlobalTailInv(v, g, cb_loc_s))
         &&& g.0@ === UnboundedLog::token![ unbounded_log_instance@ => tail => v as nat ]
         &&& g.1@ === CyclicBuffer::token![ cyclic_buffer_instance@ => tail => v as nat ]
+        &&& 0 <= v <= MAX_IDX
     }
 
 
@@ -328,7 +363,7 @@ impl NrLog
     #[inline(always)]
     pub(crate) fn index(&self, logical: u64) -> (result: usize)
         requires
-            self.slog.len() > 0
+            self.slog.len() == LOG_SIZE
         ensures
             result as nat == self.index_spec(logical as nat),
             result < self.slog.len()
@@ -337,7 +372,7 @@ impl NrLog
     }
 
     pub (crate) open spec fn index_spec(&self, logical: nat) -> nat
-        recommends self.slog.len() > 0
+        recommends self.slog.len() == LOG_SIZE
     {
         logical % (self.slog.len() as nat)
     }
@@ -345,22 +380,18 @@ impl NrLog
     #[inline(always)]
     pub(crate) fn is_alive_value(&self, logical: u64) -> (result: bool)
         requires
-            self.slog.len() > 0
+            self.slog.len() == LOG_SIZE
         ensures
-            result == self.is_alive_value_spec(logical as nat)
-
+            result == self.is_alive_value_spec(logical as int),
+            result == spec::cyclicbuffer::log_entry_alive_value(logical as int, self.slog.spec_len() as nat)
     {
-        assert(
-            ((logical as usize) / self.slog.len()) as nat
-                == ((logical as nat) / self.slog.len() as nat)
-        )  by (nonlinear_arith);
-        ((logical as usize) / self.slog.len() % 2) == 0
+        ((logical as usize) / LOG_SIZE % 2) == 0
     }
 
-    pub(crate) open spec fn is_alive_value_spec(&self, logical: nat) -> bool
-        recommends self.slog.len() > 0
+    pub(crate) open spec fn is_alive_value_spec(&self, logical: int) -> bool
+        recommends self.slog.len() == LOG_SIZE
     {
-        ((logical / (self.slog.len() as nat)) % 2) == 0
+        ((logical / (LOG_SIZE as int)) % 2) == 0
     }
 
 
@@ -416,133 +447,152 @@ impl NrLog
             self.wf(),
             cb_combiner@@.instance == self.cyclic_buffer_instance@,
             cb_combiner@@.value.is_Idle(),
-            cb_combiner@@.key == rid.id_spec()
-
+            cb_combiner@@.key == rid.id_spec(),
+            ops.len() < MAX_OPS
     {
-        let node_id = rid.id() as usize;
+        // let node_id = rid.id() as usize;
 
-        // TODO!
-        let nops = ops.len();
+        // // TODO!
+        // let nops = ops.len();
+        // assert(nops < MAX_OPS);
 
-        let mut iteration = 1;
-        let mut waitgc = 1;
+        // let mut iteration = 1;
+        // let mut waitgc = 1;
 
-        let tracked mut g_cb_comb_new = cb_combiner.get();
+        // let tracked mut g_cb_comb_new = cb_combiner.get();
 
-        while true
-            invariant
-                self.wf(),
-                0 <= iteration <= WARN_THRESHOLD,
-                g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
-                g_cb_comb_new@.key == node_id as nat,
-                g_cb_comb_new@.value.is_Idle()
-        {
-            if iteration == WARN_THRESHOLD {
-                print_starvation_warning(line!());
-                return;
-            }
+        // while true
+        //     invariant
+        //         self.wf(),
+        //         0 <= iteration <= WARN_THRESHOLD,
+        //         g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
+        //         g_cb_comb_new@.key == node_id as nat,
+        //         g_cb_comb_new@.value.is_Idle(),
+        //         nops < MAX_OPS
+        // {
+        //     if iteration == WARN_THRESHOLD {
+        //         print_starvation_warning(line!());
+        //         return;
+        //     }
 
-            iteration = iteration + 1;
+        //     iteration = iteration + 1;
 
-            // let tail = self.tail.load(Ordering::Relaxed);
-            let tail = atomic_with_ghost!(
-                &self.tail.0 => load();
-                returning tail;
-                ghost g => { }
-            );
+        //     // let tail = self.tail.load(Ordering::Relaxed);
+        //     let tail = atomic_with_ghost!(
+        //         &self.tail.0 => load();
+        //         returning tail;
+        //         ghost g => { }
+        //     );
 
-            // let head = self.head.load(Ordering::Relaxed);
-            let head = atomic_with_ghost!(
-                &self.head.0 => load();
-                returning tail;
-                ghost g => {
-                    g_cb_comb_new = self.cyclic_buffer_instance
-                        .borrow()
-                        .advance_tail_start(node_id as nat, &g, g_cb_comb_new);
-                }
-            );
+        //     // let head = self.head.load(Ordering::Relaxed);
+        //     let head = atomic_with_ghost!(
+        //         &self.head.0 => load();
+        //         returning tail;
+        //         ghost g => {
+        //             g_cb_comb_new = self.cyclic_buffer_instance
+        //                 .borrow()
+        //                 .advance_tail_start(node_id as nat, &g, g_cb_comb_new);
+        //         }
+        //     );
 
-            // capture the warning here
-            if head >= MAX_IDX {
-                panic_with_head_too_big();
-            }
+        //     // capture the warning here
+        //     if head >= MAX_IDX {
+        //         panic_with_head_too_big();
+        //     }
+
+        //     // If there are fewer than `GC_FROM_HEAD` entries on the log, then just
+        //     // try again. The replica that reserved entry (h + self.slog.len() - GC_FROM_HEAD)
+        //     // is currently trying to advance the head of the log. Keep refreshing the
+        //     // replica against the log to make sure that it isn't deadlocking GC.
+        //     // if tail > head + self.slog.len() - GC_FROM_HEAD  {  }
+        //     if tail > head + ((self.slog.len() - GC_FROM_HEAD) as u64) {
+        //         if waitgc == WARN_THRESHOLD {
+        //             print_starvation_warning(line!());
+        //             waitgc = 0;
+        //         }
+
+        //         proof {
+        //             g_cb_comb_new = self.cyclic_buffer_instance
+        //                     .borrow()
+        //                     .advance_tail_abort(node_id as nat, g_cb_comb_new);
+        //         }
+
+        //         // TODO:
+        //         // self.execute(idx, &mut s);
+
+        //         // self.advance_head(idx, &mut s)?;
+        //         let rid_copy = ReplicaToken { rid: rid.rid };
+        //         let adv_head_result = self.advance_head(rid_copy, tracked(g_cb_comb_new));
+        //         g_cb_comb_new = adv_head_result.get();
+        //         // XXX: that one here doesn't seem to work. `error: cannot call function with mode exec`
+        //         // g_cb_comb_new = self.advance_head(rid_copy, tracked(g_cb_comb_new)).get();
+        //         // continue;
+        //     } else {
+        //         assert(nops < MAX_OPS);
+
+        //         let new_tail = tail + (nops as u64);
+
+        //         // If on adding in the above entries there would be fewer than `GC_FROM_HEAD`
+        //         // entries left on the log, then we need to advance the head of the log.
+        //         let advance = new_tail > head + (self.slog.len() - GC_FROM_HEAD) as u64 ;
+
+        //         // Try reserving slots for the operations. If that fails, then restart
+        //         // from the beginning of this loop.
+        //         // if self.tail.compare_exchange_weak(tail, tail + nops, Ordering::Acquire, Ordering::Acquire)
+
+        //         let tracked adv_tail_finish_result : (
+        //             Gho<Map<int, StoredType>>,
+        //             Trk<Map<int, StoredType>>,
+        //             Trk<CyclicBuffer::combiner>,
+        //         );
 
 
-            // If there are fewer than `GC_FROM_HEAD` entries on the log, then just
-            // try again. The replica that reserved entry (h + self.slog.len() - GC_FROM_HEAD)
-            // is currently trying to advance the head of the log. Keep refreshing the
-            // replica against the log to make sure that it isn't deadlocking GC.
-            // if tail > head + self.slog.len() - GC_FROM_HEAD  {  }
-            if tail > head + ((self.slog.len() - GC_FROM_HEAD) as u64) {
-                if waitgc == WARN_THRESHOLD {
-                    print_starvation_warning(line!());
-                    waitgc = 0;
-                }
+        //         let result = atomic_with_ghost!(
+        //             &self.tail.0 => compare_exchange(tail, new_tail);
+        //             update prev -> next;
+        //             returning result;
+        //             ghost g => {
+        //                 if matches!(result, Result::Ok(tail)) {
+        //                     let tracked (inf_tail, mut cb_tail) = g;
 
-                proof {
-                    g_cb_comb_new = self.cyclic_buffer_instance
-                            .borrow()
-                            .advance_tail_abort(node_id as nat, g_cb_comb_new);
-                }
+        //                     // place the updates in the log:
+        //                     // self.unbouned_log_instance.borrow().update_place_ops_in_log_one()
 
-                // TODO:
-                // self.execute(idx, &mut s);
+        //                     // HERE IS WHERE IT DIFFERS FROM THE ORIGINAL CODE.
 
-                // self.advance_head(idx, &mut s)?;
-                let rid_copy = ReplicaToken { rid: rid.rid };
-                let adv_head_result = self.advance_head(rid_copy, tracked(g_cb_comb_new));
-                g_cb_comb_new = adv_head_result.get();
-                // XXX: that one here doesn't seem to work. `error: cannot call function with mode exec`
-                // g_cb_comb_new = self.advance_head(rid_copy, tracked(g_cb_comb_new)).get();
-                // continue;
-            } else {
-                let new_tail = tail + (nops as u64);
+        //                     // precondition!
 
-                // If on adding in the above entries there would be fewer than `GC_FROM_HEAD`
-                // entries left on the log, then we need to advance the head of the log.
-                let advance = new_tail > head + (self.slog.len() - GC_FROM_HEAD) as u64 ;
+        //                     // assert(cb_tail.view().instance == self.cyclic_buffer_instance.view());
+        //                     // assert(g_cb_comb_new.view().instance == self.cyclic_buffer_instance.view());
+        //                     // assert(g_cb_comb_new.view().key == node_id as nat);
+        //                     // assert(g_cb_comb_new.view().value.is_AdvancingTail());
+        //                     // assert(cb_tail.view().value <= new_tail);
+        //                     // assert(self.slog.len() == self.cyclic_buffer_instance.view().buffer_size());
 
-                // Try reserving slots for the operations. If that fails, then restart
-                // from the beginning of this loop.
-                // if self.tail.compare_exchange_weak(tail, tail + nops, Ordering::Acquire, Ordering::Acquire)
+        //                     assert(new_tail <= g_cb_comb_new.view().value.get_AdvancingTail_observed_head() + self.slog.len());
+        //                     assert(new_tail < MAX_IDX);
 
-                let tracked adv_tail_finish_result : (
-                    Gho<Map<int, StoredType>>,
-                    Trk<Map<int, StoredType>>,
-                    Trk<CyclicBuffer::combiner>,
-                );
+        //                     adv_tail_finish_result = self.cyclic_buffer_instance.borrow()
+        //                         .advance_tail_finish(node_id as nat, new_tail as nat, &mut cb_tail, g_cb_comb_new);
 
+        //                     g_cb_comb_new = adv_tail_finish_result.2.0;
+        //                     g = (inf_tail, cb_tail);
 
-                let result = atomic_with_ghost!(
-                    &self.tail.0 => compare_exchange(tail, new_tail);
-                    update prev -> next;
-                    returning result;
-                    ghost g => {
-                        if matches!(result, Result::Ok(tail)) {
-                            let tracked (inf_tail, mut cb_tail) = g;
+        //                     // Invariant!
 
-                            // place the updates in the log:
-                            // self.unbouned_log_instance.borrow().update_place_ops_in_log_one()
+        //                 } else {
+        //                     // no transition, abandon advance tail
+        //                     g_cb_comb_new = self.cyclic_buffer_instance.borrow()
+        //                                             .advance_tail_abort(node_id as nat, g_cb_comb_new);
+        //                 }
+        //             }
+        //         );
 
-                            adv_tail_finish_result = self.cyclic_buffer_instance.borrow()
-                                .advance_tail_finish(node_id as nat, new_tail as nat, &mut cb_tail, g_cb_comb_new);
+        //         if matches!(result, Result::Ok(tail)) {
 
-                            g_cb_comb_new = adv_tail_finish_result.2.0;
-                            g = (inf_tail, cb_tail);
-
-                        } else {
-                            // no transition, abandon advance tail
-                            g_cb_comb_new = self.cyclic_buffer_instance.borrow()
-                                                    .advance_tail_abort(node_id as nat, g_cb_comb_new);
-                        }
-                    }
-                );
-
-                if matches!(result, Result::Ok(tail)) {
-
-                }
-            }
-        }
+        //         }
+        //     }
+        // }
     }
 
 
@@ -648,6 +698,7 @@ impl NrLog
 
     {
         let node_id = rid.id() as usize;
+        assert(cb_combiner@@.key == node_id as nat);
 
         let tracked mut g_new_replica = replica.get();
         let tracked mut g_new_comb = combiner.get();
@@ -694,7 +745,12 @@ impl NrLog
         // for i in ltail..gtail {
         while local_version < global_tail
             invariant
-                self.wf()
+                self.wf(),
+                0 <= local_version <= global_tail,
+                g_new_cb_comb@.key == node_id as nat,
+                g_new_cb_comb@.instance == self.cyclic_buffer_instance@,
+                g_new_cb_comb.view().value.is_Reading(),
+                g_new_cb_comb.view().value.get_Reading_0().is_Range(),
         {
             let mut iteration = 1;
 
@@ -707,7 +763,11 @@ impl NrLog
                     self.wf(),
                     actual_idx < self.slog.len(),
                     0 <= iteration <= WARN_THRESHOLD,
-                    self.slog.spec_index(actual_idx as int).wf()
+                    g_new_cb_comb@.instance == self.cyclic_buffer_instance@,
+                    g_new_cb_comb@.key == node_id as nat,
+                    g_new_cb_comb.view().value.is_Reading(),
+                    g_new_cb_comb.view().value.get_Reading_0().is_Range(),
+                    self.slog.spec_index(actual_idx as int).wf(self.cyclic_buffer_instance)
             {
                 let tracked reader_guard_result : (Gho<Map<int, StoredType>>,Trk<CyclicBuffer::combiner>);
                 let alive_bit = atomic_with_ghost!(
@@ -715,6 +775,34 @@ impl NrLog
                     returning alive_bit;
                     ghost g => {
                         if alive_bit == is_alive_value {
+
+                            assert(g.view().instance == self.cyclic_buffer_instance.view());
+                            assert(g_new_cb_comb.view().instance == self.cyclic_buffer_instance.view());
+
+                            assert(g_new_cb_comb.view().key == node_id as nat);
+
+                            match g_new_cb_comb.view().value {
+                                spec::cyclicbuffer::CombinerState::Reading(spec::cyclicbuffer::ReaderState::Range { start, end, cur }) => {
+                                    assume(cur < end);
+                                    assert(cur == local_version);
+                                    assume(g.view().key == self.index_spec(cur));
+                                    assume(g.view().value == is_alive_value);
+                                    assert(is_alive_value == spec::cyclicbuffer::log_entry_alive_value(cur as int, self.slog.len() as nat));
+                                    assert(g.view().key == spec::cyclicbuffer::log_entry_idx(cur as int, self.slog.len() as nat));
+                                },
+                                _ => assert(false)
+                            };
+
+                            // assert(g_new_cb_comb.view().value.is_Reading());
+                            // assert(g_new_cb_comb.view().value.get_Reading_0().is_Range());
+                            // assert(g_new_cb_comb.view().value.get_Reading_0().get_Range_cur() <g_new_cb_comb.view().value.get_Reading_0().get_Range_end());
+
+                            // assert(g.view().key == g_new_cb_comb.view().value.get_Reading_0().get_Range_cur());
+                            // assert(g.view().value == is_alive_value);
+
+
+
+
                             reader_guard_result = self.cyclic_buffer_instance.borrow().reader_guard(node_id as nat, &g, g_new_cb_comb);
                             g_new_cb_comb = reader_guard_result.1.0;
                         }
@@ -731,40 +819,40 @@ impl NrLog
 
             // now we know the entry is alive
 
-            let tracked stored_entry : &StoredType;
-            proof {
-                stored_entry = self.cyclic_buffer_instance.borrow().guard_guards(node_id as nat, &g_new_cb_comb);
-            }
+            // let tracked stored_entry : &StoredType;
+            // proof {
+            //     stored_entry = self.cyclic_buffer_instance.borrow().guard_guards(node_id as nat, &g_new_cb_comb);
+            // }
 
-            // read the entry
-            let log_entry = self.slog.index(actual_idx).log_entry.borrow(tracked_exec_borrow(&stored_entry.cell_perms));
+            // // read the entry
+            // let log_entry = self.slog.index(actual_idx).log_entry.borrow(tracked_exec_borrow(&stored_entry.cell_perms));
 
-            // actual_replica', ret := nrifc.do_update(actual_replica', log_entry.op);
+            // // actual_replica', ret := nrifc.do_update(actual_replica', log_entry.op);
 
-            proof {
-                if log_entry.node_id == node_id as nat {
-                    self.unbounded_log_instance.borrow().pre_exec_dispatch_local(node_id as nat, &stored_entry.log_entry, &g_new_comb);
+            // proof {
+            //     if log_entry.node_id == node_id as nat {
+            //         self.unbounded_log_instance.borrow().pre_exec_dispatch_local(node_id as nat, &stored_entry.log_entry, &g_new_comb);
 
-                    let tracked exec_dispatch_result = self.unbounded_log_instance.borrow()
-                        .exec_dispatch_local(node_id as nat, &stored_entry.log_entry, g_new_replica, g_new_local_updates, g_new_comb);
+            //         let tracked exec_dispatch_result = self.unbounded_log_instance.borrow()
+            //             .exec_dispatch_local(node_id as nat, &stored_entry.log_entry, g_new_replica, g_new_local_updates, g_new_comb);
 
-                    g_new_replica = exec_dispatch_result.0.0;
-                    g_new_local_updates = exec_dispatch_result.1.0;
-                    g_new_comb = exec_dispatch_result.2.0;
+            //         g_new_replica = exec_dispatch_result.0.0;
+            //         g_new_local_updates = exec_dispatch_result.1.0;
+            //         g_new_comb = exec_dispatch_result.2.0;
 
-                } else {
-                    // unbounded_log::log
+            //     } else {
+            //         // unbounded_log::log
 
-                    // param_token_2_log:&log,
-                    // param_token_1_replicas: replicas,
-                    let tracked exec_dispatch_result = self.unbounded_log_instance.borrow().exec_dispatch_remote(node_id as nat, &stored_entry.log_entry, g_new_replica, g_new_comb);
-                    g_new_replica = exec_dispatch_result.0.0;
-                    g_new_comb = exec_dispatch_result.1.0;
-                }
+            //         // param_token_2_log:&log,
+            //         // param_token_1_replicas: replicas,
+            //         let tracked exec_dispatch_result = self.unbounded_log_instance.borrow().exec_dispatch_remote(node_id as nat, &stored_entry.log_entry, g_new_replica, g_new_comb);
+            //         g_new_replica = exec_dispatch_result.0.0;
+            //         g_new_comb = exec_dispatch_result.1.0;
+            //     }
 
-                // unguard
-                g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_unguard(node_id as nat, g_new_cb_comb);
-            }
+            //     // unguard
+            //     g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_unguard(node_id as nat, g_new_cb_comb);
+            // }
 
             local_version = local_version + 1;
         }
@@ -951,7 +1039,7 @@ pub tracked struct ContextGhost {
     /// Token to access the batch cell in Context
     ///
     ///  - Dafny: glinear contents: glOption<CellContents<OpResponse>>,
-    pub batch_token: Tracked<PermissionOpt<PendingOperation>>,
+    pub batch_token: Option<PermissionOpt<PendingOperation>>,
 
     /// The flat combiner slot.
     /// XXX: somehow can't make this tracked?
@@ -962,7 +1050,7 @@ pub tracked struct ContextGhost {
     /// tracks the update operation
     ///
     ///  - Dafny: glinear update: glOption<Update>
-    pub update: Tracked<Option<UnboundedLog::local_updates>>
+    pub update: Option<UnboundedLog::local_updates>
 }
 
 //  - Dafny: predicate inv(v: uint64, i: nat, cell: Cell<OpResponse>, fc_loc_s: nat)
@@ -988,8 +1076,9 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
         //   && contents.glNone?
         // )
         &&& (self.slots@.value.is_Empty() ==> {
-            &&& self.update@.is_None()
-            &&& self.batch_token@@.value.is_None()
+            &&& self.update.is_None()
+            &&& self.batch_token.is_None()
+            // &&& self.batch_token@@.value.is_None()
         })
 
         // && (fc.state.FCRequest? ==>
@@ -1001,14 +1090,15 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
         //   && contents.value.v.op == update.value.us.op
         // )
         &&& (self.slots@.value.is_Request() ==> {
-            &&& self.update@.is_Some()
-            &&& self.update@.get_Some_0()@.value.is_Init()
-            &&& self.update@.get_Some_0()@.key == self.slots@.value.get_ReqId()
+            &&& self.update.is_Some()
+            &&& self.update.get_Some_0()@.value.is_Init()
+            &&& self.update.get_Some_0()@.key == self.slots@.value.get_ReqId()
 
-            &&& self.batch_token@@.value.is_Some()
-            &&& self.batch_token@@.pcell == cell.id()
-            &&& self.batch_token@@.value.get_Some_0().op.is_Some()
-            &&& self.batch_token@@.value.get_Some_0().op.get_Some_0() == self.update@.get_Some_0()@.value.get_Init_op()
+            &&& self.batch_token.is_Some()
+            &&& self.batch_token.get_Some_0()@.value.is_Some()
+            &&& self.batch_token.get_Some_0()@.pcell == cell.id()
+            &&& self.batch_token.get_Some_0()@.value.get_Some_0().op.is_Some()
+            &&& self.batch_token.get_Some_0()@.value.get_Some_0().op.get_Some_0() == self.update.get_Some_0()@.value.get_Init_op()
         })
 
         // && (fc.state.FCInProgress? ==>
@@ -1016,8 +1106,8 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
         //   && contents.glNone?
         // )
         &&& (self.slots@.value.is_InProgress() ==> {
-            &&& self.update@.is_None()
-            &&& self.batch_token@@.value.is_None()
+            &&& self.update.is_None()
+            &&& self.batch_token.is_None()
         })
 
         // && (fc.state.FCResponse? ==>
@@ -1028,14 +1118,15 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
         //   && contents.value.cell == cell
         //   && contents.value.v.ret == update.value.us.ret
         // )
-        &&& (self.slots@.value.is_InProgress() ==> {
-            &&& self.update@.is_Some()
-            &&& self.update@.get_Some_0()@.value.is_Done()
-            &&& self.update@.get_Some_0()@.key == self.slots@.value.get_ReqId()
+        &&& (self.slots@.value.is_Response() ==> {
+            &&& self.update.is_Some()
+            &&& self.update.get_Some_0()@.value.is_Done()
+            &&& self.update.get_Some_0()@.key == self.slots@.value.get_ReqId()
 
-            &&& self.batch_token@@.value.is_Some()
-            &&& self.batch_token@@.pcell == cell.id()
-            &&& self.batch_token@@.value.get_Some_0().resp.get_Some_0() == self.update@.get_Some_0()@.value.get_Done_ret()
+            &&& self.batch_token.is_Some()
+            &&& self.batch_token.get_Some_0()@.value.is_Some()
+            &&& self.batch_token.get_Some_0()@.pcell == cell.id()
+            &&& self.batch_token.get_Some_0()@.value.get_Some_0().resp.get_Some_0() == self.update.get_Some_0()@.value.get_Done_ret()
         })
     }
 }
@@ -1075,7 +1166,10 @@ pub struct Context {
 
 // XXX: in Dafny, this predicate takes the thread id and the flat combiner instance as arguments,
 // but it seems that this is not possible here?
-pub open spec fn wf(&self) -> bool {
+pub open spec fn wf(&self, thread_idx: int) -> bool {
+    predicate {
+        self.thread_id_g@.thread_id_spec() == thread_idx
+    }
     invariant on atomic with (flat_combiner_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost) {
         // (forall v, g :: atomic_inv(atomic.inner, v, g) <==> g.inv(v, i, cell.inner, fc_loc))
         &&& g.inv(v, thread_id_g@.thread_id_spec(), batch.0, flat_combiner_instance@)
@@ -1084,14 +1178,14 @@ pub open spec fn wf(&self) -> bool {
 
 impl Context {
 
-    pub open spec fn get_thread_id(&self) -> nat {
-        self.thread_id_g@.tid as nat
+    pub open spec fn get_thread_id(&self) -> int {
+        self.thread_id_g@.tid as int
     }
 
     /// Enqueues an operation onto this context's batch of pending operations.
     pub fn enqueue_op(&self, op: UpdateOp, tracked update: Tracked<UnboundedLog::local_updates>)
         -> bool
-        requires self.wf()
+        requires self.wf(self.get_thread_id())
     {
         // enqueue is a bit a misnomer here, we actually only have one slot in the batch for now.
 
@@ -1134,7 +1228,7 @@ impl Context {
     /// replica this thread is registered against.
     pub fn enqueue_response(&self, resp: ReturnType) -> bool
         requires
-            self.wf(),
+            self.wf(self.get_thread_id())
             // self.atomic != 0
     {
         // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
@@ -1170,7 +1264,7 @@ impl Context {
 
     /// Returns a single response if available. Otherwise, returns None.
     pub fn get_result(&self) -> Option<ReturnType>
-        requires self.wf()
+        requires self.wf(self.get_thread_id())
     {
         // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
         // // let res = atomic_with_ghost!(
@@ -1391,8 +1485,7 @@ pub open spec fn wf(&self) -> bool {
 
     predicate {
         // && (forall i | 0 <= i < |contexts| :: i in contexts && contexts[i].WF(i, fc_loc))
-        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].wf())
-        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].get_thread_id() == i)
+        &&& (forall |i: int| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i].wf(i))
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].flat_combiner_instance == self.flat_combiner_instance)
 
         // && |contexts| == MAX_THREADS_PER_REPLICA as int
@@ -1401,6 +1494,9 @@ pub open spec fn wf(&self) -> bool {
         &&& 0 <= self.replica_token.rid < NUM_REPLICAS
         // && replica.InternalInv()
         &&& self.data.0.internal_inv()
+
+        // XXX: the number of threads must agree here!, make this dynamic?
+        &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
 
         // XXX: What is that one here???
         // seems to refer to module NodeReplica(nrifc: NRIfc) refines ContentsTypeMod
@@ -1425,21 +1521,7 @@ pub open spec fn wf(&self) -> bool {
 } // struct_with_invariants!
 
 
-// macro_rules! myatomic_with_ghost_no_op {
-//     ($e:expr, $g:ident, $b:block) => {
-//         ::builtin_macros::verus_exec_expr!{ {
-//             let atomic = &($e);
-//             crate::open_atomic_invariant!(&atomic.atomic_inv => pair => {
-//                 #[allow(unused_mut)]
-//                 #[verifier::proof] let (perm, mut $g) = pair;
 
-//                 proof { $b }
-
-//                 pair = (perm, $g);
-//             });
-//         } }
-//     }
-// }
 
 impl Replica  {
     /// Try to become acquire the combiner lock here. If this fails, then return None.
@@ -1560,7 +1642,6 @@ impl Replica  {
         // self.collect_thread_ops(&mut buffer, operations.as_mut_slice());
 
 
-
         // Step 2: Append all operations to the log
 
         // Step 3: Take the R/W lock on the data structure
@@ -1577,74 +1658,206 @@ impl Replica  {
     ///
     /// - Dafny: combine_collect()
     #[inline(always)]
-    fn collect_thread_ops(&self, buffer: &mut Vec<UpdateOp>, operations: &mut [usize],
-                            tracked flat_combiner:  Tracked<FlatCombiner::combiner>)
-                            // -> (flat_combiner: Tracked<FlatCombiner::combiner>)
+    fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
+                          flat_combiner:  Tracked<FlatCombiner::combiner>)
+                             -> (tracked results:
+                                (/* flat_combiner: */Tracked<FlatCombiner::combiner>,
+                                 /* request_ids: */ Ghost<Seq<ReqId>>,
+                                 /* updates: */ Tracked<Vec<UnboundedLog::local_updates>>
+                                ))
         requires
             self.wf(),
+            old(num_ops_per_thread).len() == 0,
+            old(operations).len() == 0,
             // requires flatCombiner.loc_s == node.fc_loc
-            self.flat_combiner_instance@ == flat_combiner@@.instance,
+            flat_combiner@@.instance == self.flat_combiner_instance@,
             // requires flatCombiner.state == FC.FCCombinerCollecting([])
             flat_combiner@@.value.is_Collecting(),
             flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
-            self.flat_combiner_instance@ == flat_combiner@@.instance,
-            flat_combiner@@.value.is_Responding(),
-            flat_combiner@@.value.get_Responding_1() == 0,
+            results.0@@.instance == self.flat_combiner_instance@,
+            results.0@@.value.is_Responding(),
+            results.0@@.value.get_Responding_1() == 0,
 
     {
-        let tracked mut flat_combiner_mut = flat_combiner;
+        let tracked mut flat_combiner = flat_combiner;
 
+        let tracked mut updates = Vec::new();
+        let ghost mut request_ids = Seq::empty();
+
+        // let num_registered_threads = self.next.load(Ordering::Relaxed);
+        let num_registered_threads = MAX_THREADS_PER_REPLICA;
 
         // Collect operations from each thread registered with this replica.
-        // let num_registered_threads = self.next.load(Ordering::Relaxed);
         // for i in 1..num_registered_threads {
-        // let n_contexts = self.contexts.len();
-        // let mut thread_idx = 0;
-        // while thread_idx < n_contexts {
-        //     let res = atomic_with_ghost!(
-        //         &self.contexts.index(0).atomic.0 => load();
-        //         returning ret;
-        //         ghost g // g : ContextGhost
-        //     => {
-        //         // nothing in the buffer here
-        //         if ret == 0 {
-        //             self.flat_combiner_instance.borrow().combiner_collect_empty(&g.slots, flat_combiner_mut.borrow_mut());
-        //         } else {
-        //             g.slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.slots, flat_combiner_mut.borrow_mut());
-        //         }
-        //     });
+        let mut thread_idx = 0;
+        while thread_idx < num_registered_threads
+            invariant
+                0 <= thread_idx <= num_registered_threads,
+                self.wf(),
+                operations.len() <= thread_idx,
+                num_ops_per_thread.len() == thread_idx,
+                self.contexts.len() == num_registered_threads,
+                flat_combiner@@.value.is_Collecting(),
+                flat_combiner@@.value.get_Collecting_0().len() == thread_idx,
+                flat_combiner@@.instance == self.flat_combiner_instance@,
+        {
+            assert(self.contexts.spec_index(thread_idx as int).wf(thread_idx as int));
+            assert(self.contexts.spec_index(thread_idx as int).get_thread_id() == thread_idx as int);
 
-        //     thread_idx =  thread_idx + 1;
-        // }
+            let tracked update_req : Option<UnboundedLog::local_updates>;
+            let tracked mut batch_token : Option<PermissionOpt<PendingOperation>>;
+            // let tracked
 
-        //     let ctxt_iter = self.contexts[i - 1].iter();
-        //     operations[i - 1] = ctxt_iter.len();
-        //     // meta-data is (), throw it away
-        //     buffer.extend(ctxt_iter.map(|op| op.0));
-        // }
+            let num_ops = atomic_with_ghost!(
+                &self.contexts.index(thread_idx).atomic.0 => load();
+                returning num_ops;
+                ghost g // g : ContextGhost
+            => {
+                assert(flat_combiner.view().view().value.get_Collecting_0().len() == thread_idx);
 
+                if g.slots.view().value.is_Empty() || g.slots.view().value.is_Response() {
+                    self.flat_combiner_instance.borrow().combiner_collect_empty(&g.slots, flat_combiner.borrow_mut());
+                } else {
+                    assume(!g.slots.view().value.is_InProgress());
+                    g.slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.slots, flat_combiner.borrow_mut());
+                }
 
-        // self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner_mut.borrow_mut());
+                // we just have one pending ops for now!
+                if num_ops == 1 {
+                    update_req = g.update;
+                    batch_token = g.batch_token;
+                    g.update = None;
+                    g.batch_token = None;
+                } else {
+                    update_req = None;
+                    batch_token = None;
+                }
+            });
 
-        // (tracked(flat_combiner))
-        assume(false);
+            if num_ops == 1 {
+                assert(batch_token.is_Some());
+                assert(update_req.is_Some());
+                // reading the op cell
+                //self.contexts.index(thread_idx).batch.0.take(&mut batch_token.as_ref().unwrap());
+
+                /// TODO: keep track of the request ids, ....
+
+                proof {
+                    let tracked update_req = update_req.tracked_unwrap();
+                    request_ids.push(update_req@.key);
+                    // updates.push(update_req);
+                }
+                // operations.push();
+            } else {
+                // nothng here
+            }
+
+            // set the number of active operations per thread
+            num_ops_per_thread.push(num_ops as usize);
+
+            thread_idx = thread_idx + 1;
+        }
+
+        assert(flat_combiner@@.value.get_Collecting_0().len() == thread_idx);
+        assert(thread_idx == MAX_THREADS_PER_REPLICA);
+
+        self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
+
+        (flat_combiner, ghost(request_ids), tracked(updates))
     }
 
     ///
     /// - Dafny: combine_respond
-    fn distrubute_thread_resps(&self, buffer: &mut Vec<ReturnType>, operations: &mut [usize]) {
+    fn distrubute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>,
+                               flat_combiner:  Tracked<FlatCombiner::combiner>,
+                               request_ids: Ghost<Seq<ReqId>>
+    )
+        requires
+            self.wf(),
+            old(num_ops_per_thread).len() == MAX_THREADS_PER_REPLICA,
+            old(responses).len() == MAX_THREADS_PER_REPLICA,
+            // requires flatCombiner.loc_s == node.fc_loc
+            flat_combiner@@.instance == self.flat_combiner_instance@,
+            // requires flatCombiner.state.FCCombinerResponding?
+            flat_combiner@@.value.is_Responding(),
+            flat_combiner@@.value.get_Responding_1() == 0,
+    {
+        let tracked mut flat_combiner = flat_combiner;
+
+        // let num_registered_threads = self.next.load(Ordering::Relaxed);
+        let num_registered_threads = MAX_THREADS_PER_REPLICA;
+
         // let (mut s, mut f) = (0, 0);
         // for i in 1..num_registered_threads {
-        //     if operations[i - 1] == 0 {
-        //         continue;
-        //     };
+        let mut thread_idx = 0;
+        let mut resp_idx : usize = 0;
+        while thread_idx < num_registered_threads
+            invariant
+                0 <= thread_idx <= num_registered_threads,
+                0 <= resp_idx < responses.len(),
+                resp_idx <= thread_idx,
+                num_ops_per_thread.len() == num_registered_threads,
+                responses.len() == num_registered_threads,
+                num_registered_threads == MAX_THREADS_PER_REPLICA,
+                self.wf(),
+                flat_combiner@@.instance == self.flat_combiner_instance@,
+                flat_combiner@@.value.is_Responding(),
+                flat_combiner@@.value.get_Responding_1() == thread_idx,
 
-        //     f += operations[i - 1];
-        //     self.contexts[i - 1].enqueue_resps(&results[s..f]);
-        //     s += operations[i - 1];
-        //     operations[i - 1] = 0;
-        // }
+        {
+            let num_ops = *num_ops_per_thread.index(thread_idx);
+
+            assert(flat_combiner.view().view().value.get_Responding_1() < num_registered_threads);
+
+            if num_ops == 0 {
+                // if operations[i - 1] == 0 {
+                //     continue;
+                // };
+                assume(flat_combiner.view().view().value.req_is_none(thread_idx as nat));
+                assert(thread_idx < MAX_THREADS_PER_REPLICA);
+                assert(self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA);
+                self.flat_combiner_instance.borrow().combiner_responding_empty(flat_combiner.borrow_mut());
+            } else {
+
+                //     f += operations[i - 1];
+                //     self.contexts[i - 1].enqueue_resps(&results[s..f]);
+                //     s += operations[i - 1];
+
+                // obtain the element from the operation batch
+                // let op_resp = self.contexts.index(thread_idx).batch.0.take()
+                // update with the response
+                // op_resp.resp = Some(responses.index(resp_idx));
+                // place the element back into the batck
+                // self.contexts.index(thread_idx).batch.0.put()
+
+                //     operations[i - 1] = 0;
+                atomic_with_ghost!(
+                    &self.contexts.index(thread_idx).atomic.0 => store(0);
+                    ghost g // g : ContextGhost
+                    => {
+
+                        assume(g.slots.view().instance == self.flat_combiner_instance.view());
+                        assume(g.slots.view().key == thread_idx);
+                        assume(g.slots.view().value.is_InProgress());
+                        assume(num_registered_threads == self.flat_combiner_instance.view().num_threads());
+
+                        assume(!flat_combiner.view().view().value.req_is_none(thread_idx as nat));
+
+
+                        g.slots = self.flat_combiner_instance.borrow().combiner_responding_result(g.slots, flat_combiner.borrow_mut());
+                        // g.batch_token = Some();
+                        // g.update = Some();
+                    }
+                );
+
+                resp_idx = resp_idx + 1;
+            }
+
+            thread_idx = thread_idx + 1;
+        }
+
+        self.flat_combiner_instance.borrow().combiner_responding_done(flat_combiner.borrow_mut());
     }
 
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
