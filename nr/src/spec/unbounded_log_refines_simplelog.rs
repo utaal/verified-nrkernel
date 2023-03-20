@@ -4,29 +4,28 @@
 use builtin::*;
 use builtin_macros::*;
 
+#[allow(unused_imports)] // XXX: should not be needed!
+use super::pervasive::arbitrary;
 use super::pervasive::map::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::seq::Seq;
 use super::pervasive::seq_lib::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::set::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::arbitrary;
 
 use state_machines_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::simple_log::{
-    ReadReq as SReadReq, SimpleLog, UpdateResp as SUpdateResp,
-    compute_nrstate_at_version as s_nrstate_at_version
+    compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
+    UpdateResp as SUpdateResp,
 };
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::unbounded_log::{
+    combiner_request_id_fresh, compute_nrstate_at_version as i_nrstate_at_version, get_fresh_nat,
     CombinerState, ReadonlyState, UnboundedLog, UpdateState,
-    compute_nrstate_at_version as i_nrstate_at_version, combiner_request_id_fresh,
-    get_fresh_nat,
 };
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;

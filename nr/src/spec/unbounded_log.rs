@@ -5,12 +5,12 @@ use builtin::*;
 use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::set::Set;
+use super::pervasive::arbitrary;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::map::Map;
 use super::pervasive::seq::Seq;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::arbitrary;
+use super::pervasive::set::Set;
 
 use state_machines_macros::*;
 // use crate::assert_maps_equal;
@@ -1855,4 +1855,3 @@ pub proof fn compute_nrstate_at_version_preserves(a: Map<LogIdx, LogEntry>, b: M
 
 
 } // end verus!
-

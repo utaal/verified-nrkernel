@@ -2,7 +2,7 @@
 use builtin::*;
 // mod pervasive;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::*;
+use super::pervasive::cell::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::multiset::*;
 #[allow(unused_imports)] // XXX: should not be needed!
@@ -10,7 +10,7 @@ use super::pervasive::option::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::ptr::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::cell::*;
+use super::pervasive::*;
 
 use state_machines_macros::tokenized_state_machine;
 

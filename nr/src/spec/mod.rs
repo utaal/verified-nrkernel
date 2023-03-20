@@ -1,10 +1,9 @@
-
 use super::pervasive;
 
 // some types and utilities
+pub mod constants;
 pub mod types;
 pub mod utils;
-pub mod constants;
 
 // the simple log model
 pub mod simple_log;

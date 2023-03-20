@@ -318,8 +318,7 @@ state_machine! {
     }
 }
 
-
-verus!{
+verus! {
 
 /// constructs the state of the data structure at a specific version given the log
 ///

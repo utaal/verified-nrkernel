@@ -1,18 +1,17 @@
-
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::seq::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::set::Set;
+use super::pervasive::arbitrary;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::map::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::arbitrary;
+use super::pervasive::seq::*;
+#[allow(unused_imports)] // XXX: should not be needed!
+use super::pervasive::set::Set;
 
-verus!{
+verus! {
 
 pub open spec fn seq_unique<A>(seq: Seq<A>) -> bool
     // where A: PartialEq + Structural

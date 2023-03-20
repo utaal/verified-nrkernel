@@ -12,8 +12,8 @@ use crate::pervasive::cell::{PCell, PermissionOpt};
 
 use state_machines_macros::*;
 
-use super::unbounded_log::UnboundedLog;
 use super::types::*;
+use super::unbounded_log::UnboundedLog;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
@@ -31,12 +31,11 @@ use super::utils::*;
 
 // rust_verify/tests/example.rs ignore
 
-pub const LOG_SIZE : usize = 1024;
+pub const LOG_SIZE: usize = 1024;
 
 type LogicalLogIdx = int;
 
 type Key = int;
-
 
 verus! {
 
