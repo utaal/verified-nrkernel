@@ -70,6 +70,14 @@ pub struct UpdateOp {
     u: u8,
 }
 
+impl UpdateOp {
+    pub fn clone(&self) -> (result: Self)
+        ensures self == result
+    {
+        UpdateOp { u: self.u }
+    }
+}
+
 /// Represents a read-only operation on the replica, in NR this is handled by `dispatch`
 pub struct ReadonlyOp {
     u: u8,

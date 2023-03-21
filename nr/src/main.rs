@@ -9,7 +9,7 @@ use pervasive::modes::{tracked_exec_borrow, Gho, Trk};
 use pervasive::option::Option;
 use pervasive::prelude::*;
 use pervasive::vec::Vec;
-use pervasive::slice::slice_index_set;
+// use pervasive::slice::slice_index_set;
 
 mod spec;
 // mod exec;
@@ -1009,18 +1009,18 @@ impl<D> RwLock<D> {
 /// In Dafny those data types are not options, but in Rust they are
 pub struct PendingOperation {
     /// the operation that is being executed
-    pub(crate) op: Option<UpdateOp>,
+    pub(crate) op: UpdateOp,
     /// the response of the operation
     pub(crate) resp: Option<ReturnType>,
 }
 
 impl PendingOperation {
-    // pub fn new(op: UpdateOp) -> Self {
-    //     Self {
-    //         op: Some(op),
-    //         resp: None,
-    //     }
-    // }
+    pub fn new(op: UpdateOp) -> Self {
+        PendingOperation {
+            op,
+            resp: None,
+        }
+    }
 
     pub fn set_result(&mut self, resp: ReturnType) {
         self.resp = Some(resp);
@@ -1097,8 +1097,7 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
             &&& self.batch_token.is_Some()
             &&& self.batch_token.get_Some_0()@.value.is_Some()
             &&& self.batch_token.get_Some_0()@.pcell == cell.id()
-            &&& self.batch_token.get_Some_0()@.value.get_Some_0().op.is_Some()
-            &&& self.batch_token.get_Some_0()@.value.get_Some_0().op.get_Some_0() == self.update.get_Some_0()@.value.get_Init_op()
+            &&& self.batch_token.get_Some_0()@.value.get_Some_0().op == self.update.get_Some_0()@.value.get_Init_op()
         })
 
         // && (fc.state.FCInProgress? ==>
@@ -1660,10 +1659,11 @@ impl Replica  {
     #[inline(always)]
     fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
                           flat_combiner:  Tracked<FlatCombiner::combiner>)
-                             -> (tracked results:
+                             -> (results:
                                 (/* flat_combiner: */Tracked<FlatCombiner::combiner>,
                                  /* request_ids: */ Ghost<Seq<ReqId>>,
-                                 /* updates: */ Tracked<Vec<UnboundedLog::local_updates>>
+                                 /* updates: */ Tracked<Map<nat, UnboundedLog::local_updates>>,
+                                 /* cell_permissions */ Tracked<Map<nat, PermissionOpt<PendingOperation>>>,
                                 ))
         requires
             self.wf(),
@@ -1680,9 +1680,10 @@ impl Replica  {
             results.0@@.value.get_Responding_1() == 0,
 
     {
-        let tracked mut flat_combiner = flat_combiner;
+        let mut flat_combiner = flat_combiner;
 
-        let tracked mut updates = Vec::new();
+        let tracked mut updates: Map<nat, _> = Map::tracked_empty();
+        let tracked mut cell_permissions: Map<nat, _> = Map::tracked_empty();
         let ghost mut request_ids = Seq::empty();
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
@@ -1739,16 +1740,17 @@ impl Replica  {
                 assert(batch_token.is_Some());
                 assert(update_req.is_Some());
                 // reading the op cell
-                //self.contexts.index(thread_idx).batch.0.take(&mut batch_token.as_ref().unwrap());
-
-                /// TODO: keep track of the request ids, ....
+                let mut batch_token_value = tracked(batch_token.tracked_unwrap());
+                let op = self.contexts.index(thread_idx).batch.0.borrow(&batch_token_value).op.clone();
 
                 proof {
                     let tracked update_req = update_req.tracked_unwrap();
                     request_ids.push(update_req@.key);
-                    // updates.push(update_req);
+                    updates.tracked_insert(operations.len() as nat, update_req);
+                    cell_permissions.tracked_insert(thread_idx as nat, batch_token_value.get());
                 }
-                // operations.push();
+
+                operations.push(op);
             } else {
                 // nothng here
             }
@@ -1764,7 +1766,7 @@ impl Replica  {
 
         self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
 
-        (flat_combiner, ghost(request_ids), tracked(updates))
+        (flat_combiner, ghost(request_ids), tracked(updates), tracked(cell_permissions))
     }
 
     ///
