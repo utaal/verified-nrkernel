@@ -1521,6 +1521,43 @@ pub open spec fn wf(&self) -> bool {
 
 
 
+struct CollectThreadOpsResponse {
+    flat_combiner: Tracked<FlatCombiner::combiner>,
+    request_ids: Ghost<Seq<ReqId>>,
+    updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
+    cell_permissions: Tracked<Map<nat, PermissionOpt<PendingOperation>>>,
+}
+
+impl CollectThreadOpsResponse {
+    spec fn inv(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>, num_ops_per_thread: Seq<usize>,
+                operations: Seq<UpdateOp>, replica_contexts: Seq<Context>) -> bool {
+        &&& self.flat_combiner@@.instance == flat_combiner_instance@
+        &&& self.flat_combiner@@.value.is_Responding()
+        &&& self.flat_combiner@@.value.get_Responding_0().len() as nat == MAX_THREADS_PER_REPLICA as nat
+        &&& num_ops_per_thread.len() as nat == MAX_THREADS_PER_REPLICA as nat
+        &&& self.flat_combiner@@.value.get_Responding_1() == 0
+
+        &&& forall|i: nat| #![trigger self.updates@[i]] i < self.request_ids@.len() ==> {
+            &&& self.updates@.contains_key(i)
+            &&& self.updates@[i]@.key == self.request_ids@[i as int]
+            &&& self.updates@[i]@.value.is_Init()
+            &&& self.updates@[i]@.value.get_Init_op() == operations[i as int]
+        }
+
+        &&& forall|i: nat|
+           #![trigger num_ops_per_thread[i as int]]
+           #![trigger self.flat_combiner@@.value.get_Responding_0()[i as int]]
+            i < self.flat_combiner@@.value.get_Responding_0().len() ==> {
+            &&& num_ops_per_thread[i as int] > 0 == self.flat_combiner@@.value.get_Responding_0()[i as int].is_Some()
+            &&& self.flat_combiner@@.value.get_Responding_0()[i as int].is_Some() ==> {
+                &&& self.cell_permissions@.contains_key(i)
+                &&& self.cell_permissions@[i]@.pcell === replica_contexts[i as int].batch.0.id()
+            }
+        }
+
+    }
+}
+
 
 impl Replica  {
     /// Try to become acquire the combiner lock here. If this fails, then return None.
@@ -1659,12 +1696,7 @@ impl Replica  {
     #[inline(always)]
     fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
                           flat_combiner:  Tracked<FlatCombiner::combiner>)
-                             -> (results:
-                                (/* flat_combiner: */Tracked<FlatCombiner::combiner>,
-                                 /* request_ids: */ Ghost<Seq<ReqId>>,
-                                 /* updates: */ Tracked<Map<nat, UnboundedLog::local_updates>>,
-                                 /* cell_permissions */ Tracked<Map<nat, PermissionOpt<PendingOperation>>>,
-                                ))
+                             -> (response: CollectThreadOpsResponse)
         requires
             self.wf(),
             old(num_ops_per_thread).len() == 0,
@@ -1675,15 +1707,13 @@ impl Replica  {
             flat_combiner@@.value.is_Collecting(),
             flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
-            results.0@@.instance == self.flat_combiner_instance@,
-            results.0@@.value.is_Responding(),
-            results.0@@.value.get_Responding_1() == 0,
+            response.inv(self.flat_combiner_instance, num_ops_per_thread@, operations@, self.contexts@)
 
     {
         let mut flat_combiner = flat_combiner;
 
         let tracked mut updates: Map<nat, _> = Map::tracked_empty();
-        let tracked mut cell_permissions: Map<nat, _> = Map::tracked_empty();
+        let tracked mut cell_permissions: Map<nat, PermissionOpt<PendingOperation>> = Map::tracked_empty();
         let ghost mut request_ids = Seq::empty();
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
@@ -1702,6 +1732,17 @@ impl Replica  {
                 flat_combiner@@.value.is_Collecting(),
                 flat_combiner@@.value.get_Collecting_0().len() == thread_idx,
                 flat_combiner@@.instance == self.flat_combiner_instance@,
+                forall |i: nat| i < flat_combiner@@.value.get_Collecting_0().len() ==>
+                    num_ops_per_thread[i as int] > 0 ==
+                    (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_Some(),
+                forall |i: nat| i < flat_combiner@@.value.get_Collecting_0().len() &&
+                    (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_Some() ==> {
+                        &&& cell_permissions.contains_key(i)
+                        &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
+                    }
+                        
+
+
         {
             assert(self.contexts.spec_index(thread_idx as int).wf(thread_idx as int));
             assert(self.contexts.spec_index(thread_idx as int).get_thread_id() == thread_idx as int);
@@ -1766,7 +1807,12 @@ impl Replica  {
 
         self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
 
-        (flat_combiner, ghost(request_ids), tracked(updates), tracked(cell_permissions))
+        CollectThreadOpsResponse {
+            flat_combiner,
+            request_ids: ghost(request_ids),
+            updates: tracked(updates),
+            cell_permissions: tracked(cell_permissions)
+        }
     }
 
     ///
