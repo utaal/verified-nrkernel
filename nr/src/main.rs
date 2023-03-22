@@ -13,6 +13,8 @@ use pervasive::vec::Vec;
 
 mod spec;
 // mod exec;
+// #[macro_use]
+// mod rwlock;
 
 use spec::cyclicbuffer::{self, CyclicBuffer, StoredType};
 use spec::flat_combiner::FlatCombiner;
@@ -75,7 +77,10 @@ pub fn panic_with_head_too_big() {
     panic!("WARNING: Head value exceeds the maximum value of u64.");
 }
 
-
+#[verifier(external_body)] /* vattr */
+pub fn spin_loop_hint() {
+    core::hint::spin_loop();
+}
 
 /// a simpe cache padding for the struct fields
 #[repr(align(128))]
@@ -117,14 +122,26 @@ impl ReplicaToken {
 
 
 /// the thread token identifies a thread of a given replica
+///
+///  - Dafny: linear datatype ThreadOwnedContext
 pub struct ThreadToken {
     /// the replica id this thread uses
     pub(crate) rid: ReplicaToken,
     /// identifies the thread within the replica
     pub(crate) tid: ThreadId,
+
+    /// the flat combiner client of the thread
+    pub fc_client: FlatCombiner::clients,
+    /// the permission to access the thread's operation batch
+    pub batch_perm: Tracked<Option<PermissionOpt<PendingOperation>>>,
 }
 
 impl ThreadToken {
+    pub open spec fn wf(&self) -> bool
+    {
+        &&& self.fc_client@.value.is_Idle()
+    }
+
     pub fn thread_id(&self) -> (result: ThreadId)
         ensures result as nat == self.thread_id_spec()
     {
@@ -395,12 +412,43 @@ impl NrLog
     }
 
 
+    /// This method returns the current version upper bound value for the log.
+    ///
+    ///  - Rust: get_ctail()
+    ///  - Dafny: n/a part of do-read
+    pub(crate) fn get_version_upper_bound(&self, local_reads: Tracked<UnboundedLog::local_reads>)
+        -> (ret: (u64, Tracked<UnboundedLog::local_reads>))
+        requires
+            self.wf(),
+            local_reads@@.instance == self.unbounded_log_instance@,
+            local_reads@@.value.is_Init()
+        ensures
+            ret.1@@.value.is_VersionUpperBound(),
+            ret.1@@.value.get_VersionUpperBound_version_upper_bound() == ret.0 as nat,
+            ret.1@@.instance == self.unbounded_log_instance@,
+    {
+        let tracked local_reads = local_reads.get();
+        let ghost rid = local_reads@.key;
+
+        let tracked new_local_reads_g : UnboundedLog::local_reads;
+
+        let res = atomic_with_ghost!(
+            &self.version_upper_bound.0 => load();
+            returning res;
+            ghost g => {
+                new_local_reads_g = self.unbounded_log_instance.borrow().readonly_version_upper_bound(rid, &g, local_reads);
+            }
+        );
+
+        (res, tracked(new_local_reads_g))
+    }
+
     /// checks whether the version of the local replica has advanced enough to perform read operations
     ///
     /// This basically corresponds to the transition `readonly_read_to_read` in the unbounded log.
     ///
     // https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/log.rs#L525
-    pub fn is_replica_synced_for_reads(&self, node_id: usize, version_upper_bound: u64,
+    pub fn is_replica_synced_for_reads(&self, node_id: ReplicaId, version_upper_bound: u64,
                                        local_reads: Tracked<UnboundedLog::local_reads>)
             -> (result: (bool, Tracked<UnboundedLog::local_reads>))
         requires
@@ -411,14 +459,15 @@ impl NrLog
             local_reads@@.value.get_VersionUpperBound_version_upper_bound() == version_upper_bound
         ensures
             result.0 ==> result.1@@.value.is_ReadyToRead(),
-            !result.0 ==> result.1 == local_reads
+            !result.0 ==> result.1 == local_reads,
+            result.1@@.instance == self.unbounded_log_instance@,
     {
         // obtain the request id from the local_reads token
         let rid_g : Ghost<ReqId> = ghost(local_reads@@.key);
         let tracked new_local_reads_g: UnboundedLog::local_reads;
 
         // obtain the local version
-        let local_version = &self.local_versions.index(node_id).0;
+        let local_version = &self.local_versions.index(node_id as usize).0;
 
         let res = atomic_with_ghost!(
             local_version => load();
@@ -1039,7 +1088,7 @@ pub tracked struct ContextGhost {
     /// Token to access the batch cell in Context
     ///
     ///  - Dafny: glinear contents: glOption<CellContents<OpResponse>>,
-    pub batch_token: Option<PermissionOpt<PendingOperation>>,
+    pub batch_perms: Option<PermissionOpt<PendingOperation>>,
 
     /// The flat combiner slot.
     /// XXX: somehow can't make this tracked?
@@ -1077,8 +1126,8 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
         // )
         &&& (self.slots@.value.is_Empty() ==> {
             &&& self.update.is_None()
-            &&& self.batch_token.is_None()
-            // &&& self.batch_token@@.value.is_None()
+            &&& self.batch_perms.is_None()
+            // &&& self.batch_perms@@.value.is_None()
         })
 
         // && (fc.state.FCRequest? ==>
@@ -1094,10 +1143,10 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
             &&& self.update.get_Some_0()@.value.is_Init()
             &&& self.update.get_Some_0()@.key == self.slots@.value.get_ReqId()
 
-            &&& self.batch_token.is_Some()
-            &&& self.batch_token.get_Some_0()@.value.is_Some()
-            &&& self.batch_token.get_Some_0()@.pcell == cell.id()
-            &&& self.batch_token.get_Some_0()@.value.get_Some_0().op == self.update.get_Some_0()@.value.get_Init_op()
+            &&& self.batch_perms.is_Some()
+            &&& self.batch_perms.get_Some_0()@.value.is_Some()
+            &&& self.batch_perms.get_Some_0()@.pcell == cell.id()
+            &&& self.batch_perms.get_Some_0()@.value.get_Some_0().op == self.update.get_Some_0()@.value.get_Init_op()
         })
 
         // && (fc.state.FCInProgress? ==>
@@ -1106,7 +1155,7 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
         // )
         &&& (self.slots@.value.is_InProgress() ==> {
             &&& self.update.is_None()
-            &&& self.batch_token.is_None()
+            &&& self.batch_perms.is_None()
         })
 
         // && (fc.state.FCResponse? ==>
@@ -1122,10 +1171,10 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
             &&& self.update.get_Some_0()@.value.is_Done()
             &&& self.update.get_Some_0()@.key == self.slots@.value.get_ReqId()
 
-            &&& self.batch_token.is_Some()
-            &&& self.batch_token.get_Some_0()@.value.is_Some()
-            &&& self.batch_token.get_Some_0()@.pcell == cell.id()
-            &&& self.batch_token.get_Some_0()@.value.get_Some_0().resp.get_Some_0() == self.update.get_Some_0()@.value.get_Done_ret()
+            &&& self.batch_perms.is_Some()
+            &&& self.batch_perms.get_Some_0()@.value.is_Some()
+            &&& self.batch_perms.get_Some_0()@.pcell == cell.id()
+            &&& self.batch_perms.get_Some_0()@.value.get_Some_0().resp.get_Some_0() == self.update.get_Some_0()@.value.get_Done_ret()
         })
     }
 }
@@ -1157,7 +1206,7 @@ pub struct Context {
     pub (crate) atomic: CachePadded<AtomicU64<_, ContextGhost, _>>,
 
     /// ghost: identifier of the thread
-    pub thread_id_g: Tracked<ThreadToken>,
+    pub thread_id_g: Ghost<nat>,
 
     /// ghost: the flat combiner instance
     pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
@@ -1165,60 +1214,49 @@ pub struct Context {
 
 // XXX: in Dafny, this predicate takes the thread id and the flat combiner instance as arguments,
 // but it seems that this is not possible here?
-pub open spec fn wf(&self, thread_idx: int) -> bool {
+pub open spec fn wf(&self, thread_idx: nat) -> bool {
     predicate {
-        self.thread_id_g@.thread_id_spec() == thread_idx
+        self.thread_id_g@ == thread_idx
     }
     invariant on atomic with (flat_combiner_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost) {
         // (forall v, g :: atomic_inv(atomic.inner, v, g) <==> g.inv(v, i, cell.inner, fc_loc))
-        &&& g.inv(v, thread_id_g@.thread_id_spec(), batch.0, flat_combiner_instance@)
+        &&& g.inv(v, thread_id_g@, batch.0, flat_combiner_instance@)
     }
 }} // struct_with_invariants!
 
 impl Context {
 
-    pub open spec fn get_thread_id(&self) -> int {
-        self.thread_id_g@.tid as int
-    }
-
     /// Enqueues an operation onto this context's batch of pending operations.
-    pub fn enqueue_op(&self, op: UpdateOp, tracked update: Tracked<UnboundedLog::local_updates>)
-        -> bool
-        requires self.wf(self.get_thread_id())
+    ///
+    /// Note, enqueue is a bit a misnomer. We just have one operation per thread
+    pub fn enqueue_op(&self, op: UpdateOp, local_updates: Tracked<UnboundedLog::local_updates>,
+                        batch_perms: Tracked<PermissionOpt<PendingOperation>>) -> bool
+        requires
+            self.wf(self.thread_id_g@),
+            local_updates@@.value.is_Init(),
+            batch_perms@@.pcell == self.batch.0.id(),
+            batch_perms@@.value.is_None()
+            // TODO: here we must know that the value of the atomic is 0.
     {
-        // enqueue is a bit a misnomer here, we actually only have one slot in the batch for now.
+        let mut batch_perms = batch_perms;
 
-        // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
-        // let res = atomic_with_ghost!(
-        //     &self.atomic.0 => compare_exchange(0, 1);
-        //     update prev->next;
-        //     ghost g => {
-        //         if prev == 0 {
-        //             // store the operatin in the cell
-        //             token =  Some(g.batch_token);
-        //         } else {
-        //             token = None;
-        //         }
-        //     }
-        // );
+        // put the operation there, updates the permissions so we can store them in the GhostContext
+        self.batch.0.put(&mut batch_perms, PendingOperation::new(op));
 
-        // if res.is_Ok() {
-        //     if res.get_Ok_0() == 0 {
-        //         let tracked token = token.get_Some_0();
-        //         let pending_op = PendingOperation {
-        //             op: Some(op),
-        //             resp: None,
-        //         };
+        let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
+        let res = atomic_with_ghost!(
+            &self.atomic.0 => store(1);
+            update prev->next;
+            ghost g => {
+                assert(prev == 0);
+                assert(g.batch_perms.is_None());
+                // put the permissions into the ghost context
+                g.batch_perms = Some(batch_perms.get());
+                // put the update into the ghost context
+                g.update = Some(local_updates.get());
+            }
+        );
 
-        //         // HERE:
-        //         // self.batch.0.put(&mut token, pending_op);
-        //         true
-        //     } else {
-        //         false
-        //     }
-        // } else {
-        //     false
-        // }
         false
     }
 
@@ -1227,7 +1265,7 @@ impl Context {
     /// replica this thread is registered against.
     pub fn enqueue_response(&self, resp: ReturnType) -> bool
         requires
-            self.wf(self.get_thread_id())
+            self.wf(self.thread_id_g@)
             // self.atomic != 0
     {
         // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
@@ -1237,7 +1275,7 @@ impl Context {
         //     ghost g => {
         //         if res == 1 {
         //             // store the operatin in the cell
-        //             token =  Some(g.batch_token);
+        //             token =  Some(g.batch_perms);
         //         } else {
         //             token = None;
         //         }
@@ -1263,7 +1301,7 @@ impl Context {
 
     /// Returns a single response if available. Otherwise, returns None.
     pub fn get_result(&self) -> Option<ReturnType>
-        requires self.wf(self.get_thread_id())
+        requires self.wf(self.thread_id_g@)
     {
         // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
         // // let res = atomic_with_ghost!(
@@ -1272,7 +1310,7 @@ impl Context {
         // //     ghost g => {
         // //         if prev == 1 {
         // //             // store the operatin in the cell
-        // //             token =  Some(g.batch_token);
+        // //             token =  Some(g.batch_perms);
         // //         } else {
         // //             token = None;
         // //         }
@@ -1484,13 +1522,13 @@ pub open spec fn wf(&self) -> bool {
 
     predicate {
         // && (forall i | 0 <= i < |contexts| :: i in contexts && contexts[i].WF(i, fc_loc))
-        &&& (forall |i: int| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i].wf(i))
-        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> #[trigger] self.contexts[i as int].flat_combiner_instance == self.flat_combiner_instance)
+        &&& (forall |i: int| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i]).wf(i as nat))
+        &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i as int]).flat_combiner_instance == self.flat_combiner_instance)
 
         // && |contexts| == MAX_THREADS_PER_REPLICA as int
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
         // && 0 <= nodeId as int < NUM_REPLICAS as int
-        &&& 0 <= self.replica_token.rid < NUM_REPLICAS
+        &&& 0 <= self.spec_id() < NUM_REPLICAS
         // && replica.InternalInv()
         &&& self.data.0.internal_inv()
 
@@ -1518,8 +1556,6 @@ pub open spec fn wf(&self) -> bool {
 }
 
 } // struct_with_invariants!
-
-
 
 struct CollectThreadOpsResponse {
     flat_combiner: Tracked<FlatCombiner::combiner>,
@@ -1558,8 +1594,18 @@ impl CollectThreadOpsResponse {
     }
 }
 
-
 impl Replica  {
+    pub fn id(&self) -> (res: ReplicaId)
+        ensures res as nat == self.spec_id()
+    {
+        self.replica_token.id()
+    }
+
+    /// returns the replica id for this replica
+    pub open spec fn spec_id(&self) -> NodeId {
+        self.replica_token.id_spec()
+    }
+
     /// Try to become acquire the combiner lock here. If this fails, then return None.
     ///
     ///  - Dafny: part of method try_combine
@@ -1708,7 +1754,6 @@ impl Replica  {
             flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
             response.inv(self.flat_combiner_instance, num_ops_per_thread@, operations@, self.contexts@)
-
     {
         let mut flat_combiner = flat_combiner;
 
@@ -1740,15 +1785,15 @@ impl Replica  {
                         &&& cell_permissions.contains_key(i)
                         &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
                     }
-                        
+
 
 
         {
-            assert(self.contexts.spec_index(thread_idx as int).wf(thread_idx as int));
-            assert(self.contexts.spec_index(thread_idx as int).get_thread_id() == thread_idx as int);
+            assert(self.contexts.spec_index(thread_idx as int).wf(thread_idx as nat));
+            assert(self.contexts.spec_index(thread_idx as int).thread_id_g == thread_idx as nat);
 
             let tracked update_req : Option<UnboundedLog::local_updates>;
-            let tracked mut batch_token : Option<PermissionOpt<PendingOperation>>;
+            let tracked mut batch_perms : Option<PermissionOpt<PendingOperation>>;
             // let tracked
 
             let num_ops = atomic_with_ghost!(
@@ -1768,20 +1813,20 @@ impl Replica  {
                 // we just have one pending ops for now!
                 if num_ops == 1 {
                     update_req = g.update;
-                    batch_token = g.batch_token;
+                    batch_perms = g.batch_perms;
                     g.update = None;
-                    g.batch_token = None;
+                    g.batch_perms = None;
                 } else {
                     update_req = None;
-                    batch_token = None;
+                    batch_perms = None;
                 }
             });
 
             if num_ops == 1 {
-                assert(batch_token.is_Some());
+                assert(batch_perms.is_Some());
                 assert(update_req.is_Some());
                 // reading the op cell
-                let mut batch_token_value = tracked(batch_token.tracked_unwrap());
+                let mut batch_token_value = tracked(batch_perms.tracked_unwrap());
                 let op = self.contexts.index(thread_idx).batch.0.borrow(&batch_token_value).op.clone();
 
                 proof {
@@ -1894,7 +1939,7 @@ impl Replica  {
 
 
                         g.slots = self.flat_combiner_instance.borrow().combiner_responding_result(g.slots, flat_combiner.borrow_mut());
-                        // g.batch_token = Some();
+                        // g.batch_perms = Some();
                         // g.update = Some();
                     }
                 );
@@ -1919,18 +1964,26 @@ impl Replica  {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute(&self, slog: &NrLog, op: ReadonlyOp, idx: ThreadToken) -> Result<ReturnType, () /* ReplicaError */>
+    pub fn execute(&self, slog: &NrLog, op: ReadonlyOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
         requires
-          self.wf(),
-          slog.wf(),
+            self.wf(),
+            slog.wf(),
+            tkn.wf(),
+            self.unbounded_log_instance@ == slog.unbounded_log_instance@,
+            self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@
     {
+        let tracked local_reads : UnboundedLog::local_reads;
         proof {
             // start the read transaction, get the ticket
+            // (Gho<Map<ReqId,ReadonlyState>>, Trk<local_reads>, Gho<Map<NodeId,CombinerState>>)
             let tracked ticket = self.unbounded_log_instance.borrow().readonly_start(op);
+            local_reads = ticket.1.0;
         }
+        let ghost rid = local_reads@.key;
 
         // Step 1: Read the local tail value
         // let ctail = slog.get_ctail();
+        let (version_upper_bound, local_reads) = slog.get_version_upper_bound(tracked(local_reads));
 
         // Step 2: wait until the replica is synced for reads, try to combine in mean time
         // while !slog.is_replica_synced_for_reads(&self.log_tkn, ctail) {
@@ -1939,31 +1992,73 @@ impl Replica  {
         //     }
         //     spin_loop();
         // }
+        let (mut is_synced, mut local_reads) = slog.is_replica_synced_for_reads(self.id(), version_upper_bound, local_reads);
+        while !is_synced
+            invariant
+                self.wf(),
+                slog.wf(),
+                !is_synced ==> local_reads@@.value.is_VersionUpperBound(),
+                !is_synced ==> local_reads@@.value.get_VersionUpperBound_version_upper_bound() == version_upper_bound,
+                is_synced ==> local_reads@@.value.is_ReadyToRead(),
+                local_reads@@.instance == slog.unbounded_log_instance@,
+                slog.unbounded_log_instance@ == self.unbounded_log_instance@
+
+        {
+            self.try_combine(slog);
+            spin_loop_hint();
+            let res = slog.is_replica_synced_for_reads(self.id(), version_upper_bound, local_reads);
+            is_synced = res.0;
+            local_reads = res.1;
+        }
 
         // Step 3: Take the read-only lock, and read the value
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
 
+        // 3. Take read-lock on replica; apply operation on replica
+        // linear var linear_guard := node.replica.acquire_shared(tid as uint8, client_counter);
+        // assert linear_guard.v.ghost_replica.nodeId == stub.rs.nodeId;
+
+        // shared var shared_v := RwLockImpl.borrow_shared(rwlock, guard);
+        // assert shared_v.ghost_replica.nodeId == ticket.rs.nodeId;
+        // result := nrifc.do_readonly(shared_v.actual_replica, op);
+
+        // assert nrifc.read(shared_v.ghost_replica.state, ticket.rs.op) == result;
+
+        // shared var NodeReplica(actual_replica, ghost_replica, combinerState, cb) := shared_v;
+        // ticket' := perform_ReadonlyDone(ticket, ghost_replica, combinerState);
+
+        // result, stub := apply_readonly(node.replica, linear_guard, op, stub);
+        // client_counter := node.replica.release_shared(linear_guard);
 
         // Step 4: Finish the read-only transaction, return result
-        // self.unbounded_log_instance.readonly_finish(rid, op, res);
+        // self.unbounded_log_instance.borrow().readonly_finish(rid, op, res, local_reads);
 
         // assert(false);
-        Err(())
+        Err(tkn)
     }
 
     /// Executes a mutable operation against this replica and returns a
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute_mut(&self, slog: &NrLog, op: UpdateOp, idx: ThreadToken) -> Result<ReturnType, () /* ReplicaError */>
+    pub fn execute_mut(&self, slog: &NrLog, op: UpdateOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
         requires
             slog.wf(),
-            self.wf()
-            // something about the idx
+            self.wf(),
+            tkn.wf(),
+            self.unbounded_log_instance@ == slog.unbounded_log_instance@,
+            self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@
     {
+        // start the update transaction
+        let tracked local_updates : UnboundedLog::local_updates;
         proof {
+            //: (Gho<Map<ReqId, UpdateState>>, Trk<UnboundedLog::local_updates>, Gho<Map<NodeId, CombinerState>>)
             let tracked ticket = self.unbounded_log_instance.borrow().update_start(op);
+            local_updates = ticket.1.0;
         }
+        let ghost rid = local_updates@.key;
+
+        let ThreadToken { rid, tid, fc_client, batch_perm } = tkn;
 
         // Step 1: Enqueue the operation onto the thread local batch
         // while !self.make_pending(op.clone(), idx.tid()) {}
@@ -1976,7 +2071,27 @@ impl Replica  {
         // Return the response to the caller function.
         // self.get_response(slog, idx.tid())
         // assert(false);
-        Err(())
+
+        // finish the update transaction, return the result
+        // self.unbounded_log_instance.borrow().update_finish(rid, local_updates);
+
+        Err(ThreadToken { rid, tid, fc_client, batch_perm })
+    }
+
+    /// Enqueues an operation inside a thread local context. Returns a boolean
+    /// indicating whether the operation was enqueued (true) or not (false).
+    fn make_pending(&self, op: UpdateOp, tid: ThreadId,
+        local_updates : Tracked<UnboundedLog::local_updates>,
+        batch_perms: Tracked<PermissionOpt<PendingOperation>>
+    ) -> bool
+        requires
+            self.wf(),
+            0 <= tid < self.contexts.len(),
+            batch_perms@@.value.is_None(),
+            batch_perms@@.pcell == self.contexts.spec_index(tid as int).batch.0.id(),
+    {
+        // self.contexts[idx - 1].enqueue(op, ())
+        self.contexts.index(tid as usize).enqueue_op(op, local_updates, batch_perms)
     }
 
 }
@@ -2004,9 +2119,7 @@ pub struct NodeReplicated {
     // replicas: Vec<Box<Replica<NRState, UpdateOp, ReturnType>>>,
     pub (crate) replicas: Vec<Box<Replica>>,
 
-    /// something that creates new request ids, or do we
-    // #[verifier::proof] request_id: ReqId,
-
+    /// XXX: should that be here, or go into the NrLog / replicas?
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
 }
@@ -2015,15 +2128,21 @@ pub struct NodeReplicated {
 
 /// Proof blocks for the NodeReplicate data structure
 impl NodeReplicated {
+    /// Wellformedness of the NodeReplicated data structure
     pub open spec fn wf(&self) -> bool {
+        // the log shall be well-formed and the instances match
         &&& self.log.wf()
-        &&& self.unbounded_log_instance == self.log.unbounded_log_instance
-        &&& self.cyclic_buffer_instance == self.log.cyclic_buffer_instance
+        &&& self.unbounded_log_instance@ == self.log.unbounded_log_instance@
+        &&& self.cyclic_buffer_instance@ == self.log.cyclic_buffer_instance@
 
+        // the number of replicas should be the as configured
+        &&& self.replicas.spec_len() == NUM_REPLICAS
+
+        // the replicas should be well-formed and the instances match
         &&& forall |i| 0 <= i < self.replicas.len() ==> {
-            &&& #[trigger] self.replicas[i].wf()
-            &&& self.replicas[i].unbounded_log_instance == self.unbounded_log_instance
-            &&& self.replicas[i].cyclic_buffer_instance == self.cyclic_buffer_instance
+            &&& (#[trigger] self.replicas[i]).wf()
+            &&& self.replicas[i].unbounded_log_instance@ == self.unbounded_log_instance@
+            &&& self.replicas[i].cyclic_buffer_instance@ == self.cyclic_buffer_instance@
         }
     }
 }
@@ -2036,8 +2155,9 @@ impl NodeReplicated {
     // ///
     // ///  - Dafny: n/a ?
     // ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
-    // pub fn init(num_replicas: usize) -> Self
+    // pub fn init(num_replicas: usize) -> (res: Self)
     //     requires num_replicas > 0
+    //     ensures res.wf()
     // {
 
     //     // This is basically a wrapper around the `init` of the interface defined in Dafny
@@ -2079,17 +2199,15 @@ impl NodeReplicated {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> Result<ReturnType, ()>
-        requires
-          self.wf(),
-          forall |i| 0 <= i < self.replicas.len() ==> #[trigger] self.replicas[i].wf()
+    pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
+        requires self.wf() && tkn.wf()
     {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
             self.replicas.index(replica_id).execute_mut(&self.log, op, tkn)
         } else {
-            Err(())
+            Err(tkn)
         }
     }
 
@@ -2101,17 +2219,15 @@ impl NodeReplicated {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> Result<ReturnType, ()>
-        requires
-            self.wf(),
-            forall |i| 0 <= i < self.replicas.len() ==> #[trigger] self.replicas[i].wf()
+    pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
+        requires self.wf() && tkn.wf()
     {
         let replica_id = tkn.replica_id() as usize;
         if replica_id< self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
             self.replicas.index(replica_id).execute(&self.log, op, tkn)
         } else {
-            Err(())
+            Err(tkn)
         }
     }
 }
