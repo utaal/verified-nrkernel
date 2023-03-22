@@ -149,7 +149,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             SimpleLog::show::readonly_start(interp(pre), interp(post), rid, op);
         }
 
-        readonly_read_ctail(rid) => {
+        readonly_version_upper_bound(rid) => {
             let op = pre.local_reads.index(rid).get_Init_op();
 
             assert_maps_equal!(

@@ -624,7 +624,7 @@ UnboundedLog {
     ///
     /// The algorithm waits while local_version < read_version
     transition!{
-        readonly_read_ctail(rid: ReqId) {
+        readonly_version_upper_bound(rid: ReqId) {
             remove local_reads -= [ rid => let ReadonlyState::Init { op } ];
             add    local_reads += [ rid => ReadonlyState::VersionUpperBound {
                                                 op, version_upper_bound: pre.version_upper_bound } ];
@@ -961,8 +961,8 @@ UnboundedLog {
     #[inductive(readonly_start)]
     fn readonly_start_inductive(pre: Self, post: Self, op: ReadonlyOp) { }
 
-    #[inductive(readonly_read_ctail)]
-    fn readonly_read_ctail_inductive(pre: Self, post: Self, rid: ReqId) { }
+    #[inductive(readonly_version_upper_bound)]
+    fn readonly_version_upper_bound_inductive(pre: Self, post: Self, rid: ReqId) { }
 
     #[inductive(readonly_ready_to_read)]
     fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: ReqId, node_id: NodeId) {
