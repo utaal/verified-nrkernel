@@ -44,6 +44,9 @@ pub const MAX_THREADS_PER_REPLICA: usize = 256;
 
 pub const MAX_PENDING_OPS: usize = 1;
 
+/// interval when we do a try_combine when checking for responses
+pub const RESPONSE_CHECK_INTERVAL : u32 = 1 << 29;
+
 /// Constant required for garbage collection. When the tail and the head are these many
 /// entries apart on the circular buffer, garbage collection will be performed by one of
 /// the replicas registered with the log.
@@ -131,15 +134,15 @@ pub struct ThreadToken {
     pub(crate) tid: ThreadId,
 
     /// the flat combiner client of the thread
-    pub fc_client: FlatCombiner::clients,
+    pub fc_client: Tracked<FlatCombiner::clients>,
     /// the permission to access the thread's operation batch
-    pub batch_perm: Tracked<Option<PermissionOpt<PendingOperation>>>,
+    pub batch_perm: Tracked<PermissionOpt<PendingOperation>>,
 }
 
 impl ThreadToken {
     pub open spec fn wf(&self) -> bool
     {
-        &&& self.fc_client@.value.is_Idle()
+        &&& self.fc_client@@.value.is_Idle()
     }
 
     pub fn thread_id(&self) -> (result: ThreadId)
@@ -1230,34 +1233,92 @@ impl Context {
     ///
     /// Note, enqueue is a bit a misnomer. We just have one operation per thread
     pub fn enqueue_op(&self, op: UpdateOp, local_updates: Tracked<UnboundedLog::local_updates>,
-                        batch_perms: Tracked<PermissionOpt<PendingOperation>>) -> bool
+                        batch_perms: Tracked<PermissionOpt<PendingOperation>>,
+                        fc_clients: Tracked<FlatCombiner::clients>
+                    ) -> (res: (bool, Tracked<FlatCombiner::clients>))
         requires
             self.wf(self.thread_id_g@),
             local_updates@@.value.is_Init(),
             batch_perms@@.pcell == self.batch.0.id(),
-            batch_perms@@.value.is_None()
+            batch_perms@@.value.is_None(),
+            fc_clients@@.instance == self.flat_combiner_instance@
             // TODO: here we must know that the value of the atomic is 0.
     {
+        let ghost tid = fc_clients@@.key;
+        let ghost rid = local_updates@@.key;
+
         let mut batch_perms = batch_perms;
+        let tracked mut fc_clients   = fc_clients.get();
 
         // put the operation there, updates the permissions so we can store them in the GhostContext
         self.batch.0.put(&mut batch_perms, PendingOperation::new(op));
 
-        let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
+        let tracked send_request_result;
         let res = atomic_with_ghost!(
             &self.atomic.0 => store(1);
             update prev->next;
             ghost g => {
+                // here we should know that the previous value was 0 and that the permissions are none
                 assert(prev == 0);
                 assert(g.batch_perms.is_None());
                 // put the permissions into the ghost context
                 g.batch_perms = Some(batch_perms.get());
                 // put the update into the ghost context
                 g.update = Some(local_updates.get());
+
+                send_request_result = self.flat_combiner_instance.borrow().send_request(tid, rid, fc_clients, g.slots);
+                fc_clients = send_request_result.0.0;
+                g.slots = send_request_result.1.0;
             }
         );
 
-        false
+        (true, tracked(fc_clients))
+    }
+
+    /// Returns a single response if available. Otherwise, returns None.
+    pub fn dequeue_response(&self, fc_clients: Tracked<FlatCombiner::clients>)
+    -> (res: (Option<(ReturnType, Tracked<PermissionOpt<PendingOperation>>,
+        Tracked<UnboundedLog::local_updates>)>, Tracked<FlatCombiner::clients>))
+        requires self.wf(self.thread_id_g@)
+    {
+        let tracked mut fc_clients   = fc_clients.get();
+        let tracked recv_response_result;
+        let tracked batch_perms;
+        let tracked local_updates;
+        let res = atomic_with_ghost!(
+            &self.atomic.0 => load();
+            returning res;
+            ghost g => {
+                if res == 0 {
+                    assert(g.batch_perms.is_Some());
+                    assert(g.update.is_Some());
+                    batch_perms = g.batch_perms;
+                    local_updates = g.update;
+
+                    let tid = fc_clients.view().key;
+                    let rid = local_updates.get_Some_0().view().key;
+
+                    recv_response_result = self.flat_combiner_instance.borrow().recv_response(tid, rid, fc_clients, g.slots);
+
+                    fc_clients = recv_response_result.0.0;
+                    g.slots = recv_response_result.1.0;
+                    g.batch_perms = None;
+                    g.update = None;
+                } else {
+                    local_updates = None;
+                    batch_perms = None;
+                }
+            }
+        );
+
+        if res == 0 {
+            let mut batch_perms = tracked(batch_perms.tracked_unwrap());
+            let op = self.batch.0.take(&mut batch_perms);
+            let resp = op.resp.unwrap();
+            (Some((resp, batch_perms, tracked(local_updates.tracked_unwrap()))), tracked(fc_clients))
+        } else {
+            (None, tracked(fc_clients))
+        }
     }
 
     /// Enqueues a response onto this context. This is invoked by the combiner
@@ -1299,34 +1360,7 @@ impl Context {
         false
     }
 
-    /// Returns a single response if available. Otherwise, returns None.
-    pub fn get_result(&self) -> Option<ReturnType>
-        requires self.wf(self.thread_id_g@)
-    {
-        // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
-        // // let res = atomic_with_ghost!(
-        // //     &self.atomic.0 => compare_exchange(1, 0);
-        // //     update prev->next;
-        // //     ghost g => {
-        // //         if prev == 1 {
-        // //             // store the operatin in the cell
-        // //             token =  Some(g.batch_perms);
-        // //         } else {
-        // //             token = None;
-        // //         }
-        // //     }
-        // // );
 
-        // if res.get_Ok_0() != 0 {
-        //     // let pending_op = self.batch.0.take(token.get_Some_0());
-        //     // let response = pending_op.resp.get_Some_0();
-        //     // Some(response)
-        //     None
-        // } else {
-        //     None
-        // }
-        None
-    }
 
     /// Returns the maximum number of operations that will go pending on this context.
     #[inline(always)]
@@ -2056,34 +2090,44 @@ impl Replica  {
             let tracked ticket = self.unbounded_log_instance.borrow().update_start(op);
             local_updates = ticket.1.0;
         }
-        let ghost rid = local_updates@.key;
+        let ghost req_id = local_updates@.key;
 
         let ThreadToken { rid, tid, fc_client, batch_perm } = tkn;
 
         // Step 1: Enqueue the operation onto the thread local batch
         // while !self.make_pending(op.clone(), idx.tid()) {}
+        // Note: if we have the thread token, this will always succeed.
+        let mk_pending_res = self.make_pending(op, tid, tracked(local_updates), batch_perm, fc_client);
+        let fc_client = mk_pending_res.1;
 
         // Step 2: Try to do flat combining to appy the update to the data structure
         // self.try_combine(slog)?;
+        self.try_combine(slog);
 
         // Step 3: Obtain the result form the responses
 
         // Return the response to the caller function.
-        // self.get_response(slog, idx.tid())
-        // assert(false);
+        let response = self.get_response(slog, tid, fc_client);
+        let batch_perm = response.1;
+        let local_updates = response.2;
+        let fc_client = response.3;
 
         // finish the update transaction, return the result
-        // self.unbounded_log_instance.borrow().update_finish(rid, local_updates);
+        self.unbounded_log_instance.borrow().update_finish(req_id, local_updates.get());
 
-        Err(ThreadToken { rid, tid, fc_client, batch_perm })
+        Ok((
+            response.0,
+            ThreadToken { rid, tid, fc_client, batch_perm }
+        ))
     }
 
     /// Enqueues an operation inside a thread local context. Returns a boolean
     /// indicating whether the operation was enqueued (true) or not (false).
     fn make_pending(&self, op: UpdateOp, tid: ThreadId,
         local_updates : Tracked<UnboundedLog::local_updates>,
-        batch_perms: Tracked<PermissionOpt<PendingOperation>>
-    ) -> bool
+        batch_perms: Tracked<PermissionOpt<PendingOperation>>,
+        fc_client: Tracked<FlatCombiner::clients>
+    ) -> (bool, builtin::Tracked<spec::flat_combiner::FlatCombiner::clients>)
         requires
             self.wf(),
             0 <= tid < self.contexts.len(),
@@ -2091,7 +2135,44 @@ impl Replica  {
             batch_perms@@.pcell == self.contexts.spec_index(tid as int).batch.0.id(),
     {
         // self.contexts[idx - 1].enqueue(op, ())
-        self.contexts.index(tid as usize).enqueue_op(op, local_updates, batch_perms)
+        self.contexts.index(tid as usize).enqueue_op(op, local_updates, batch_perms, fc_client)
+    }
+
+    /// Busy waits until a response is available within the thread's context.
+    fn get_response(&self, slog: &NrLog, tid: ThreadId, fc_client: Tracked<FlatCombiner::clients>)
+        -> (res: (ReturnType, Tracked<PermissionOpt<PendingOperation>>,
+            Tracked<UnboundedLog::local_updates>,
+            Tracked<FlatCombiner::clients>))
+        requires
+            slog.wf(),
+            self.wf(),
+            0 <= tid < self.contexts.len(),
+    {
+        let context = self.contexts.index(tid as usize);
+        let mut fc_client = fc_client;
+
+        let mut iter : u32 = 0;
+        let mut r = None;
+        while r.is_None()
+            invariant
+                slog.wf(),
+                self.wf(),
+                0 <= iter <= RESPONSE_CHECK_INTERVAL,
+        {
+            if iter == RESPONSE_CHECK_INTERVAL {
+                self.try_combine(slog);
+                iter = 0;
+            }
+
+            let deq_resp_result = context.dequeue_response(fc_client);
+            r = deq_resp_result.0;
+            fc_client = deq_resp_result.1;
+
+            iter = iter + 1;
+        }
+
+        let r = r.unwrap();
+        (r.0, r.1, r.2, fc_client)
     }
 
 }
