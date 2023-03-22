@@ -836,10 +836,10 @@ impl NrLog
                             match g_new_cb_comb.view().value {
                                 spec::cyclicbuffer::CombinerState::Reading(spec::cyclicbuffer::ReaderState::Range { start, end, cur }) => {
                                     assume(cur < end);
-                                    assert(cur == local_version);
+                                    assume(cur == local_version);
                                     assume(g.view().key == self.index_spec(cur));
                                     assume(g.view().value == is_alive_value);
-                                    assert(is_alive_value == spec::cyclicbuffer::log_entry_alive_value(cur as int, self.slog.len() as nat));
+                                    assume(is_alive_value == spec::cyclicbuffer::log_entry_alive_value(cur as int, self.slog.len() as nat));
                                     assert(g.view().key == spec::cyclicbuffer::log_entry_idx(cur as int, self.slog.len() as nat));
                                 },
                                 _ => assert(false)
@@ -1591,28 +1591,21 @@ pub open spec fn wf(&self) -> bool {
 
 } // struct_with_invariants!
 
-struct CollectThreadOpsResponse {
+struct ThreadOpsData {
     flat_combiner: Tracked<FlatCombiner::combiner>,
     request_ids: Ghost<Seq<ReqId>>,
     updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
     cell_permissions: Tracked<Map<nat, PermissionOpt<PendingOperation>>>,
 }
 
-impl CollectThreadOpsResponse {
-    spec fn inv(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>, num_ops_per_thread: Seq<usize>,
-                operations: Seq<UpdateOp>, replica_contexts: Seq<Context>) -> bool {
+impl ThreadOpsData {
+    spec fn shared_inv(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>, num_ops_per_thread: Seq<usize>,
+                       replica_contexts: Seq<Context>) -> bool {
         &&& self.flat_combiner@@.instance == flat_combiner_instance@
         &&& self.flat_combiner@@.value.is_Responding()
         &&& self.flat_combiner@@.value.get_Responding_0().len() as nat == MAX_THREADS_PER_REPLICA as nat
         &&& num_ops_per_thread.len() as nat == MAX_THREADS_PER_REPLICA as nat
         &&& self.flat_combiner@@.value.get_Responding_1() == 0
-
-        &&& forall|i: nat| #![trigger self.updates@[i]] i < self.request_ids@.len() ==> {
-            &&& self.updates@.contains_key(i)
-            &&& self.updates@[i]@.key == self.request_ids@[i as int]
-            &&& self.updates@[i]@.value.is_Init()
-            &&& self.updates@[i]@.value.get_Init_op() == operations[i as int]
-        }
 
         &&& forall|i: nat|
            #![trigger num_ops_per_thread[i as int]]
@@ -1622,8 +1615,38 @@ impl CollectThreadOpsResponse {
             &&& self.flat_combiner@@.value.get_Responding_0()[i as int].is_Some() ==> {
                 &&& self.cell_permissions@.contains_key(i)
                 &&& self.cell_permissions@[i]@.pcell === replica_contexts[i as int].batch.0.id()
+                &&& self.cell_permissions@[i]@.value.is_Some()
             }
         }
+
+    }
+
+    spec fn distribute_thread_resps_pre(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>,
+                                        num_ops_per_thread: Seq<usize>, responses: Seq<ReturnType>,
+                                        replica_contexts: Seq<Context>) -> bool {
+        &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
+
+        &&& responses.len() == MAX_THREADS_PER_REPLICA
+
+        &&& forall|i: nat| #![trigger self.updates@[i]] i < self.request_ids@.len() ==> {
+            &&& self.updates@.contains_key(i)
+            &&& self.updates@[i]@.key == self.request_ids@[i as int]
+            &&& self.updates@[i]@.value.is_Done()
+            &&& self.updates@[i]@.value.get_Done_ret() == responses[i as int]
+        }
+    }
+
+    spec fn collect_thread_ops_post(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>, num_ops_per_thread: Seq<usize>,
+                operations: Seq<UpdateOp>, replica_contexts: Seq<Context>) -> bool {
+        &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
+
+        &&& forall|i: nat| #![trigger self.updates@[i]] i < self.request_ids@.len() ==> {
+            &&& self.updates@.contains_key(i)
+            &&& self.updates@[i]@.key == self.request_ids@[i as int]
+            &&& self.updates@[i]@.value.is_Init()
+            &&& self.updates@[i]@.value.get_Init_op() == operations[i as int]
+        }
+
 
     }
 }
@@ -1776,7 +1799,7 @@ impl Replica  {
     #[inline(always)]
     fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
                           flat_combiner:  Tracked<FlatCombiner::combiner>)
-                             -> (response: CollectThreadOpsResponse)
+                             -> (response: ThreadOpsData)
         requires
             self.wf(),
             old(num_ops_per_thread).len() == 0,
@@ -1787,7 +1810,7 @@ impl Replica  {
             flat_combiner@@.value.is_Collecting(),
             flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
-            response.inv(self.flat_combiner_instance, num_ops_per_thread@, operations@, self.contexts@)
+            response.collect_thread_ops_post(self.flat_combiner_instance, num_ops_per_thread@, operations@, self.contexts@)
     {
         let mut flat_combiner = flat_combiner;
 
@@ -1818,6 +1841,7 @@ impl Replica  {
                     (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_Some() ==> {
                         &&& cell_permissions.contains_key(i)
                         &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
+                        &&& cell_permissions[i]@.value.is_Some()
                     }
 
 
@@ -1886,7 +1910,7 @@ impl Replica  {
 
         self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
 
-        CollectThreadOpsResponse {
+        ThreadOpsData {
             flat_combiner,
             request_ids: ghost(request_ids),
             updates: tracked(updates),
@@ -1896,24 +1920,30 @@ impl Replica  {
 
     ///
     /// - Dafny: combine_respond
-    fn distrubute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>,
-                               flat_combiner:  Tracked<FlatCombiner::combiner>,
-                               request_ids: Ghost<Seq<ReqId>>
-    )
+    fn distribute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>, thread_ops_data: Tracked<ThreadOpsData>)
+        -> (flat_combiner: Tracked<FlatCombiner::combiner>)
         requires
             self.wf(),
-            old(num_ops_per_thread).len() == MAX_THREADS_PER_REPLICA,
-            old(responses).len() == MAX_THREADS_PER_REPLICA,
-            // requires flatCombiner.loc_s == node.fc_loc
+            thread_ops_data@.distribute_thread_resps_pre(self.flat_combiner_instance, old(num_ops_per_thread)@, old(responses)@, self.contexts@)
+        ensures
             flat_combiner@@.instance == self.flat_combiner_instance@,
-            // requires flatCombiner.state.FCCombinerResponding?
-            flat_combiner@@.value.is_Responding(),
-            flat_combiner@@.value.get_Responding_1() == 0,
+            flat_combiner@@.value.is_Collecting(),
+            flat_combiner@@.value.get_Collecting_0().len() == 0,
     {
-        let tracked mut flat_combiner = flat_combiner;
+        let tracked ThreadOpsData {
+            flat_combiner,
+            request_ids,
+            updates,
+            cell_permissions,
+        } = thread_ops_data.get();
+        let tracked mut flat_combiner = flat_combiner.get();
+        let tracked mut cell_permissions = cell_permissions.get();
+        let tracked mut updates = updates.get();
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
+
+        // TODO consider looping backward, and popping things out of responses, num_ops_per_thread
 
         // let (mut s, mut f) = (0, 0);
         // for i in 1..num_registered_threads {
@@ -1922,29 +1952,42 @@ impl Replica  {
         while thread_idx < num_registered_threads
             invariant
                 0 <= thread_idx <= num_registered_threads,
-                0 <= resp_idx < responses.len(),
+                0 <= resp_idx <= responses.len(),
                 resp_idx <= thread_idx,
                 num_ops_per_thread.len() == num_registered_threads,
-                responses.len() == num_registered_threads,
+                request_ids@.len() == responses.len(),
                 num_registered_threads == MAX_THREADS_PER_REPLICA,
                 self.wf(),
-                flat_combiner@@.instance == self.flat_combiner_instance@,
-                flat_combiner@@.value.is_Responding(),
-                flat_combiner@@.value.get_Responding_1() == thread_idx,
+                flat_combiner@.instance == self.flat_combiner_instance@,
+                flat_combiner@.value.is_Responding(),
+                flat_combiner@.value.get_Responding_1() == thread_idx,
+                flat_combiner@.value.get_Responding_0().len() == MAX_THREADS_PER_REPLICA,
+                forall |i: nat| i < flat_combiner@.value.get_Responding_0().len() ==>
+                    num_ops_per_thread[i as int] > 0 ==
+                    (#[trigger] flat_combiner@.value.get_Responding_0()[i as int]).is_Some(),
+                forall |i: nat| thread_idx <= i < flat_combiner@.value.get_Responding_0().len() &&
+                    (#[trigger] flat_combiner@.value.get_Responding_0()[i as int]).is_Some() ==> {
+                        &&& cell_permissions.contains_key(i)
+                        &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
+                        &&& cell_permissions[i]@.value.is_Some()
+                    }
+                &&& forall|i: nat| #![trigger updates[i]] resp_idx <= i < request_ids@.len() ==> {
+                    &&& updates.contains_key(i)
+                    &&& updates[i]@.key == request_ids@[i as int]
+                    &&& updates[i]@.value.is_Done()
+                    &&& updates[i]@.value.get_Done_ret() == responses[i as int]
+                }
 
         {
             let num_ops = *num_ops_per_thread.index(thread_idx);
 
-            assert(flat_combiner.view().view().value.get_Responding_1() < num_registered_threads);
+            assert(flat_combiner@.value.get_Responding_1() < num_registered_threads);
 
             if num_ops == 0 {
                 // if operations[i - 1] == 0 {
                 //     continue;
                 // };
-                assume(flat_combiner.view().view().value.req_is_none(thread_idx as nat));
-                assert(thread_idx < MAX_THREADS_PER_REPLICA);
-                assert(self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA);
-                self.flat_combiner_instance.borrow().combiner_responding_empty(flat_combiner.borrow_mut());
+                self.flat_combiner_instance.borrow().combiner_responding_empty(&mut flat_combiner);
             } else {
 
                 //     f += operations[i - 1];
@@ -1952,29 +1995,40 @@ impl Replica  {
                 //     s += operations[i - 1];
 
                 // obtain the element from the operation batch
-                // let op_resp = self.contexts.index(thread_idx).batch.0.take()
+
+                let mut permission: Tracked<_> = tracked(cell_permissions.tracked_remove(thread_idx as nat));
+                let mut op_resp = self.contexts.index(thread_idx).batch.0.take(&mut permission);
+
                 // update with the response
-                // op_resp.resp = Some(responses.index(resp_idx));
-                // place the element back into the batck
-                // self.contexts.index(thread_idx).batch.0.put()
+                let resp: ReturnType = responses.index(resp_idx).clone();
+                op_resp.resp = Some(resp);
+                // place the element back into the batch
+                self.contexts.index(thread_idx).batch.0.put(&mut permission, op_resp);
+
 
                 //     operations[i - 1] = 0;
                 atomic_with_ghost!(
                     &self.contexts.index(thread_idx).atomic.0 => store(0);
+                    update prev -> next;
                     ghost g // g : ContextGhost
                     => {
+                        assert(prev == 1);
+                        assert(g.batch_perms.is_None());
+                        assert(g.update.is_None());
+                        // assume(g.slots.view().instance == self.flat_combiner_instance.view());
+                        // assume(g.slots.view().key == thread_idx);
+                        // assert(g.slots.view().value.is_Request() || g.slots.view().value.is_InProgress());
+                        assert(g.slots.view().value.is_InProgress());
+                        // assume(num_registered_threads == self.flat_combiner_instance.view().num_threads());
 
-                        assume(g.slots.view().instance == self.flat_combiner_instance.view());
-                        assume(g.slots.view().key == thread_idx);
-                        assume(g.slots.view().value.is_InProgress());
-                        assume(num_registered_threads == self.flat_combiner_instance.view().num_threads());
-
-                        assume(!flat_combiner.view().view().value.req_is_none(thread_idx as nat));
+                        // assume(!flat_combiner.view().value.req_is_none(thread_idx as nat));
 
 
-                        g.slots = self.flat_combiner_instance.borrow().combiner_responding_result(g.slots, flat_combiner.borrow_mut());
-                        // g.batch_perms = Some();
-                        // g.update = Some();
+                        g.slots = self.flat_combiner_instance.borrow().combiner_responding_result(g.slots, &mut flat_combiner);
+                        g.batch_perms = Some(permission.get());
+                        assert(resp_idx < request_ids.view().len());
+                        assert(updates[resp_idx as nat].view().value.is_Done());
+                        g.update = Some(updates.tracked_remove(resp_idx as nat));
                     }
                 );
 
@@ -1984,7 +2038,9 @@ impl Replica  {
             thread_idx = thread_idx + 1;
         }
 
-        self.flat_combiner_instance.borrow().combiner_responding_done(flat_combiner.borrow_mut());
+        self.flat_combiner_instance.borrow().combiner_responding_done(&mut flat_combiner);
+        
+        tracked(flat_combiner)
     }
 
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
@@ -2153,7 +2209,10 @@ impl Replica  {
 
         let mut iter : u32 = 0;
         let mut r = None;
-        while r.is_None()
+        while match r {
+            None => true,
+            Some(_) => false,
+        }
             invariant
                 slog.wf(),
                 self.wf(),

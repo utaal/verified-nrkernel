@@ -97,6 +97,14 @@ pub struct ReturnType {
 
 impl Structural for ReturnType {}
 
+impl ReturnType {
+    pub fn clone(&self) -> (result: Self)
+        ensures self == result
+    {
+        ReturnType { u: self.u }
+    }
+}
+
 /// Represents an entry in the log
 ///
 /// datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
