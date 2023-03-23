@@ -2039,7 +2039,7 @@ impl Replica  {
         }
 
         self.flat_combiner_instance.borrow().combiner_responding_done(&mut flat_combiner);
-        
+
         tracked(flat_combiner)
     }
 
@@ -2209,10 +2209,7 @@ impl Replica  {
 
         let mut iter : u32 = 0;
         let mut r = None;
-        while match r {
-            None => true,
-            Some(_) => false,
-        }
+        while r.is_none()
             invariant
                 slog.wf(),
                 self.wf(),

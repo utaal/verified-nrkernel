@@ -6,6 +6,7 @@ use super::pervasive::prelude::*;
 // mod pervasive;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::cell::*;
+use super::pervasive::multiset::*;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::pervasive::multiset::*;
 #[allow(unused_imports)] // XXX: should not be needed!
@@ -19,280 +20,210 @@ use super::pervasive::*;
 
 use state_machines_macros::tokenized_state_machine;
 
-verus_old_todo_no_ghost_blocks!{
 
-tokenized_state_machine!{
-    DistRwLock<T> {
-        fields {
-            #[sharding(constant)]
-            pub rc_width: int,
+tokenized_state_machine!(RwLockSpec<#[verifier(maybe_negative)] T> {
+    fields {
+        #[sharding(constant)]
+        pub user_inv: Set<T>,
 
-            #[sharding(storage_option)]
-            pub storage: Option<T>,
+        #[sharding(variable)]
+        pub flag_exc: bool,
 
-            #[sharding(variable)]
-            pub exc_locked: bool,
+        #[sharding(variable)]
+        pub flag_rc: nat,
 
-            #[sharding(map)]
-            pub ref_counts: Map<int, int>,
+        #[sharding(storage_option)]
+        pub storage: Option<T>,
 
-            #[sharding(option)]
-            pub exc_pending: Option<int>,
+        #[sharding(option)]
+        pub pending_writer: Option<()>,
 
-            #[sharding(option)]
-            pub exc_guard: Option<()>,
+        #[sharding(option)]
+        pub writer: Option<()>,
 
-            #[sharding(multiset)]
-            pub shared_pending: Multiset<int>,
+        #[sharding(multiset)]
+        pub pending_reader: Multiset<()>,
 
-            #[sharding(multiset)]
-            pub shared_guard: Multiset<(int, T)>,
-        }
+        #[sharding(multiset)]
+        pub reader: Multiset<T>,
+    }
 
-        init!{
-            initialize(rc_width: int, init_t: T) {
-                require(0 < rc_width);
-                init rc_width = rc_width;
-                init storage = Option::Some(init_t);
-                init exc_locked = false;
-                init ref_counts = Map::new(
-                    |i| 0 <= i < rc_width,
-                    |i| 0,
-                );
-                init exc_pending = Option::None;
-                init exc_guard = Option::None;
-                init shared_pending = Multiset::empty();
-                init shared_guard = Multiset::empty();
-            }
-        }
-
-        transition!{
-            exc_start() {
-                require(!pre.exc_locked);
-                update exc_locked = true;
-                add exc_pending += Some(0);
-            }
-        }
-
-        transition!{
-            exc_check_count() {
-                remove exc_pending -= Some(let r);
-                have ref_counts >= [r => 0];
-
-                add exc_pending += Some(r + 1);
-            }
-        }
-
-        transition!{
-            exc_finish() {
-                remove exc_pending -= Some(pre.rc_width);
-                add exc_guard += Some(());
-                withdraw storage -= Some(let _);
-            }
-        }
-
-        transition!{
-            exc_release(t: T) {
-                update exc_locked = false;
-                remove exc_guard -= Some(());
-                deposit storage += Some(t);
-            }
-        }
-
-        transition!{
-            shared_start(r: int) {
-                remove ref_counts -= [r => let rc];
-                add ref_counts += [r => rc + 1];
-                add shared_pending += {r};
-            }
-        }
-
-        transition!{
-            shared_finish(r: int) {
-                require(!pre.exc_locked);
-                remove shared_pending -= {r};
-
-                birds_eye let t = pre.storage.get_Some_0();
-                add shared_guard += {(r, t)};
-            }
-        }
-
-        transition!{
-            shared_release(val: (int, T)) {
-                remove shared_guard -= {val};
-
-                let r = val.0;
-                remove ref_counts -= [r => let rc];
-                add ref_counts += [r => rc - 1];
-
-                assert(rc > 0) by {
-                    assert(0 <= r < pre.rc_width);
-                    assert(pre.shared_guard.count(val) > 0);
-                    assert(Self::filter_r(pre.shared_guard, r).count(val) > 0);
-                    assert(Self::filter_r(pre.shared_guard, r).len() > 0);
-                    assert(pre.ref_counts.index(r) > 0);
-                };
-            }
-        }
-
-        property!{
-            do_guard(val: (int, T)) {
-                have shared_guard >= {val};
-                guard storage >= Some(val.1);
-            }
-        }
-
-        ///// Invariants and proofs
-
-        #[invariant]
-        pub fn ref_counts_domain(&self) -> bool {
-            &&& 0 < self.rc_width
-            &&& forall |i: int| 0 <= i < self.rc_width <==> self.ref_counts.dom().contains(i)
-        }
-
-        #[invariant]
-        pub fn exc_inv(&self) -> bool {
-            &&& self.exc_locked <==> (self.exc_pending.is_Some() || self.exc_guard.is_Some())
-            &&& self.storage.is_Some() <==> self.exc_guard.is_None()
-            &&& if let Option::Some(cur_r) = self.exc_pending {
-                &&& 0 <= cur_r <= self.rc_width
-                &&& self.exc_guard.is_None()
-                &&& forall |x| self.shared_guard.count(x) > 0 ==> !(0 <= x.0 < cur_r)
-            } else {
-                true
-            }
-        }
-
-        #[invariant]
-        pub fn shared_pending_in_range(&self) -> bool {
-            forall |r| self.shared_pending.count(r) > 0 ==> (0 <= r < self.rc_width)
-        }
-
-        #[invariant]
-        pub fn shared_guard_in_range(&self) -> bool {
-            forall |x| self.shared_guard.count(x) > 0 ==> (0 <= x.0 < self.rc_width)
-        }
-
-        #[invariant]
-        pub fn shared_inv_agree(&self) -> bool {
-            forall |v| #[trigger] self.shared_guard.count(v) > 0 ==>
-                self.storage === Option::Some(v.1)
-        }
-
-        pub closed spec fn filter_r(shared_guard: Multiset<(int, T)>, r: int) -> Multiset<(int, T)> {
-            shared_guard.filter(|val: (int, T)| val.0 == r)
-        }
-
-        #[invariant]
-        pub fn shared_counts_agree(&self) -> bool {
-            forall |r| 0 <= r < self.rc_width ==>
-                #[trigger] self.ref_counts.index(r) ==
-                    self.shared_pending.count(r) as int +
-                        Self::filter_r(self.shared_guard, r).len() as int
-        }
-
-        #[inductive(initialize)]
-        fn initialize_inductive(post: Self, rc_width: int, init_t: T) {
-            assert forall |r| 0 <= r < post.rc_width implies
-                #[trigger] post.ref_counts.index(r) ==
-                    post.shared_pending.count(r) as int +
-                        Self::filter_r(post.shared_guard, r).len() as int
-            by {
-                assert(post.ref_counts.index(r) == 0);
-                assert(post.shared_pending.count(r) == 0);
-                assert_multisets_equal!(
-                    Self::filter_r(post.shared_guard, r),
-                    Multiset::empty(),
-                );
-                assert(Self::filter_r(post.shared_guard, r).len() == 0);
-            }
-            assert(post.shared_counts_agree());
-        }
-
-        #[inductive(exc_start)]
-        fn exc_start_inductive(pre: Self, post: Self) {
-
-        }
-
-        #[inductive(exc_check_count)]
-        fn exc_check_count_inductive(pre: Self, post: Self) {
-            let prev_r = pre.exc_pending.get_Some_0();
-            assert forall |x| #[trigger] post.shared_guard.count(x) > 0
-                && x.0 == prev_r implies false
-            by {
-                assert(Self::filter_r(post.shared_guard, prev_r).count(x) > 0);
-            }
-        }
-
-        #[inductive(exc_finish)]
-        fn exc_finish_inductive(pre: Self, post: Self) {
-        }
-
-        #[inductive(exc_release)]
-        fn exc_release_inductive(pre: Self, post: Self, t: T) {
-
-        }
-
-        #[inductive(shared_start)]
-        fn shared_start_inductive(pre: Self, post: Self, r: int) { }
-
-        #[inductive(shared_finish)]
-        fn shared_finish_inductive(pre: Self, post: Self, r: int) {
-            let t = pre.storage.get_Some_0();
-
-            assert forall |r0| 0 <= r0 < post.rc_width implies
-                #[trigger] post.ref_counts.index(r0) ==
-                    post.shared_pending.count(r0) as int +
-                        Self::filter_r(post.shared_guard, r0).len() as int
-            by {
-                if r == r0 {
-                    assert_multisets_equal!(
-                        pre.shared_pending,
-                        post.shared_pending.add(Multiset::singleton(r))
-                    );
-                    assert_multisets_equal!(
-                        Self::filter_r(post.shared_guard, r),
-                        Self::filter_r(pre.shared_guard, r).add(
-                            Multiset::singleton((r, t)))
-                    );
-                    assert(post.ref_counts.index(r0) ==
-                        post.shared_pending.count(r0) as int +
-                            Self::filter_r(post.shared_guard, r0).len() as int);
-                } else {
-                    assert_multisets_equal!(
-                          Self::filter_r(post.shared_guard, r0),
-                          Self::filter_r(pre.shared_guard, r0)
-                    );
-                    assert(post.ref_counts.index(r0) ==
-                        post.shared_pending.count(r0) as int +
-                            Self::filter_r(post.shared_guard, r0).len() as int);
-                }
-            }
-        }
-
-        #[inductive(shared_release)]
-        fn shared_release_inductive(pre: Self, post: Self, val: (int, T)) {
-            let r = val.0;
-            assert forall |r0| 0 <= r0 < post.rc_width implies
-                #[trigger] post.ref_counts.index(r0) ==
-                    post.shared_pending.count(r0) as int +
-                        Self::filter_r(post.shared_guard, r0).len() as int
-            by {
-                if r0 == r {
-                    assert_multisets_equal!(
-                        Self::filter_r(pre.shared_guard, r),
-                        Self::filter_r(post.shared_guard, r).add(
-                            Multiset::singleton(val))
-                    );
-                } else {
-                    assert_multisets_equal!(
-                          Self::filter_r(post.shared_guard, r0),
-                          Self::filter_r(pre.shared_guard, r0)
-                    );
-                }
-            }
+    init!{
+        initialize_full(user_inv: Set<T>, t: T) {
+            require(user_inv.contains(t));
+            init user_inv = user_inv;
+            init flag_exc = false;
+            init flag_rc = 0;
+            init storage = Option::Some(t);
+            init pending_writer = Option::None;
+            init writer = Option::None;
+            init pending_reader = Multiset::empty();
+            init reader = Multiset::empty();
         }
     }
-}
 
-} // verus!
+    #[inductive(initialize_full)]
+    fn initialize_full_inductive(post: Self, user_inv: Set<T>, t: T) { }
+
+    /// Increment the 'rc' counter, obtain a pending_reader
+    transition!{
+        acquire_read_start() {
+            update flag_rc = pre.flag_rc + 1;
+            add pending_reader += {()};
+        }
+    }
+
+    /// Exchange the pending_reader for a reader by checking
+    /// that the 'exc' bit is 0
+    transition!{
+        acquire_read_end() {
+            require(pre.flag_exc == false);
+
+            remove pending_reader -= {()};
+
+            birds_eye let x: T = pre.storage.get_Some_0();
+            add reader += {x};
+
+            assert(pre.user_inv.contains(x));
+        }
+    }
+
+    /// Decrement the 'rc' counter, abandon the attempt to gain
+    /// the 'read' lock.
+    transition!{
+        acquire_read_abandon() {
+            remove pending_reader -= {()};
+            assert(pre.flag_rc >= 1);
+            update flag_rc = (pre.flag_rc - 1) as nat;
+        }
+    }
+
+    /// Atomically set 'exc' bit from 'false' to 'true'
+    /// Obtain a pending_writer
+    transition!{
+        acquire_exc_start() {
+            require(pre.flag_exc == false);
+            update flag_exc = true;
+            add pending_writer += Some(());
+        }
+    }
+
+    /// Finish obtaining the write lock by checking that 'rc' is 0.
+    /// Exchange the pending_writer for a writer and withdraw the
+    /// stored object.
+    transition!{
+        acquire_exc_end() {
+            require(pre.flag_rc == 0);
+
+            remove pending_writer -= Some(());
+
+            add writer += Some(());
+
+            birds_eye let x = pre.storage.get_Some_0();
+            withdraw storage -= Some(x);
+
+            assert(pre.user_inv.contains(x));
+        }
+    }
+
+    /// Release the write-lock. Update the 'exc' bit back to 'false'.
+    /// Return the 'writer' and also deposit an object back into storage.
+    transition!{
+        release_exc(x: T) {
+            require(pre.user_inv.contains(x));
+            remove writer -= Some(());
+
+            update flag_exc = false;
+
+            deposit storage += Some(x);
+        }
+    }
+
+    /// Check that the 'reader' is actually a guard for the given object.
+    property!{
+        read_guard(x: T) {
+            have reader >= {x};
+            guard storage >= Some(x);
+        }
+    }
+
+    property!{
+        read_match(x: T, y: T) {
+            have reader >= {x};
+            have reader >= {y};
+            assert(equal(x, y));
+        }
+    }
+
+    /// Release the reader-lock. Decrement 'rc' and return the 'reader' object.
+    #[transition]
+    transition!{
+        release_shared(x: T) {
+            remove reader -= {x};
+
+            assert(pre.flag_rc >= 1) by {
+                //assert(pre.reader.count(x) >= 1);
+                assert(equal(pre.storage, Option::Some(x)));
+                //assert(equal(x, pre.storage.get_Some_0()));
+            };
+            update flag_rc = (pre.flag_rc - 1) as nat;
+        }
+    }
+
+    #[invariant]
+    pub fn exc_bit_matches(&self) -> bool {
+        (if self.flag_exc { 1 } else { 0 as int }) ==
+            (if self.pending_writer.is_Some() { 1 } else { 0 as int }) as int
+            + (if self.writer.is_Some() { 1 } else { 0 as int }) as int
+    }
+
+    #[invariant]
+    pub fn count_matches(&self) -> bool {
+        self.flag_rc == self.pending_reader.count(())
+            + self.reader.count(self.storage.get_Some_0())
+    }
+
+    #[invariant]
+    pub fn reader_agrees_storage(&self) -> bool {
+        forall |t: T| #[trigger] self.reader.count(t) > 0 ==> equal(self.storage, Option::Some(t))
+    }
+
+    #[invariant]
+    pub fn writer_agrees_storage(&self) -> bool {
+        self.writer.is_Some() ==> self.storage.is_None()
+    }
+
+    #[invariant]
+    pub fn writer_agrees_storage_rev(&self) -> bool {
+        self.storage.is_None() ==> self.writer.is_Some()
+    }
+
+    #[invariant]
+    pub fn sto_user_inv(&self) -> bool {
+        self.storage.is_Some() ==>
+            self.user_inv.contains(self.storage.get_Some_0())
+    }
+
+    #[inductive(acquire_read_start)]
+    fn acquire_read_start_inductive(pre: Self, post: Self) { }
+
+    #[inductive(acquire_read_end)]
+    fn acquire_read_end_inductive(pre: Self, post: Self) { }
+
+    #[inductive(acquire_read_abandon)]
+    fn acquire_read_abandon_inductive(pre: Self, post: Self) { }
+
+    #[inductive(acquire_exc_start)]
+    fn acquire_exc_start_inductive(pre: Self, post: Self) { }
+
+    #[inductive(acquire_exc_end)]
+    fn acquire_exc_end_inductive(pre: Self, post: Self) { }
+
+    #[inductive(release_exc)]
+    fn release_exc_inductive(pre: Self, post: Self, x: T) { }
+
+    #[inductive(release_shared)]
+    fn release_shared_inductive(pre: Self, post: Self, x: T) {
+        assert(equal(pre.storage, Option::Some(x)));
+    }
+});

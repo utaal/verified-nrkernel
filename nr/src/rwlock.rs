@@ -11,6 +11,7 @@ use crate::pervasive::modes::*;
 use crate::pervasive::multiset::*;
 use crate::pervasive::map::*;
 use crate::pervasive::seq::*;
+use crate::pervasive::set::*;
 use crate::pervasive::option::*;
 use crate::pervasive::atomic_ghost::*;
 use crate::pervasive::cell::{PCell, PermissionOpt};
@@ -32,381 +33,327 @@ pub fn spin_loop_hint() {
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-//  The Reader / Shared Guard of the RwLock
+// RwLockWriteGuard
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
-
-
-struct_with_invariants!{
-
-
-///  structure used to release the exclusive write access of a lock
-///
-/// An ExclusiveGuard is a special ghost object you get when you call `acquire` on a RwLock. Its
-/// only purpose is that it allows you to call `release` again later. This requirement allows us
-/// to enforce that no client calls a `release` without previously calling `acquire`.
-///
-/// TODO: implement drop?
+/// structure used to release the exclusive write access of a lock when dropped.
+//
+/// This structure is created by the write and try_write methods on RwLockSpec.
 tracked struct RwLockWriteGuard<T> {
-    // glinear exc_obtained_token: Token,
-    pub t_exc_guard: DistRwLock::exc_guard<T>,
-    pub t_data_perm: T,
-    // glinear empty_cell_contents: HandleTypeMod.Handle,
-    pub g_rw_lock : DistRwLock::Instance<T>,
+    handle: Tracked<RwLockSpec::writer<PermissionOpt<T>>>,
+    perm: Tracked<PermissionOpt<T>>,
+    //foo: Tracked<T>,
+    // rw_lock : Ghost<DistRwLock::Instance<T>>,
 }
 
-pub open spec fn inv(&self, expected_lock: DistRwLock::Instance<T>) -> bool {
-    predicate {
-        // && exc_obtained_token.loc == m.loc
-        self.t_exc_guard@.instance == expected_lock
-        // && IsExcAcqObtained(exc_obtained_token.val)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//  RwLockReadGuard
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        // && empty_cell_contents.lcell == m.lcell.inner // empty_cell_contents is talking about m's cell
-        // && empty_cell_contents.v.None?  // m.cell is empty, ready to be give-n back a value at release time.
+/// RAII structure used to release the shared read access of a lock when dropped.
+///
+/// This structure is created by the read and try_read methods on RwLockSpec.
+tracked struct RwLockReadGuard<T> {
+    handle: Tracked<RwLockSpec::reader<PermissionOpt<T>>>,
+    // rw_lock : Ghost<DistRwLock::Instance<T>>,
+}
 
+impl<T> RwLockReadGuard<T> {
+    spec fn view(&self) -> T {
+        self.handle@@.key.view().value.get_Some_0()
+        //self.handle@@.key.get_Some_0()
 
-        //&& m == expected_lock
-        &&& self.g_rw_lock == expected_lock
     }
 }
 
-} // struct_with_invariants!
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-//  The Writer / Exclusive Guard of the RwLock
+// RwLockSpec
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-type ThreadId = u32;
-
-struct_with_invariants!{
-
-/// Structure used to release the shared read access of a lock
-///
-/// A SharedGuard is for shared access. Use the `borrow_shared` method below to obtain shared access
-/// to the data structure stored in the mutex.
-///
-/// TODO: implement drop?
-struct RwLockReadGuard<T>{
-    /// Thread ID of the thread that acquired the shared lock
-    ///
-    /// The shared access can be released on a different thread than the one that acquired it;
-    /// the guard carries with it the necessary non-ghost thread id that matches the thread_id
-    /// associated with the ghost shared_obtained_token.
-    pub acquiring_thread_id: ThreadId,
-
-    // glinear shared_obtained_token: Token,
-
-    pub ghost rw_lock : DistRwLock::Instance<T>,
-    pub ghost value: T,
-}
-
-pub open spec fn inv(&self, expected_lock: DistRwLock::Instance<T>) -> bool {
-    predicate {
-        &&& 0 <= (self.acquiring_thread_id as nat) < self.rw_lock.rc_width()
-
-        // && shared_obtained_token.loc == m.loc
-        // && shared_obtained_token.val.M?
-        // && shared_obtained_token.val == RwLockMod.SharedAcqHandle(RwLockMod.SharedAcqObtained(
-        //   acquiring_thread_id as nat, StoredContents()))
-        &&& self.rw_lock == expected_lock
-    }
-}
-
-} // struct_with_invariants!
-
 
 
 struct_with_invariants!{
-struct RwLock<T> {
-    /// the exclusive flag
-    pub(crate) exc_locked: CachePadded<AtomicBool<_, DistRwLock::exc_locked<T>, _>>,
-    /// reference counts
-    pub(crate) ref_counts: Vec<CachePadded<AtomicU64<_, DistRwLock::ref_counts<T>, _>>>,
+/// A reader-writer lock
+struct RwLock<#[verifier(maybe_negative)] T> {
+    /// cell containing the data
+    cell: PCell<T>,
+    /// exclusive access
+    exc: CachePadded<AtomicBool<_, RwLockSpec::flag_exc<PermissionOpt<T>>, _>>,
+    /// reference count
+    rc: CachePadded<AtomicU64<_, RwLockSpec::flag_rc<PermissionOpt<T>>, _>>,
 
-    /// the instance of the lock
-    pub tracked inst: DistRwLock::Instance<T>,
+    /// the state machien instance
+    tracked inst: RwLockSpec::Instance<PermissionOpt<T>>,
+    ghost user_inv: Set<T>,
 }
 
-pub open spec fn wf(&self) -> bool {
-
+pub closed spec fn wf(&self) -> bool {
     predicate {
-        // && |refCounts| == RC_WIDTH
-        &&& self.inst.rc_width() == self.ref_counts@.len()
-
-        &&& forall |i: int| (0 <= i && i < self.ref_counts@.len()) ==>
-            (#[trigger] self.ref_counts@.index(i)).0.well_formed()
-            && self.ref_counts@.index(i).0.constant() === (self.inst, i)
+        forall |v: PermissionOpt<T>| #[trigger] self.inst.user_inv().contains(v) == (
+            equal(v@.pcell, self.cell.id()) && v@.value.is_Some()
+                && self.user_inv.contains(v@.value.get_Some_0())
+        )
     }
 
-    invariant on exc_locked with (inst) specifically (self.exc_locked.0) is (b: bool, g: DistRwLock::exc_locked<T>) {
-        g@ === DistRwLock::token![ inst => exc_locked => b ]
+    invariant on exc with (inst) specifically (self.exc.0) is (v: bool, g: RwLockSpec::flag_exc<PermissionOpt<T>>) {
+        // g@ === RwLockSpec::token! [ inst => exc ==> v ]
+        g@.instance == inst && g@.value == v
     }
 
-    invariant on ref_counts with (inst)
-        forall |i: int|
-        where (0 <= i < self.ref_counts@.len())
-        specifically (self.ref_counts@[i].0)
-        is (v: u64, g: DistRwLock::ref_counts<T>)
-    {
-        g@ === DistRwLock::token![ inst => ref_counts => i => v as int ]
+    invariant on rc with (inst) specifically (self.rc.0) is (v: u64, g: RwLockSpec::flag_rc<PermissionOpt<T>>) {
+        // g@ === RwLockSpec::token! [ inst => rc ==> v ]
+        g@.instance == inst && g@.value == v as nat
     }
 }
-
 } // struct_with_invariants!
+
 
 impl<T> RwLock<T> {
-    #[verifier(spinoff_prover)]
-    fn new(rc_width: usize, t: T) -> (res: Self)
-        requires 0 < rc_width
-        ensures res.wf()
-    {
-        let tracked inst;
-        let tracked exc_locked_token;
-        let tracked mut ref_counts_tokens;
-        proof {
-            let tracked (Trk(inst0), Trk(exc_locked_token0), Trk(ref_counts_tokens0), _, _, _, _) =
-                DistRwLock::Instance::initialize(rc_width as int, t, Option::Some(t));
-            inst = inst0;
-            exc_locked_token = exc_locked_token0;
-            ref_counts_tokens = ref_counts_tokens0;
-        }
-
-        let exc_locked_atomic = AtomicBool::new(inst, false, exc_locked_token);
-
-        let mut v: Vec<CachePadded<AtomicU64<(DistRwLock::Instance<T>, int), DistRwLock::ref_counts<T>, _>>>
-            = Vec::new();
-        let mut i: usize = 0;
-
-        assert forall |j: int|
-            i <= j && j < rc_width implies
-            #[trigger] ref_counts_tokens.dom().contains(j)
-                  && equal(ref_counts_tokens.index(j)@.instance, inst)
-                  && equal(ref_counts_tokens.index(j)@.key, j)
-                  && equal(ref_counts_tokens.index(j)@.value, 0)
-        by {
-            assert(ref_counts_tokens.dom().contains(j));
-            assert(equal(ref_counts_tokens.index(j)@.instance, inst));
-            assert(equal(ref_counts_tokens.index(j)@.key, j));
-            assert(equal(ref_counts_tokens.index(j)@.value, 0));
-        }
-
-        assert(forall |j: int|
-          #![trigger( ref_counts_tokens.dom().contains(j) )]
-          #![trigger( ref_counts_tokens.index(j) )]
-            i <= j && j < rc_width ==> (
-            ref_counts_tokens.dom().contains(j)
-            && equal(ref_counts_tokens.index(j)@.instance, inst)
-            && equal(ref_counts_tokens.index(j)@.key, j)
-            && equal(ref_counts_tokens.index(j)@.value, 0)
-        ));
-
-        while i < rc_width
-            invariant
-                i <= rc_width,
-                v@.len() == i as int,
-                forall(|j: int| 0 <= j && j < i ==>
-                    (#[trigger]v@.index(j)).0.well_formed()
-                      && equal(v@.index(j).0.constant(), (inst, j))
-                ),
-                forall |j: int|
-                    #![trigger( ref_counts_tokens.dom().contains(j) )]
-                    #![trigger( ref_counts_tokens.index(j) )]
-                    i <= j && j < rc_width ==> (
-                        ref_counts_tokens.dom().contains(j)
-                        && equal(ref_counts_tokens.index(j)@.instance, inst)
-                        && equal(ref_counts_tokens.index(j)@.key, j)
-                        && equal(ref_counts_tokens.index(j)@.value, 0)
-                    ),
-        {
-            assert(ref_counts_tokens.dom().contains(i as int));
-
-            let tracked ref_count_token;
-            proof {
-                ref_count_token = ref_counts_tokens.tracked_remove(i as int);
-            }
-
-            let rc_atomic = AtomicU64::new((inst, spec_cast_integer::<_, int>(i)), 0, ref_count_token);
-            v.push(CachePadded(rc_atomic));
-
-            i = i + 1;
-
-            assert forall |j: int|
-                i <= j && j < rc_width implies
-                #[trigger] ref_counts_tokens.dom().contains(j)
-                      && equal(ref_counts_tokens.index(j)@.instance, inst)
-                      && equal(ref_counts_tokens.index(j)@.key, j)
-                      && equal(ref_counts_tokens.index(j)@.value, 0)
-            by {
-                assert(ref_counts_tokens.dom().contains(j));
-                assert(equal(ref_counts_tokens.index(j)@.instance, inst));
-                assert(equal(ref_counts_tokens.index(j)@.key, j));
-                assert(equal(ref_counts_tokens.index(j)@.value, 0));
-            }
-        }
-
-        let s = RwLock {
-            exc_locked: CachePadded(exc_locked_atomic),
-            ref_counts: v,
-            inst: inst,
-        };
-
-        assert(s.inst.rc_width() == s.ref_counts@.len());
-
-        s
+    /// Invariant on the data
+    spec fn inv(&self, t: T) -> bool {
+        self.user_inv.contains(t)
     }
 
+    spec fn wf_write_handle(&self, write_handle: &RwLockWriteGuard<T>) -> bool {
+        &&& write_handle.handle@@.instance == self.inst
 
-    pub fn acquire_exclusive(&self) -> (res: Tracked<RwLockWriteGuard<T>>)
+        &&& write_handle.perm@@.pcell == self.cell.id()
+        &&& write_handle.perm@@.value.is_None()
+    }
+
+    spec fn wf_read_handle(&self, read_handle: &RwLockReadGuard<T>) -> bool {
+        &&& read_handle.handle@@.instance == self.inst
+
+        &&& read_handle.handle@@.key.view().value.is_Some()
+        &&& read_handle.handle@@.key.view().pcell == self.cell.id()
+        &&& read_handle.handle@@.count == 1
+    }
+
+    fn new(t: T, inv: Ghost<FnSpec(T) -> bool>) -> (res: Self)
         requires
-            self.wf(),
-            // internal inv
-            //
+            inv@(t)
         ensures
-            res@.inv(self.inst)
+            res.wf(),
+            forall |v: T| res.inv(v) == inv@(v)
     {
-        let tracked mut t_exc_pending : Option<DistRwLock::exc_pending<T>> = Option::None;
+        let (cell, perm) = PCell::<T>::new(t);
 
-        let mut got_exc = false;
-        while !got_exc
+        let ghost set_inv = Set::new(inv@);
+
+        let ghost user_inv = Set::new(closure_to_fn_spec(|s: PermissionOpt<T>| {
+            &&& equal(s@.pcell, cell.id())
+            &&& s@.value.is_Some()
+            &&& set_inv.contains(s@.value.get_Some_0())
+        }));
+
+        let tracked inst;
+        let tracked flag_exc;
+        let tracked flag_rc;
+        proof {
+            let tracked (Trk(_inst), Trk(_flag_exc), Trk(_flag_rc), _, _, _, _) =
+                RwLockSpec::Instance::<PermissionOpt<T>>::initialize_full(user_inv, perm@, Option::Some(perm.get()));
+            inst = _inst;
+            flag_exc = _flag_exc;
+            flag_rc = _flag_rc;
+        }
+
+        let exc = AtomicBool::new(inst, false, flag_exc);
+        let rc = AtomicU64::new(inst, 0, flag_rc);
+
+        RwLock { cell, exc: CachePadded(exc), rc: CachePadded(rc), inst, user_inv: set_inv }
+    }
+
+    fn acquire_write(&self) -> (res: (T, Tracked<RwLockWriteGuard<T>>))
+        requires self.wf()
+        ensures self.wf_write_handle(&res.1@) && self.inv(res.0)
+    {
+
+        let mut done = false;
+        let tracked mut token: Option<RwLockSpec::pending_writer<PermissionOpt<T>>> = Option::None;
+        while !done
             invariant
                 self.wf(),
-                got_exc ==> t_exc_pending.is_Some() && t_exc_pending.get_Some_0()@.instance == self.inst && t_exc_pending.get_Some_0()@.value == 0
+                done ==> token.is_Some() && token.get_Some_0()@.instance == self.inst,
         {
-            let locked = atomic_with_ghost!(
-                &self.exc_locked.0 => compare_exchange(false, true);
-                update prev -> next;
-                ghost g => {
-                    if prev == false {
-                        // lock taken
-                        t_exc_pending = Option::Some(self.inst.exc_start(&mut g));
-                    }
+            let result = atomic_with_ghost!(
+                &self.exc.0 => compare_exchange(false, true);
+                returning res;
+                ghost g =>
+            {
+                if res.is_Ok() {
+                    token = Option::Some(self.inst.acquire_exc_start(&mut g));
                 }
-            );
+            });
 
-            got_exc = if let Result::Ok(_) = locked {
-                true
-            } else {
-                false
+            done = match result {
+                Result::Ok(_) => true,
+                _ => false,
             };
         }
 
-        let tracked mut t_exc_pending = t_exc_pending.tracked_unwrap();
-
-        assert(self.ref_counts.len() == self.inst.rc_width());
-
-        let mut visited = 0;
-        let rc_width = self.ref_counts.len();
-        while visited < rc_width
+        loop
             invariant
                 self.wf(),
-                0 <= visited <= rc_width,
-                rc_width == self.inst.rc_width(),
-                t_exc_pending@.instance == self.inst,
-                t_exc_pending@.value == visited,
-
+                token.is_Some() && token.get_Some_0()@.instance == self.inst,
         {
-            let ref_count = atomic_with_ghost!(
-                &self.ref_counts.index(visited).0 => load();
-                returning ref_count;
-                ghost g => {
-                    if ref_count == 0 {
-                        // there are no outstanding shared references, we can advance
-                        t_exc_pending = self.inst.exc_check_count(&g, t_exc_pending);
-                    }
-                }
-            );
 
-            if ref_count == 0 {
-                visited = visited + 1;
-            } else {
-                spin_loop_hint();
+            let tracked mut perm_opt: Option<PermissionOpt<T>> = Option::None;
+            let tracked mut handle_opt: Option<RwLockSpec::writer<PermissionOpt<T>>> =Option::None;
+            let tracked acquire_exc_end_result; // need to define tracked, can't in the body
+            let result = atomic_with_ghost!(
+                &self.rc.0 => load();
+                returning res;
+                ghost g => {
+                if res == 0 {
+                    acquire_exc_end_result = self.inst.acquire_exc_end(&g, token.tracked_unwrap());
+                    token = Option::None;
+                    perm_opt = Option::Some(acquire_exc_end_result.1.0);
+                    handle_opt = Option::Some(acquire_exc_end_result.2.0);
+                }
+            });
+
+            if result == 0 {
+                let mut perm = tracked(perm_opt.tracked_unwrap());
+                let tracked handle = tracked(handle_opt.tracked_unwrap());
+
+                let t = self.cell.take(&mut perm);
+
+                let tracked write_handle = RwLockWriteGuard { perm, handle };
+                return (t, tracked(write_handle));
             }
         }
-
-        // finish: update the guard
-        let tracked (t_data_perm, t_exc_guard) =  self.inst.exc_finish(t_exc_pending);
-
-        let tracked guard = RwLockWriteGuard {
-            t_exc_guard: t_exc_guard.0,
-            t_data_perm: t_data_perm.0,
-            g_rw_lock: self.inst.clone(),
-        };
-
-       tracked(guard)
     }
 
-    pub fn release_exclusive(&self, guard: Tracked<RwLockWriteGuard<T>>)
-        requires
-            self.wf(),
-            guard@.inv(self.inst)
+    fn acquire_read(&self) -> (res: Tracked<RwLockReadGuard<T>>)
+        requires self.wf()
+        ensures
+            self.wf_read_handle(&res@) && self.inv(res@@)
     {
-        let tracked RwLockWriteGuard { t_exc_guard, t_data_perm, g_rw_lock } = guard.get();
+        loop
+            invariant self.wf()
+        {
+
+            let val = atomic_with_ghost!(&self.rc.0 => load(); ghost g => { });
+
+            let tracked mut token: Option<RwLockSpec::pending_reader<PermissionOpt<T>>> = Option::None;
+
+            if val < 18446744073709551615 {
+                let result = atomic_with_ghost!(
+                    &self.rc.0 => compare_exchange(val, val + 1);
+                    returning res;
+                    ghost g =>
+                {
+                    if res.is_Ok() {
+                        token = Option::Some(self.inst.acquire_read_start(&mut g));
+                    }
+                });
+
+                match result {
+                    Result::Ok(_) => {
+                        let tracked mut handle_opt: Option<RwLockSpec::reader<PermissionOpt<T>>> = Option::None;
+                        let tracked acquire_read_end_result;
+                        let result = atomic_with_ghost!(
+                            &self.exc.0 => load();
+                            returning res;
+                            ghost g =>
+                        {
+                            if res == false {
+                                acquire_read_end_result = self.inst.acquire_read_end(&g, token.tracked_unwrap());
+                                token = Option::None;
+                                handle_opt = Option::Some(acquire_read_end_result.1.0);
+                            }
+                        });
+
+                        if result == false {
+                            let tracked handle = tracked(handle_opt.tracked_unwrap());
+                            return tracked(RwLockReadGuard { handle });
+                        } else {
+                            let _ = atomic_with_ghost!(
+                                &self.rc.0 => fetch_sub(1);
+                                ghost g =>
+                            {
+                                self.inst.acquire_read_abandon(&mut g, token.tracked_unwrap());
+                            });
+                        }
+                    }
+                    _ => { }
+                }
+            }
+        }
+    }
+
+    fn borrow<'a>(&'a self, read_handle: &'a Tracked<RwLockReadGuard<T>>) -> (res: &'a T)
+        requires self.wf() && self.wf_read_handle(&read_handle@)
+        ensures res == read_handle@@
+    {
+        let tracked perm = self.inst.read_guard(read_handle@.handle@@.key, read_handle.borrow().handle.borrow());
+        self.cell.borrow(tracked_exec_borrow(perm))
+    }
+
+    fn release_write(&self, t: T, write_handle: Tracked<RwLockWriteGuard<T>>)
+        requires
+            self.wf() && self.wf_write_handle(&write_handle@) && self.inv(t)
+    {
+        let tracked write_handle = write_handle.get();
+        let mut perm = tracked_exec(write_handle.perm.get());
+
+        self.cell.put(&mut perm, t);
 
         atomic_with_ghost!(
-            &self.exc_locked.0 => store(false);
-            ghost g => {
-                self.inst.exc_release(t_data_perm, t_data_perm, &mut g, t_exc_guard);
-            }
-        );
-    }
-
-    pub fn acquire_shared(&self, tid: ThreadId)
-        requires
-            self.wf(),
-            0 <= tid < self.ref_counts.len()
-    {
-        // let tracked shared_handle = Option::None;
-        while true
-            invariant
-                self.wf(),
-                0 <= tid < self.ref_counts.len()
+            &self.exc.0 => store(false);
+            ghost g =>
         {
-
-            // Spin loop until nobody has the exclusive access acquired.
-            // Note we don't do anything with handles here, because correctness
-            // doesn't (can't!) depend on the value we observe for the
-            // exclusiveFlag here.
-            let mut exc_acquired = atomic_with_ghost!(
-                &self.exc_locked.0 => load();
-                returning locked;
-                ghost g => { }
-            );
-
-            while exc_acquired
-                invariant
-                    self.wf(),
-                    0 <= tid < self.ref_counts.len(),
-            {
-                spin_loop_hint();
-                let locked = atomic_with_ghost!(
-                    &self.exc_locked.0 => load();
-                    returning locked;
-                    ghost g => { }
-                );
-            }
-
-            // Increment my thread-specific refcount to indicate my enthusiasm to get this shared access.
-
-            // atomic_with_ghost!(
-            //     &self.ref_counts.index(tid as usize).0 => fetch_add(1);
-            //     returning locked;
-            //     ghost g => {
-
-
-            //     }
-            // );
-
-        }
+            self.inst.release_exc(perm.view(), &mut g, perm.get(), write_handle.handle.get());
+        });
     }
 
-    pub fn release_shared(&self) {
+    fn release_read(&self, read_handle: Tracked<RwLockReadGuard<T>>)
+        requires self.wf() && self.wf_read_handle(&read_handle@)
+    {
+        let tracked  RwLockReadGuard { handle } = read_handle.get();
 
+        let _ = atomic_with_ghost!(
+            &self.rc.0 => fetch_sub(1);
+            ghost g =>
+        {
+            self.inst.release_shared(handle.view().view().key, &mut g, handle.get());
+        });
+    }
+
+    proof fn lemma_readers_match(tracked &self, tracked read_handle1: &Tracked<RwLockReadGuard<T>>, tracked read_handle2: &Tracked<RwLockReadGuard<T>>)
+        requires
+            self.wf() && self.wf_read_handle(&read_handle1@) && self.wf_read_handle(&read_handle2@)
+        ensures
+            read_handle1@@ == read_handle2@@
+    {
+        self.inst.read_match(
+            read_handle1@.handle@@.key,
+            read_handle2@.handle@@.key,
+            read_handle1.borrow().handle.borrow(),
+            read_handle2.borrow().handle.borrow());
     }
 }
 
+fn main() {
+    let ghost inv = closure_to_fn_spec(|v: u64| v == 5 || v == 13);
+    let lock = RwLock::<u64>::new(5, ghost(inv));
 
-} // struct_with_invariants!
+    let (val, write_handle) = lock.acquire_write();
+    assert(val == 5 || val == 13);
+    lock.release_write(13, write_handle);
 
-pub fn main() {}
+    let read_handle1 = lock.acquire_read();
+    let read_handle2 = lock.acquire_read();
+
+    let val1 = lock.borrow(&read_handle1);
+    let val2 = lock.borrow(&read_handle2);
+
+    lock.lemma_readers_match(&read_handle1, &read_handle2);
+    assert(*val1 == *val2);
+
+    lock.release_read(read_handle1);
+    lock.release_read(read_handle2);
+}
+
+} // verus!
+
+
