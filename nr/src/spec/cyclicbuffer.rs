@@ -3,7 +3,8 @@ use builtin::*;
 use builtin_macros::*;
 
 use super::pervasive::map::*;
-use super::pervasive::option::Option;
+// #[allow(unused_imports)]
+// use super::pervasive::option::Option;
 // use super::pervasive::seq::*;
 // use super::pervasive::set::*;
 // use super::pervasive::*;

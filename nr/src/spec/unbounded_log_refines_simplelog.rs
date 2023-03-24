@@ -213,7 +213,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
             assert(0 <= version <=  interp(pre).log.len());
             assert(interp(pre).readonly_reqs.index(rid).get_Req_version() <= version <= interp(pre).log.len());
 
-            assert(ret == interp(pre).nrstate_at_version(version).read(op)) by {
+            assert(ret == interp(pre).nrstate_at_version(version).spec_read(op)) by {
                 state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
             }
 
@@ -335,7 +335,7 @@ pub open spec fn result_match(log: Map<LogIdx, LogEntry>,  output: ReturnType, v
     recommends version_in_log(log, version)
 {
 
-    output == i_nrstate_at_version(log, version).read(op)
+    output == i_nrstate_at_version(log, version).spec_read(op)
 }
 
 

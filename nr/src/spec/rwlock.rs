@@ -1,23 +1,7 @@
 #[allow(unused_imports)]
 use builtin::*;
-use builtin_macros::*;
-use super::pervasive::prelude::*;
-
-// mod pervasive;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::cell::*;
-use super::pervasive::multiset::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::multiset::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::map::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::option::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::ptr::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::*;
-
+#[allow(unused_imports)]
+use super::pervasive::{ prelude::*, multiset::*, option::* };
 use state_machines_macros::tokenized_state_machine;
 
 

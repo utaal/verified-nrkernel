@@ -289,7 +289,7 @@ UnboundedLog {
         pub tail: nat,
 
         #[sharding(map)]
-        pub replicas: Map<NodeId, NRState>,
+        pub replicas: Map<NodeId, DataStructureSpec>,
 
         #[sharding(map)]
         pub local_versions: Map<NodeId, LogIdx>, // previously called "local tails"
@@ -536,7 +536,7 @@ UnboundedLog {
         match read {
             ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                 exists |v: nat| (#[trigger] rangeincl(version_upper_bound, v, self.version_upper_bound))
-                    && ret == compute_nrstate_at_version(self.log, v).read(op)
+                    && ret == compute_nrstate_at_version(self.log, v).spec_read(op)
             },
             _ => true,
         }
@@ -554,10 +554,10 @@ UnboundedLog {
     pub open spec fn update_results_match(&self, update: UpdateState) -> bool {
         match update {
             UpdateState::Applied { ret, idx } => {
-                ret == compute_nrstate_at_version(self.log, idx).update(self.log[idx].op).1
+                ret == compute_nrstate_at_version(self.log, idx).spec_update(self.log[idx].op).1
             },
             UpdateState::Done { ret, idx } => {
-                ret == compute_nrstate_at_version(self.log, idx).update(self.log[idx].op).1
+                ret == compute_nrstate_at_version(self.log, idx).spec_update(self.log[idx].op).1
             },
             _ => true,
         }
@@ -596,7 +596,7 @@ UnboundedLog {
             init num_replicas = number_of_nodes;
             init log = Map::empty();
             init tail = 0;
-            init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| NRState::init());
+            init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| DataStructureSpec::init());
             init local_versions = Map::new(|n: NodeId| n < number_of_nodes, |n| 0);
             init version_upper_bound = 0;
             init local_reads = Map::empty();
@@ -652,7 +652,7 @@ UnboundedLog {
             have   combiner    >= [ node_id => CombinerState::Ready ];
             have   replicas    >= [ node_id => let state ];
 
-            let ret = state.read(op);
+            let ret = state.spec_read(op);
 
             add local_reads += [ rid => ReadonlyState::Done{ op, node_id, version_upper_bound, ret } ];
         }
@@ -841,7 +841,7 @@ UnboundedLog {
             // apply all updates between lhead and global tail that were enqueued from local node
             require(lversion < tail);
             require(log_entry.node_id == node_id);
-            let (new_nr_state, ret) = old_nr_state.update(log_entry.op);
+            let (new_nr_state, ret) = old_nr_state.spec_update(log_entry.op);
 
             add local_updates += [ rid => UpdateState::Applied { ret, idx: lversion }];
             add replicas      += [ node_id => new_nr_state];
@@ -860,7 +860,7 @@ UnboundedLog {
             // apply all updates between lhead and global tail that were enqueued from remote nodes
             require(lversion < tail);
             require(log_entry.node_id != node_id);
-            let (new_nr_state, ret) = old_nr_state.update(log_entry.op);
+            let (new_nr_state, ret) = old_nr_state.spec_update(log_entry.op);
 
             add replicas    += [ node_id => new_nr_state ];
             add combiner    += [ node_id => CombinerState::Loop { queued_ops, lversion: lversion + 1, tail, idx}];
@@ -1149,7 +1149,7 @@ UnboundedLog {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                     let ver = choose(|ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound))
-                        && ret == compute_nrstate_at_version(pre.log, ver).read(op));
+                        && ret == compute_nrstate_at_version(pre.log, ver).spec_read(op));
                     compute_nrstate_at_version_preserves(pre.log, post.log, ver);
                 },
                 _ => {},
@@ -1211,7 +1211,7 @@ UnboundedLog {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                     let ver = choose(|ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound))
-                        && ret == compute_nrstate_at_version(post.log, ver).read(op));
+                        && ret == compute_nrstate_at_version(post.log, ver).spec_read(op));
                     assert(rangeincl(version_upper_bound, ver, post.version_upper_bound));
                 },
                 _ => {}
@@ -1826,16 +1826,16 @@ decreases b - a
 ///
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given  version.
-pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version: LogIdx) -> NRState
+pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version: LogIdx) -> DataStructureSpec
     recommends forall |i| 0 <= i < version ==> log.dom().contains(i)
     decreases version
 {
     // decreases_when(version >= 0);
     if version == 0 {
-        NRState::init()
+        DataStructureSpec::init()
     } else {
         let ver =  (version - 1) as nat;
-        compute_nrstate_at_version(log, ver).update(log[ver].op).0
+        compute_nrstate_at_version(log, ver).spec_update(log[ver].op).0
     }
 }
 

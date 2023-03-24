@@ -29,38 +29,62 @@ pub type ThreadId = nat;
 // implement.
 
 /// represents a replica state
-pub struct NRState {
+pub struct DataStructureSpec {
     pub u: u8,
 }
 
-impl NRState {
+impl DataStructureSpec {
 
     #[verifier(opaque)]
     pub open spec fn init() -> Self {
-        NRState { u: 0 }
+        DataStructureSpec { u: 0 }
     }
 
     /// reads the current state of the replica
     #[verifier(opaque)]
-    pub open spec fn read(&self, op: ReadonlyOp) -> ReturnType {
+    pub open spec fn spec_read(&self, op: ReadonlyOp) -> ReturnType {
         ReturnType { u: 0 }
     }
 
     #[verifier(opaque)]
-    pub open spec fn update(self, op: UpdateOp) -> (Self, ReturnType) {
+    pub open spec fn spec_update(self, op: UpdateOp) -> (Self, ReturnType) {
         (self, ReturnType { u: 0 })
     }
 }
 
+pub struct DataStructureType {
+    u: u8,
+}
+
+impl DataStructureType {
+    pub open spec fn interp(&self) -> DataStructureSpec {
+        DataStructureSpec { u: 0 }
+    }
+
+    pub fn update(&mut self, op: UpdateOp) -> (result: ReturnType)
+        ensures old(self).interp().spec_update(op) == (self.interp(), result)
+    {
+        ReturnType { u: 0 }
+
+    }
+
+    pub fn read(&self, op: ReadonlyOp) -> (result: ReturnType)
+        ensures self.interp().spec_read(op) == result
+    {
+        ReturnType { u: 0 }
+    }
+}
+
+
 // #[spec]
 // #[verifier(opaque)]
-// pub fn read(state: NRState, op: ReadonlyOp) -> ReturnType {
+// pub fn read(state: DataStructureSpec, op: ReadonlyOp) -> ReturnType {
 //     ReturnType { u: 0 }
 // }
 
 // #[spec]
 // #[verifier(opaque)]
-// pub fn update_state(state: NRState, op: UpdateOp) -> (NRState, ReturnType) {
+// pub fn update_state(state: DataStructureSpec, op: UpdateOp) -> (DataStructureSpec, ReturnType) {
 //     (state, ReturnType { u: 0 })
 // }
 

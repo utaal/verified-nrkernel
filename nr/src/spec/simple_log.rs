@@ -107,7 +107,7 @@ state_machine! {
 
 
         ////////////////////////////////////////////////////////////////////////////////////////////
-        // Constructing the NRState
+        // Constructing the DataStructureSpec
         ////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -115,7 +115,7 @@ state_machine! {
         ///
         /// This function recursively applies the update operations to the initial state of the
         /// data structure and returns the state of the data structure at the given  version.
-        pub open spec fn nrstate_at_version(&self, version: LogIdx) -> NRState
+        pub open spec fn nrstate_at_version(&self, version: LogIdx) -> DataStructureSpec
             recommends 0 <= version <= self.log.len()
         {
             compute_nrstate_at_version(self.log, version)
@@ -168,7 +168,7 @@ state_machine! {
 
                 require(current <= version <= pre.log.len());
                 require(version <= pre.version);
-                require(ret == pre.nrstate_at_version(version).read(op));
+                require(ret == pre.nrstate_at_version(version).spec_read(op));
 
                 update readonly_reqs = pre.readonly_reqs.remove(rid);
             }
@@ -324,15 +324,15 @@ verus! {
 ///
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given  version.
-pub open spec fn compute_nrstate_at_version(log: Seq<UpdateOp>, version: LogIdx) -> NRState
+pub open spec fn compute_nrstate_at_version(log: Seq<UpdateOp>, version: LogIdx) -> DataStructureSpec
     recommends 0 <= version <= log.len()
     decreases version
 {
     // decreases_when(version >= 0);
     if version == 0 {
-        NRState::init()
+        DataStructureSpec::init()
     } else {
-        compute_nrstate_at_version(log, (version - 1) as nat).update(log[version - 1]).0
+        compute_nrstate_at_version(log, (version - 1) as nat).spec_update(log[version - 1]).0
     }
 }
 
