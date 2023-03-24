@@ -140,7 +140,7 @@ pub struct Replica {
     //
     //   - Dafny: linear replica: RwLock,
     //   - Rust:  data: CachePadded<RwLock<D>>,
-    pub data: CachePadded<RwLock<NRState>>,
+    pub data: CachePadded<RwLock<DataStructureSpec>>,
 
 
     // /// Thread index that will be handed out to the next thread that registers

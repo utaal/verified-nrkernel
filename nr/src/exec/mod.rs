@@ -61,7 +61,7 @@ pub struct NodeReplicated {
     /// the nodes or replicas in the system
     ///
     ///  - Rust: replicas: Vec<Box<Replica<D>>>,
-    // replicas: Vec<Box<Replica<NRState, UpdateOp, ReturnType>>>,
+    // replicas: Vec<Box<Replica<DataStructureSpec, UpdateOp, ReturnType>>>,
     replicas: Vec<Box<Replica>>,
 
     /// something that creates new request ids, or do we

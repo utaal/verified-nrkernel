@@ -5,7 +5,7 @@ mod pervasive;
 use pervasive::cell::{CellId, PCell, PermissionOpt};
 #[allow(unused_imports)] // XXX: should not be needed!
 use pervasive::map::Map;
-use pervasive::modes::{tracked_exec_borrow, Gho, Trk};
+use pervasive::modes::{tracked_exec_borrow, tracked_exec, ghost_exec, Gho, Trk};
 use pervasive::option::Option;
 use pervasive::prelude::*;
 use pervasive::vec::Vec;
@@ -16,10 +16,11 @@ mod spec;
 // #[macro_use]
 // mod rwlock;
 
-use spec::cyclicbuffer::{self, CyclicBuffer, StoredType};
+use spec::cyclicbuffer::{CyclicBuffer, StoredType};
 use spec::flat_combiner::FlatCombiner;
 use spec::types::*;
 use spec::unbounded_log::UnboundedLog;
+use spec::rwlock::{RwLockSpec};
 
 use pervasive::atomic_ghost::*;
 
@@ -121,6 +122,10 @@ impl ReplicaToken {
     pub open spec fn id_spec(&self) -> nat {
         self.rid as nat
     }
+
+    pub open spec fn view(&self) -> nat {
+        self.rid as nat
+    }
 }
 
 
@@ -169,6 +174,137 @@ impl ThreadToken {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // NR Log
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Data structure that is passed between the append and exec functins of the log.
+pub tracked struct NrLogAppendExecDataGhost {
+    pub(crate) local_updates: Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+    pub(crate) ghost_replica: Tracked<UnboundedLog::replicas>,
+    pub(crate) combiner: Tracked<UnboundedLog::combiner>,
+    pub(crate) cb_combiner: Tracked<CyclicBuffer::combiner>,
+    pub(crate) request_ids: Ghost<Seq<ReqId>>,
+}
+
+impl NrLogAppendExecDataGhost {
+    pub open spec fn append_pre(&self, ops: Seq<UpdateOp>,  nid: NodeId, cb_inst: CyclicBuffer::Instance) -> bool {
+        // requires nr.cb_loc_s == cb.cb_loc_s
+        &&& self.cb_combiner@@.instance == cb_inst
+        // requires cb.nodeId == node.nodeId as int
+        &&& self.cb_combiner@@.key == nid
+        // requires cb.rs.CombinerIdle?
+        &&& self.cb_combiner@@.value.is_Idle()
+        // requires combinerState.nodeId == node.nodeId as int
+        &&& self.combiner@@.key == nid
+        // requires combinerState.state == CombinerReady
+        &&& self.combiner@@.value.is_Ready()
+        // requires forall i | 0 <= i < |requestIds| ::
+        //     i in updates && updates[i] == Update(requestIds[i], UpdateInit(ops[i]))
+        &&& forall |i| 0 <= i < self.request_ids@.len() ==> {
+            &&& self.local_updates@.contains_key(i)
+            &&& (#[trigger] self.local_updates@[i])@.key == self.request_ids@[i as int]
+            &&& self.local_updates@[i]@.value.is_Init()
+            &&& self.local_updates@[i]@.value.get_Init_op() == ops[i as int]
+        }
+
+        // requires |ops| == MAX_THREADS_PER_REPLICA as int
+        // requires |requestIds| == num_ops as int <= MAX_THREADS_PER_REPLICA as int
+        // requires |requestIds| <= MAX_THREADS_PER_REPLICA as int
+        // requires |responses| == MAX_THREADS_PER_REPLICA as int
+
+        // requires ghost_replica.nodeId == node.nodeId as int
+        &&& self.ghost_replica@@.key == nid
+        // &&& self.ghost_replica@@.value == actual_replica.I_();
+        // requires ghost_replica.state == nrifc.I(actual_replica)
+    }
+
+    pub open spec fn append_post(&self, pre: Self, nid: NodeId, responses: Seq<ReturnType>) -> bool {
+        // ensures combinerState'.state.CombinerReady? || combinerState'.state.CombinerPlaced?
+        self.combiner@@.value.is_Ready() || self.combiner@@.value.is_Placed()
+        // TODO: ensures combinerState'.state.CombinerReady? ==> post_exec(node, requestIds, responses', updates', combinerState')
+        &&& self.combiner@@.value.is_Ready() ==> {
+            &&& forall |i| 0 <= i < self.request_ids@.len() ==> {
+                &&& self.local_updates@.contains_key(i)
+                &&& (#[trigger] self.local_updates@[i])@.key == self.request_ids@[i as int]
+                &&& self.local_updates@[i]@.value.is_Done()
+                &&& self.local_updates@[i]@.value.get_Done_ret() == responses[i as int]
+            }
+        }
+        // TODO: ensures combinerState'.state.CombinerPlaced? ==> pre_exec(node, requestIds, responses', updates', combinerState')
+        &&& self.combiner@@.value.is_Placed() ==> {
+            &&& self.combiner@@.value.get_Placed_queued_ops() == self.request_ids@
+            &&& forall |i| 0 <= i < self.request_ids@.len() ==> {
+                &&& self.local_updates@.contains_key(i)
+                &&& (#[trigger] self.local_updates@[i])@.key == self.request_ids@[i as int]
+                &&& self.local_updates@[i]@.value.is_Placed()
+                //TODO: self.local_updates[i]@.value.get_Placed_idx() == self.request_ids
+            }
+        }
+        // ensures cb' == cb,
+        &&& self.cb_combiner == pre.cb_combiner
+
+        // ensures ghost_replica'.nodeId == node.nodeId as int
+        &&& self.ghost_replica@@.key == nid
+        // TODO: ensures ghost_replica'.state == nrifc.I(actual_replica')
+    }
+
+    pub open spec fn execute_pre(&self, nid: NodeId, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+        // requires nr.cb_loc_s == cb.cb_loc_s
+        &&& self.cb_combiner@@.instance == cb_inst
+        // requires cb.nodeId == node.nodeId as int
+        &&& self.cb_combiner@@.key == nid
+        // requires cb.rs.CombinerIdle?
+        &&& self.cb_combiner@@.value.is_Idle()
+
+        // requires combinerState.state.CombinerReady? || combinerState.state.CombinerPlaced?
+        &&& self.combiner@@.value.is_Ready() || self.combiner@@.value.is_Placed()
+        // requires combinerState.nodeId == node.nodeId as int
+        &&& self.combiner@@.key == nid
+        &&& self.combiner@@.instance == inst
+
+        // TODO:requires combinerState.state.CombinerPlaced? ==> pre_exec(node, requestIds, responses, updates, combinerState)
+        &&& self.combiner@@.value.is_Placed() ==> {
+            &&& self.combiner@@.value.get_Placed_queued_ops() == self.request_ids@
+            &&& forall |i| 0 <= i < self.request_ids@.len() ==> {
+                &&& self.local_updates@.contains_key(i)
+                &&& (#[trigger] self.local_updates@[i])@.key == self.request_ids@[i as int]
+                &&& self.local_updates@[i]@.value.is_Placed()
+                //TODO: self.local_updates[i]@.value.get_Placed_idx() == self.request_ids
+            }
+        }
+
+        // TODO: requires ghost_replica.state == nrifc.I(actual_replica)
+        // requires ghost_replica.nodeId == node.nodeId as int
+        &&& self.ghost_replica@@.key == nid
+
+        // TODO: requires |responses| == MAX_THREADS_PER_REPLICA as int
+    }
+
+    pub open spec fn execute_post(&self, pre: Self, nid: NodeId, responses: Seq<ReturnType>) -> bool {
+        // TODO: |responses'| == MAX_THREADS_PER_REPLICA as int
+        // TODO: |requestIds| <= MAX_THREADS_PER_REPLICA as int
+
+        // TODO: ensures combinerState.state.CombinerPlaced? ==> post_exec(node, requestIds, responses', updates', combinerState')
+        &&& pre.combiner@@.value.is_Placed() ==> {
+            &&& self.combiner@@.value.is_Ready()
+            &&& self.combiner@@.key == pre.combiner@@.key
+            &&& forall |i| 0 <= i < self.request_ids@.len() ==> {
+                &&& self.local_updates@.contains_key(i)
+                &&& (#[trigger] self.local_updates@[i])@.key == self.request_ids@[i as int]
+                &&& self.local_updates@[i]@.value.is_Done()
+                &&& self.local_updates@[i]@.value.get_Done_ret() == responses[i as int]
+            }
+        }
+        // ensures combinerState.state.CombinerReady? ==> responses == responses' && combinerState' == combinerState && updates' == updates
+        &&& pre.combiner@@.value.is_Ready() ==> {
+            &&& self.combiner == pre.combiner
+            &&& self.local_updates == pre.local_updates
+        }
+        // ensures cb' == cb
+        &&& self.cb_combiner == pre.cb_combiner
+        // TODO: ensures ghost_replica'.state == nrifc.I(actual_replica')
+        // ensures ghost_replica'.nodeId == node.nodeId as int
+        &&& self.ghost_replica@@.key == nid
+    }
+}
 
 
 struct_with_invariants!{
@@ -492,65 +628,74 @@ impl NrLog
 
 
     /// Inserts a slice of operations into the log.
-    pub fn append(&self, ops: &Vec<UpdateOp>, rid: ReplicaToken,
-        cb_combiner: Tracked<CyclicBuffer::combiner>
-    )
+    pub fn append(&self, replica_token: &ReplicaToken, operations: &Vec<UpdateOp>,
+        responses: &Vec<ReturnType>,
+        ghost_data: Tracked<NrLogAppendExecDataGhost>
+    ) -> (result: Tracked<NrLogAppendExecDataGhost>)
         requires
             self.wf(),
-            cb_combiner@@.instance == self.cyclic_buffer_instance@,
-            cb_combiner@@.value.is_Idle(),
-            cb_combiner@@.key == rid.id_spec(),
-            ops.len() < MAX_OPS
+            ghost_data@.append_pre(operations@, replica_token@, self.cyclic_buffer_instance@),
+            operations.len() < MAX_OPS
+        ensures
+            result@.append_post(ghost_data@, replica_token@, responses@)
     {
-        // let node_id = rid.id() as usize;
+        let nid = replica_token.id() as usize;
+
+        // somehow can't really do this as a destructor
+        let tracked ghost_data = ghost_data.get();
+        let tracked local_updates = ghost_data.local_updates;       // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+        let tracked ghost_replica = ghost_data.ghost_replica;       // Tracked<UnboundedLog::replicas>,
+        let tracked mut combiner = ghost_data.combiner.get();       // Tracked<UnboundedLog::combiner>,
+        let tracked mut cb_combiner = ghost_data.cb_combiner.get(); // Tracked<CyclicBuffer::combiner>,
+        let tracked request_ids = ghost_data.request_ids;           // Ghost<Seq<ReqId>>,
 
         // // TODO!
-        // let nops = ops.len();
-        // assert(nops < MAX_OPS);
+        let nops = operations.len();
 
-        // let mut iteration = 1;
-        // let mut waitgc = 1;
 
-        // let tracked mut g_cb_comb_new = cb_combiner.get();
+        let mut iteration = 1;
+        let mut waitgc = 1;
 
-        // while true
-        //     invariant
-        //         self.wf(),
-        //         0 <= iteration <= WARN_THRESHOLD,
-        //         g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
-        //         g_cb_comb_new@.key == node_id as nat,
-        //         g_cb_comb_new@.value.is_Idle(),
-        //         nops < MAX_OPS
-        // {
-        //     if iteration == WARN_THRESHOLD {
-        //         print_starvation_warning(line!());
-        //         return;
-        //     }
+        loop
+            invariant
+                self.wf(),
+                0 <= iteration <= WARN_THRESHOLD,
+                cb_combiner@.instance == self.cyclic_buffer_instance@,
+                cb_combiner@.key == nid as nat,
+                cb_combiner@.value.is_Idle(),
+                nops < MAX_OPS
+        {
+            if iteration == WARN_THRESHOLD {
+                print_starvation_warning(line!());
+                iteration = 0;
+                // TODO: return;
+            }
 
-        //     iteration = iteration + 1;
+            iteration = iteration + 1;
 
-        //     // let tail = self.tail.load(Ordering::Relaxed);
-        //     let tail = atomic_with_ghost!(
-        //         &self.tail.0 => load();
-        //         returning tail;
-        //         ghost g => { }
-        //     );
+            // let tail = self.tail.load(Ordering::Relaxed);
+            let tail = atomic_with_ghost!(
+                &self.tail.0 => load();
+                returning tail;
+                ghost g => { }
+            );
 
-        //     // let head = self.head.load(Ordering::Relaxed);
-        //     let head = atomic_with_ghost!(
-        //         &self.head.0 => load();
-        //         returning tail;
-        //         ghost g => {
-        //             g_cb_comb_new = self.cyclic_buffer_instance
-        //                 .borrow()
-        //                 .advance_tail_start(node_id as nat, &g, g_cb_comb_new);
-        //         }
-        //     );
+            // let head = self.head.load(Ordering::Relaxed);
+            let head = atomic_with_ghost!(
+                &self.head.0 => load();
+                returning tail;
+                ghost g => {
+                    cb_combiner = self.cyclic_buffer_instance
+                        .borrow()
+                        .advance_tail_start(nid as nat, &g, cb_combiner);
+                }
+            );
 
-        //     // capture the warning here
-        //     if head >= MAX_IDX {
-        //         panic_with_head_too_big();
-        //     }
+            // capture the warning here
+            if head >= MAX_IDX {
+                panic_with_head_too_big();
+                // TODO: return
+            }
 
         //     // If there are fewer than `GC_FROM_HEAD` entries on the log, then just
         //     // try again. The replica that reserved entry (h + self.slog.len() - GC_FROM_HEAD)
@@ -644,7 +789,18 @@ impl NrLog
 
         //         }
         //     }
-        // }
+        }
+
+        let tracked combiner = tracked(combiner);
+        let tracked cb_combiner = tracked(cb_combiner);
+        let tracked ghost_data = NrLogAppendExecDataGhost {
+            local_updates,  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+            ghost_replica,  // Tracked<UnboundedLog::replicas>,
+            combiner,       // Tracked<UnboundedLog::combiner>,
+            cb_combiner,    // Tracked<CyclicBuffer::combiner>,
+            request_ids,    // Ghost<Seq<ReqId>>,
+        };
+        tracked(ghost_data)
     }
 
 
@@ -666,7 +822,7 @@ impl NrLog
         let ghost g_node_id = cb_combiner@@.key;
 
         let mut iteration = 1;
-        while true
+        loop
             invariant
                 self.wf(),
                 g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
@@ -676,14 +832,14 @@ impl NrLog
         {
             // TODO
             // let global_head = self.head.load(Ordering::Relaxed);
-            let mut global_head = atomic_with_ghost!(
+            let global_head = atomic_with_ghost!(
                 &self.head.0 => load();
                 returning ret;
                 ghost g => { /* no-op */ }
             );
 
             // let f = self.tail.load(Ordering::Relaxed);
-            let mut global_tail = atomic_with_ghost!(
+            let global_tail = atomic_with_ghost!(
                 &self.tail.0 => load();
                 returning ret;
                 ghost g => { /* no-op */ }
@@ -723,56 +879,51 @@ impl NrLog
             // g_cb_comb_new =  self.execute(node_id_copy);
 
         }
-        tracked(g_cb_comb_new)
     }
 
 
     /// Executes a passed in closure (`d`) on all operations starting from a
     /// replica's local tail on the shared log. The replica is identified
     /// through an `idx` passed in as an argument.
-    pub(crate) fn execute(&self, rid: ReplicaToken,
-        local_updates: Tracked::<UnboundedLog::local_updates>,
-        replica: Tracked<UnboundedLog::replicas>,
-        combiner: Tracked<UnboundedLog::combiner>,
-        cb_combiner: Tracked<CyclicBuffer::combiner>
-    )
+    pub(crate) fn execute(&self, replica_token: &ReplicaToken,
+        responses: &Vec<ReturnType>,
+        ghost_data: Tracked<NrLogAppendExecDataGhost>
+    ) -> (result: Tracked<NrLogAppendExecDataGhost>)
         requires
             self.wf(),
-            rid.id_spec() < self.num_replicas@,
-            replica@@.instance == self.unbounded_log_instance@,
-            replica@@.key == rid.id_spec(),
-            cb_combiner@@.instance == self.cyclic_buffer_instance@,
-            cb_combiner@@.value.is_Idle(),
-            cb_combiner@@.key == rid.id_spec(),
-            combiner@@.value.is_Placed() || combiner@@.value.is_Ready(),
-            combiner@@.key == rid.id_spec(),
-            combiner@@.instance == self.unbounded_log_instance@
+            replica_token@ < self.local_versions.len(),
+            ghost_data@.execute_pre(replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
+        ensures
+            result@.execute_post(ghost_data@, replica_token@, responses@)
 
     {
-        let node_id = rid.id() as usize;
-        assert(cb_combiner@@.key == node_id as nat);
+        let nid = replica_token.id() as usize;
 
-        let tracked mut g_new_replica = replica.get();
-        let tracked mut g_new_comb = combiner.get();
-        let tracked mut g_new_cb_comb = cb_combiner.get();
-        let tracked mut g_new_local_updates = local_updates.get();
+        // somehow can't really do this as a destructor
+        let tracked ghost_data = ghost_data.get();
+        let tracked local_updates = ghost_data.local_updates;       // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+        let tracked ghost_replica = ghost_data.ghost_replica;       // Tracked<UnboundedLog::replicas>,
+        let tracked mut combiner = ghost_data.combiner.get();       // Tracked<UnboundedLog::combiner>,
+        let tracked mut cb_combiner = ghost_data.cb_combiner.get(); // Tracked<CyclicBuffer::combiner>,
+        let tracked request_ids = ghost_data.request_ids;           // Ghost<Seq<ReqId>>,
 
         // if the combiner ins idle, we start it with the trival start transition
         proof {
-            if combiner@@.value.is_Ready() {
-                g_new_comb = self.unbounded_log_instance.borrow().exec_trivial_start(node_id as nat, g_new_comb);
+            if combiner@.value.is_Ready() {
+                combiner = self.unbounded_log_instance.borrow().exec_trivial_start(nid as nat, combiner);
             }
         }
 
         // let ltail = self.ltails[idx.0 - 1].load(Ordering::Relaxed);
         let mut local_version = atomic_with_ghost!(
-            &self.local_versions.index(node_id).0 => load();
+            &self.local_versions.index(nid).0 => load();
             returning ret;
             ghost g => {
                 // this kicks of the state transition in both the cyclic buffer and the unbounded log
-                g_new_comb = self.unbounded_log_instance.borrow().exec_load_local_version(node_id as nat, &g.0, g_new_comb);
-                g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_start(node_id as nat, &g.1, g_new_cb_comb);
-            });
+                combiner = self.unbounded_log_instance.borrow().exec_load_local_version(nid as nat, &g.0, combiner);
+                cb_combiner = self.cyclic_buffer_instance.borrow().reader_start(nid as nat, &g.1, cb_combiner);
+            }
+        );
 
         // Check if we have any work to do by comparing our local tail with the log's
         // global tail. If they're equal, then we're done here and can simply return.
@@ -783,91 +934,92 @@ impl NrLog
             ghost g => {
                 if (local_version == global_tail) {
                     // there has ben no additional updates to be applied, combiner back to idle
-                    g_new_comb = self.unbounded_log_instance.borrow().exec_finish_no_change(node_id as nat, &g.0, g_new_comb);
-                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_abort(node_id as nat, g_new_cb_comb);
+                    combiner = self.unbounded_log_instance.borrow().exec_finish_no_change(nid as nat, &g.0, combiner);
+                    cb_combiner = self.cyclic_buffer_instance.borrow().reader_abort(nid as nat, cb_combiner);
                 } else {
-                    g_new_comb = self.unbounded_log_instance.borrow().exec_load_global_head(node_id as nat, &g.0, g_new_comb);
-                    g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_enter(node_id as nat,  &g.1, g_new_cb_comb);
+                    combiner = self.unbounded_log_instance.borrow().exec_load_global_head(nid as nat, &g.0, combiner);
+                    cb_combiner = self.cyclic_buffer_instance.borrow().reader_enter(nid as nat,  &g.1, cb_combiner);
                 }
-            });
-
-        // Execute all operations from the passed in offset to the shared log's tail.
-        // Check if the entry is live first; we could have a replica that has reserved
-        // entries, but not filled them into the log yet.
-        // for i in ltail..gtail {
-        while local_version < global_tail
-            invariant
-                self.wf(),
-                0 <= local_version <= global_tail,
-                g_new_cb_comb@.key == node_id as nat,
-                g_new_cb_comb@.instance == self.cyclic_buffer_instance@,
-                g_new_cb_comb.view().value.is_Reading(),
-                g_new_cb_comb.view().value.get_Reading_0().is_Range(),
-        {
-            let mut iteration = 1;
-
-            let actual_idx = self.index(local_version);
-            let is_alive_value = self.is_alive_value(local_version);
-
-            let mut is_alive = false;
-            while !is_alive
-                invariant
-                    self.wf(),
-                    actual_idx < self.slog.len(),
-                    0 <= iteration <= WARN_THRESHOLD,
-                    g_new_cb_comb@.instance == self.cyclic_buffer_instance@,
-                    g_new_cb_comb@.key == node_id as nat,
-                    g_new_cb_comb.view().value.is_Reading(),
-                    g_new_cb_comb.view().value.get_Reading_0().is_Range(),
-                    self.slog.spec_index(actual_idx as int).wf(self.cyclic_buffer_instance)
-            {
-                let tracked reader_guard_result : (Gho<Map<int, StoredType>>,Trk<CyclicBuffer::combiner>);
-                let alive_bit = atomic_with_ghost!(
-                    &self.slog.index(actual_idx).alive => load();
-                    returning alive_bit;
-                    ghost g => {
-                        if alive_bit == is_alive_value {
-
-                            assert(g.view().instance == self.cyclic_buffer_instance.view());
-                            assert(g_new_cb_comb.view().instance == self.cyclic_buffer_instance.view());
-
-                            assert(g_new_cb_comb.view().key == node_id as nat);
-
-                            match g_new_cb_comb.view().value {
-                                spec::cyclicbuffer::CombinerState::Reading(spec::cyclicbuffer::ReaderState::Range { start, end, cur }) => {
-                                    assume(cur < end);
-                                    assume(cur == local_version);
-                                    assume(g.view().key == self.index_spec(cur));
-                                    assume(g.view().value == is_alive_value);
-                                    assume(is_alive_value == spec::cyclicbuffer::log_entry_alive_value(cur as int, self.slog.len() as nat));
-                                    assert(g.view().key == spec::cyclicbuffer::log_entry_idx(cur as int, self.slog.len() as nat));
-                                },
-                                _ => assert(false)
-                            };
-
-                            // assert(g_new_cb_comb.view().value.is_Reading());
-                            // assert(g_new_cb_comb.view().value.get_Reading_0().is_Range());
-                            // assert(g_new_cb_comb.view().value.get_Reading_0().get_Range_cur() <g_new_cb_comb.view().value.get_Reading_0().get_Range_end());
-
-                            // assert(g.view().key == g_new_cb_comb.view().value.get_Reading_0().get_Range_cur());
-                            // assert(g.view().value == is_alive_value);
-
-
-
-
-                            reader_guard_result = self.cyclic_buffer_instance.borrow().reader_guard(node_id as nat, &g, g_new_cb_comb);
-                            g_new_cb_comb = reader_guard_result.1.0;
-                        }
-                    });
-
-                if iteration == WARN_THRESHOLD {
-                    print_starvation_warning(line!());
-                    iteration = 0;
-                }
-
-                is_alive = alive_bit == is_alive_value;
-                iteration = iteration + 1;
             }
+        );
+
+        // // Execute all operations from the passed in offset to the shared log's tail.
+        // // Check if the entry is live first; we could have a replica that has reserved
+        // // entries, but not filled them into the log yet.
+        // // for i in ltail..gtail {
+        // while local_version < global_tail
+        //     invariant
+        //         self.wf(),
+        //         0 <= local_version <= global_tail,
+        //         g_new_cb_comb@.key == node_id as nat,
+        //         g_new_cb_comb@.instance == self.cyclic_buffer_instance@,
+        //         g_new_cb_comb.view().value.is_Reading(),
+        //         g_new_cb_comb.view().value.get_Reading_0().is_Range(),
+        // {
+        //     let mut iteration = 1;
+
+        //     let actual_idx = self.index(local_version);
+        //     let is_alive_value = self.is_alive_value(local_version);
+
+        //     let mut is_alive = false;
+        //     while !is_alive
+        //         invariant
+        //             self.wf(),
+        //             actual_idx < self.slog.len(),
+        //             0 <= iteration <= WARN_THRESHOLD,
+        //             g_new_cb_comb@.instance == self.cyclic_buffer_instance@,
+        //             g_new_cb_comb@.key == node_id as nat,
+        //             g_new_cb_comb.view().value.is_Reading(),
+        //             g_new_cb_comb.view().value.get_Reading_0().is_Range(),
+        //             self.slog.spec_index(actual_idx as int).wf(self.cyclic_buffer_instance)
+        //     {
+        //         let tracked reader_guard_result : (Gho<Map<int, StoredType>>,Trk<CyclicBuffer::combiner>);
+        //         let alive_bit = atomic_with_ghost!(
+        //             &self.slog.index(actual_idx).alive => load();
+        //             returning alive_bit;
+        //             ghost g => {
+        //                 if alive_bit == is_alive_value {
+
+        //                     assert(g.view().instance == self.cyclic_buffer_instance.view());
+        //                     assert(g_new_cb_comb.view().instance == self.cyclic_buffer_instance.view());
+
+        //                     assert(g_new_cb_comb.view().key == node_id as nat);
+
+        //                     match g_new_cb_comb.view().value {
+        //                         spec::cyclicbuffer::CombinerState::Reading(spec::cyclicbuffer::ReaderState::Range { start, end, cur }) => {
+        //                             assume(cur < end);
+        //                             assume(cur == local_version);
+        //                             assume(g.view().key == self.index_spec(cur));
+        //                             assume(g.view().value == is_alive_value);
+        //                             assume(is_alive_value == spec::cyclicbuffer::log_entry_alive_value(cur as int, self.slog.len() as nat));
+        //                             assert(g.view().key == spec::cyclicbuffer::log_entry_idx(cur as int, self.slog.len() as nat));
+        //                         },
+        //                         _ => assert(false)
+        //                     };
+
+        //                     // assert(g_new_cb_comb.view().value.is_Reading());
+        //                     // assert(g_new_cb_comb.view().value.get_Reading_0().is_Range());
+        //                     // assert(g_new_cb_comb.view().value.get_Reading_0().get_Range_cur() <g_new_cb_comb.view().value.get_Reading_0().get_Range_end());
+
+        //                     // assert(g.view().key == g_new_cb_comb.view().value.get_Reading_0().get_Range_cur());
+        //                     // assert(g.view().value == is_alive_value);
+
+
+
+
+        //                     reader_guard_result = self.cyclic_buffer_instance.borrow().reader_guard(node_id as nat, &g, g_new_cb_comb);
+        //                     g_new_cb_comb = reader_guard_result.1.0;
+        //                 }
+        //             });
+
+        //         if iteration == WARN_THRESHOLD {
+        //             print_starvation_warning(line!());
+        //             iteration = 0;
+        //         }
+
+        //         is_alive = alive_bit == is_alive_value;
+        //         iteration = iteration + 1;
+        //     }
 
             // now we know the entry is alive
 
@@ -906,8 +1058,8 @@ impl NrLog
             //     g_new_cb_comb = self.cyclic_buffer_instance.borrow().reader_unguard(node_id as nat, g_new_cb_comb);
             // }
 
-            local_version = local_version + 1;
-        }
+        //     local_version = local_version + 1;
+        // }
 
 
 
@@ -947,6 +1099,16 @@ impl NrLog
         // self.ctail.fetch_max(gtail, Ordering::Relaxed);
         // self.ltails[idx.0 - 1].store(gtail, Ordering::Relaxed);
 
+        let tracked combiner = tracked(combiner);
+        let tracked cb_combiner = tracked(cb_combiner);
+        let tracked ghost_data = NrLogAppendExecDataGhost {
+            local_updates,  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+            ghost_replica,  // Tracked<UnboundedLog::replicas>,
+            combiner,       // Tracked<UnboundedLog::combiner>,
+            cb_combiner,    // Tracked<CyclicBuffer::combiner>,
+            request_ids,    // Ghost<Seq<ReqId>>,
+        };
+        tracked(ghost_data)
     }
 
 
@@ -1026,26 +1188,6 @@ impl NrLog
         (min_local_version, tracked(g_cb_comb_new))
     }
 
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Thread Contexts
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// TODO:
-pub struct RwLock<D>
-{
-    foo: Option<D>
-}
-
-impl<D> RwLock<D> {
-    pub open spec fn internal_inv(&self) -> bool {
-        true
-    }
-
-    pub open spec fn inv(&self) -> bool {
-        true
-    }
 }
 
 
@@ -1391,9 +1533,10 @@ struct_with_invariants!{
 pub struct ReplicatedDataStructure {
     /// the actual data structure
     ///  - Dafny: linear actual_replica: nrifc.DataStructureType,
-    pub data: NRState,
+    pub data: DataStructureType,
     // TODO: add the ghost replica here!
     ///  - Dafny: glinear ghost_replica: Replica,
+    pub replica: Tracked<UnboundedLog::replicas>,
     ///  - Dafny: glinear combiner: CombinerToken,
     pub combiner: Tracked<UnboundedLog::combiner>,
     ///  - Dafny: glinear cb: CBCombinerToken
@@ -1401,16 +1544,18 @@ pub struct ReplicatedDataStructure {
 }
 
 //  - Dafny: predicate WF(nodeId: nat, cb_loc_s: nat) {
-pub open spec fn wf(&self, node_id: nat, cb: CyclicBuffer::Instance) -> bool {
+pub open spec fn wf(&self, nid: NodeId, cb: CyclicBuffer::Instance) -> bool {
     predicate {
         // && ghost_replica.state == nrifc.I(actual_replica)
+        &&& self.replica@@.value == self.data.interp()
         // && ghost_replica.nodeId == nodeId
+        &&& self.replica@@.key == nid
         // && combiner.state == CombinerReady
         &&& self.combiner@@.value.is_Ready()
         // && combiner.nodeId == nodeId
-        &&& self.combiner@@.key == node_id
+        &&& self.combiner@@.key == nid
         // && cb.nodeId == nodeId
-        &&& self.cb_combiner@@.key == node_id
+        &&& self.cb_combiner@@.key == nid
         // && cb.rs.CombinerIdle?
         &&& self.cb_combiner@@.value.is_Idle()
         // && cb.cb_loc_s == cb_loc_s
@@ -1430,11 +1575,14 @@ struct_with_invariants!{
 ///  - Rust:  N/A
 pub tracked struct CombinerLockStateGhost {
     // glinear flatCombiner: FCCombiner,
-    pub combiner: Tracked<FlatCombiner::combiner>,
+    pub flat_combiner: Tracked<FlatCombiner::combiner>,
 
-    /// Stores the token to access the op_buffer in the replica
+    /// Stores the token to access the collected_operations in the replica
     ///  - Dafny: glinear gops: LC.LCellContents<seq<nrifc.UpdateOp>>,
-    pub op_buffer_token: Tracked<PermissionOpt<Vec<UpdateOp>>>,
+    pub collected_operations_perm: Tracked<PermissionOpt<Vec<UpdateOp>>>,
+
+    /// Stores the token to access the number of collected operations in the replica
+    pub collected_operations_per_thread_perm: Tracked<PermissionOpt<Vec<usize>>>,
 
     /// Stores the token to access the responses in teh Replica
     ///  - Dafny: glinear gresponses: LC.LCellContents<seq<nrifc.ReturnType>>,
@@ -1449,20 +1597,20 @@ pub tracked struct CombinerLockStateGhost {
 pub open spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses_id: CellId, op_buffer_id: CellId) -> bool {
     predicate {
         // && g.value.flatCombiner.state == FC.FCCombinerCollecting([])
-        &&& self.combiner@@.value.is_Collecting()
-        &&& self.combiner@@.value.get_Collecting_0().len() == 0
+        &&& self.flat_combiner@@.value.is_Collecting()
+        &&& self.flat_combiner@@.value.get_Collecting_0().len() == 0
 
         // && g.value.flatCombiner.loc_s == fc_loc
-        &&& self.combiner@@.instance == combiner_instance
+        &&& self.flat_combiner@@.instance == combiner_instance
 
         // && g.value.gops.v.Some?
-        &&& self.op_buffer_token@@.value.is_Some()
+        &&& self.collected_operations_perm@@.value.is_Some()
 
         // && g.value.gresponses.lcell == responses
-        &&& self.op_buffer_token@@.pcell == op_buffer_id
+        &&& self.collected_operations_perm@@.pcell == op_buffer_id
 
         // && |g.value.gops.v.value| == MAX_THREADS_PER_REPLICA as int
-        &&& self.op_buffer_token@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
+        &&& self.collected_operations_perm@@.value.get_Some_0().len() == MAX_THREADS_PER_REPLICA
 
         // && g.value.gresponses.v.Some?
         &&& self.responses_token@@.value.is_Some()
@@ -1517,7 +1665,13 @@ pub struct Replica {
     ///
     ///  - Dafny: linear ops: LC.LinearCell<seq<nrifc.UpdateOp>>,
     ///  - Rust:  buffer: RefCell<Vec<<D as Dispatch>::WriteOperation>>,
-    pub op_buffer: PCell<Vec<UpdateOp>>,
+    pub collected_operations: PCell<Vec<UpdateOp>>,
+
+
+    // /// Number of operations collected by the combiner from each thread at any
+    // we just have one inflight operation per thread
+    // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
+    pub collected_operations_per_thread: PCell<Vec<usize>>,
 
     /// A buffer of results collected after flat combining. With the help of
     /// `inflight`, the combiner enqueues these results into the appropriate
@@ -1536,16 +1690,14 @@ pub struct Replica {
     //
     //   - Dafny: linear replica: RwLock,
     //   - Rust:  data: CachePadded<RwLock<D>>,
-    pub data: CachePadded<RwLock<NRState>>,
+    pub data: CachePadded<RwLock<ReplicatedDataStructure>>,
 
 
     /// Thread index that will be handed out to the next thread that registers
     // with the replica when calling [`Replica::register()`].
     // next: CachePadded<AtomicU64<_, FlatCombiner::num_threads, _>>,
 
-    // /// Number of operations collected by the combiner from each thread at any
-    // we just have one inflight operation per thread
-    // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
+
 
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
@@ -1564,7 +1716,8 @@ pub open spec fn wf(&self) -> bool {
         // && 0 <= nodeId as int < NUM_REPLICAS as int
         &&& 0 <= self.spec_id() < NUM_REPLICAS
         // && replica.InternalInv()
-        &&& self.data.0.internal_inv()
+        &&& self.data.0.wf()
+        // &&& self.data.0.internal_inv()
 
         // XXX: the number of threads must agree here!, make this dynamic?
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
@@ -1576,11 +1729,11 @@ pub open spec fn wf(&self) -> bool {
     }
 
     // (forall v, g :: atomic_inv(combiner_lock.inner, v, g) <==> CombinerLockInv(v, g, fc_loc, ops, responses))
-    invariant on combiner with (flat_combiner_instance, responses, op_buffer) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
+    invariant on combiner with (flat_combiner_instance, responses, collected_operations) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
         // v != means lock is not taken,
         &&& (v == 0) <==> g.is_Some()
         // the lock is not taken, the ghost state is Some
-        &&& (g.is_Some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), op_buffer.id()))
+        &&& (g.is_Some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), collected_operations.id()))
     }
 
     // invariant on next specifically (self.next.0) is (v: u64, g: FlatCombiner::num_threads) {
@@ -1594,7 +1747,7 @@ pub open spec fn wf(&self) -> bool {
 struct ThreadOpsData {
     flat_combiner: Tracked<FlatCombiner::combiner>,
     request_ids: Ghost<Seq<ReqId>>,
-    updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
+    local_updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
     cell_permissions: Tracked<Map<nat, PermissionOpt<PendingOperation>>>,
 }
 
@@ -1628,11 +1781,11 @@ impl ThreadOpsData {
 
         &&& responses.len() == MAX_THREADS_PER_REPLICA
 
-        &&& forall|i: nat| #![trigger self.updates@[i]] i < self.request_ids@.len() ==> {
-            &&& self.updates@.contains_key(i)
-            &&& self.updates@[i]@.key == self.request_ids@[i as int]
-            &&& self.updates@[i]@.value.is_Done()
-            &&& self.updates@[i]@.value.get_Done_ret() == responses[i as int]
+        &&& forall|i: nat| #![trigger self.local_updates@[i]] i < self.request_ids@.len() ==> {
+            &&& self.local_updates@.contains_key(i)
+            &&& self.local_updates@[i]@.key == self.request_ids@[i as int]
+            &&& self.local_updates@[i]@.value.is_Done()
+            &&& self.local_updates@[i]@.value.get_Done_ret() == responses[i as int]
         }
     }
 
@@ -1640,11 +1793,11 @@ impl ThreadOpsData {
                 operations: Seq<UpdateOp>, replica_contexts: Seq<Context>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
 
-        &&& forall|i: nat| #![trigger self.updates@[i]] i < self.request_ids@.len() ==> {
-            &&& self.updates@.contains_key(i)
-            &&& self.updates@[i]@.key == self.request_ids@[i as int]
-            &&& self.updates@[i]@.value.is_Init()
-            &&& self.updates@[i]@.value.get_Init_op() == operations[i as int]
+        &&& forall|i: nat| #![trigger self.local_updates@[i]] i < self.request_ids@.len() ==> {
+            &&& self.local_updates@.contains_key(i)
+            &&& self.local_updates@[i]@.key == self.request_ids@[i as int]
+            &&& self.local_updates@[i]@.value.is_Init()
+            &&& self.local_updates@[i]@.value.get_Init_op() == operations[i as int]
         }
 
 
@@ -1671,8 +1824,8 @@ impl Replica  {
         requires self.wf()
         ensures
           result.0 ==> result.1@.is_Some(),
-          result.0 ==> result.1@.get_Some_0().combiner@@.value.is_Collecting(),
-          result.0 ==> result.1@.get_Some_0().combiner@@.value.get_Collecting_0().len() == 0,
+          result.0 ==> result.1@.get_Some_0().flat_combiner@@.value.is_Collecting(),
+          result.0 ==> result.1@.get_Some_0().flat_combiner@@.value.get_Collecting_0().len() == 0,
         //   result.0 ==> self.combiner.0.atomic_inv.constant().1 != 0
           // result.0 ==> self.combiner.0.ghost.is_None()
     {
@@ -1720,7 +1873,7 @@ impl Replica  {
     fn release_combiner_lock(&self, tracked lock_state: Tracked<CombinerLockStateGhost>)
         requires
             self.wf(),
-            lock_state@.inv(self.flat_combiner_instance@, self.responses.id(), self.op_buffer.id()),
+            lock_state@.inv(self.flat_combiner_instance@, self.responses.id(), self.collected_operations.id()),
             // self.combiner.0.atomic_inv.constant().1 != 0
             // lock_state@.combiner@@.value.is_Collecting(),
             // lock_state@.combiner@@.value.get_Collecting_0().len() == 0,
@@ -1753,8 +1906,8 @@ impl Replica  {
         if acquired {
             assert(combiner_lock@.is_Some());
             // assert(self.combiner.0.load() != 0);
-            let tracked mut combiner_lock = tracked(combiner_lock.get().tracked_unwrap());
-            self.combine(slog, &mut combiner_lock);
+            let combiner_lock = tracked(combiner_lock.get().tracked_unwrap());
+            let combiner_lock = self.combine(slog, combiner_lock);
             assume(false);
             self.release_combiner_lock(combiner_lock);
         } else {
@@ -1765,33 +1918,77 @@ impl Replica  {
     /// Performs one round of flat combining. Collects, appends and executes operations.
     ///
     /// https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/nr/replica.rs#L835
-    fn combine(&self, slog: &NrLog, tracked combiner_lock: &mut Tracked<CombinerLockStateGhost>)
-            // -> (result: Tracked<CombinerLockStateGhost>)
+    fn combine(&self, slog: &NrLog, combiner_lock: Tracked<CombinerLockStateGhost>)
+            -> (result: Tracked<CombinerLockStateGhost>)
         requires
             self.wf(),
             slog.wf(),
-            old(combiner_lock)@.combiner@@.value.is_Collecting(),
-            old(combiner_lock)@.combiner@@.value.get_Collecting_0().len() == 0,
+            combiner_lock@.flat_combiner@@.value.is_Collecting(),
+            combiner_lock@.flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
-            combiner_lock@.combiner@@.value.is_Collecting(),
-            combiner_lock@.combiner@@.value.get_Collecting_0().len() == 0,
+            result@.flat_combiner@@.value.is_Collecting(),
+            result@.flat_combiner@@.value.get_Collecting_0().len() == 0,
 
     {
+        // disassemble the combiner lock
+        let tracked combiner_lock = combiner_lock.get();
+        let flat_combiner = tracked_exec(combiner_lock.flat_combiner.get());
+        let mut collected_operations_perm = tracked_exec(combiner_lock.collected_operations_perm.get());
+        let mut collected_operations_per_thread_perm = tracked_exec(combiner_lock.collected_operations_per_thread_perm.get());
+        let mut responses_token = tracked_exec(combiner_lock.responses_token.get());
+
+        // obtain access to the responses, operations and num_ops_per_thread buffers
+        let mut responses = self.responses.take(&mut responses_token);
+        let mut operations = self.collected_operations.take(&mut collected_operations_perm);
+        let mut num_ops_per_thread = self.collected_operations_per_thread.take(&mut collected_operations_per_thread_perm);
+
         // Step 1: collect the operations from the threads
         // self.collect_thread_ops(&mut buffer, operations.as_mut_slice());
 
 
-        // Step 2: Append all operations to the log
+        let collect_res = self.collect_thread_ops(&mut operations, &mut num_ops_per_thread, flat_combiner);
+        let tracked collect_res = collect_res.get();
+        let flat_combiner = tracked_exec(collect_res.flat_combiner.get());
+        let local_updates = tracked_exec(collect_res.local_updates.get());
+        let request_ids :  Ghost<Seq<ReqId>> = ghost_exec(collect_res.request_ids@);
+        let cell_permissions = tracked_exec(collect_res.cell_permissions.get());
 
-        // Step 3: Take the R/W lock on the data structure
+        // flat_combiner: Tracked<FlatCombiner::combiner>,
+        // request_ids: Ghost<Seq<ReqId>>,
+        // local_updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
+        // cell_permissions: Tracked<Map<nat, PermissionOpt<PendingOperation>>>,
 
-        // Step 3: Execute all operations
+        // Step 2: Take the R/W lock on the data structure
+        let (replicated_data_structure, write_handle) = self.data.0.acquire_write();
+        let data = replicated_data_structure.data;
+        let replica = replicated_data_structure.replica;
+        let combiner = replicated_data_structure.combiner;
+        let cb_combiner = replicated_data_structure.cb_combiner;
 
-        // Step 4: release the R/W lock on the data structure
 
-        // Step 5: collect the results
+        // // Step 3: Append all operations to the log
+        // let cb_combiner = slog.append(&self.replica_token, &operations, cb_combiner);
 
-        // combiner_lock
+        // // Step 3: Execute all operations
+        // // slog.execute(&self.rid, local_updates, replica, combiner, cb_combiner);
+
+        // // Step 4: release the R/W lock on the data structure
+        // let replicated_data_structure = ReplicatedDataStructure  { data, replica, combiner, cb_combiner };
+
+        // self.data.0.release_write(replicated_data_structure, write_handle);
+
+        // // Step 5: collect the results
+        // let tracked thread_ops_data = ThreadOpsData { flat_combiner, request_ids, local_updates, cell_permissions };
+        // let flat_combiner = self.distribute_thread_resps(&mut responses, &mut num_ops_per_thread, tracked(thread_ops_data));
+
+        // // place the responses back into the state
+        // self.responses.put(&mut responses_token, responses);
+        // self.collected_operations.put(&mut collected_operations_perm, operations);
+        // self.collected_operations_per_thread.put(&mut collected_operations_per_thread_perm, num_ops_per_thread);
+
+        // re-assemble the combiner lock
+        let tracked combiner_lock =  CombinerLockStateGhost { flat_combiner, collected_operations_perm, collected_operations_per_thread_perm, responses_token };
+        tracked(combiner_lock)
     }
 
     ///
@@ -1799,7 +1996,7 @@ impl Replica  {
     #[inline(always)]
     fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
                           flat_combiner:  Tracked<FlatCombiner::combiner>)
-                             -> (response: ThreadOpsData)
+                             -> (response: Tracked<ThreadOpsData>)
         requires
             self.wf(),
             old(num_ops_per_thread).len() == 0,
@@ -1810,7 +2007,7 @@ impl Replica  {
             flat_combiner@@.value.is_Collecting(),
             flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
-            response.collect_thread_ops_post(self.flat_combiner_instance, num_ops_per_thread@, operations@, self.contexts@)
+            response@.collect_thread_ops_post(self.flat_combiner_instance, num_ops_per_thread@, operations@, self.contexts@)
     {
         let mut flat_combiner = flat_combiner;
 
@@ -1910,12 +2107,13 @@ impl Replica  {
 
         self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
 
-        ThreadOpsData {
+        let tracked thread_ops_data = ThreadOpsData {
             flat_combiner,
             request_ids: ghost(request_ids),
-            updates: tracked(updates),
+            local_updates: tracked(updates),
             cell_permissions: tracked(cell_permissions)
-        }
+        };
+        tracked(thread_ops_data)
     }
 
     ///
@@ -1933,12 +2131,12 @@ impl Replica  {
         let tracked ThreadOpsData {
             flat_combiner,
             request_ids,
-            updates,
+            local_updates,
             cell_permissions,
         } = thread_ops_data.get();
         let tracked mut flat_combiner = flat_combiner.get();
         let tracked mut cell_permissions = cell_permissions.get();
-        let tracked mut updates = updates.get();
+        let tracked mut updates = local_updates.get();
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
@@ -2103,25 +2301,13 @@ impl Replica  {
 
         // Step 3: Take the read-only lock, and read the value
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
-
-        // 3. Take read-lock on replica; apply operation on replica
-        // linear var linear_guard := node.replica.acquire_shared(tid as uint8, client_counter);
-        // assert linear_guard.v.ghost_replica.nodeId == stub.rs.nodeId;
-
-        // shared var shared_v := RwLockImpl.borrow_shared(rwlock, guard);
-        // assert shared_v.ghost_replica.nodeId == ticket.rs.nodeId;
-        // result := nrifc.do_readonly(shared_v.actual_replica, op);
-
-        // assert nrifc.read(shared_v.ghost_replica.state, ticket.rs.op) == result;
-
-        // shared var NodeReplica(actual_replica, ghost_replica, combinerState, cb) := shared_v;
-        // ticket' := perform_ReadonlyDone(ticket, ghost_replica, combinerState);
-
-        // result, stub := apply_readonly(node.replica, linear_guard, op, stub);
-        // client_counter := node.replica.release_shared(linear_guard);
+        let read_handle = self.data.0.acquire_read();
+        let replica = self.data.0.borrow(&read_handle);
+        let result = replica.data.read(op);
+        self.data.0.release_read(read_handle);
 
         // Step 4: Finish the read-only transaction, return result
-        // self.unbounded_log_instance.borrow().readonly_finish(rid, op, res, local_reads);
+        self.unbounded_log_instance.borrow().readonly_finish(rid, op, result, local_reads.get());
 
         // assert(false);
         Err(tkn)
@@ -2253,7 +2439,7 @@ pub struct NodeReplicated {
     /// the nodes or replicas in the system
     ///
     ///  - Rust: replicas: Vec<Box<Replica<D>>>,
-    // replicas: Vec<Box<Replica<NRState, UpdateOp, ReturnType>>>,
+    // replicas: Vec<Box<Replica<DataStructureType, UpdateOp, ReturnType>>>,
     pub (crate) replicas: Vec<Box<Replica>>,
 
     /// XXX: should that be here, or go into the NrLog / replicas?
@@ -2366,6 +2552,310 @@ impl NodeReplicated {
         } else {
             Err(tkn)
         }
+    }
+}
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RwLockWriteGuard
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// structure used to release the exclusive write access of a lock when dropped.
+//
+/// This structure is created by the write and try_write methods on RwLockSpec.
+tracked struct RwLockWriteGuard<T> {
+    handle: Tracked<RwLockSpec::writer<PermissionOpt<T>>>,
+    perm: Tracked<PermissionOpt<T>>,
+    //foo: Tracked<T>,
+    // rw_lock : Ghost<DistRwLock::Instance<T>>,
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+//  RwLockReadGuard
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// RAII structure used to release the shared read access of a lock when dropped.
+///
+/// This structure is created by the read and try_read methods on RwLockSpec.
+tracked struct RwLockReadGuard<T> {
+    handle: Tracked<RwLockSpec::reader<PermissionOpt<T>>>,
+    // rw_lock : Ghost<DistRwLock::Instance<T>>,
+}
+
+impl<T> RwLockReadGuard<T> {
+    spec fn view(&self) -> T {
+        self.handle@@.key.view().value.get_Some_0()
+        //self.handle@@.key.get_Some_0()
+
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// RwLockSpec
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+struct_with_invariants!{
+/// A reader-writer lock
+pub struct RwLock<#[verifier(maybe_negative)] T> {
+    /// cell containing the data
+    cell: PCell<T>,
+    /// exclusive access
+    exc: CachePadded<AtomicBool<_, RwLockSpec::flag_exc<PermissionOpt<T>>, _>>,
+    /// reference count
+    rc: CachePadded<AtomicU64<_, RwLockSpec::flag_rc<PermissionOpt<T>>, _>>,
+
+    /// the state machien instance
+    tracked inst: RwLockSpec::Instance<PermissionOpt<T>>,
+    ghost user_inv: Set<T>,
+}
+
+pub closed spec fn wf(&self) -> bool {
+    predicate {
+        forall |v: PermissionOpt<T>| #[trigger] self.inst.user_inv().contains(v) == (
+            equal(v@.pcell, self.cell.id()) && v@.value.is_Some()
+                && self.user_inv.contains(v@.value.get_Some_0())
+        )
+    }
+
+    invariant on exc with (inst) specifically (self.exc.0) is (v: bool, g: RwLockSpec::flag_exc<PermissionOpt<T>>) {
+        // g@ === RwLockSpec::token! [ inst => exc ==> v ]
+        g@.instance == inst && g@.value == v
+    }
+
+    invariant on rc with (inst) specifically (self.rc.0) is (v: u64, g: RwLockSpec::flag_rc<PermissionOpt<T>>) {
+        // g@ === RwLockSpec::token! [ inst => rc ==> v ]
+        g@.instance == inst && g@.value == v as nat
+    }
+}
+} // struct_with_invariants!
+
+
+impl<T> RwLock<T> {
+    /// Invariant on the data
+    spec fn inv(&self, t: T) -> bool {
+        self.user_inv.contains(t)
+    }
+
+    spec fn wf_write_handle(&self, write_handle: &RwLockWriteGuard<T>) -> bool {
+        &&& write_handle.handle@@.instance == self.inst
+
+        &&& write_handle.perm@@.pcell == self.cell.id()
+        &&& write_handle.perm@@.value.is_None()
+    }
+
+    spec fn wf_read_handle(&self, read_handle: &RwLockReadGuard<T>) -> bool {
+        &&& read_handle.handle@@.instance == self.inst
+
+        &&& read_handle.handle@@.key.view().value.is_Some()
+        &&& read_handle.handle@@.key.view().pcell == self.cell.id()
+        &&& read_handle.handle@@.count == 1
+    }
+
+    fn new(t: T, inv: Ghost<FnSpec(T) -> bool>) -> (res: Self)
+        requires
+            inv@(t)
+        ensures
+            res.wf(),
+            forall |v: T| res.inv(v) == inv@(v)
+    {
+        let (cell, perm) = PCell::<T>::new(t);
+
+        let ghost set_inv = Set::new(inv@);
+
+        let ghost user_inv = Set::new(closure_to_fn_spec(|s: PermissionOpt<T>| {
+            &&& equal(s@.pcell, cell.id())
+            &&& s@.value.is_Some()
+            &&& set_inv.contains(s@.value.get_Some_0())
+        }));
+
+        let tracked inst;
+        let tracked flag_exc;
+        let tracked flag_rc;
+        proof {
+            let tracked (Trk(_inst), Trk(_flag_exc), Trk(_flag_rc), _, _, _, _) =
+                RwLockSpec::Instance::<PermissionOpt<T>>::initialize_full(user_inv, perm@, Option::Some(perm.get()));
+            inst = _inst;
+            flag_exc = _flag_exc;
+            flag_rc = _flag_rc;
+        }
+
+        let exc = AtomicBool::new(inst, false, flag_exc);
+        let rc = AtomicU64::new(inst, 0, flag_rc);
+
+        RwLock { cell, exc: CachePadded(exc), rc: CachePadded(rc), inst, user_inv: set_inv }
+    }
+
+    fn acquire_write(&self) -> (res: (T, Tracked<RwLockWriteGuard<T>>))
+        requires self.wf()
+        ensures self.wf_write_handle(&res.1@) && self.inv(res.0)
+    {
+
+        let mut done = false;
+        let tracked mut token: Option<RwLockSpec::pending_writer<PermissionOpt<T>>> = Option::None;
+        while !done
+            invariant
+                self.wf(),
+                done ==> token.is_Some() && token.get_Some_0()@.instance == self.inst,
+        {
+            let result = atomic_with_ghost!(
+                &self.exc.0 => compare_exchange(false, true);
+                returning res;
+                ghost g =>
+            {
+                if res.is_Ok() {
+                    token = Option::Some(self.inst.acquire_exc_start(&mut g));
+                }
+            });
+
+            done = match result {
+                Result::Ok(_) => true,
+                _ => false,
+            };
+        }
+
+        loop
+            invariant
+                self.wf(),
+                token.is_Some() && token.get_Some_0()@.instance == self.inst,
+        {
+
+            let tracked mut perm_opt: Option<PermissionOpt<T>> = Option::None;
+            let tracked mut handle_opt: Option<RwLockSpec::writer<PermissionOpt<T>>> =Option::None;
+            let tracked acquire_exc_end_result; // need to define tracked, can't in the body
+            let result = atomic_with_ghost!(
+                &self.rc.0 => load();
+                returning res;
+                ghost g => {
+                if res == 0 {
+                    acquire_exc_end_result = self.inst.acquire_exc_end(&g, token.tracked_unwrap());
+                    token = Option::None;
+                    perm_opt = Option::Some(acquire_exc_end_result.1.0);
+                    handle_opt = Option::Some(acquire_exc_end_result.2.0);
+                }
+            });
+
+            if result == 0 {
+                let mut perm = tracked(perm_opt.tracked_unwrap());
+                let tracked handle = tracked(handle_opt.tracked_unwrap());
+
+                let t = self.cell.take(&mut perm);
+
+                let tracked write_handle = RwLockWriteGuard { perm, handle };
+                return (t, tracked(write_handle));
+            }
+        }
+    }
+
+    fn acquire_read(&self) -> (res: Tracked<RwLockReadGuard<T>>)
+        requires self.wf()
+        ensures
+            self.wf_read_handle(&res@) && self.inv(res@@)
+    {
+        loop
+            invariant self.wf()
+        {
+
+            let val = atomic_with_ghost!(&self.rc.0 => load(); ghost g => { });
+
+            let tracked mut token: Option<RwLockSpec::pending_reader<PermissionOpt<T>>> = Option::None;
+
+            if val < 18446744073709551615 {
+                let result = atomic_with_ghost!(
+                    &self.rc.0 => compare_exchange(val, val + 1);
+                    returning res;
+                    ghost g =>
+                {
+                    if res.is_Ok() {
+                        token = Option::Some(self.inst.acquire_read_start(&mut g));
+                    }
+                });
+
+                match result {
+                    Result::Ok(_) => {
+                        let tracked mut handle_opt: Option<RwLockSpec::reader<PermissionOpt<T>>> = Option::None;
+                        let tracked acquire_read_end_result;
+                        let result = atomic_with_ghost!(
+                            &self.exc.0 => load();
+                            returning res;
+                            ghost g =>
+                        {
+                            if res == false {
+                                acquire_read_end_result = self.inst.acquire_read_end(&g, token.tracked_unwrap());
+                                token = Option::None;
+                                handle_opt = Option::Some(acquire_read_end_result.1.0);
+                            }
+                        });
+
+                        if result == false {
+                            let tracked handle = tracked(handle_opt.tracked_unwrap());
+                            return tracked(RwLockReadGuard { handle });
+                        } else {
+                            let _ = atomic_with_ghost!(
+                                &self.rc.0 => fetch_sub(1);
+                                ghost g =>
+                            {
+                                self.inst.acquire_read_abandon(&mut g, token.tracked_unwrap());
+                            });
+                        }
+                    }
+                    _ => { }
+                }
+            }
+        }
+    }
+
+    fn borrow<'a>(&'a self, read_handle: &'a Tracked<RwLockReadGuard<T>>) -> (res: &'a T)
+        requires self.wf() && self.wf_read_handle(&read_handle@)
+        ensures res == read_handle@@
+    {
+        let tracked perm = self.inst.read_guard(read_handle@.handle@@.key, read_handle.borrow().handle.borrow());
+        self.cell.borrow(tracked_exec_borrow(perm))
+    }
+
+    fn release_write(&self, t: T, write_handle: Tracked<RwLockWriteGuard<T>>)
+        requires
+            self.wf() && self.wf_write_handle(&write_handle@) && self.inv(t)
+    {
+        let tracked write_handle = write_handle.get();
+        let mut perm = tracked_exec(write_handle.perm.get());
+
+        self.cell.put(&mut perm, t);
+
+        atomic_with_ghost!(
+            &self.exc.0 => store(false);
+            ghost g =>
+        {
+            self.inst.release_exc(perm.view(), &mut g, perm.get(), write_handle.handle.get());
+        });
+    }
+
+    fn release_read(&self, read_handle: Tracked<RwLockReadGuard<T>>)
+        requires self.wf() && self.wf_read_handle(&read_handle@)
+    {
+        let tracked  RwLockReadGuard { handle } = read_handle.get();
+
+        let _ = atomic_with_ghost!(
+            &self.rc.0 => fetch_sub(1);
+            ghost g =>
+        {
+            self.inst.release_shared(handle.view().view().key, &mut g, handle.get());
+        });
+    }
+
+    proof fn lemma_readers_match(tracked &self, tracked read_handle1: &Tracked<RwLockReadGuard<T>>, tracked read_handle2: &Tracked<RwLockReadGuard<T>>)
+        requires
+            self.wf() && self.wf_read_handle(&read_handle1@) && self.wf_read_handle(&read_handle2@)
+        ensures
+            read_handle1@@ == read_handle2@@
+    {
+        self.inst.read_match(
+            read_handle1@.handle@@.key,
+            read_handle2@.handle@@.key,
+            read_handle1.borrow().handle.borrow(),
+            read_handle2.borrow().handle.borrow());
     }
 }
 
