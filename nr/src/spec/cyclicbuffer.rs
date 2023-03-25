@@ -34,7 +34,7 @@ use super::utils::*;
 
 pub const LOG_SIZE: usize = 1024;
 
-type LogicalLogIdx = int;
+pub type LogicalLogIdx = int;
 
 type Key = int;
 
