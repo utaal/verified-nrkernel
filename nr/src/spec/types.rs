@@ -129,12 +129,19 @@ impl ReturnType {
     }
 }
 
-/// Represents an entry in the log
-///
-/// datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
 pub struct LogEntry {
     pub op: UpdateOp,
     pub node_id: NodeId,
 }
+
+
+/// Represents an entry in the log
+///
+/// datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
+pub struct ConcreteLogEntry {
+    pub op: UpdateOp,
+    pub node_id: u64,
+}
+
 
 } // verus!

@@ -44,7 +44,7 @@ verus! {
 
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
 pub struct StoredType {
-    pub cell_perms: PermissionOpt<LogEntry>,
+    pub cell_perms: PermissionOpt<ConcreteLogEntry>,
     pub log_entry: UnboundedLog::log //Option<UnboundedLog::log>
 }
 

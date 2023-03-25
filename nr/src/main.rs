@@ -16,7 +16,7 @@ mod spec;
 // #[macro_use]
 // mod rwlock;
 
-use spec::cyclicbuffer::{CyclicBuffer, StoredType, LogicalLogIdx};
+use spec::cyclicbuffer::{CyclicBuffer, StoredType, LogicalLogIdx, stored_type_inv};
 use spec::flat_combiner::FlatCombiner;
 use spec::types::*;
 use spec::unbounded_log::UnboundedLog;
@@ -251,6 +251,8 @@ impl NrLogAppendExecDataGhost {
         &&& self.combiner@@.key == nid
         // requires combinerState.state == CombinerReady
         &&& self.combiner@@.value.is_Ready()
+        // same number of ops as request ids
+        &&& self.request_ids@.len() == ops.len()
         // requires forall i | 0 <= i < |requestIds| ::
         //     i in updates && updates[i] == Update(requestIds[i], UpdateInit(ops[i]))
         &&& forall |i| 0 <= i < self.request_ids@.len() ==> {
@@ -383,7 +385,7 @@ pub struct BufferEntry {
     ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
     ///  - Rust:  pub(crate) replica: usize,
     // pub(crate) replica: usize,
-    pub log_entry: PCell<LogEntry>,
+    pub log_entry: PCell<ConcreteLogEntry>,
 
     /// Indicates whether this entry represents a valid operation when on the log.
     ///
@@ -689,12 +691,14 @@ impl NrLog
     ) -> (result: Tracked<NrLogAppendExecDataGhost>)
         requires
             self.wf(),
+            replica_token@ < self.local_versions.len(),
             ghost_data@.append_pre(operations@, replica_token@, self.cyclic_buffer_instance@),
             operations.len() < MAX_OPS
         ensures
             result@.append_post(ghost_data@, replica_token@, responses@)
     {
         let nid = replica_token.id() as usize;
+
 
         // somehow can't really do this as a destructor
         let tracked mut ghost_data = ghost_data.get();
@@ -708,9 +712,12 @@ impl NrLog
         loop
             invariant
                 self.wf(),
-                ghost_data.append_pre(operations@, replica_token@, self.cyclic_buffer_instance@),
+                0 <= waitgc <= WARN_THRESHOLD,
                 0 <= iteration <= WARN_THRESHOLD,
-                nops < MAX_OPS
+                replica_token@ < self.local_versions.len(),
+                nid == replica_token@,
+                nops == operations.len(),
+                ghost_data.append_pre(operations@, replica_token@, self.cyclic_buffer_instance@),
         {
             // unpack stuff
             let tracked mut local_updates = ghost_data.local_updates.get();// Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
@@ -739,6 +746,10 @@ impl NrLog
                 &self.head.0 => load();
                 returning tail;
                 ghost g => {
+                    assert(g.view().instance == self.cyclic_buffer_instance.view());
+                    assert(cb_combiner.view().instance == self.cyclic_buffer_instance.view());
+                    assert(cb_combiner.view().key == nid);
+                    assert(cb_combiner.view().value.is_Idle());
                     cb_combiner = self.cyclic_buffer_instance
                         .borrow()
                         .advance_tail_start(nid as nat, &g, cb_combiner);
@@ -769,6 +780,11 @@ impl NrLog
                             .borrow()
                             .advance_tail_abort(nid as nat, cb_combiner);
                 }
+
+                assert(cb_combiner@.value.is_Idle());
+                assert(combiner@.value.is_Ready() || combiner@.value.is_Placed());
+                assert(combiner@.value.is_Ready());
+
 
                 // assemble the struct again
                 ghost_data = NrLogAppendExecDataGhost {
@@ -819,9 +835,8 @@ impl NrLog
             let tracked advance_tail_finish_result : (Gho<Map<LogicalLogIdx,StoredType>>, Trk<Map<LogicalLogIdx, StoredType>>, Trk<CyclicBuffer::combiner>);
             let tracked update_place_ops_in_log_one_result : (Trk<UnboundedLog::log>, Trk<UnboundedLog::local_updates>, Trk<UnboundedLog::combiner>);
 
-            let tracked cb_log_map : Map<int, StoredType>;
-            let tracked log_map : Map<nat,UnboundedLog::log>;
-
+            let tracked mut cb_log_entries : Map<int, StoredType> = Map::tracked_empty();
+            let tracked mut log_entries : Map<nat,UnboundedLog::log> = Map::tracked_empty();
             let result = atomic_with_ghost!(
                 &self.tail.0 => compare_exchange(tail, new_tail);
                 update prev -> next;
@@ -830,19 +845,25 @@ impl NrLog
                     if matches!(result, Result::Ok(tail)) {
                         let tracked (mut unbounded_tail, mut cb_tail) = g;
 
+                        assert(tail <= new_tail);
+                        assert(new_tail <= head + self.slog.len());
+
                         advance_tail_finish_result = self.cyclic_buffer_instance.borrow()
                             .advance_tail_finish(nid as nat, new_tail as nat, &mut cb_tail, cb_combiner);
                         cb_combiner = advance_tail_finish_result.2.0;
-                        cb_log_map = advance_tail_finish_result.1.0;
+                        cb_log_entries = advance_tail_finish_result.1.0;
 
                         let mut idx : nat = 0;
-                        // TODO: while idx < nops {
+                        // TODO: how to do this lool?
+                        // TODO: is this the right way to go about this? This is where we differ,
+                        // we now do just a single insert
+                        // while idx < nops {
                             let reqid = request_ids.view()[idx as int];
                             update_place_ops_in_log_one_result = self.unbounded_log_instance.borrow()
                                 .update_place_ops_in_log_one(nid as nat, reqid, &mut unbounded_tail, local_updates.tracked_remove(idx), combiner);
                             combiner = update_place_ops_in_log_one_result.2.0;
+                            log_entries.tracked_insert(idx, update_place_ops_in_log_one_result.0.0);
                             local_updates.tracked_insert(idx, update_place_ops_in_log_one_result.1.0);
-                            log_map.insert(update_place_ops_in_log_one_result.0.0.view().key, update_place_ops_in_log_one_result.0.0);
                             idx = idx + 1;
                         // }
                         g = (unbounded_tail, cb_tail);
@@ -868,10 +889,76 @@ impl NrLog
 
             // Successfully reserved entries on the shared log. Add the operations in.
             let mut idx = 0;
-            while idx < nops {
-                // TODO: write the log entry
+            while idx < nops
+                invariant
+                    self.wf(),
+                    0 <= idx <= nops,
+                    nops == operations.len(),
+                    forall |i| idx < nops ==> cb_log_entries.contains_key(i),
+                    cb_combiner@.key == nid,
+                    cb_combiner@.value.is_Appending(),
+                    cb_combiner@.value.get_Appending_cur_idx() == tail + idx,
+                    cb_combiner@.value.get_Appending_tail() == new_tail,
+                    cb_combiner@.instance == self.cyclic_buffer_instance@,
+            {
+                let tracked mut cb_log_entry;
+                proof {
+                    cb_log_entry = cb_log_entries.tracked_remove(idx as int);
+                }
+                let mut cb_log_entry_perms = tracked(cb_log_entry.cell_perms);
+
+                //let tracked log_entry = log_entry.tracked_remove(idx);
+
+                // the logical index into the log
+                let logical_log_idx = tail + idx as u64;
+                let log_idx = self.index(logical_log_idx);
+
+                // unsafe { (*e).operation = Some(op.clone()) };
+                // unsafe { (*e).replica = idx.0 };
+                let new_log_entry = ConcreteLogEntry {
+                    op: operations.index(idx as usize).clone(),
+                    node_id: nid as u64,
+                };
+
+                // update the log entry in the buffer
+                assume(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
+                assume(cb_log_entry_perms@@.value.is_None());
+                self.slog.index(log_idx).log_entry.put(&mut cb_log_entry_perms, new_log_entry);
 
 
+                // unsafe { (*e).alivef.store(m, Ordering::Release) };
+                let m = self.is_alive_value(log_idx as u64);
+
+                let tracked append_flip_bit_result;
+                let tracked new_stored_type;
+
+                atomic_with_ghost!(
+                    &self.slog.index(log_idx).alive => store(m);
+                    ghost g => {
+                        new_stored_type = StoredType {
+                            cell_perms: cb_log_entry_perms.get(),
+                            log_entry: log_entries.tracked_remove(idx as nat),
+                        };
+
+                        assert(g.view().instance == self.cyclic_buffer_instance.view());
+                        assert(cb_combiner.view().instance == self.cyclic_buffer_instance.view());
+                        assert(cb_combiner.view().key == nid);
+                        assert(cb_combiner.view().value.is_Appending());
+                        let c_cur_idx = cb_combiner.view().value.get_Appending_cur_idx();
+                        let c_tail = cb_combiner.view().value.get_Appending_tail();
+                        assert(c_cur_idx == logical_log_idx);
+                        assert(g.view().key == self.index_spec(c_cur_idx));
+                        assert(c_cur_idx < c_tail);
+                        assert(stored_type_inv(new_stored_type, c_cur_idx as int));
+
+
+
+                        append_flip_bit_result = self.cyclic_buffer_instance.borrow()
+                            .append_flip_bit(nid as NodeId, new_stored_type, new_stored_type, g, cb_combiner);
+                        g = append_flip_bit_result.0.0;
+                        cb_combiner = append_flip_bit_result.1.0;
+                    }
+                );
 
                 // TODO: flip the bit
 
