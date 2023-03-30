@@ -1818,7 +1818,7 @@ impl Directory {
 }
 
 impl<A,B> Result<A,B> {
-    pub open spec(checked) fn map_ok<C, F: Fn(A) -> C>(self, f: F) -> Result<C,B> {
+    pub open spec(checked) fn map_ok<C>(self, f: FnSpec(A) -> C) -> Result<C,B> {
         match self {
             Ok(a)  => Ok(f(a)),
             Err(b) => Err(b),
@@ -1827,7 +1827,7 @@ impl<A,B> Result<A,B> {
 }
 
 impl<A> Result<A,A> {
-    pub open spec(checked) fn map<B, F: Fn(A) -> B>(self, f: F) -> Result<B,B> {
+    pub open spec(checked) fn map<B>(self, f: FnSpec(A) -> B) -> Result<B,B> {
         match self {
             Ok(a)  => Ok(f(a)),
             Err(a) => Err(f(a)),

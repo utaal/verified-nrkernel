@@ -705,13 +705,16 @@ impl PageTable {
         }
     }
 
-    #[proof] #[verifier(decreases_by)]
-    spec fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, pt: PTDir) {
+    #[verifier(decreases_by)]
+    proof fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, pt: PTDir) {
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
-        assert(self.arch@.layers.len() - (layer + 1) < self.arch@.layers.len() - layer);
-        // FIXME: why isn't this going through?
-        // Can I somehow assert the decreases here or assert an inequality between tuples?
-        assume(false);
+        assert(self.inv_at(layer, ptr, pt));
+        if init.len() >= self.arch@.num_entries(layer) {
+        } else {
+            // FIXME: Verus bug? If I remove either the interp_at_entry or the interp_at_aux call
+            // from the function, the termination check succeeds but if both are present, it fails.
+            assume(false);
+        }
     }
 
     pub open spec fn interp(self) -> l1::Directory {
