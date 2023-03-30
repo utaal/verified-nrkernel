@@ -271,7 +271,8 @@ FlatCombiner {
             require(!pre.combiner.req_is_none(tid));
 
             update combiner = CombinerState::Responding(pre.combiner.get_Responding_0(), tid + 1);
-            remove slots -= [ tid => let SlotState::InProgress(rid) ];
+            remove slots -= [ tid => let r ];
+            assert let SlotState::InProgress(rid) = r;
             add    slots += [ tid => SlotState::Response(rid) ];
         }
     }

@@ -171,6 +171,61 @@ impl ThreadToken {
     }
 }
 
+pub open spec fn rids_match(
+    bools: Seq<Option<ReqId>>, rids: Seq<ReqId>,
+    bools_start: nat, bools_end: nat, rids_start: nat, rids_end: nat) -> bool
+    decreases bools_end - bools_start
+        when bools_start <= bools_end <= bools.len() && rids_start <= rids_end <= rids.len()
+{
+
+    if bools_end == bools_start {
+      rids_end == rids_start
+    } else {
+      if bools[bools_end - 1].is_Some() {
+        &&& rids_end > rids_start
+        &&& rids[rids_end - 1] == bools[bools_end - 1].get_Some_0()
+        &&& rids_match(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, (rids_end - 1) as nat)
+      } else {
+        rids_match(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, rids_end)
+      }
+    }
+}
+
+proof fn rids_match_pop(
+    bools: Seq<Option<ReqId>>, rids: Seq<ReqId>,
+    bools_start: nat, bools_end: nat, rids_start: nat, rids_end: nat)
+    requires
+        bools_start <= bools_end <= bools.len(),
+        rids_start <= rids_end <= rids.len(),
+        rids_match(bools, rids, bools_start, bools_end, rids_start, rids_end)
+    ensures
+        bools[bools_start as int].is_Some() ==> {
+            &&& rids_start < rids_end
+            &&& rids[rids_start as int] == bools[bools_start as int].get_Some_0()
+            &&& rids_match(bools, rids, (bools_start + 1) as nat, bools_end, (rids_start + 1) as nat, rids_end)
+        },
+        bools[bools_start as int].is_None() ==> {
+            &&& rids_match(bools, rids, (bools_start + 1) as nat, bools_end, rids_start, rids_end)
+        }
+    decreases bools_end - bools_start
+
+{
+    if bools_end == bools_start {
+    } else {
+      if bools[bools_end - 1].is_Some() {
+        if bools_end - 1 > bools_start {
+          rids_match_pop(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, (rids_end - 1) as nat);
+        }
+      } else {
+        if bools_end - 1 > bools_start {
+          rids_match_pop(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, rids_end);
+        }
+      }
+    }
+}
+
+
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // NR Log
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2163,7 +2218,9 @@ impl Replica  {
         -> (flat_combiner: Tracked<FlatCombiner::combiner>)
         requires
             self.wf(),
-            thread_ops_data@.distribute_thread_resps_pre(self.flat_combiner_instance, old(num_ops_per_thread)@, old(responses)@, self.contexts@)
+            thread_ops_data@.distribute_thread_resps_pre(self.flat_combiner_instance, old(num_ops_per_thread)@, old(responses)@, self.contexts@),
+            rids_match(thread_ops_data@.flat_combiner@@.value.get_Responding_0(), thread_ops_data@.request_ids@,
+                0, thread_ops_data@.flat_combiner@@.value.get_Responding_0().len(), 0, thread_ops_data@.request_ids@.len())
         ensures
             flat_combiner@@.instance == self.flat_combiner_instance@,
             flat_combiner@@.value.is_Collecting(),
@@ -2183,6 +2240,9 @@ impl Replica  {
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
 
         // TODO consider looping backward, and popping things out of responses, num_ops_per_thread
+        //
+        assume(request_ids@.len() == responses.len());
+
 
         // let (mut s, mut f) = (0, 0);
         // for i in 1..num_registered_threads {
@@ -2193,6 +2253,7 @@ impl Replica  {
                 0 <= thread_idx <= num_registered_threads,
                 0 <= resp_idx <= responses.len(),
                 resp_idx <= thread_idx,
+                // thread_idx < num_registered_threads ==> resp_idx < responses.len(), // TODO do we actually need this?
                 num_ops_per_thread.len() == num_registered_threads,
                 request_ids@.len() == responses.len(),
                 num_registered_threads == MAX_THREADS_PER_REPLICA,
@@ -2209,15 +2270,25 @@ impl Replica  {
                         &&& cell_permissions.contains_key(i)
                         &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
                         &&& cell_permissions[i]@.value.is_Some()
-                    }
-                &&& forall|i: nat| #![trigger updates[i]] resp_idx <= i < request_ids@.len() ==> {
+                    },
+                forall|i: nat| #![trigger updates[i]] resp_idx <= i < request_ids@.len() ==> {
                     &&& updates.contains_key(i)
                     &&& updates[i]@.key == request_ids@[i as int]
                     &&& updates[i]@.value.is_Done()
                     &&& updates[i]@.value.get_Done_ret() == responses[i as int]
-                }
+                },
+                // thread_idx as nat <= flat_combiner@.value.get_Responding_0().len(),
+                rids_match(flat_combiner@.value.get_Responding_0(), request_ids@,
+                    thread_idx as nat, flat_combiner@.value.get_Responding_0().len(),
+                    resp_idx as nat, request_ids@.len()),
 
         {
+            proof {
+                rids_match_pop(flat_combiner@.value.get_Responding_0(), request_ids@,
+                    thread_idx as nat, flat_combiner@.value.get_Responding_0().len(),
+                    resp_idx as nat, request_ids@.len());
+            }
+
             let num_ops = *num_ops_per_thread.index(thread_idx);
 
             assert(flat_combiner@.value.get_Responding_1() < num_registered_threads);
@@ -2239,11 +2310,14 @@ impl Replica  {
                 let mut op_resp = self.contexts.index(thread_idx).batch.0.take(&mut permission);
 
                 // update with the response
+                assert(resp_idx < responses.len());
                 let resp: ReturnType = responses.index(resp_idx).clone();
                 op_resp.resp = Some(resp);
                 // place the element back into the batch
                 self.contexts.index(thread_idx).batch.0.put(&mut permission, op_resp);
 
+                assert(flat_combiner@.value.get_Responding_0()[thread_idx as int].is_Some());
+                assert(thread_idx == flat_combiner@.value.get_Responding_1());
 
                 //     operations[i - 1] = 0;
                 atomic_with_ghost!(
@@ -2251,23 +2325,15 @@ impl Replica  {
                     update prev -> next;
                     ghost g // g : ContextGhost
                     => {
-                        assert(prev == 1);
-                        assert(g.batch_perms.is_None());
-                        assert(g.update.is_None());
-                        // assume(g.slots.view().instance == self.flat_combiner_instance.view());
-                        // assume(g.slots.view().key == thread_idx);
-                        // assert(g.slots.view().value.is_Request() || g.slots.view().value.is_InProgress());
-                        assert(g.slots.view().value.is_InProgress());
-                        // assume(num_registered_threads == self.flat_combiner_instance.view().num_threads());
-
-                        // assume(!flat_combiner.view().value.req_is_none(thread_idx as nat));
-
-
                         g.slots = self.flat_combiner_instance.borrow().combiner_responding_result(g.slots, &mut flat_combiner);
                         g.batch_perms = Some(permission.get());
                         assert(resp_idx < request_ids.view().len());
+                        assert(updates.contains_key(resp_idx as nat));
                         assert(updates[resp_idx as nat].view().value.is_Done());
                         g.update = Some(updates.tracked_remove(resp_idx as nat));
+                        assert(g.slots.view().value.get_ReqId() == request_ids.view()[resp_idx as int]);
+                        assert(g.update.get_Some_0().view().key == g.slots.view().value.get_ReqId());
+                        assert(g.inv(0, thread_idx as nat, self.contexts.spec_index(thread_idx as int).batch.0, self.flat_combiner_instance.view()));
                     }
                 );
 
