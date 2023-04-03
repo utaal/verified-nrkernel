@@ -169,11 +169,11 @@ FlatCombiner {
         match self.combiner {
             CombinerState::Collecting(elems) => {
                 forall |i:nat| (0 <= i < elems.len() && elems[i as int].is_Some())
-                    ==> (#[trigger] self.slots[i]).is_InProgress() && self.slots[i].get_InProgress_0() == elems[i as int ].get_Some_0()
+                    ==> (#[trigger] self.slots[i]).is_InProgress() && (#[trigger] self.slots[i]).get_InProgress_0() == elems[i as int ].get_Some_0()
             },
             CombinerState::Responding(elems, idx) => {
                 forall |i:nat| idx <= i < elems.len() && elems[i as int].is_Some()
-                   ==> (#[trigger] self.slots[i]).is_InProgress() && self.slots[i].get_InProgress_0() == elems[i as int].get_Some_0()
+                   ==> (#[trigger] self.slots[i]).is_InProgress() && (#[trigger] self.slots[i]).get_InProgress_0() == elems[i as int].get_Some_0()
             },
         }
     }
@@ -273,6 +273,7 @@ FlatCombiner {
             update combiner = CombinerState::Responding(pre.combiner.get_Responding_0(), tid + 1);
             remove slots -= [ tid => let r ];
             assert let SlotState::InProgress(rid) = r;
+            assert pre.combiner.get_Responding_0()[tid as int].get_Some_0() == rid;
             add    slots += [ tid => SlotState::Response(rid) ];
         }
     }
