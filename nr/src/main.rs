@@ -1437,6 +1437,7 @@ impl NrLog
             assert(stored_entry == cb_combiner@.value.get_Reading_0().get_Guard_val());
 
             // read the entry
+            assert(self.slog.spec_index(phys_log_idx as int).log_entry.id() == stored_entry.cell_perms@.pcell);
             let log_entry = self.slog.index(phys_log_idx).log_entry.borrow(tracked_exec_borrow(&stored_entry.cell_perms));
 
             // actual_replica', ret := nrifc.do_update(actual_replica', log_entry.op);

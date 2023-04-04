@@ -30,48 +30,51 @@ pub type ThreadId = nat;
 
 /// represents a replica state
 pub struct DataStructureSpec {
-    pub u: u8,
+    pub val: u64,
 }
 
 impl DataStructureSpec {
 
     #[verifier(opaque)]
     pub open spec fn init() -> Self {
-        DataStructureSpec { u: 0 }
+        DataStructureSpec { val: 0 }
     }
 
     /// reads the current state of the replica
     #[verifier(opaque)]
     pub open spec fn spec_read(&self, op: ReadonlyOp) -> ReturnType {
-        ReturnType { u: 0 }
+        ReturnType::Value(0)
     }
 
     #[verifier(opaque)]
     pub open spec fn spec_update(self, op: UpdateOp) -> (Self, ReturnType) {
-        (self, ReturnType { u: 0 })
+        (self, ReturnType::Ok)
     }
 }
 
 pub struct DataStructureType {
-    u: u8,
+    pub val: u64,
 }
 
 impl DataStructureType {
     pub open spec fn interp(&self) -> DataStructureSpec {
-        DataStructureSpec { u: 0 }
+        DataStructureSpec { val: self.val }
     }
 
     pub fn update(&mut self, op: UpdateOp) -> (result: ReturnType)
         ensures old(self).interp().spec_update(op) == (self.interp(), result)
     {
-        ReturnType { u: 0 }
-
+        match op {
+            UpdateOp::Reset => self.val = 0,
+            UpdateOp::Inc => self.val = self.val + 1,
+        }
+        ReturnType::Ok
     }
 
     pub fn read(&self, op: ReadonlyOp) -> (result: ReturnType)
         ensures self.interp().spec_read(op) == result
     {
-        ReturnType { u: 0 }
+        ReturnType::Value(self.val)
     }
 }
 
@@ -90,21 +93,25 @@ impl DataStructureType {
 
 
 /// represents a update operation on the replica, in NR this is handled by `dispatch_mut`
-pub struct UpdateOp {
-    u: u8,
+pub enum UpdateOp {
+    Reset,
+    Inc,
 }
 
 impl UpdateOp {
     pub fn clone(&self) -> (result: Self)
         ensures self == result
     {
-        UpdateOp { u: self.u }
+        match self {
+            UpdateOp::Reset => UpdateOp::Reset,
+            UpdateOp::Inc => UpdateOp::Inc,
+        }
     }
 }
 
 /// Represents a read-only operation on the replica, in NR this is handled by `dispatch`
-pub struct ReadonlyOp {
-    u: u8,
+pub enum ReadonlyOp {
+    Get,
 }
 
 /// the operations enum
@@ -115,8 +122,9 @@ pub enum Request {
 
 /// Represents the return type of the read-only operation
 #[derive(PartialEq, Eq)]
-pub struct ReturnType {
-    pub u: u8,
+pub enum ReturnType {
+    Value(u64),
+    Ok,
 }
 
 impl Structural for ReturnType {}
@@ -125,7 +133,10 @@ impl ReturnType {
     pub fn clone(&self) -> (result: Self)
         ensures self == result
     {
-        ReturnType { u: self.u }
+        match self {
+            ReturnType::Value(v) => ReturnType::Value(*v),
+            ReturnType::Ok => ReturnType::Ok,
+        }
     }
 }
 
