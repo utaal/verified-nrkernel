@@ -2263,7 +2263,7 @@ pub open spec fn wf(&self) -> bool {
         &&& self.data.0.wf()
         // &&& self.data.0.internal_inv()
         // TODO: is this the right way to do this?
-        &&& forall |v: ReplicatedDataStructure| #[trigger] self.data.0.inv(v) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@)
+        &&& (forall |v: ReplicatedDataStructure| #[trigger] self.data.0.inv(v) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
 
         // XXX: the number of threads must agree here!, make this dynamic?
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
@@ -2590,9 +2590,6 @@ impl Replica  {
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
-
-        // TODO: that's literally from the `wf()`, why does that fail?
-        assert(self.flat_combiner_instance@.num_threads() == num_registered_threads);
 
         // Collect operations from each thread registered with this replica.
         // for i in 1..num_registered_threads {
