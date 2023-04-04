@@ -781,38 +781,81 @@ impl NrLog
         (res >= version_upper_bound, tracked(new_local_reads_g))
     }
 
+    // tracked struct AppendEntriesGhostState {
+    //     idx: nat,
+    //     tracked log: Map<ReqId, UnboundedLog::log>,
+    //     tracked local_updates: Map<ReqId, UnboundedLog::local_updates>,
+    //     tracked combiner: UnboundedLog::combiner,
+    //     tracked tail: UnboundedLog::tail,
+    // }
 
-    // proof fn append_entries(&self, tracked nid : nat, tracked tail : UnboundedLog::tail, request_ids: Seq<ReqId>, tracked local_updates: Map<ReqId, UnboundedLog::local_updates>, tracked combiner: UnboundedLog::combiner)
+    // impl AppendEntriesGhostState {
+    //     fn inv(&self) {
+
+    //     }
+    // }
+
+    // proof fn append_entries(
+    //     &self,
+    //     nid : nat,
+    //     idx : nat, // top-level call is with idx == request_ids.len() - 1
+    //     request_ids: Seq<ReqId>,
+    //     tracked state: AppendEntriesGhostState,
+    // ) -> (tracked ret: AppendEntriesGhostState)
+    //     decreases
+    //         idx
     //     requires
     //         self.wf(),
     //     ensures
-    //         true
+    //         // up to till
 
     // {
-    //     let mut tail = tail;
+    //     // [ 0 ... request_ids.len() ]
+    //     // [ 0 ... request_ids.len() - 1 ]
+    //     // [ 0 ... request_ids.len() - 2 ]
+    //     // ...
+    //     // [ 0 ]
 
-    //     let mut idx = 0 as nat;
+    //     let mut state = state;
 
-
-    //     loop {
-    //         if idx == request_ids.len() {
-    //             break;
-    //         }
-
-    //         let reqid = request_ids[idx as int];
-    //         let tracked local_update = local_updates.tracked_remove(idx);
-
-    //         let tracked update_place_ops_in_log_one_result = self.unbounded_log_instance.borrow()
-    //              .update_place_ops_in_log_one(nid as nat, reqid, &mut tail, local_updates.tracked_remove(idx), combiner);
-
-    //         idx = idx + 1;
+    //     if idx != 0 {
+    //         state = self.append_entries(nid, idx - 1, request_ids, state);
+    //         // assume we've iterated up to idx - 1
     //     }
 
-    //     // while idx < operations.len() {
+    //     let AppendEntriesGhostState {
+    //         log,
+    //         local_updates,
+    //         combiner,
+    //         tail
+    //     } = state;
 
+    //     let reqid = request_ids.view()[idx as int];
 
-    //     //     idx = idx + 1;
-    //     // }
+    //     let local_update = local_updates.tracked_remove(idx);
+
+    //     assert(unbounded_tail.view().instance == self.unbounded_log_instance);
+    //     assert(local_update.view().instance == self.unbounded_log_instance);
+    //     assert(local_update.view().key == reqid);
+    //     assert(local_update.view().value.is_Init());
+    //     assert(combiner.view().instance == self.unbounded_log_instance);
+
+    //     // we need a transition from Init to Placed!
+    //     assert(combiner.view().value.is_Placed());
+
+    //     update_place_ops_in_log_one_result = self.unbounded_log_instance.borrow()
+    //         .update_place_ops_in_log_one(nid as nat, reqid, &mut unbounded_tail, local_update, combiner);
+    //     combiner = update_place_ops_in_log_one_result.2.0;
+    //     log_entries.tracked_insert(idx, update_place_ops_in_log_one_result.0.0);
+    //     local_updates.tracked_insert(idx, update_place_ops_in_log_one_result.1.0);
+    //     idx = idx + 1;
+
+    //     AppendEntriesGhostState {
+    //         log,
+    //         local_updates,
+    //         combiner,
+    //         tail
+    //     }
     // }
 
 
@@ -998,30 +1041,9 @@ impl NrLog
 
                             let reqid = request_ids.view()[idx as int];
 
-                            local_update = local_updates.tracked_remove(idx);
-
-                            assert(unbounded_tail.view().instance == self.unbounded_log_instance);
-                            assert(local_update.view().instance == self.unbounded_log_instance);
-                            assert(local_update.view().key == reqid);
-                            assert(local_update.view().value.is_Init());
-                            assert(combiner.view().instance == self.unbounded_log_instance);
-
-                            // we need a transition from Init to Placed!
-                            assert(combiner.view().value.is_Placed());
-
-                            update_place_ops_in_log_one_result = self.unbounded_log_instance.borrow()
-                                .update_place_ops_in_log_one(nid as nat, reqid, &mut unbounded_tail, local_update, combiner);
-                            combiner = update_place_ops_in_log_one_result.2.0;
-                            log_entries.tracked_insert(idx, update_place_ops_in_log_one_result.0.0);
-                            local_updates.tracked_insert(idx, update_place_ops_in_log_one_result.1.0);
-                            idx = idx + 1;
+                            // LOOP TODO
                         }
 
-                        // self.append_entries(nid as nat, unbounded_tail, request_ids.view(), local_updates, combiner);
-
-                        // while idx < nops {
-
-                        // }
                         g = (unbounded_tail, cb_tail);
 
                         // need to get the loop done above!
