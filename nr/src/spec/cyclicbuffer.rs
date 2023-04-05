@@ -540,26 +540,26 @@ tokenized_state_machine! { CyclicBuffer {
                 }
             };
 
+
             assert forall
               |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
                 ==> stored_type_inv(#[trigger] withdrawn.index(i), i) by {
 
-                    assert forall |i: int|
-                        pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                        implies
-                        pre.contents.dom().contains(i) && #[trigger] withdrawn.dom().contains(i)
-                    by {
-                        let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
-                        map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
-                        assert(map_contains_value(pre.local_versions, min_local_head));
-                        assert(observed_head <= min_local_head);
-                    }
+                assert forall
+                  |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
+                    implies stored_type_inv(#[trigger] withdrawn.index(i), i) by {
 
-                    assert forall
-                    |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                      ==> stored_type_inv(#[trigger] withdrawn.index(i), i) by {
+                        assert(pre.contents.dom().contains(i) && #[trigger] withdrawn.dom().contains(i)) by {
+                            let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
+                            map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
+                            assert(map_contains_value(pre.local_versions, min_local_head));
+                            assert(observed_head <= min_local_head);
+                        };
 
-                      }
+                        assert(pre.contents[i] == withdrawn[i]);
+
+                        assert(stored_type_inv(withdrawn.index(i), i));
+                    };
                 };
         }
     }
