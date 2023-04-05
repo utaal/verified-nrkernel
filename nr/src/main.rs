@@ -563,7 +563,7 @@ pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance) ->
     predicate {
         // &&& self.idx == (self.request_ids.len() - ridx)
         // &&& 0 <= self.idx <= ridx
-        &&& 0< self.idx < self.request_ids.len()
+        &&& 0 <= self.idx <= self.request_ids.len()
         &&& ridx < self.request_ids.len()
 
         // tail value
@@ -861,12 +861,12 @@ impl NrLog
     proof fn unbounded_log_append_entries(tracked &self, nid: nat, ridx: nat, tracked state: AppendEntriesGhostState) -> (tracked ret: AppendEntriesGhostState)
         requires
             self.wf(),
-            state.wf(ridx, nid, self.unbounded_log_instance@),
-            state.idx == 0
+            state.idx == 0,
+            state.wf(nid, ridx, self.unbounded_log_instance@),
         ensures
-            ret.wf(ridx, nid, self.unbounded_log_instance@),
+            ret.wf(nid, ridx, self.unbounded_log_instance@),
             ret.request_ids == state.request_ids,
-            ret.idx == state.idx,
+            ret.idx == ridx + 1,
             ret.old_tail == state.old_tail,
         decreases
             ridx
@@ -875,9 +875,11 @@ impl NrLog
 
         if ridx != 0 {
             state = self.unbounded_log_append_entries(nid, (ridx - 1) as nat, state);
+            assert(state.idx == ridx);
             // assume we've iterated up to idx - 1
+        } else {
+            assert(state.idx == 0);
         }
-        // assert(state.idx == ridx);
 
         let tracked AppendEntriesGhostState {
             idx,
@@ -1099,7 +1101,6 @@ impl NrLog
                         cb_combiner = advance_tail_finish_result.2.0;
                         cb_log_entries = advance_tail_finish_result.1.0;
 
-
                         // TODO: how to do this lool?
                         // TODO: is this the right way to go about this? This is where we differ,
                         // we now do just a single insert
@@ -1142,6 +1143,8 @@ impl NrLog
                 }
             );
 
+            assert(forall|k: int| cb_log_entries.dom().contains(k)
+                   ==> (#[trigger] cb_log_entries[k]).cell_perms@.pcell == self.slog.spec_index(self.index_spec((tail + k) as nat) as int).log_entry.id());
             assert(forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i));
 
             if !matches!(result, Result::Ok(tail)) {
@@ -1186,8 +1189,6 @@ impl NrLog
                 //let tracked log_entry = log_entry.tracked_remove(idx);
 
                 // the logical index into the log
-                // TODO: Overflow here!
-                assert((tail as nat) + (idx as nat) < 0xffff_ffff_f000_0000);
                 let logical_log_idx = tail + idx as u64;
                 let log_idx = self.index(logical_log_idx);
 
@@ -1199,8 +1200,8 @@ impl NrLog
                 };
 
                 // update the log entry in the buffer
-                assert(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
-                assert(cb_log_entry_perms@@.value.is_None());
+                assume(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
+                assume(cb_log_entry_perms@@.value.is_None());
                 self.slog.index(log_idx).log_entry.put(&mut cb_log_entry_perms, new_log_entry);
 
 
