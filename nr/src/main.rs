@@ -556,7 +556,7 @@ tracked struct AppendEntriesGhostState {
     pub tracked local_updates: Map<nat, UnboundedLog::local_updates>,
     pub tracked combiner: UnboundedLog::combiner,
     pub tracked tail: UnboundedLog::tail,
-    pub request_ids: Seq<ReqId>
+    pub ghost request_ids: Seq<ReqId>
 }
 
 pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance) -> bool {
@@ -949,7 +949,7 @@ impl NrLog
                 ghost_data.append_pre(operations@, replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         {
             // unpack stuff
-            let tracked local_updates = ghost_data.local_updates.get();// Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+            let tracked mut local_updates = ghost_data.local_updates.get();// Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
             let tracked ghost_replica = ghost_data.ghost_replica;      // Tracked<UnboundedLog::replicas>,
             let tracked mut combiner = ghost_data.combiner.get();          // Tracked<UnboundedLog::combiner>,
             let tracked mut cb_combiner = ghost_data.cb_combiner.get();    // Tracked<CyclicBuffer::combiner>,
@@ -1091,8 +1091,6 @@ impl NrLog
                     if matches!(result, Result::Ok(tail)) {
                         let tracked (mut unbounded_tail, mut cb_tail) = g;
 
-
-
                         assert(tail <= new_tail);
                         assert(new_tail <= head + self.slog.len());
 
@@ -1111,21 +1109,22 @@ impl NrLog
                             combiner = self.unbounded_log_instance.borrow().exec_trivial_start(nid as nat, combiner);
 
                             // TODO: proof vs. spec mode!
-                            // append_entries_ghost_state = AppendEntriesGhostState {
-                            //     idx : 0,
-                            //     old_tail: tail as nat,
-                            //     log_entries,
-                            //     local_updates,
-                            //     combiner,
-                            //     tail: unbounded_tail,
-                            //     request_ids: request_ids.view()
-                            // };
+                            append_entries_ghost_state = AppendEntriesGhostState {
+                                idx : 0,
+                                old_tail: tail as nat,
+                                log_entries,
+                                local_updates,
+                                combiner,
+                                tail: unbounded_tail,
+                                request_ids: request_ids.view()
+                            };
 
-                            // append_entries_ghost_state = self.unbounded_log_append_entries(nid as nat, (request_ids.view().len() - 1) as nat, append_entries_ghost_state);
+                            append_entries_ghost_state = self.unbounded_log_append_entries(nid as nat, (request_ids.view().len() - 1) as nat, append_entries_ghost_state);
 
-                            // log_entries = append_entries_ghost_state.log_entries;
-                            // combiner = append_entries_ghost_state.combiner;
-                            // unbounded_tail = append_entries_ghost_state.tail;
+                            log_entries = append_entries_ghost_state.log_entries;
+                            combiner = append_entries_ghost_state.combiner;
+                            unbounded_tail = append_entries_ghost_state.tail;
+                            local_updates = append_entries_ghost_state.local_updates;
                         }
 
                         g = (unbounded_tail, cb_tail);
@@ -1148,7 +1147,7 @@ impl NrLog
             if !matches!(result, Result::Ok(tail)) {
                 // assemble the struct again
                 ghost_data = NrLogAppendExecDataGhost {
-                    local_updates:tracked(local_updates),  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
+                    local_updates: tracked(local_updates),  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
                     ghost_replica,  // Tracked<UnboundedLog::replicas>,
                     combiner: tracked(combiner),       // Tracked<UnboundedLog::combiner>,
                     cb_combiner: tracked(cb_combiner),    // Tracked<CyclicBuffer::combiner>,
