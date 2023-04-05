@@ -1188,7 +1188,7 @@ impl NrLog
 
                 // the logical index into the log
                 // TODO: Overflow here!
-                assume((tail as nat) + (idx as nat) < 0xffff_ffff_f000_0000);
+                assert((tail as nat) + (idx as nat) < 0xffff_ffff_f000_0000);
                 let logical_log_idx = tail + idx as u64;
                 let log_idx = self.index(logical_log_idx);
 
@@ -1200,8 +1200,8 @@ impl NrLog
                 };
 
                 // update the log entry in the buffer
-                assume(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
-                assume(cb_log_entry_perms@@.value.is_None());
+                assert(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
+                assert(cb_log_entry_perms@@.value.is_None());
                 self.slog.index(log_idx).log_entry.put(&mut cb_log_entry_perms, new_log_entry);
 
 
@@ -1512,7 +1512,7 @@ impl NrLog
                     returning alive_bit;
                     ghost g => {
                         if alive_bit == is_alive_value {
-                            assume(g.view().key == phys_log_idx);
+                            assert(g.view().key == phys_log_idx);
                             reader_guard_result = self.cyclic_buffer_instance.borrow().reader_guard(nid as nat, &g, cb_combiner);
                             cb_combiner = reader_guard_result.1.0;
                         }
@@ -2412,7 +2412,7 @@ impl ThreadOpsData {
         &&& num_ops_per_thread.len() as nat == MAX_THREADS_PER_REPLICA as nat
         &&& self.flat_combiner@@.value.get_Responding_1() == 0
 
-        &&& forall|i: nat|
+        &&& (forall|i: nat|
            #![trigger num_ops_per_thread[i as int]]
            #![trigger self.flat_combiner@@.value.get_Responding_0()[i as int]]
             i < self.flat_combiner@@.value.get_Responding_0().len() ==> {
@@ -2422,7 +2422,7 @@ impl ThreadOpsData {
                 &&& self.cell_permissions@[i]@.pcell === replica_contexts[i as int].batch.0.id()
                 &&& self.cell_permissions@[i]@.value.is_Some()
             }
-        }
+        })
 
     }
 
@@ -2443,6 +2443,9 @@ impl ThreadOpsData {
             &&& self.local_updates@[i]@.value.is_Done()
             &&& self.local_updates@[i]@.value.get_Done_ret() == responses[i as int]
         })
+
+        &&& rids_match(self.flat_combiner@@.value.get_Responding_0(), self.request_ids@,
+                 0, self.flat_combiner@@.value.get_Responding_0().len(), 0, self.request_ids@.len())
     }
 
     spec fn distribute_thread_resps_post(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>) -> bool
@@ -2468,6 +2471,8 @@ impl ThreadOpsData {
             &&& self.local_updates@[i]@.value.get_Init_op() == operations[i as int]
         })
 
+        &&& rids_match(self.flat_combiner@@.value.get_Responding_0(), self.request_ids@,
+                 0, self.flat_combiner@@.value.get_Responding_0().len(), 0, self.request_ids@.len())
 
     }
 }
@@ -2552,7 +2557,7 @@ impl Replica  {
             ghost g
             => {
                 // assert(old_val == v);
-                assume(old_val != 0);
+                assert(old_val != 0);
                 assert(g.is_None());
                 g = Some(lock_state.get());
             });
@@ -2578,7 +2583,7 @@ impl Replica  {
             // assert(self.combiner.0.load() != 0);
             let combiner_lock = tracked(combiner_lock.get().tracked_unwrap());
             let combiner_lock = self.combine(slog, combiner_lock);
-            assume(false);
+            assert(false);
             self.release_combiner_lock(combiner_lock);
         } else {
             // nothing to be done here.
@@ -2714,6 +2719,10 @@ impl Replica  {
         let tracked mut cell_permissions: Map<nat, PermissionOpt<PendingOperation>> = Map::tracked_empty();
         let ghost mut request_ids = Seq::empty();
 
+
+        assert(rids_match(flat_combiner@@.value.get_Collecting_0(), request_ids,
+        0, flat_combiner@@.value.get_Collecting_0().len(), 0, request_ids.len()));
+
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
 
@@ -2748,7 +2757,9 @@ impl Replica  {
                     &&& updates[i]@.key == request_ids[i as int]
                     &&& updates[i]@.value.is_Init()
                     &&& updates[i]@.value.get_Init_op() == operations[i as int]
-                }
+                },
+                rids_match(flat_combiner@@.value.get_Collecting_0(), request_ids,
+                    0, flat_combiner@@.value.get_Collecting_0().len(), 0, request_ids.len())
 
         {
             assert(self.contexts.spec_index(thread_idx as int).wf(thread_idx as nat));
@@ -2766,9 +2777,16 @@ impl Replica  {
                 assert(flat_combiner.view().view().value.get_Collecting_0().len() == thread_idx);
 
                 if g.slots.view().value.is_Empty() || g.slots.view().value.is_Response() {
+
+                    rids_match_add_none(flat_combiner.view().view().value.get_Collecting_0(), request_ids,
+                        0, flat_combiner.view().view().value.get_Collecting_0().len(), 0, request_ids.len());
                     self.flat_combiner_instance.borrow().combiner_collect_empty(&g.slots, flat_combiner.borrow_mut());
                 } else {
-                    assume(!g.slots.view().value.is_InProgress());
+                    assert(!g.slots.view().value.is_InProgress());
+
+                    rids_match_add_rid(flat_combiner.view().view().value.get_Collecting_0(), request_ids,
+                        0, flat_combiner.view().view().value.get_Collecting_0().len(), 0, request_ids.len(),g.update.get_Some_0().view().key);
+
                     g.slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.slots, flat_combiner.borrow_mut());
                 }
 
@@ -2799,11 +2817,12 @@ impl Replica  {
                     updates.tracked_insert(request_ids.len() as nat, update_req);
                     cell_permissions.tracked_insert(thread_idx as nat, batch_token_value.get());
                 }
+
                 // assert(operations.len() == request_ids.len());
                 request_ids = request_ids.push(update_req@.key);
                 operations.push(op);
             } else {
-                // nothng here
+                // nothing here
                 // assert(operations.len() == request_ids.len());
             }
 
@@ -3234,12 +3253,12 @@ impl NodeReplicated {
         &&& self.replicas.spec_len() == NUM_REPLICAS
 
         // the replicas should be well-formed and the instances match
-        &&& forall |i| 0 <= i < self.replicas.len() ==> {
+        &&& (forall |i| 0 <= i < self.replicas.len() ==> {
             &&& (#[trigger] self.replicas[i]).wf()
             &&& self.replicas[i].spec_id() == i
             &&& self.replicas[i].unbounded_log_instance@ == self.unbounded_log_instance@
             &&& self.replicas[i].cyclic_buffer_instance@ == self.cyclic_buffer_instance@
-        }
+        })
     }
 }
 
