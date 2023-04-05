@@ -246,6 +246,7 @@ tokenized_state_machine! { CyclicBuffer {
             ReaderState::Starting{start} => {
                 // the starting value should match the local tail
                 &&& start == self.local_versions[node_id]
+                &&& start <= self.tail
             }
             ReaderState::Range{start, end, cur} => {
                 // the start must be our local tail
