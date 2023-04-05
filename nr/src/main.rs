@@ -1143,8 +1143,8 @@ impl NrLog
                 }
             );
 
-            assert(forall|k: int| cb_log_entries.dom().contains(k)
-                   ==> (#[trigger] cb_log_entries[k]).cell_perms@.pcell == self.slog.spec_index(self.index_spec((tail + k) as nat) as int).log_entry.id());
+            // assert(forall|k: int| cb_log_entries.dom().contains(k)
+            //        ==> (#[trigger] cb_log_entries[k]).cell_perms@.pcell == self.slog.spec_index(self.index_spec((tail + k) as nat) as int).log_entry.id());
             assert(forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i));
 
             if !matches!(result, Result::Ok(tail)) {
@@ -1171,6 +1171,9 @@ impl NrLog
                     nops == request_ids@.len(),
                     forall |i| idx <= i < request_ids@.len() ==> cb_log_entries.contains_key(i),
                     forall |i| idx <= i < request_ids@.len() ==> log_entries.contains_key(i), // && log_entries[i] == Log(tail as int + i, ops[i], node.nodeId as int)
+                    forall|i: int| idx <= i < nops ==> (#[trigger] cb_log_entries[i]).cell_perms@.pcell == self.slog.spec_index(
+                        self.index_spec((tail + i) as nat) as int).log_entry.id(),
+                    forall|i: int| idx <= i < nops ==> stored_type_inv(cb_log_entries[i], tail + i),
                     cb_combiner@.key == nid,
                     cb_combiner@.value.is_Appending(),
                     cb_combiner@.value.get_Appending_cur_idx() == tail + idx,
@@ -1200,9 +1203,8 @@ impl NrLog
                 };
 
                 // update the log entry in the buffer
-                assume(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
-                assume(cb_log_entry_perms@@.value.is_None());
-                self.slog.index(log_idx).log_entry.put(&mut cb_log_entry_perms, new_log_entry);
+                assert(cb_log_entry_perms@@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
+                self.slog.index(log_idx).log_entry.replace(&mut cb_log_entry_perms, new_log_entry);
 
 
                 // unsafe { (*e).alivef.store(m, Ordering::Release) };
