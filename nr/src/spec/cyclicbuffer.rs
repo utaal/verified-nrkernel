@@ -48,7 +48,12 @@ pub struct StoredType {
     pub log_entry: UnboundedLog::log //Option<UnboundedLog::log>
 }
 
-pub spec fn stored_type_inv(st: StoredType, idx: int) -> bool;
+pub open spec fn stored_type_inv(st: StoredType, idx: int) -> bool {
+    &&& st.log_entry@.key == idx
+    &&& st.cell_perms@.value.is_Some()
+    &&& st.cell_perms@.value.get_Some_0().node_id as NodeId == st.log_entry@.value.node_id
+    &&& st.cell_perms@.value.get_Some_0().op == st.log_entry@.value.op
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -364,6 +369,7 @@ tokenized_state_machine! { CyclicBuffer {
             add combiner += [
                 node_id => CombinerState::Reading(ReaderState::Range { start, end: pre.tail, cur: start })
             ];
+            assert start <= pre.tail;
         }
     }
 
@@ -395,6 +401,8 @@ tokenized_state_machine! { CyclicBuffer {
                 node_id => let CombinerState::Reading( ReaderState::Guard{ start, end, cur, val })
             ];
             guard contents >= [ cur as int => val ];
+
+            assert(stored_type_inv(val, cur as int));
         }
     }
 
@@ -531,9 +539,27 @@ tokenized_state_machine! { CyclicBuffer {
                 }
             };
 
-            // assert(forall
-            //   |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-            //     ==> stored_type_inv(#[trigger] withdrawn.index(i), i));
+            assert forall
+              |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
+                ==> stored_type_inv(#[trigger] withdrawn.index(i), i) by {
+
+                    assert forall |i: int|
+                        pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
+                        implies
+                        pre.contents.dom().contains(i) && #[trigger] withdrawn.dom().contains(i)
+                    by {
+                        let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
+                        map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
+                        assert(map_contains_value(pre.local_versions, min_local_head));
+                        assert(observed_head <= min_local_head);
+                    }
+
+                    assert forall
+                    |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
+                      ==> stored_type_inv(#[trigger] withdrawn.index(i), i) by {
+
+                      }
+                };
         }
     }
 

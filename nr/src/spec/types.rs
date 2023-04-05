@@ -35,20 +35,23 @@ pub struct DataStructureSpec {
 
 impl DataStructureSpec {
 
-    #[verifier(opaque)]
+    // #[verifier(opaque)]
     pub open spec fn init() -> Self {
         DataStructureSpec { val: 0 }
     }
 
     /// reads the current state of the replica
-    #[verifier(opaque)]
+    // #[verifier(opaque)]
     pub open spec fn spec_read(&self, op: ReadonlyOp) -> ReturnType {
-        ReturnType::Value(0)
+        ReturnType::Value(self.val)
     }
 
-    #[verifier(opaque)]
+    // #[verifier(opaque)]
     pub open spec fn spec_update(self, op: UpdateOp) -> (Self, ReturnType) {
-        (self, ReturnType::Ok)
+        match op {
+            UpdateOp::Reset => (DataStructureSpec { val: 0 }, ReturnType::Ok),
+            UpdateOp::Inc => (DataStructureSpec { val: if self.val < 0xffff_ffff_ffff_ffff { (self.val + 1) as u64 } else { 0 } }, ReturnType::Ok)
+        }
     }
 }
 
@@ -57,6 +60,12 @@ pub struct DataStructureType {
 }
 
 impl DataStructureType {
+    pub fn init() -> (result: Self)
+        ensures result.interp() == DataStructureSpec::init()
+    {
+        DataStructureType { val: 0 }
+    }
+
     pub open spec fn interp(&self) -> DataStructureSpec {
         DataStructureSpec { val: self.val }
     }
@@ -66,7 +75,7 @@ impl DataStructureType {
     {
         match op {
             UpdateOp::Reset => self.val = 0,
-            UpdateOp::Inc => self.val = self.val + 1,
+            UpdateOp::Inc => self.val = if self.val < 0xffff_ffff_ffff_ffff { self.val + 1 } else { 0 }
         }
         ReturnType::Ok
     }
