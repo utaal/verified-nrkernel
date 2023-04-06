@@ -4,7 +4,7 @@ use builtin_macros::*;
 
 use super::pervasive::map::*;
 // #[allow(unused_imports)]
-// use super::pervasive::option::Option;
+use super::pervasive::option::Option;
 // use super::pervasive::seq::*;
 // use super::pervasive::set::*;
 // use super::pervasive::*;
@@ -45,14 +45,20 @@ verus! {
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
 pub struct StoredType {
     pub cell_perms: PermissionOpt<ConcreteLogEntry>,
-    pub log_entry: UnboundedLog::log //Option<UnboundedLog::log>
+    pub log_entry: Option<UnboundedLog::log>
 }
 
 pub open spec fn stored_type_inv(st: StoredType, idx: int) -> bool {
-    &&& st.log_entry@.key == idx
-    &&& st.cell_perms@.value.is_Some()
-    &&& st.cell_perms@.value.get_Some_0().node_id as NodeId == st.log_entry@.value.node_id
-    &&& st.cell_perms@.value.get_Some_0().op == st.log_entry@.value.op
+    &&& idx >= 0 ==> {
+        &&& st.log_entry.is_Some()
+        &&& st.cell_perms@.value.is_Some()
+        &&& st.log_entry.get_Some_0()@.key == idx
+        &&& st.cell_perms@.value.get_Some_0().node_id as NodeId == st.log_entry.get_Some_0()@.value.node_id
+        &&& st.cell_perms@.value.get_Some_0().op == st.log_entry.get_Some_0()@.value.op
+    }
+    &&& idx < 0 ==> {
+        &&& true
+    }
 }
 
 
@@ -515,7 +521,7 @@ tokenized_state_machine! { CyclicBuffer {
         advance_tail_finish(node_id: NodeId, new_tail: nat) {
             remove combiner -= [ node_id => let CombinerState::AdvancingTail { observed_head } ];
             add    combiner += [ node_id => CombinerState::Appending { cur_idx: pre.tail, tail: new_tail } ];
-            update tail            = new_tail;
+            update tail      = new_tail;
 
             // only allow advances and must not overwrite still active entries
             require(pre.tail <= new_tail <= observed_head + pre.buffer_size);

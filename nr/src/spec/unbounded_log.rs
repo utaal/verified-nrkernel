@@ -834,9 +834,11 @@ UnboundedLog {
             remove combiner      -= [ node_id => let CombinerState::Loop { queued_ops, lversion, tail, idx } ];
             remove replicas      -= [ node_id => let old_nr_state ];
             let rid = queued_ops.index(idx as int);
-            remove local_updates -= [ rid => let u ];
+            remove local_updates -= [ rid => let local_update ];
 
             have log >= [lversion => let log_entry];
+
+            // require(local_update.is_Placed());
 
             // apply all updates between lhead and global tail that were enqueued from local node
             require(lversion < tail);

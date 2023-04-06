@@ -232,6 +232,18 @@ FlatCombiner {
     }
 
 
+    /// Safety Condition: the slot state is not in progress when collecting
+    property!{
+        pre_combiner_collect_request() {
+            require(pre.combiner.is_Collecting());
+            let idx = pre.combiner.get_Collecting_0().len();
+            require(idx < pre.num_threads);
+            have slots >= [ idx => let slot_state ];
+
+            assert(!slot_state.is_InProgress());
+        }
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Combiner Responding to Requests
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -294,6 +306,17 @@ FlatCombiner {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
 
+    /// Safety Condition: the slot state is not in progress when collecting
+    property!{
+        pre_send_request(tid: ThreadId) {
+
+            have clients >= [ tid => let ClientState::Idle ];
+            have slots   >= [ tid => let slot_state ];
+
+            assert(slot_state.is_Empty());
+        }
+    }
+
     transition!{
         send_request(tid: ThreadId, rid: ReqId) {
             remove clients -= [ tid => let ClientState::Idle ];
@@ -304,6 +327,17 @@ FlatCombiner {
         }
     }
 
+    /// Safety Condition: the slot state is not in progress when collecting
+    property!{
+        pre_recv_response(tid: ThreadId) {
+
+            have clients >= [ tid => let ClientState::Waiting(rid) ];
+            have slots   >= [ tid => let slot_state ];
+
+            assert(!slot_state.is_Empty());
+            assert(slot_state.get_ReqId() == rid);
+        }
+    }
 
     transition!{
         recv_response(tid: ThreadId, rid: ReqId) {
