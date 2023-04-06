@@ -691,6 +691,8 @@ pub open spec fn wf(&self) -> bool {
         // make sure we
         &&& self.unbounded_log_instance@.num_replicas() == self.num_replicas
         &&& self.cyclic_buffer_instance@.num_replicas() == self.num_replicas
+
+        &&& self.cyclic_buffer_instance@.unbounded_log_instance() == self.unbounded_log_instance
     }
 
     // invariant on slog with (
@@ -798,7 +800,7 @@ impl NrLog
                 slog_entries.len() == log_idx,
                 forall |i| 0 <= i < log_idx ==> (#[trigger] slog_entries[i]).is_Some(),
                 forall |i| -log_size <= i < logical_log_idx <==> #[trigger] contents.contains_key(i),
-                forall |i| #[trigger] contents.contains_key(i) ==> stored_type_inv(contents[i], i),
+                forall |i| #[trigger] contents.contains_key(i) ==> stored_type_inv(contents[i], i, unbounded_log_instance),
 
         {
             // pub log_entry: PCell<ConcreteLogEntry>,
@@ -814,7 +816,7 @@ impl NrLog
                 log_entry: Option::None
             };
 
-            assert(stored_type_inv(stored_type, logical_log_idx));
+            assert(stored_type_inv(stored_type, logical_log_idx, unbounded_log_instance));
 
             // add the stored type to the contents map
             contents.tracked_insert(logical_log_idx, stored_type);
@@ -849,7 +851,7 @@ impl NrLog
                 Trk(cb_local_versions0), // Map<NodeId, CyclicBuffer::local_versions>;
                 Trk(cb_alive_bits0), // Map<LogIdx, CyclicBuffer::alive_bits>;
                 Trk(cb_combiner0), // Map<NodeId, CyclicBuffer::combiner>;
-            ) = CyclicBuffer::Instance::initialize(log_size as nat, num_replicas as nat, contents, contents);
+            ) = CyclicBuffer::Instance::initialize(unbounded_log_instance, log_size as nat, num_replicas as nat, contents, contents);
             cyclic_buffer_instance = cyclic_buffer_instance0;
             cb_head = cb_head0;
             cb_tail = cb_tail0;
@@ -1374,7 +1376,7 @@ impl NrLog
 
             // assert(forall|k: int| cb_log_entries.dom().contains(k)
             //        ==> (#[trigger] cb_log_entries[k]).cell_perms@.pcell == self.slog.spec_index(self.index_spec((tail + k) as nat) as int).log_entry.id());
-            assert(forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i));
+            assert(forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i, self.unbounded_log_instance@));
             assert(self.cyclic_buffer_instance@.buffer_size() == LOG_SIZE);
 
             if !matches!(result, Result::Ok(tail)) {
@@ -1405,12 +1407,14 @@ impl NrLog
                        &&& log_entries[i]@.key == tail + i
                        &&& log_entries[i]@.value.node_id == nid
                        &&& log_entries[i]@.value.op == operations[i as int]
+
+                       &&& log_entries[i]@.instance == self.unbounded_log_instance@
                        // && log_entries[i] == Log(tail as int + i, ops[i], node.nodeId as int)
                     },
                     forall |i| tail - LOG_SIZE <= i < new_tail - LOG_SIZE ==> cb_log_entries.contains_key(i),
                     forall|i: int| idx <= i < nops ==> (#[trigger] cb_log_entries[i]).cell_perms@.pcell == self.slog.spec_index(
                         self.index_spec((tail + i) as nat) as int).log_entry.id(),
-                    forall|i: int| idx <= i < nops ==> stored_type_inv(cb_log_entries[i], tail + i),
+                    forall|i: int| idx <= i < nops ==> stored_type_inv(cb_log_entries[i], tail + i, self.unbounded_log_instance@),
                     cb_combiner@.key == nid,
                     cb_combiner@.value.is_Appending(),
                     cb_combiner@.value.get_Appending_cur_idx() == tail + idx,
@@ -1467,7 +1471,8 @@ impl NrLog
                         assert(new_stored_type.log_entry.get_Some_0().view().value.node_id == nid);
 
                         // TODO: how to establish this?
-                        assert(stored_type_inv(new_stored_type, c_cur_idx as int));
+                        assert(new_stored_type.log_entry.get_Some_0().view().instance == self.unbounded_log_instance.view());
+                        assert(stored_type_inv(new_stored_type, c_cur_idx as int, self.unbounded_log_instance.view()));
 
                         append_flip_bit_result = self.cyclic_buffer_instance.borrow()
                             .append_flip_bit(nid as NodeId, new_stored_type, new_stored_type, g, cb_combiner);

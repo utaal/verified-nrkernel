@@ -49,13 +49,15 @@ pub struct StoredType {
     pub log_entry: Option<UnboundedLog::log>
 }
 
-pub open spec fn stored_type_inv(st: StoredType, idx: int) -> bool {
+pub open spec fn stored_type_inv(st: StoredType, idx: int, unbounded_log_instance: UnboundedLog::Instance) -> bool {
     &&& idx >= 0 ==> {
         &&& st.log_entry.is_Some()
         &&& st.cell_perms@.value.is_Some()
         &&& st.log_entry.get_Some_0()@.key == idx
         &&& st.cell_perms@.value.get_Some_0().node_id as NodeId == st.log_entry.get_Some_0()@.value.node_id
         &&& st.cell_perms@.value.get_Some_0().op == st.log_entry.get_Some_0()@.value.op
+
+        &&& st.log_entry.get_Some_0()@.instance == unbounded_log_instance
     }
     &&& idx < 0 ==> {
         &&& true
@@ -128,6 +130,9 @@ impl CombinerState {
 
 tokenized_state_machine! { CyclicBuffer {
     fields {
+        #[sharding(constant)]
+        pub unbounded_log_instance: UnboundedLog::Instance,
+
         /// the size of the buffer
         #[sharding(constant)]
         pub buffer_size: LogIdx,
@@ -239,7 +244,7 @@ tokenized_state_machine! { CyclicBuffer {
     #[invariant]
     pub spec fn contents_meet_inv(&self) -> bool {
         forall |i: int| #[trigger] self.contents.dom().contains(i) ==>
-            stored_type_inv(self.contents[i], i)
+            stored_type_inv(self.contents[i], i, self.unbounded_log_instance)
     }
 
     #[invariant]
@@ -329,10 +334,11 @@ tokenized_state_machine! { CyclicBuffer {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     init!{
-        initialize(buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
+        initialize(unbounded_log_instance: UnboundedLog::Instance, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
             require(num_replicas > 0);
             require(buffer_size == LOG_SIZE);
 
+            init unbounded_log_instance = unbounded_log_instance;
             init buffer_size = buffer_size;
             init num_replicas = num_replicas;
             init head = 0;
@@ -340,7 +346,7 @@ tokenized_state_machine! { CyclicBuffer {
             init local_versions = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| 0);
 
             require(forall |i: int| (-buffer_size <= i < 0 <==> contents.dom().contains(i)));
-            require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i));
+            require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i, unbounded_log_instance));
             init contents = contents;
 
             init alive_bits = Map::new(|i: nat| 0 <= i < buffer_size, |i: nat| !log_entry_alive_value(i as int, buffer_size));
@@ -410,7 +416,7 @@ tokenized_state_machine! { CyclicBuffer {
             ];
             guard contents >= [ cur as int => val ];
 
-            assert(stored_type_inv(val, cur as int));
+            assert(stored_type_inv(val, cur as int, pre.unbounded_log_instance));
         }
     }
 
@@ -550,11 +556,11 @@ tokenized_state_machine! { CyclicBuffer {
 
             assert forall
               |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                ==> stored_type_inv(#[trigger] withdrawn.index(i), i) by {
+                ==> stored_type_inv(#[trigger] withdrawn.index(i), i, pre.unbounded_log_instance) by {
 
                 assert forall
                   |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                    implies stored_type_inv(#[trigger] withdrawn.index(i), i) by {
+                    implies stored_type_inv(#[trigger] withdrawn.index(i), i, pre.unbounded_log_instance) by {
 
                         assert(pre.contents.dom().contains(i) && #[trigger] withdrawn.dom().contains(i)) by {
                             let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
@@ -565,7 +571,7 @@ tokenized_state_machine! { CyclicBuffer {
 
                         assert(pre.contents[i] == withdrawn[i]);
 
-                        assert(stored_type_inv(withdrawn.index(i), i));
+                        assert(stored_type_inv(withdrawn.index(i), i, pre.unbounded_log_instance));
                     };
                 };
         }
@@ -594,7 +600,7 @@ tokenized_state_machine! { CyclicBuffer {
             add    alive_bits += [ log_entry_idx(cur_idx as int, pre.buffer_size) => log_entry_alive_value(cur_idx  as int, pre.buffer_size) ];
 
             require(cur_idx < tail);
-            require(stored_type_inv(deposited, cur_idx as int));
+            require(stored_type_inv(deposited, cur_idx as int, pre.unbounded_log_instance));
 
             deposit contents += [ cur_idx as int => deposited ] by {
                 map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
@@ -617,7 +623,7 @@ tokenized_state_machine! { CyclicBuffer {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     #[inductive(initialize)]
-    fn initialize_inductive(post: Self, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
+    fn initialize_inductive(post: Self, unbounded_log_instance: UnboundedLog::Instance, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
         assert forall |i| post.tail <= i < post.buffer_size implies !log_entry_is_alive(post.alive_bits, i, post.buffer_size) by {
             int_mod_less_than_same(i, post.buffer_size as int);
         }
