@@ -911,7 +911,7 @@ impl NrLog
         let tracked cb_inst = tracked(cyclic_buffer_instance.clone());
         let tracked ul_inst = tracked(unbounded_log_instance.clone());
         let tail = CachePadded(AtomicU64::new((cb_inst, ul_inst), 0, (ul_tail, cb_tail)));
-        let mut local_versions = Vec::with_capacity(num_replicas);
+        let mut local_versions : Vec<CachePadded<AtomicU64<(Tracked<UnboundedLog::Instance>, Tracked<CyclicBuffer::Instance>, int), (UnboundedLog::local_versions, CyclicBuffer::local_versions), _>>>= Vec::with_capacity(num_replicas);
 
 
         let mut nid = 0;
@@ -931,9 +931,12 @@ impl NrLog
                     &&& ul_local_versions[i]@.key == i
                     &&& ul_local_versions[i]@.value == 0
                 },
-                forall |i| 0 <= i < local_versions.len() ==> {
+                forall |i: int| #![trigger local_versions[i]] 0 <= i < local_versions.len() ==> {
                     // what to put here?
-                    &&& true
+                    &&& local_versions[i].0.well_formed()
+                    &&& local_versions[i].0.constant().0 == unbounded_log_instance
+                    &&& local_versions[i].0.constant().1 == cyclic_buffer_instance
+                    &&& local_versions[i].0.constant().2 == i
                 }
         {
             let ghost mut nid_ghost;
@@ -949,6 +952,7 @@ impl NrLog
             let tracked ul_inst = tracked(unbounded_log_instance.clone());
 
             local_versions.push(CachePadded(AtomicU64::new((ul_inst, cb_inst, nid_ghost), 0, (ul_version, cb_version))));
+
             nid = nid + 1;
         }
 

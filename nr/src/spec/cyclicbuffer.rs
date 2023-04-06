@@ -32,6 +32,7 @@ use super::utils::*;
 
 // rust_verify/tests/example.rs ignore
 
+#[verifier(publish)]
 pub const LOG_SIZE: usize = 1024;
 
 pub type LogicalLogIdx = int;
