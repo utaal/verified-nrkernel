@@ -747,18 +747,58 @@ pub open spec fn wf(&self) -> bool {
 }
 } // struct_with_invariants!{
 
+struct_with_invariants!{
+pub tracked struct NrLogTokens {
+    pub ghost num_replicas: nat,
+    pub tracked replicas    : Map<NodeId,UnboundedLog::replicas>,
+    pub tracked combiners   : Map<NodeId,UnboundedLog::combiner>,
+    pub tracked cb_combiners: Map<NodeId, CyclicBuffer::combiner>,
+    pub tracked unbounded_log_instance: UnboundedLog::Instance,
+    pub tracked cyclic_buffer_instance: CyclicBuffer::Instance,
+}
+
+pub open spec fn wf(&self, num_replicas: nat) -> bool {
+    predicate {
+        &&& self.num_replicas == num_replicas
+        &&& (forall |i| #![trigger self.replicas[i]]0 <= i < self.num_replicas ==> {
+            &&& #[trigger] self.replicas.contains_key(i)
+            &&& self.replicas[i]@.instance == self.unbounded_log_instance
+            &&& self.replicas[i]@.key == i
+            &&& self.replicas[i]@.value == DataStructureSpec::init()
+        })
+
+        &&& (forall |i| #![trigger self.combiners[i]]0 <= i < self.num_replicas ==> {
+            &&& #[trigger]  self.combiners.contains_key(i)
+            &&& self.combiners[i]@.instance == self.unbounded_log_instance
+            &&& self.combiners[i]@.key == i
+            &&& self.combiners[i]@.value.is_Ready()
+        })
+
+        &&& (forall |i| #![trigger self.cb_combiners[i]]0 <= i < self.num_replicas ==> {
+            &&& #[trigger] self.cb_combiners.contains_key(i)
+            &&& self.cb_combiners[i]@.instance == self.cyclic_buffer_instance
+            &&& self.cb_combiners[i]@.key == i
+            &&& self.cb_combiners[i]@.value.is_Idle()
+        })
+    }
+}
+
+} // struct_with_invariants!{
 
 impl NrLog
 {
     /// initializes the NrLOg
-    pub fn new(num_replicas: usize, log_size: usize) -> (res: (Self, Vec<ReplicaToken>))
+    pub fn new(num_replicas: usize, log_size: usize) -> (res: (Self, Vec<ReplicaToken>, Tracked<NrLogTokens>))
         requires
             log_size == LOG_SIZE,
             num_replicas == NUM_REPLICAS
         ensures
             res.0.wf(),
+            res.0.unbounded_log_instance@ == res.2@.unbounded_log_instance,
+            res.0.cyclic_buffer_instance@ == res.2@.cyclic_buffer_instance,
             res.1.len() == num_replicas,
             forall |i| #![trigger res.1[i]] 0 <= i < num_replicas ==> res.1[i].id_spec() == i,
+            res.2@.wf(num_replicas as nat)
     {
         //
         // initialize the unbounded log state machine to obtain the tokens
@@ -859,7 +899,7 @@ impl NrLog
         let tracked cb_tail                 : CyclicBuffer::tail;
         let tracked mut cb_local_versions   : Map<NodeId, CyclicBuffer::local_versions>;
         let tracked mut cb_alive_bits       : Map<LogIdx, CyclicBuffer::alive_bits>;
-        let tracked cb_combiner             : Map<NodeId, CyclicBuffer::combiner>;
+        let tracked cb_combiners            : Map<NodeId, CyclicBuffer::combiner>;
 
         proof {
             assert(log_size == LOG_SIZE);
@@ -877,7 +917,7 @@ impl NrLog
             cb_tail = cb_tail0;
             cb_local_versions = cb_local_versions0;
             cb_alive_bits = cb_alive_bits0;
-            cb_combiner = cb_combiner0;
+            cb_combiners = cb_combiner0;
         }
 
         //
@@ -995,6 +1035,17 @@ impl NrLog
             idx = idx + 1;
         }
 
+        let ghost mut num_replicas_ghost; proof { num_replicas_ghost = num_replicas as nat };
+
+        let tracked config = NrLogTokens {
+            num_replicas: num_replicas_ghost,
+            replicas: ul_replicas,
+            combiners: ul_combiner,
+            cb_combiners,
+            unbounded_log_instance: unbounded_log_instance.clone(),
+            cyclic_buffer_instance: cyclic_buffer_instance.clone(),
+        };
+
         let log = NrLog {
             slog,
             version_upper_bound,
@@ -1006,7 +1057,8 @@ impl NrLog
             cyclic_buffer_instance: tracked(cyclic_buffer_instance),
         };
 
-        (log, replica_tokens)
+
+        (log, replica_tokens, tracked(config))
     }
 
 
@@ -2876,7 +2928,7 @@ impl ThreadOpsData {
 
 /// struct containing arguments for creating a new replica
 pub tracked struct ReplicaConfig {
-    pub tracked replicas: UnboundedLog::replicas,
+    pub tracked replica: UnboundedLog::replicas,
     pub tracked combiner: UnboundedLog::combiner,
     pub tracked cb_combiner: CyclicBuffer::combiner,
     pub tracked unbounded_log_instance: UnboundedLog::Instance,
@@ -2888,9 +2940,9 @@ impl ReplicaConfig {
         &&& self.combiner@.instance == self.unbounded_log_instance
         &&& self.cb_combiner@.instance == self.cyclic_buffer_instance
 
-        &&& self.replicas@.value == DataStructureSpec::init()
-        &&& self.replicas@.key == nid
-        &&& self.replicas@.instance == self.unbounded_log_instance
+        &&& self.replica@.value == DataStructureSpec::init()
+        &&& self.replica@.key == nid
+        &&& self.replica@.instance == self.unbounded_log_instance
         &&& self.combiner@.value.is_Ready()
         &&& self.combiner@.key == nid
         &&& self.cb_combiner@.key == nid
@@ -2908,10 +2960,13 @@ impl Replica  {
             replica_token.id_spec() < NUM_REPLICAS,
             config@.wf(replica_token.id_spec())
         ensures
-            res.wf()
+            res.wf(),
+            res.spec_id() == replica_token.id_spec(),
+            res.unbounded_log_instance@ == config@.unbounded_log_instance,
+            res.cyclic_buffer_instance@ == config@.cyclic_buffer_instance,
     {
         let tracked ReplicaConfig {
-            replicas,
+            replica,
             combiner,
             cb_combiner,
             unbounded_log_instance,
@@ -2954,7 +3009,7 @@ impl Replica  {
 
         let replicated_data_structure = ReplicatedDataStructure {
             data: DataStructureType::init(),
-            replica: tracked(replicas),
+            replica: tracked(replica),
             combiner: tracked(combiner),
             cb_combiner: tracked(cb_combiner)
         };
@@ -3560,9 +3615,12 @@ impl Replica  {
 
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
     /// registration was successfull. None if the registration failed.
-    pub fn register(&self) -> Option<ReplicaToken> {
-        // assert(false);
-        None
+    pub fn register(&mut self) -> Option<ThreadToken> {
+        if self.thread_tokens.len() > 0 {
+            Option::Some(self.thread_tokens.pop())
+        } else {
+            None
+        }
     }
 
     /// Executes an immutable operation against this replica and returns a
@@ -3843,35 +3901,76 @@ impl NodeReplicated {
             num_replicas == NUM_REPLICAS
         ensures res.wf()
     {
-        let (mut log, replica_tokens) = NrLog::new(num_replicas, LOG_SIZE);
+        let (log, replica_tokens, nr_log_tokens) = NrLog::new(num_replicas, LOG_SIZE);
 
-        let tracked unbounded_log_instance = log.unbounded_log_instance.borrow().clone();
-        let tracked cyclic_buffer_instance = log.cyclic_buffer_instance.borrow().clone();
+        let tracked NrLogTokens {
+            num_replicas: _,
+            mut replicas,
+            mut combiners,
+            mut cb_combiners,
+            unbounded_log_instance,
+            cyclic_buffer_instance,
+        } = nr_log_tokens.get();
 
-        let replicas : Vec<Box<Replica>> = Vec::new();
+        let mut actual_replicas : Vec<Box<Replica>> = Vec::new();
         let mut idx = 0;
         while idx < num_replicas
             invariant
+                num_replicas <= NUM_REPLICAS,
                 0 <= idx <= num_replicas,
-                replicas.len() == idx,
-                forall |i| #![trigger replicas[i]] 0 <= i < idx ==> {
-                    replicas[i].wf()
-                    &&& replicas[i].spec_id() == i
-                    &&& replicas[i].unbounded_log_instance@ == unbounded_log_instance
-                    &&& replicas[i].cyclic_buffer_instance@ == cyclic_buffer_instance
-                }
-        {
-            // let tracked config = ReplicaConfig {
+                replica_tokens.len() == num_replicas,
+                forall |i| 0 <= i < num_replicas ==> (#[trigger]replica_tokens[i]).id_spec() == i,
+                actual_replicas.len() == idx,
+                forall |i| #![trigger actual_replicas[i]] 0 <= i < idx ==> {
+                    &&& actual_replicas[i as int].wf()
+                    &&& actual_replicas[i as int].spec_id() == i
+                    &&& actual_replicas[i as int].unbounded_log_instance@ == unbounded_log_instance
+                    &&& actual_replicas[i as int].cyclic_buffer_instance@ == cyclic_buffer_instance
+                },
+                (forall |i| #![trigger replicas[i]] idx <= i < num_replicas ==> {
+                    &&& #[trigger]  replicas.contains_key(i)
+                    &&& replicas[i]@.instance == unbounded_log_instance
+                    &&& replicas[i]@.key == i
+                    &&& replicas[i]@.value == DataStructureSpec::init()
+                }),
+                (forall |i| #![trigger combiners[i]] idx <= i < num_replicas ==> {
+                    &&& #[trigger] combiners.contains_key(i)
+                    &&& combiners[i]@.instance == unbounded_log_instance
+                    &&& combiners[i]@.key == i
+                    &&& combiners[i]@.value.is_Ready()
+                }),
+                (forall |i| #![trigger cb_combiners[i]] idx <= i < num_replicas ==> {
+                    &&& #[trigger]cb_combiners.contains_key(i)
+                    &&& cb_combiners[i]@.instance == cyclic_buffer_instance
+                    &&& cb_combiners[i]@.key == i
+                    &&& cb_combiners[i]@.value.is_Idle()
+                })
 
-            // }
-            // let replica_token = log.
-            // let replica = Replica::new(replica_token, MAX_THREADS_PER_REPLICA, config);
+        {
+            let ghost mut idx_ghost; proof { idx_ghost = idx as nat };
+
+            let tracked combiner = combiners.tracked_remove(idx_ghost);
+            let tracked cb_combiner = cb_combiners.tracked_remove(idx_ghost);
+            let tracked replica = replicas.tracked_remove(idx_ghost);
+            let replica_token = replica_tokens.index(idx).clone();
+            let tracked config = ReplicaConfig {
+                replica,
+                combiner,
+                cb_combiner,
+                unbounded_log_instance: unbounded_log_instance.clone(),
+                cyclic_buffer_instance: cyclic_buffer_instance.clone(),
+            };
+            assert(config.wf(idx as nat));
+            assert(replica_token.id_spec() == idx as nat);
+
+            let replica = Replica::new(replica_token, MAX_THREADS_PER_REPLICA, tracked(config));
+            actual_replicas.push(Box::new(replica));
             idx = idx + 1;
         }
 
         let unbounded_log_instance = tracked(unbounded_log_instance);
         let cyclic_buffer_instance = tracked(cyclic_buffer_instance);
-        NodeReplicated { log, replicas, unbounded_log_instance, cyclic_buffer_instance }
+        NodeReplicated { log, replicas: actual_replicas, unbounded_log_instance, cyclic_buffer_instance }
     }
 
     /// Registers a thread with a given replica in the [`NodeReplicated`]
@@ -3883,11 +3982,14 @@ impl NodeReplicated {
     ///
     ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-        requires self.wf()
+    pub fn register(&mut self, replica_id: ReplicaId) -> Option<ThreadToken>
+        requires old(self).wf()
     {
-        // assert(false);
-        None
+        if (replica_id as usize) < self.replicas.len() {
+            None
+        } else {
+            None
+        }
     }
 
     /// Executes a mutable operation against the data-structure.
@@ -4243,43 +4345,106 @@ impl<T> RwLock<T> {
 
 } // verus!
 
+use  std::sync::Arc;
+
+struct NrCounter(Arc<NodeReplicated>, ThreadToken);
+
+const NUM_OPS_PER_THREAD: usize = 1000;
+const NUM_THREADS: usize = 4;
+
+// #[verifier(external_body)] /* vattr */
+#[verifier(external_body)] /* vattr */
 pub fn main() {
 
+    println!("Creating Replicated Data Structure...");
 
-    // let stack = Arc::new(NodeReplicated::new(NUM_REPLICAS, |_node| 0)?);
+    let mut nr_counter = NodeReplicated::new(NUM_REPLICAS);
 
-    // // The replica executes a Modify or Access operations by calling
-    // // `execute_mut` and `execute`. Eventually they end up in the `Dispatch` trait.
-    // let thread_loop = |stack: NrStack<usize>| {
-    //     for i in 0..NUM_OPS_PER_THREAD {
-    //         match i % 3 {
-    //             0 => {
-    //                 stack.push(i);
-    //                 Some(i)
-    //             }
-    //             1 => stack.pop(),
-    //             2 => stack.peek(),
-    //             _ => unreachable!(),
-    //         };
-    //     }
-    // };
+    println!("Obtaining Thread tokens for {NUM_THREADS} threads...");
 
-    // let mut threads = Vec::with_capacity(NUM_THREADS);
-    // for idx in 0..NUM_THREADS {
-    //     let stack = stack.clone();
-    //     threads.push(std::thread::spawn(move || {
-    //         let ridx = stack
-    //             .register(idx % NUM_REPLICAS)
-    //             .expect("Unable to register with stack");
-    //         thread_loop(NrStack(stack, ridx));
-    //     }));
-    // }
+    let mut thread_tokens = Vec::with_capacity(NUM_THREADS);
+    for idx in 0..NUM_THREADS+NUM_REPLICAS {
+        if let Option::Some(tkn) = nr_counter.register((idx % NUM_REPLICAS) as u32) {
+            thread_tokens.push(tkn);
+        } else {
+            panic!("could not register with replica!");
+        }
+    }
 
-    // // Wait for all the threads to finish
-    // for thread in threads {
-    //     thread.join().unwrap();
-    // }
+    let nr_counter = Arc::new(nr_counter);
 
-    // Ok(())
+    // The replica executes a Modify or Access operations by calling
+    // `execute_mut` and `execute`. Eventually they end up in the `Dispatch` trait.
+    let thread_loop = |counter: NrCounter| {
+        let NrCounter(counter, mut tkn) = counter;
+        let tid = tkn.thread_id();
+        println!("Thread #{tid}  executing {NUM_OPS_PER_THREAD} operations");
+        for i in 0..NUM_OPS_PER_THREAD {
+            match i % 2 {
+                0 => {
+                    match counter.execute_mut(UpdateOp::Inc, tkn) {
+                        Result::Ok((ret, t)) => {
+                            tkn = t;
+                        },
+                        Result::Err(t) => {
+                            tkn = t;
+                        }
+                    }
+                }
+                1 => {
+                    match  counter.execute(ReadonlyOp::Get, tkn) {
+                        Result::Ok((ret, t)) => {
+                            tkn = t;
+                        },
+                        Result::Err(t) => {
+                            tkn = t;
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            };
+        }
+    };
 
+    println!("Creating {NUM_THREADS} threads...");
+
+    let mut threads = Vec::with_capacity(NUM_THREADS);
+    for idx in 0..NUM_THREADS {
+        let counter = nr_counter.clone();
+        let tkn = thread_tokens.pop();
+        threads.push(std::thread::spawn(move || {
+            thread_loop(NrCounter(counter, tkn));
+        }));
+    }
+
+    println!("Waiting for threads to finish...");
+
+    // Wait for all the threads to finish
+    for idx in 0..NUM_THREADS {
+        let thread = threads.pop();
+        thread.join().unwrap();
+    }
+
+    println!("Obtain final result...");
+
+    for idx in 0 .. NUM_REPLICAS {
+        let tkn = thread_tokens.pop();
+        match nr_counter.execute(ReadonlyOp::Get, tkn) {
+            Result::Ok((ret, t)) => {
+                match ret {
+                    ReturnType::Value(v) => {
+                        println!("Replica {idx} - Final Result: v expected {}", NUM_THREADS * NUM_OPS_PER_THREAD / 2);
+                    }
+                    ReturnType::Ok => {
+                        println!("Replica {idx} - Final Result: OK? expected {}", NUM_THREADS * NUM_OPS_PER_THREAD / 2);
+                    }
+                }
+            },
+            Result::Err(t) => {
+                println!("Replica {idx} - Final Result: Err");
+            }
+        }
+    }
+
+    println!("Done!");
 }
