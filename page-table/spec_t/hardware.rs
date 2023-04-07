@@ -1,17 +1,16 @@
 #![allow(unused_imports)] 
-use crate::pervasive::*;
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
-use map::*;
-use seq::*;
-#[allow(unused_imports)] use set::*;
+use vstd::map::*;
+use vstd::seq::*;
+use vstd::set::*;
+use vstd::option::{ *, Option::* };
 use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::l0;
 use crate::impl_u::l2_impl;
-use option::{ *, Option::* };
 
 verus! {
 

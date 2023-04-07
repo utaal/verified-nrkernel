@@ -1,15 +1,14 @@
 #![allow(unused_imports)]
-use crate::pervasive::*;
-use seq::*;
-use set::*;
-use crate::*;
 use builtin::*;
 use builtin_macros::*;
+use crate::*;
 use state_machines_macros::*;
-use map::*;
+use vstd::seq::*;
+use vstd::set::*;
+use vstd::map::*;
+use vstd::option::{ *, Option::None, Option::Some };
 use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
-use option::{ *, Option::None, Option::Some };
 use crate::spec_t::mem::{ word_index_spec };
 
 // TODO:

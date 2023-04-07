@@ -1,18 +1,17 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use crate::pervasive::*;
-use modes::*;
-use seq::*;
-use option::{*, Option::*};
-use map::*;
-use set::*;
-use set_lib::*;
+use vstd::prelude::arbitrary;
+use vstd::modes::*;
+use vstd::seq::*;
+use vstd::option::{*, Option::*};
+use vstd::map::*;
+use vstd::set::*;
+use vstd::set_lib::*;
+use vstd::vec::*;
+use vstd::result::{*, Result::*};
 use crate::impl_u::lib;
-use vec::*;
 use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
-
-use result::{*, Result::*};
 
 verus! {
 
@@ -141,7 +140,7 @@ impl PageTableContents {
         }
     }
 
-    proof fn map_frame_preserves_inv(#[spec] self, base: nat, pte: PageTableEntry)
+    proof fn map_frame_preserves_inv(self, base: nat, pte: PageTableEntry)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
@@ -331,7 +330,7 @@ pub proof fn lemma_finite_map_union<S,T>()
 {
     assert_forall_by(|s1: Map<S,T>, s2: Map<S,T>| {
         requires(s1.dom().finite() && s2.dom().finite());
-        ensures(#[auto_trigger] s1.union_prefer_right(s2).dom().finite());
+        ensures((#[trigger] s1.union_prefer_right(s2)).dom().finite());
 
         assert(s1.dom().union(s2.dom()).finite());
 

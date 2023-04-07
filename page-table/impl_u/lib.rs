@@ -1,9 +1,9 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use crate::pervasive::*;
+use vstd::pervasive::*;
 use crate::definitions_t::aligned;
-use map::*;
+use vstd::map::*;
 
 verus! {
 

@@ -1,15 +1,15 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use crate::pervasive::*;
-use modes::*;
-use seq::*;
-use option::{*, Option::*};
-use map::*;
-use set::*;
-use set_lib::*;
-use vec::*;
-use result::{*, Result::*};
+use vstd::pervasive::*;
+use vstd::modes::*;
+use vstd::seq::*;
+use vstd::option::{*, Option::*};
+use vstd::map::*;
+use vstd::set::*;
+use vstd::set_lib::*;
+use vstd::vec::*;
+use vstd::result::{*, Result::*};
 use crate::impl_u::lib;
 use crate::definitions_t::{ aligned, between };
 
