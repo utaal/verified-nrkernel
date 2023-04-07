@@ -50,13 +50,13 @@ pub struct StoredType {
 }
 
 pub open spec fn stored_type_inv(st: StoredType, idx: int, unbounded_log_instance: UnboundedLog::Instance) -> bool {
+    // also match the cell id
+    &&& st.cell_perms@.value.is_Some()
     &&& idx >= 0 ==> {
         &&& st.log_entry.is_Some()
-        &&& st.cell_perms@.value.is_Some()
         &&& st.log_entry.get_Some_0()@.key == idx
         &&& st.cell_perms@.value.get_Some_0().node_id as NodeId == st.log_entry.get_Some_0()@.value.node_id
         &&& st.cell_perms@.value.get_Some_0().op == st.log_entry.get_Some_0()@.value.op
-
         &&& st.log_entry.get_Some_0()@.instance == unbounded_log_instance
     }
     &&& idx < 0 ==> {
