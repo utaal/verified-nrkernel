@@ -111,9 +111,11 @@ pub struct ReplicaToken {
 }
 
 impl ReplicaToken {
-    // pub const fn new(rid: ReplicaId) -> Self {
-    //     Self { rid }
-    // }
+    pub const fn new(rid: ReplicaId) -> (res: ReplicaToken)
+        ensures res@ == rid
+    {
+        ReplicaToken { rid }
+    }
 
     pub const fn clone(&self) -> (res: Self)
         ensures
@@ -669,7 +671,6 @@ pub struct NrLog
     /// XXX: should we make this an array as well
     pub(crate) local_versions: Vec<CachePadded<AtomicU64<_, (UnboundedLog::local_versions, CyclicBuffer::local_versions), _>>>,  // NodeInfo is padded
 
-
     // The upstream Rust version also contains:
     //  - pub(crate) next: CachePadded<AtomicUsize>, the identifier for the next replica
     //  - pub(crate) lmasks: [CachePadded<Cell<bool>>; MAX_REPLICAS_PER_LOG], tracking of alivebits
@@ -750,12 +751,14 @@ pub open spec fn wf(&self) -> bool {
 impl NrLog
 {
     /// initializes the NrLOg
-    pub fn new(num_replicas: usize, log_size: usize) -> (res: Self)
+    pub fn new(num_replicas: usize, log_size: usize) -> (res: (Self, Vec<ReplicaToken>))
         requires
             log_size == LOG_SIZE,
             num_replicas == NUM_REPLICAS
         ensures
-            res.wf()
+            res.0.wf(),
+            res.1.len() == num_replicas,
+            forall |i| #![trigger res.1[i]] 0 <= i < num_replicas ==> res.1[i].id_spec() == i,
     {
         //
         // initialize the unbounded log state machine to obtain the tokens
@@ -975,7 +978,24 @@ impl NrLog
             nid = nid + 1;
         }
 
-        NrLog {
+        //
+        // Create the replica tokens
+        //
+
+        let mut replica_tokens : Vec<ReplicaToken> = Vec::with_capacity(num_replicas);
+        let mut idx = 0;
+        while idx < num_replicas
+            invariant
+                0 <= idx <= num_replicas,
+                num_replicas <= NUM_REPLICAS,
+                replica_tokens.len() == idx,
+                forall |i| #![trigger replica_tokens[i]] 0 <= i < idx ==> replica_tokens[i].id_spec() == i,
+        {
+            replica_tokens.push(ReplicaToken::new(idx as ReplicaId));
+            idx = idx + 1;
+        }
+
+        let log = NrLog {
             slog,
             version_upper_bound,
             head,
@@ -984,7 +1004,9 @@ impl NrLog
             num_replicas : ghost(num_replicas as nat),
             unbounded_log_instance: tracked(unbounded_log_instance),
             cyclic_buffer_instance: tracked(cyclic_buffer_instance),
-        }
+        };
+
+        (log, replica_tokens)
     }
 
 
@@ -2047,6 +2069,15 @@ impl NrLog
         (min_local_version, tracked(g_cb_comb_new))
     }
 
+
+    // pub fn register(&mut self) -> Option<ReplicaToken> {
+    //     if self.replica_tokens.len() > 0 {
+    //         Option::Some(self.replica_tokens.pop())
+    //     } else {
+    //         Option::None
+    //     }
+    // }
+
 }
 
 
@@ -2309,6 +2340,10 @@ impl Context {
 
     pub fn new(thread_id: usize, slot: Tracked<FlatCombiner::slots>, flat_combiner_instance: Tracked<FlatCombiner::Instance>, unbounded_log_instance: Tracked<UnboundedLog::Instance>)
         -> (res: (Context, Tracked<PermissionOpt<PendingOperation>>))
+        requires
+            slot@@.value.is_Empty(),
+            slot@@.instance == flat_combiner_instance,
+            slot@@.key == thread_id as nat
         ensures
             res.0.wf(thread_id as nat),
             res.0.flat_combiner_instance == flat_combiner_instance,
@@ -2325,6 +2360,7 @@ impl Context {
         //
         let (batch, batch_perms) = PCell::empty();
         let batch = CachePadded(batch);
+
         //
         // create the ghost context
         //
@@ -2333,6 +2369,7 @@ impl Context {
             slots: slot.get(),
             update: Option::None,
         };
+
 
         let atomic = AtomicU64::new((flat_combiner_instance, unbounded_log_instance, batch, ghost(thread_id_g)), 0, context_ghost);
 
@@ -2942,6 +2979,12 @@ impl Replica  {
                 contexts.len() == idx,
                 thread_tokens.len() == idx,
                 0 <= idx <= num_threads,
+                forall |i: nat| idx <= i < num_threads ==> fc_slots.contains_key(i),
+                forall |i: nat| #![trigger fc_slots[i]] idx <= i < num_threads ==> {
+                    &&& fc_slots[i]@.value.is_Empty()
+                    &&& fc_slots[i]@.key == i
+                    &&& fc_slots[i]@.instance == fc_instance
+                },
                 forall |i: nat| idx <= i < num_threads ==> fc_clients.contains_key(i),
                 forall |i: nat| #![trigger fc_clients[i]] idx <= i < num_threads ==> {
                     &&& fc_clients[i]@.instance == fc_instance
@@ -3795,16 +3838,41 @@ impl NodeReplicated {
     ///
     ///  - Dafny: n/a ?
     ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
-    // pub fn init(num_replicas: usize) -> (res: Self)
-    //     requires num_replicas > 0
-    //     ensures res.wf()
-    // {
-    //     arbitrary()
-    // //     NodeReplicated {
-    // //         log: NrLog::new(),
-    // //         replicas: Vec::new(),
-    // //     }
-    // }
+    pub fn new(num_replicas: usize) -> (res: Self)
+        requires
+            num_replicas == NUM_REPLICAS
+        ensures res.wf()
+    {
+        let (mut log, replica_tokens) = NrLog::new(num_replicas, LOG_SIZE);
+
+        let tracked unbounded_log_instance = log.unbounded_log_instance.borrow().clone();
+        let tracked cyclic_buffer_instance = log.cyclic_buffer_instance.borrow().clone();
+
+        let replicas : Vec<Box<Replica>> = Vec::new();
+        let mut idx = 0;
+        while idx < num_replicas
+            invariant
+                0 <= idx <= num_replicas,
+                replicas.len() == idx,
+                forall |i| #![trigger replicas[i]] 0 <= i < idx ==> {
+                    replicas[i].wf()
+                    &&& replicas[i].spec_id() == i
+                    &&& replicas[i].unbounded_log_instance@ == unbounded_log_instance
+                    &&& replicas[i].cyclic_buffer_instance@ == cyclic_buffer_instance
+                }
+        {
+            // let tracked config = ReplicaConfig {
+
+            // }
+            // let replica_token = log.
+            // let replica = Replica::new(replica_token, MAX_THREADS_PER_REPLICA, config);
+            idx = idx + 1;
+        }
+
+        let unbounded_log_instance = tracked(unbounded_log_instance);
+        let cyclic_buffer_instance = tracked(cyclic_buffer_instance);
+        NodeReplicated { log, replicas, unbounded_log_instance, cyclic_buffer_instance }
+    }
 
     /// Registers a thread with a given replica in the [`NodeReplicated`]
     /// data-structure. Returns an Option containing a [`ThreadToken`] if the
@@ -4175,4 +4243,43 @@ impl<T> RwLock<T> {
 
 } // verus!
 
-pub fn main() {}
+pub fn main() {
+
+
+    // let stack = Arc::new(NodeReplicated::new(NUM_REPLICAS, |_node| 0)?);
+
+    // // The replica executes a Modify or Access operations by calling
+    // // `execute_mut` and `execute`. Eventually they end up in the `Dispatch` trait.
+    // let thread_loop = |stack: NrStack<usize>| {
+    //     for i in 0..NUM_OPS_PER_THREAD {
+    //         match i % 3 {
+    //             0 => {
+    //                 stack.push(i);
+    //                 Some(i)
+    //             }
+    //             1 => stack.pop(),
+    //             2 => stack.peek(),
+    //             _ => unreachable!(),
+    //         };
+    //     }
+    // };
+
+    // let mut threads = Vec::with_capacity(NUM_THREADS);
+    // for idx in 0..NUM_THREADS {
+    //     let stack = stack.clone();
+    //     threads.push(std::thread::spawn(move || {
+    //         let ridx = stack
+    //             .register(idx % NUM_REPLICAS)
+    //             .expect("Unable to register with stack");
+    //         thread_loop(NrStack(stack, ridx));
+    //     }));
+    // }
+
+    // // Wait for all the threads to finish
+    // for thread in threads {
+    //     thread.join().unwrap();
+    // }
+
+    // Ok(())
+
+}
