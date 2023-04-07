@@ -2266,6 +2266,8 @@ impl PageTable {
                             assume(pt_res@.region === pt@.region);
                             Ok(res)
                         } else {
+                            // FIXME: main_new problem example
+                            // let idx_int: Ghost<int> = Ghost::new(idx as int);
                             let pt_res: Ghost<PTDir> = Ghost::new(
                                 PTDir {
                                     region: pt@.region,
