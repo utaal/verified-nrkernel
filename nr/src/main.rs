@@ -1392,7 +1392,6 @@ impl NrLog
                 // !!! THIS IS A PANIC CASE! WE DO NOT RETURN FROM HERE !!!
                 // !!! JUST MAKING THE POST CONDITION PASS !!!
                 ////////////////////////////////////////////////////////////////////////////////////
-                let request_ids = Ghost(Seq::empty());
                 proof {
                     cb_combiner = self.cyclic_buffer_instance.borrow().advance_tail_abort(nid as nat, cb_combiner);
 
@@ -1401,8 +1400,7 @@ impl NrLog
                         ghost_replica,                              // Tracked<UnboundedLog::replicas>,
                         combiner: Tracked(combiner),                // Tracked<UnboundedLog::combiner>,
                         cb_combiner: Tracked(cb_combiner),          // Tracked<CyclicBuffer::combiner>,
-                        // TODO: this should work: request_ids: Ghost(Seq::empty()),              // Ghost<Seq<ReqId>>,
-                        request_ids,              // Ghost<Seq<ReqId>>,
+                        request_ids: Ghost(Seq::empty()),              // Ghost<Seq<ReqId>>,
                     };
                 }
 
@@ -1811,7 +1809,7 @@ impl NrLog
             let tracked cb_combiner = Tracked(cb_combiner);
             let tracked ghost_replica = Tracked(ghost_replica);
             let tracked local_updates = Tracked(local_updates);
-            let /*TODO: tracked*/ request_ids = Ghost(request_ids);
+            let tracked request_ids = Ghost(request_ids);
             let tracked ghost_data = NrLogAppendExecDataGhost {
                 local_updates,  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
                 ghost_replica,  // Tracked<UnboundedLog::replicas>,
@@ -2059,7 +2057,7 @@ impl NrLog
         let tracked cb_combiner = Tracked(cb_combiner);
         let tracked local_updates = Tracked(local_updates);
         let tracked ghost_replica = Tracked(ghost_replica);
-        let /*TODO: tracked*/ request_ids = Ghost(request_ids);
+        let tracked request_ids = Ghost(request_ids);
         let tracked ghost_data = NrLogAppendExecDataGhost {
             local_updates,  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
             ghost_replica,  // Tracked<UnboundedLog::replicas>,
@@ -3490,11 +3488,9 @@ impl Replica  {
             self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
         }
 
-        let request_ids = Ghost(request_ids);
         let tracked thread_ops_data = ThreadOpsData {
             flat_combiner,
-            // TODO: request_ids: Ghost(request_ids),
-            request_ids,
+            request_ids: Ghost(request_ids),
             local_updates: Tracked(updates),
             cell_permissions: Tracked(cell_permissions)
         };
