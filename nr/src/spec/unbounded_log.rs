@@ -5,12 +5,12 @@ use builtin::*;
 use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::arbitrary;
+use vstd::pervasive::arbitrary;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::map::Map;
-use super::pervasive::seq::Seq;
+use vstd::map::Map;
+use vstd::seq::Seq;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::set::Set;
+use vstd::set::Set;
 
 use state_machines_macros::*;
 // use crate::assert_maps_equal;

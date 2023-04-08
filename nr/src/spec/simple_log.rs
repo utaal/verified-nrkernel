@@ -4,10 +4,10 @@ use builtin_macros::*;
 use state_machines_macros::*;
 
 // use pervasive::*;
-use super::pervasive::map::*;
-use super::pervasive::seq::*;
+use vstd::map::*;
+use vstd::seq::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::set::*;
+use vstd::set::*;
 
 use super::types::*;
 #[allow(unused_imports)] // XXX: should not be needed!

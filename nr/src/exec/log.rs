@@ -2,7 +2,7 @@ use builtin_macros::verus_old_todo_no_ghost_blocks;
 
 
 use crate::pervasive::prelude::*;
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use crate::pervasive::cell::{PCell, PointsTo};
 use crate::pervasive::map::Map;
 use crate::pervasive::option::Option;
 use crate::pervasive::vec::Vec;
@@ -19,7 +19,7 @@ use super::{LOG_SIZE, NUM_REPLICAS};
 
 use super::cachepadded::CachePadded;
 
-verus_old_todo_no_ghost_blocks! {
+verus! {
 
 
 struct_with_invariants!{

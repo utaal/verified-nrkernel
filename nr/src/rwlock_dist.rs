@@ -13,13 +13,13 @@ use crate::pervasive::map::*;
 use crate::pervasive::seq::*;
 use crate::pervasive::option::*;
 use crate::pervasive::atomic_ghost::*;
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use crate::pervasive::cell::{PCell, PointsTo};
 use crate::pervasive::result::Result;
 use state_machines_macros::tokenized_state_machine;
 
 use spec::rwlock::*;
 
-verus_old_todo_no_ghost_blocks!{
+verus!{
 
 /// a simpe cache padding for the struct fields
 #[repr(align(128))]

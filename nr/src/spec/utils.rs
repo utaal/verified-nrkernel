@@ -3,13 +3,13 @@ use builtin::*;
 use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::arbitrary;
+use vstd::pervasive::arbitrary;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::map::*;
+use vstd::map::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::seq::*;
+use vstd::seq::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::set::Set;
+use vstd::set::Set;
 
 verus! {
 

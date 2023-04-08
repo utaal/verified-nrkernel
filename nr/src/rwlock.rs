@@ -14,13 +14,13 @@ use crate::pervasive::seq::*;
 use crate::pervasive::set::*;
 use crate::pervasive::option::*;
 use crate::pervasive::atomic_ghost::*;
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use crate::pervasive::cell::{PCell, PointsTo};
 use crate::pervasive::result::Result;
 use state_machines_macros::tokenized_state_machine;
 
 use spec::rwlock::*;
 
-verus_old_todo_no_ghost_blocks!{
+verus!{
 
 /// a simpe cache padding for the struct fields
 #[repr(align(128))]
@@ -40,8 +40,8 @@ pub fn spin_loop_hint() {
 //
 /// This structure is created by the write and try_write methods on RwLockSpec.
 tracked struct RwLockWriteGuard<T> {
-    handle: Tracked<RwLockSpec::writer<PermissionOpt<T>>>,
-    perm: Tracked<PermissionOpt<T>>,
+    handle: Tracked<RwLockSpec::writer<PointsTo<T>>>,
+    perm: Tracked<PointsTo<T>>,
     //foo: Tracked<T>,
     // rw_lock : Ghost<DistRwLock::Instance<T>>,
 }
@@ -54,7 +54,7 @@ tracked struct RwLockWriteGuard<T> {
 ///
 /// This structure is created by the read and try_read methods on RwLockSpec.
 tracked struct RwLockReadGuard<T> {
-    handle: Tracked<RwLockSpec::reader<PermissionOpt<T>>>,
+    handle: Tracked<RwLockSpec::reader<PointsTo<T>>>,
     // rw_lock : Ghost<DistRwLock::Instance<T>>,
 }
 
@@ -77,29 +77,29 @@ struct RwLock<#[verifier(maybe_negative)] T> {
     /// cell containing the data
     cell: PCell<T>,
     /// exclusive access
-    exc: CachePadded<AtomicBool<_, RwLockSpec::flag_exc<PermissionOpt<T>>, _>>,
+    exc: CachePadded<AtomicBool<_, RwLockSpec::flag_exc<PointsTo<T>>, _>>,
     /// reference count
-    rc: CachePadded<AtomicU64<_, RwLockSpec::flag_rc<PermissionOpt<T>>, _>>,
+    rc: CachePadded<AtomicU64<_, RwLockSpec::flag_rc<PointsTo<T>>, _>>,
 
     /// the state machien instance
-    tracked inst: RwLockSpec::Instance<PermissionOpt<T>>,
+    tracked inst: RwLockSpec::Instance<PointsTo<T>>,
     ghost user_inv: Set<T>,
 }
 
 pub closed spec fn wf(&self) -> bool {
     predicate {
-        forall |v: PermissionOpt<T>| #[trigger] self.inst.user_inv().contains(v) == (
+        forall |v: PointsTo<T>| #[trigger] self.inst.user_inv().contains(v) == (
             equal(v@.pcell, self.cell.id()) && v@.value.is_Some()
                 && self.user_inv.contains(v@.value.get_Some_0())
         )
     }
 
-    invariant on exc with (inst) specifically (self.exc.0) is (v: bool, g: RwLockSpec::flag_exc<PermissionOpt<T>>) {
+    invariant on exc with (inst) specifically (self.exc.0) is (v: bool, g: RwLockSpec::flag_exc<PointsTo<T>>) {
         // g@ === RwLockSpec::token! [ inst => exc ==> v ]
         g@.instance == inst && g@.value == v
     }
 
-    invariant on rc with (inst) specifically (self.rc.0) is (v: u64, g: RwLockSpec::flag_rc<PermissionOpt<T>>) {
+    invariant on rc with (inst) specifically (self.rc.0) is (v: u64, g: RwLockSpec::flag_rc<PointsTo<T>>) {
         // g@ === RwLockSpec::token! [ inst => rc ==> v ]
         g@.instance == inst && g@.value == v as nat
     }
@@ -139,7 +139,7 @@ impl<T> RwLock<T> {
 
         let ghost set_inv = Set::new(inv@);
 
-        let ghost user_inv = Set::new(closure_to_fn_spec(|s: PermissionOpt<T>| {
+        let ghost user_inv = Set::new(closure_to_fn_spec(|s: PointsTo<T>| {
             &&& equal(s@.pcell, cell.id())
             &&& s@.value.is_Some()
             &&& set_inv.contains(s@.value.get_Some_0())
@@ -150,7 +150,7 @@ impl<T> RwLock<T> {
         let tracked flag_rc;
         proof {
             let tracked (Trk(_inst), Trk(_flag_exc), Trk(_flag_rc), _, _, _, _) =
-                RwLockSpec::Instance::<PermissionOpt<T>>::initialize_full(user_inv, perm@, Option::Some(perm.get()));
+                RwLockSpec::Instance::<PointsTo<T>>::initialize_full(user_inv, perm@, Option::Some(perm.get()));
             inst = _inst;
             flag_exc = _flag_exc;
             flag_rc = _flag_rc;
@@ -168,7 +168,7 @@ impl<T> RwLock<T> {
     {
 
         let mut done = false;
-        let tracked mut token: Option<RwLockSpec::pending_writer<PermissionOpt<T>>> = Option::None;
+        let tracked mut token: Option<RwLockSpec::pending_writer<PointsTo<T>>> = Option::None;
         while !done
             invariant
                 self.wf(),
@@ -196,8 +196,8 @@ impl<T> RwLock<T> {
                 token.is_Some() && token.get_Some_0()@.instance == self.inst,
         {
 
-            let tracked mut perm_opt: Option<PermissionOpt<T>> = Option::None;
-            let tracked mut handle_opt: Option<RwLockSpec::writer<PermissionOpt<T>>> =Option::None;
+            let tracked mut perm_opt: Option<PointsTo<T>> = Option::None;
+            let tracked mut handle_opt: Option<RwLockSpec::writer<PointsTo<T>>> =Option::None;
             let tracked acquire_exc_end_result; // need to define tracked, can't in the body
             let result = atomic_with_ghost!(
                 &self.rc.0 => load();
@@ -234,7 +234,7 @@ impl<T> RwLock<T> {
 
             let val = atomic_with_ghost!(&self.rc.0 => load(); ghost g => { });
 
-            let tracked mut token: Option<RwLockSpec::pending_reader<PermissionOpt<T>>> = Option::None;
+            let tracked mut token: Option<RwLockSpec::pending_reader<PointsTo<T>>> = Option::None;
 
             if val < 18446744073709551615 {
                 let result = atomic_with_ghost!(
@@ -249,7 +249,7 @@ impl<T> RwLock<T> {
 
                 match result {
                     Result::Ok(_) => {
-                        let tracked mut handle_opt: Option<RwLockSpec::reader<PermissionOpt<T>>> = Option::None;
+                        let tracked mut handle_opt: Option<RwLockSpec::reader<PointsTo<T>>> = Option::None;
                         let tracked acquire_read_end_result;
                         let result = atomic_with_ghost!(
                             &self.exc.0 => load();

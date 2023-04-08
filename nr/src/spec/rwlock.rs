@@ -1,11 +1,11 @@
 #[allow(unused_imports)]
 use builtin::*;
 #[allow(unused_imports)]
-use super::pervasive::{ prelude::*, multiset::*, option::* };
+use vstd::{ prelude::*, multiset::*, option::* };
 use state_machines_macros::tokenized_state_machine;
 
 
-tokenized_state_machine!(RwLockSpec<#[verifier(maybe_negative)] T> {
+tokenized_state_machine!(RwLockSpec<#[verifier::maybe_negative] T> {
     fields {
         #[sharding(constant)]
         pub user_inv: Set<T>,

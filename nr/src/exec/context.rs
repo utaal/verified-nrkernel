@@ -2,7 +2,7 @@ use builtin_macros::verus_old_todo_no_ghost_blocks;
 
 
 use crate::pervasive::prelude::*;
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use crate::pervasive::cell::{PCell, PointsTo};
 use crate::pervasive::map::Map;
 use crate::pervasive::option::Option;
 use crate::pervasive::vec::Vec;
@@ -18,7 +18,7 @@ use super::cachepadded::CachePadded;
 use super::ReplicaId;
 use super::replica::ReplicaToken;
 
-verus_old_todo_no_ghost_blocks! {
+verus! {
 
 
 /// the thread token identifies a thread of a given replica
@@ -72,7 +72,7 @@ pub struct ContextGhost {
     /// Token to access the batch cell in Context
     ///
     ///  - Dafny: glinear contents: glOption<CellContents<OpResponse>>,
-    pub batch_token: Tracked<PermissionOpt<PendingOperation>>,
+    pub batch_token: Tracked<PointsTo<PendingOperation>>,
 
     // The flat combiner
     // fc: FCSlot
@@ -138,7 +138,7 @@ impl Context {
     {
         // enqueue is a bit a misnomer here, we actually only have one slot in the batch for now.
 
-        // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
+        // let tracked token : Option<Tracked<PointsTo<PendingOperation>>>;
         // let res = atomic_with_ghost!(
         //     &self.atomic.0 => compare_exchange(0, 1);
         //     update prev->next;
@@ -180,7 +180,7 @@ impl Context {
             self.wf(),
             // self.atomic != 0
     {
-        // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
+        // let tracked token : Option<Tracked<PointsTo<PendingOperation>>>;
         // let res = atomic_with_ghost!(
         //     &self.atomic.0 => load();
         //     returning res;
@@ -215,7 +215,7 @@ impl Context {
     pub fn get_result(&self) -> Option<ReturnType>
         requires self.wf()
     {
-        // let tracked token : Option<Tracked<PermissionOpt<PendingOperation>>>;
+        // let tracked token : Option<Tracked<PointsTo<PendingOperation>>>;
         // // let res = atomic_with_ghost!(
         // //     &self.atomic.0 => compare_exchange(1, 0);
         // //     update prev->next;

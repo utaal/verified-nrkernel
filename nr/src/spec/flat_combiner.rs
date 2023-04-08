@@ -5,12 +5,12 @@ use builtin::*;
 use builtin_macros::*;
 
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::map::*;
-use super::pervasive::option::Option;
-use super::pervasive::seq::*;
-// use super::pervasive::set::*;
+use vstd::map::*;
+use vstd::option::Option;
+use vstd::seq::*;
+// use vstd::set::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use super::pervasive::arbitrary;
+use vstd::pervasive::arbitrary;
 
 use state_machines_macros::*;
 

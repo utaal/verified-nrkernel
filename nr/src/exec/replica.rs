@@ -2,7 +2,7 @@
 use builtin_macros::verus_old_todo_no_ghost_blocks;
 
 use crate::pervasive::prelude::*;
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use crate::pervasive::cell::{PCell, PointsTo};
 use crate::pervasive::map::Map;
 use crate::pervasive::option::Option;
 use crate::pervasive::vec::Vec;
@@ -36,7 +36,7 @@ use super::context::LogToken;
 pub type ReplicaToken = ThreadIdx;
 
 
-verus_old_todo_no_ghost_blocks! {
+verus! {
 
 struct_with_invariants!{
 /// Ghost state that is protected by the combiner lock
@@ -52,11 +52,11 @@ pub struct CombinerLockStateGhost {
 
     /// Stores the token to access the op_buffer in the replica
     ///  - Dafny: glinear gops: LC.LCellContents<seq<nrifc.UpdateOp>>,
-    pub op_buffer_token: Tracked<PermissionOpt<Vec<UpdateOp>>>,
+    pub op_buffer_token: Tracked<PointsTo<Vec<UpdateOp>>>,
 
     /// Stores the token to access the responses in teh Replica
     ///  - Dafny: glinear gresponses: LC.LCellContents<seq<nrifc.ReturnType>>,
-    pub responses_token: Tracked<PermissionOpt<Vec<ReturnType>>>,
+    pub responses_token: Tracked<PointsTo<Vec<ReturnType>>>,
 }
 
 
@@ -461,4 +461,4 @@ impl Replica  {
 }
 
 
-} // verus_old_todo_no_ghost_blocks! {
+} // verus! {

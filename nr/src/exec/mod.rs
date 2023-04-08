@@ -44,7 +44,7 @@ pub use log::NrLog;
 // The Public Interface
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-verus_old_todo_no_ghost_blocks! {
+verus! {
 
 
 /// The "main" type of NR which users interact with.
@@ -171,4 +171,4 @@ impl NodeReplicated {
     }
 }
 
-} // verus_old_todo_no_ghost_blocks!
+} // verus!

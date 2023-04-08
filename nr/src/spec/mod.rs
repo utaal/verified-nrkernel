@@ -1,5 +1,3 @@
-use super::pervasive;
-
 // some types and utilities
 pub mod constants;
 pub mod types;

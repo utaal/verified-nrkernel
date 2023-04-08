@@ -2,14 +2,14 @@
 use builtin::*;
 use builtin_macros::*;
 
-use super::pervasive::map::*;
+use vstd::map::*;
 // #[allow(unused_imports)]
-use super::pervasive::option::Option;
-// use super::pervasive::seq::*;
-// use super::pervasive::set::*;
-// use super::pervasive::*;
+use vstd::option::Option;
+// use vstd::seq::*;
+// use vstd::set::*;
+// use vstd::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use vstd::cell::{PCell, PointsTo};
 
 use state_machines_macros::*;
 
@@ -32,7 +32,7 @@ use super::utils::*;
 
 // rust_verify/tests/example.rs ignore
 
-#[verifier(publish)]
+#[verifier::publish]
 pub const LOG_SIZE: usize = 1024;
 
 pub type LogicalLogIdx = int;
@@ -41,11 +41,11 @@ type Key = int;
 
 verus! {
 
-    // pub type StoredType = PermissionOpt<LogEntry>;
+    // pub type StoredType = PointsTo<LogEntry>;
 
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
 pub struct StoredType {
-    pub cell_perms: PermissionOpt<ConcreteLogEntry>,
+    pub cell_perms: PointsTo<ConcreteLogEntry>,
     pub log_entry: Option<UnboundedLog::log>
 }
 

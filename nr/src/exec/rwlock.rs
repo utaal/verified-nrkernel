@@ -2,7 +2,7 @@ use builtin_macros::verus_old_todo_no_ghost_blocks;
 
 
 use crate::pervasive::prelude::*;
-use crate::pervasive::cell::{PCell, PermissionOpt};
+use crate::pervasive::cell::{PCell, PointsTo};
 use crate::pervasive::map::Map;
 use crate::pervasive::option::Option;
 use crate::pervasive::vec::Vec;
@@ -16,7 +16,7 @@ use crate::spec::unbounded_log::UnboundedLog;
 
 
 
-verus_old_todo_no_ghost_blocks! {
+verus! {
 
 // TODO:
 pub struct RwLock<D>

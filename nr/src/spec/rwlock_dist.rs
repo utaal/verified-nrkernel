@@ -19,7 +19,7 @@ use super::pervasive::*;
 
 use state_machines_macros::tokenized_state_machine;
 
-verus_old_todo_no_ghost_blocks!{
+verus!{
 
 tokenized_state_machine!{
     DistRwLock<T> {
