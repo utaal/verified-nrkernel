@@ -55,6 +55,19 @@ impl DataStructureSpec {
     }
 }
 
+#[verifier(external_body)] /* vattr */
+fn print_update_op(op: &UpdateOp, val: u64) {
+    match op {
+        UpdateOp::Reset => println!("Update::Reset {val} -> 0"),
+        UpdateOp::Inc => println!("Update::increment {val} -> {}", val + 1),
+    }
+}
+
+#[verifier(external_body)] /* vattr */
+fn print_readonly_op(op: &ReadonlyOp) {
+    println!("Read::Get")
+}
+
 pub struct DataStructureType {
     pub val: u64,
 }
@@ -73,6 +86,7 @@ impl DataStructureType {
     pub fn update(&mut self, op: UpdateOp) -> (result: ReturnType)
         ensures old(self).interp().spec_update(op) == (self.interp(), result)
     {
+        // print_update_op(&op, self.val);
         match op {
             UpdateOp::Reset => self.val = 0,
             UpdateOp::Inc => self.val = if self.val < 0xffff_ffff_ffff_ffff { self.val + 1 } else { 0 }
@@ -83,6 +97,7 @@ impl DataStructureType {
     pub fn read(&self, op: ReadonlyOp) -> (result: ReturnType)
         ensures self.interp().spec_read(op) == result
     {
+        // print_readonly_op(&op);
         ReturnType::Value(self.val)
     }
 }

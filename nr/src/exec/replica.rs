@@ -404,8 +404,8 @@ impl Replica  {
             responses_token,
         };
 
-        let fc_inst = Tracked(fc_instance.clone());
-        let combiner = CachePadded(AtomicU64::new(Ghost((fc_inst, responses, collected_operations, collected_operations_per_thread)), 0, Tracked(Option::Some(context_ghost))));
+        let tracked fc_inst = fc_instance.clone();
+        let combiner = CachePadded(AtomicU64::new(Ghost((Tracked(fc_inst), responses, collected_operations, collected_operations_per_thread)), 0, Tracked(Option::Some(context_ghost))));
 
         //
         // Assemble the data struture
@@ -517,6 +517,7 @@ impl Replica  {
         // Step 1: try to take the combiner lock to become combiner
         let (acquired, combiner_lock) = self.acquire_combiner_lock();
 
+
         // Step 2: if we are the combiner then perform flat combining, else return
         if acquired {
             assert(combiner_lock@.is_Some());
@@ -561,17 +562,8 @@ impl Replica  {
         // Step 1: collect the operations from the threads
         // self.collect_thread_ops(&mut buffer, operations.as_mut_slice());
 
-        let collect_res = self.collect_thread_ops(&mut operations, &mut num_ops_per_thread, flat_combiner);
-        let tracked collect_res = collect_res.get();
-        let flat_combiner = Tracked(collect_res.flat_combiner.get());
-        let local_updates = Tracked(collect_res.local_updates.get());
-        let request_ids :  Ghost<Seq<ReqId>> = Ghost(collect_res.request_ids@);
-        let cell_permissions = Tracked(collect_res.cell_permissions.get());
-
-        // flat_combiner: Tracked<FlatCombiner::combiner>,
-        // request_ids: Ghost<Seq<ReqId>>,
-        // local_updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
-        // cell_permissions: Tracked<Map<nat, PointsTo<PendingOperation>>>,
+        let Tracked(collect_res) = self.collect_thread_ops(&mut operations, &mut num_ops_per_thread, flat_combiner);
+        let tracked ThreadOpsData { flat_combiner, local_updates, request_ids, cell_permissions } = collect_res;
 
         // Step 2: Take the R/W lock on the data structure
         let (replicated_data_structure, write_handle) = self.data.0.acquire_write();
@@ -596,23 +588,22 @@ impl Replica  {
             &&& (#[trigger] append_exec_ghost_data.local_updates@[i])@.instance == self.unbounded_log_instance@}
         );
 
-        let append_exec_ghost_data = slog.append(&self.replica_token, &operations, &responses, Tracked(append_exec_ghost_data));
+        let append_exec_ghost_data = slog.append(&self.replica_token, &operations, &mut responses, &mut data, Tracked(append_exec_ghost_data));
+
 
         // Step 3: Execute all operations
         assert(append_exec_ghost_data@.execute_pre(self.replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
         let append_exec_ghost_data = slog.execute(&self.replica_token, &mut responses, &mut data, append_exec_ghost_data);
+        let Tracked(append_exec_ghost_data) = append_exec_ghost_data;
 
-        let tracked NrLogAppendExecDataGhost {
-            local_updates: local_updates,
-            ghost_replica: ghost_replica,
-            combiner: combiner,
-            cb_combiner: cb_combiner,
-            request_ids: request_ids,
-        } = append_exec_ghost_data.get();
+        let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids } = append_exec_ghost_data;
+        let tracked Tracked(ghost_replica) = ghost_replica;
+        let tracked Tracked(combiner) = combiner;
+        let tracked Tracked(cb_combiner) = cb_combiner;
 
         // Step 4: release the R/W lock on the data structure
-        // let replicated_data_structure = ReplicatedDataStructure  { data, replica: ghost_replica, combiner, cb_combiner };
-        // self.data.0.release_write(replicated_data_structure, write_handle);
+        let replicated_data_structure = ReplicatedDataStructure  { data, replica: Tracked(ghost_replica), combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner) };
+        self.data.0.release_write(replicated_data_structure, write_handle);
 
         // // Step 5: collect the results
         let tracked thread_ops_data = ThreadOpsData { flat_combiner, request_ids, local_updates, cell_permissions };
@@ -946,6 +937,12 @@ impl Replica  {
         }
     }
 
+    #[verifier(external_body)] /* vattr */
+    pub fn progress(line: u32) {
+        println!("Replica:: progress {line}");
+    }
+
+
     /// Executes an immutable operation against this replica and returns a
     /// response.
     ///
@@ -970,10 +967,10 @@ impl Replica  {
         let ghost nid = tkn.replica_id_spec();
         assert(nid == self.spec_id());
 
-
         // Step 1: Read the local tail value
         // let ctail = slog.get_ctail();
         let (version_upper_bound, local_reads) = slog.get_version_upper_bound(Tracked(local_reads));
+
 
         // Step 2: wait until the replica is synced for reads, try to combine in mean time
         // while !slog.is_replica_synced_for_reads(&self.log_tkn, ctail) {
@@ -1005,6 +1002,7 @@ impl Replica  {
             is_synced = res.0;
             local_reads = res.1;
         }
+
         let tracked local_reads = local_reads.get();
 
         // Step 3: Take the read-only lock, and read the value
@@ -1028,7 +1026,7 @@ impl Replica  {
         }
 
         // assert(false);
-        Err(tkn)
+        Ok((result, tkn))
     }
 
     /// Executes a mutable operation against this replica and returns a

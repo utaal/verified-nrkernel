@@ -713,24 +713,26 @@ impl NrLog
 
     /// Inserts a slice of operations into the log.
     pub fn append(&self, replica_token: &ReplicaToken, operations: &Vec<UpdateOp>,
-        responses: &Vec<ReturnType>,
-        ghost_data_in: Tracked<NrLogAppendExecDataGhost>
+        // responses and actual replica are part of the closure
+        responses: &mut Vec<ReturnType>,
+        actual_replica: &mut DataStructureType,
+        // here we also need to pass the mut replica
+        ghost_data: Tracked<NrLogAppendExecDataGhost>
     ) -> (result: Tracked<NrLogAppendExecDataGhost>)
         requires
             self.wf(),
             replica_token@ < self.local_versions.len(),
-            ghost_data_in@.append_pre(operations@, replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+            ghost_data@.append_pre(operations@, replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
             operations.len() <= MAX_REQUESTS
         ensures
             result@.append_post(replica_token@,  self.unbounded_log_instance@, self.cyclic_buffer_instance@, operations@, responses@)
     {
+        let tracked Tracked(mut ghost_data) = ghost_data;
+
         let nid = replica_token.id() as usize;
 
         // // TODO!
         let nops = operations.len();
-
-        // somehow can't really do this as a destructor
-        let tracked mut ghost_data = ghost_data_in.get();
 
         let mut iteration = 1;
         let mut waitgc = 1;
@@ -747,11 +749,10 @@ impl NrLog
                 ghost_data.append_pre(operations@, replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         {
             // unpack stuff
-            let tracked mut local_updates = ghost_data.local_updates.get();// Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
-            let tracked ghost_replica = ghost_data.ghost_replica;      // Tracked<UnboundedLog::replicas>,
-            let tracked mut combiner = ghost_data.combiner.get();          // Tracked<UnboundedLog::combiner>,
-            let tracked mut cb_combiner = ghost_data.cb_combiner.get();    // Tracked<CyclicBuffer::combiner>,
-            let tracked request_ids = ghost_data.request_ids;          // Ghost<Seq<ReqId>>,
+            let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids} = ghost_data;
+            let tracked Tracked(mut cb_combiner) = cb_combiner;
+            let tracked Tracked(mut combiner) = combiner;
+            let tracked Tracked(local_updates) = local_updates;
 
             if iteration == WARN_THRESHOLD {
                 print_starvation_warning(line!());
@@ -773,10 +774,10 @@ impl NrLog
                 &self.head.0 => load();
                 returning tail;
                 ghost g => {
-                    assert(g.view().instance == self.cyclic_buffer_instance.view());
-                    assert(cb_combiner.view().instance == self.cyclic_buffer_instance.view());
-                    assert(cb_combiner.view().key == nid);
-                    assert(cb_combiner.view().value.is_Idle());
+                    // assert(g.view().instance == self.cyclic_buffer_instance.view());
+                    // assert(cb_combiner.view().instance == self.cyclic_buffer_instance.view());
+                    // assert(cb_combiner.view().key == nid);
+                    // assert(cb_combiner.view().value.is_Idle());
                     cb_combiner = self.cyclic_buffer_instance
                         .borrow()
                         .advance_tail_start(nid as nat, &g, cb_combiner);
@@ -788,10 +789,11 @@ impl NrLog
             // is currently trying to advance the head of the log. Keep refreshing the
             // replica against the log to make sure that it isn't deadlocking GC.
             // if tail > head + self.slog.len() - GC_FROM_HEAD  {  }
-            if tail > head + ((self.slog.len() - GC_FROM_HEAD) as u64) {
+            if tail > head + (self.slog.len() as u64 - GC_FROM_HEAD as u64) {
                 if waitgc == WARN_THRESHOLD {
                     print_starvation_warning(line!());
                     waitgc = 0;
+                    // TODO: Return?
                 }
 
                 waitgc = waitgc + 1;
@@ -800,40 +802,13 @@ impl NrLog
                     cb_combiner = self.cyclic_buffer_instance.borrow().advance_tail_abort(nid as nat, cb_combiner);
                 }
 
-
-                // TODO: call execute here!
-                // // assemble the struct again
-                // ghost_data = NrLogAppendExecDataGhost {
-                //     local_updates: Tracked(local_updates),  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
-                //     ghost_replica,  // Tracked<UnboundedLog::replicas>,
-                //     combiner: Tracked(combiner),       // Tracked<UnboundedLog::combiner>,
-                //     cb_combiner: Tracked(cb_combiner),    // Tracked<CyclicBuffer::combiner>,
-                //     request_ids,    // Ghost<Seq<ReqId>>,
-                // };
-
-                // // let tracked execute_res = self.execute(replica_token, responses, Tracked(ghost_data));
-
-                // ghost_data = execute_res.get();
-                // local_updates = ghost_data.local_updates.get(); // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
-                // ghost_replica = ghost_data.ghost_replica;       // Tracked<UnboundedLog::replicas>,
-                // combiner = ghost_data.combiner.get();           // Tracked<UnboundedLog::combiner>,
-                // cb_combiner = ghost_data.cb_combiner.get();     // Tracked<CyclicBuffer::combiner>,
-                // request_ids = ghost_data.request_ids;           // Ghost<Seq<ReqId>>,
-
-                let advance_head_res = self.advance_head(replica_token, Tracked(cb_combiner));
+                let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates: Tracked(local_updates), ghost_replica, combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner), request_ids};
+                let ghost_data0 = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
+                let ghost_data0 = self.advance_head(replica_token, responses, actual_replica, ghost_data0);
+                let tracked Tracked(ghost_data0) = ghost_data0;
                 proof {
-                    cb_combiner = advance_head_res.get();
-
-                    // assemble the struct again
-                    ghost_data = NrLogAppendExecDataGhost {
-                        local_updates: Tracked(local_updates),  // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
-                        ghost_replica,  // Tracked<UnboundedLog::replicas>,
-                        combiner: Tracked(combiner),       // Tracked<UnboundedLog::combiner>,
-                        cb_combiner: Tracked(cb_combiner),    // Tracked<CyclicBuffer::combiner>,
-                        request_ids,    // Ghost<Seq<ReqId>>,
-                    };
+                    ghost_data = ghost_data0;
                 }
-
                 continue;
             }
 
@@ -851,17 +826,10 @@ impl NrLog
                 ////////////////////////////////////////////////////////////////////////////////////
                 proof {
                     cb_combiner = self.cyclic_buffer_instance.borrow().advance_tail_abort(nid as nat, cb_combiner);
-
-                    ghost_data = NrLogAppendExecDataGhost {
-                        local_updates: Tracked(Map::tracked_empty()),   // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
-                        ghost_replica,                              // Tracked<UnboundedLog::replicas>,
-                        combiner: Tracked(combiner),                // Tracked<UnboundedLog::combiner>,
-                        cb_combiner: Tracked(cb_combiner),          // Tracked<CyclicBuffer::combiner>,
-                        request_ids: Ghost(Seq::empty()),              // Ghost<Seq<ReqId>>,
-                    };
                 }
 
-                return Tracked(ghost_data);
+                let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates: Tracked(Map::tracked_empty()), ghost_replica, combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner), request_ids: Ghost(Seq::empty())};
+                return Tracked(ghost_data0);
             }
 
             // If on adding in the above entries there would be fewer than `GC_FROM_HEAD`
@@ -884,7 +852,8 @@ impl NrLog
 
             // let tracked local_update ;// UnboundedLog::local_updates
             let result = atomic_with_ghost!(
-                &self.tail.0 => compare_exchange(tail, new_tail);
+                //&self.tail.0 => compare_exchange(tail, new_tail);
+                &self.tail.0 => compare_exchange_weak(tail, new_tail);
                 update prev -> next;
                 returning result;
                 ghost g => {
@@ -1078,13 +1047,6 @@ impl NrLog
                 cb_combiner = self.cyclic_buffer_instance.borrow().append_finish(nid as nat, cb_combiner);
             }
 
-            if advance {
-                let advance_head_res = self.advance_head(replica_token, Tracked(cb_combiner));
-                proof {
-                    cb_combiner = advance_head_res.get();
-                }
-            }
-
             proof {
                 ghost_data = NrLogAppendExecDataGhost {
                     local_updates:Tracked(local_updates),   // Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
@@ -1095,7 +1057,11 @@ impl NrLog
                 };
             }
 
-            return Tracked(ghost_data);
+            return if advance {
+                self.advance_head(replica_token, responses, actual_replica, Tracked(ghost_data))
+            } else {
+                Tracked(ghost_data)
+            }
         }
 
     }
@@ -1104,32 +1070,32 @@ impl NrLog
     /// Advances the head of the log forward. If a replica has stopped making
     /// progress, then this method will never return. Accepts a closure that is
     /// passed into execute() to ensure that this replica does not deadlock GC.
-    pub fn advance_head(&self, replica_token: &ReplicaToken,
-        cb_combiner: Tracked<CyclicBuffer::combiner>)
-            -> (result: Tracked<CyclicBuffer::combiner>)
+    fn advance_head(&self, replica_token: &ReplicaToken,
+                    // the following were part of the closure
+                    responses: &mut Vec<ReturnType>,
+                    actual_replica: &mut DataStructureType,
+                    // ghost state for execute etc.
+                    ghost_data: Tracked<NrLogAppendExecDataGhost>)
+            -> (res: Tracked<NrLogAppendExecDataGhost>)
         requires
             self.wf(),
-            cb_combiner@@.instance == self.cyclic_buffer_instance@,
-            cb_combiner@@.value.is_Idle()
+            ghost_data@.execute_pre(replica_token.id_spec(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         ensures
-            result@@.instance == self.cyclic_buffer_instance@,
-            result@@.key == cb_combiner@@.key,
-            result@@.value.is_Idle()
+            res@.execute_pre(replica_token.id_spec(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
     {
-        let tracked mut g_cb_comb_new = cb_combiner.get();
-        let ghost g_node_id = cb_combiner@@.key;
+        let mut ghost_data = ghost_data;
 
         let mut iteration = 1;
         loop
             invariant
                 self.wf(),
-                g_cb_comb_new@.instance == self.cyclic_buffer_instance@,
-                g_cb_comb_new@.value.is_Idle(),
-                g_cb_comb_new@.key == g_node_id,
-                g_node_id == cb_combiner@@.key,
+                ghost_data@.execute_pre(replica_token.id_spec(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
                 0 <= iteration <= WARN_THRESHOLD
         {
-            // TODO
+            let Tracked(ghost_data0) = ghost_data;
+            let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids } = ghost_data0;
+            let tracked Tracked(mut cb_combiner) = cb_combiner;
+
             // let global_head = self.head.load(Ordering::Relaxed);
             let global_head = atomic_with_ghost!(
                 &self.head.0 => load();
@@ -1144,24 +1110,26 @@ impl NrLog
                 ghost g => { /* no-op */ }
             );
 
-            let res = self.find_min_local_version(Tracked(g_cb_comb_new));
-            let min_local_version = res.0;
-            proof {
-                g_cb_comb_new = res.1.get();
-            }
+            let (min_local_version, cb_combiner0) = self.find_min_local_version(Tracked(cb_combiner));
+            let tracked Tracked(mut cb_combiner) = cb_combiner0;
+            // let res = ;
+            // let min_local_version = res.0;
+            // proof {
+            //     g_cb_comb_new = res.1.get();
+            // }
 
             // If we cannot advance the head further, then start
             // from the beginning of this loop again. Before doing so, try consuming
             // any new entries on the log to prevent deadlock.
             if min_local_version == global_head {
                 proof {
-                    g_cb_comb_new = self.cyclic_buffer_instance.borrow().advance_head_abort(g_node_id, g_cb_comb_new);
+                    cb_combiner = self.cyclic_buffer_instance.borrow().advance_head_abort(replica_token.id_spec(), cb_combiner);
                 }
-
                 if iteration == WARN_THRESHOLD {
                     print_starvation_warning(line!());
-
-                    return Tracked(g_cb_comb_new);
+                    // let tracked cb_combiner = Tracked(cb_combiner);
+                    // let tracked ghost_data = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
+                    // return Tracked(ghost_data);
                 }
                 iteration = iteration + 1;
             } else {
@@ -1171,28 +1139,21 @@ impl NrLog
                     &self.head.0 => store(min_local_version);
                     update old_val -> new_val;
                     ghost g => {
-                        g_cb_comb_new = self.cyclic_buffer_instance.borrow().advance_head_finish(g_node_id, &mut g, g_cb_comb_new);
+                        cb_combiner = self.cyclic_buffer_instance.borrow().advance_head_finish(replica_token.id_spec(), &mut g, cb_combiner);
                 });
 
-                if global_tail < min_local_version + (self.slog.len() - GC_FROM_HEAD) as u64 {
-                    return Tracked(g_cb_comb_new);
+                if global_tail < min_local_version + self.slog.len() as u64 - GC_FROM_HEAD as u64 {
+                    let tracked cb_combiner = Tracked(cb_combiner);
+                    let tracked ghost_data = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
+                    return Tracked(ghost_data);
                 }
             }
-            // XXX: We don't have clone/copy, hmm...
-            // let node_id_copy = ReplicaToken { rid: rid.rid };
-            // g_cb_comb_new =  self.execute(node_id_copy);
 
+            let tracked cb_combiner = Tracked(cb_combiner);
+            let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
+            ghost_data = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
         }
     }
-
-    // proof fn foo<A>(a: Seq<A>, b: Seq<A>)
-    //     requires a.len() == 0 && b.len() == 0
-    //     ensures a == b
-    // {
-    //     assert(a == Seq::empty());
-    //     assert(b == Seq::empty());
-    // }
-
 
     /// Executes a passed in closure (`d`) on all operations starting from a
     /// replica's local tail on the shared log. The replica is identified

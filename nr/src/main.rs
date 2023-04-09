@@ -53,14 +53,17 @@ pub struct NodeReplicated {
     /// the log of operations
     ///
     ///  - Rust: log: Log<D::WriteOperation>,
-    pub/*REVIEW: (crate)*/ log: NrLog,
+    pub /* REVIEW: (crate) */ log: NrLog,
     // log: NrLog,
 
     /// the nodes or replicas in the system
     ///
     ///  - Rust: replicas: Vec<Box<Replica<D>>>,
     // replicas: Vec<Box<Replica<DataStructureType, UpdateOp, ReturnType>>>,
-    pub/*REVIEW: (crate)*/ replicas: Vec<Box<Replica>>,
+    pub /* REVIEW (crate) */ replicas: Vec<Box<Replica>>,
+
+
+    pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken>>,
 
     /// XXX: should that be here, or go into the NrLog / replicas?
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
@@ -116,6 +119,7 @@ impl NodeReplicated {
         } = nr_log_tokens.get();
 
         let mut actual_replicas : Vec<Box<Replica>> = Vec::new();
+        let mut thread_tokens : Vec<Vec<ThreadToken>> = Vec::new();
         let mut idx = 0;
         while idx < num_replicas
             invariant
@@ -173,7 +177,7 @@ impl NodeReplicated {
 
         let unbounded_log_instance = Tracked(unbounded_log_instance);
         let cyclic_buffer_instance = Tracked(cyclic_buffer_instance);
-        NodeReplicated { log, replicas: actual_replicas, unbounded_log_instance, cyclic_buffer_instance }
+        NodeReplicated { log, replicas: actual_replicas, thread_tokens, unbounded_log_instance, cyclic_buffer_instance }
     }
 
     /// Registers a thread with a given replica in the [`NodeReplicated`]
@@ -187,9 +191,13 @@ impl NodeReplicated {
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
     pub fn register(&mut self, replica_id: ReplicaId) -> Option<ThreadToken>
         requires old(self).wf()
+        // ensures self.wf()
     {
         if (replica_id as usize) < self.replicas.len() {
-            None
+            let mut replica : Box<Replica> = self.replicas.remove(replica_id);
+            let res : Option<ThreadToken> = (*replica).register();
+            self.replicas.insert(replica_id, replica);
+            res
         } else {
             None
         }
@@ -232,7 +240,7 @@ impl NodeReplicated {
             tkn.batch_perm@@.pcell == self.replicas.spec_index(tkn.replica_id_spec() as int).contexts.spec_index(tkn.thread_id_spec() as int).batch.0.id(),
     {
         let replica_id = tkn.replica_id() as usize;
-        if replica_id< self.replicas.len() {
+        if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
             self.replicas.index(replica_id).execute(&self.log, op, tkn)
         } else {
@@ -252,8 +260,9 @@ use  std::sync::Arc;
 
 struct NrCounter(Arc<NodeReplicated>, ThreadToken);
 
-const NUM_OPS_PER_THREAD: usize = 1000;
-const NUM_THREADS: usize = 4;
+const NUM_OPS_PER_THREAD: usize = 1_000_000;
+const NUM_THREADS_PER_REPLICA: usize = 4;
+const NUM_THREADS: usize = NUM_THREADS_PER_REPLICA*NUM_REPLICAS;
 
 // #[verifier(external_body)] /* vattr */
 #[verifier::external_body] /* vattr */
@@ -266,8 +275,9 @@ pub fn main() {
     println!("Obtaining Thread tokens for {NUM_THREADS} threads...");
 
     let mut thread_tokens = Vec::with_capacity(NUM_THREADS);
-    for idx in 0..NUM_THREADS+NUM_REPLICAS {
+    for idx in 0..NUM_THREADS+2*NUM_REPLICAS {
         if let Option::Some(tkn) = nr_counter.register(idx % NUM_REPLICAS) {
+            println!(" - thread: {}.{}", tkn.replica_id(), tkn.thread_id());
             thread_tokens.push(tkn);
         } else {
             panic!("could not register with replica!");
@@ -280,11 +290,14 @@ pub fn main() {
     // `execute_mut` and `execute`. Eventually they end up in the `Dispatch` trait.
     let thread_loop = |counter: NrCounter| {
         let NrCounter(counter, mut tkn) = counter;
-        let tid = tkn.thread_id();
-        println!("Thread #{tid}  executing {NUM_OPS_PER_THREAD} operations");
+        let tid = (tkn.replica_id(), tkn.thread_id());
+        println!("Thread #{tid:?} start. executing {NUM_OPS_PER_THREAD} operations");
+        let mut num_updates = 0;
         for i in 0..NUM_OPS_PER_THREAD {
-            match i % 2 {
+            match (tid.1 as usize + i) % 2 {
                 0 => {
+                    // println!(" - Thread #{tid:?}  executing Update operation {i}");
+                    num_updates += 1;
                     match counter.execute_mut(UpdateOp::Inc, tkn) {
                         Result::Ok((ret, t)) => {
                             tkn = t;
@@ -294,7 +307,8 @@ pub fn main() {
                         }
                     }
                 }
-                1 => {
+                _ => {
+                    // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
                     match  counter.execute(ReadonlyOp::Get, tkn) {
                         Result::Ok((ret, t)) => {
                             tkn = t;
@@ -304,9 +318,32 @@ pub fn main() {
                         }
                     }
                 }
-                _ => unreachable!(),
             };
+
+            // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
+            match  counter.execute(ReadonlyOp::Get, tkn) {
+                Result::Ok((ret, t)) => {
+                    tkn = t;
+                },
+                Result::Err(t) => {
+                    tkn = t;
+                }
+            }
         }
+
+        // make sure to make progress on all replicas
+        for _ in 0..NUM_OPS_PER_THREAD  {
+            std::thread::yield_now();
+            match counter.execute(ReadonlyOp::Get, tkn) {
+                Result::Ok((ret, t)) => {
+                    tkn = t;
+                },
+                Result::Err(t) => {
+                    tkn = t;
+                }
+            }
+        }
+        println!("Thread #{tid:?} done. executed {num_updates} update operations");
     };
 
     println!("Creating {NUM_THREADS} threads...");
@@ -330,16 +367,16 @@ pub fn main() {
 
     println!("Obtain final result...");
 
-    for idx in 0 .. NUM_REPLICAS {
+    for idx in 0..NUM_REPLICAS {
         let tkn = thread_tokens.pop();
         match nr_counter.execute(ReadonlyOp::Get, tkn) {
             Result::Ok((ret, t)) => {
                 match ret {
                     ReturnType::Value(v) => {
-                        println!("Replica {idx} - Final Result: v expected {}", NUM_THREADS * NUM_OPS_PER_THREAD / 2);
+                        println!("Replica {idx} - Final Result: {v} expected {}", NUM_THREADS * (NUM_OPS_PER_THREAD)/ 2);
                     }
                     ReturnType::Ok => {
-                        println!("Replica {idx} - Final Result: OK? expected {}", NUM_THREADS * NUM_OPS_PER_THREAD / 2);
+                        println!("Replica {idx} - Final Result: OK? expected {}", NUM_THREADS * (NUM_OPS_PER_THREAD)/ 2);
                     }
                 }
             },
