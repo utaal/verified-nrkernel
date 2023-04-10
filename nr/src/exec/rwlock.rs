@@ -272,7 +272,9 @@ impl<T> RwLock<T> {
 
     pub fn release_write(&self, t: T, write_handle: Tracked<RwLockWriteGuard<T>>)
         requires
-            self.wf() && self.wf_write_handle(&write_handle@) && self.inv(t)
+            self.wf(),
+            self.wf_write_handle(&write_handle@),
+            self.inv(t)
     {
         let tracked write_handle = write_handle.get();
         let tracked mut perm = write_handle.perm.get();

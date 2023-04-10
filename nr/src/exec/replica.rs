@@ -582,7 +582,7 @@ impl Replica  {
 
         // Step 3: Append all operations to the log
 
-        assert(append_exec_ghost_data.append_pre(operations@, self.replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+        assert(append_exec_ghost_data.append_pre(self.replica_token@, operations@,  data.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
         assert(forall |i|  #[trigger] append_exec_ghost_data.local_updates@.contains_key(i) ==> {
             &&& (#[trigger] append_exec_ghost_data.local_updates@[i])@.instance == self.unbounded_log_instance@}
@@ -592,7 +592,10 @@ impl Replica  {
 
 
         // Step 3: Execute all operations
-        assert(append_exec_ghost_data@.execute_pre(self.replica_token@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+        assert(responses.len() == 0);
+        assert(append_exec_ghost_data@.request_ids@.len() == 0);
+        assert(data.interp() == append_exec_ghost_data@.ghost_replica@@.value);
+        assert(append_exec_ghost_data@.execute_pre(self.replica_token@, data.interp(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
         let append_exec_ghost_data = slog.execute(&self.replica_token, &mut responses, &mut data, append_exec_ghost_data);
         let Tracked(append_exec_ghost_data) = append_exec_ghost_data;
 
@@ -603,11 +606,18 @@ impl Replica  {
 
         // Step 4: release the R/W lock on the data structure
         let replicated_data_structure = ReplicatedDataStructure  { data, replica: Tracked(ghost_replica), combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner) };
+
+        assert(replicated_data_structure.replica@@.value == replicated_data_structure.data.interp());
+        assert(replicated_data_structure.wf(self.replica_token.id_spec(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+        assert(self.data.0.inv(replicated_data_structure));
         self.data.0.release_write(replicated_data_structure, write_handle);
 
         // // Step 5: collect the results
         let tracked thread_ops_data = ThreadOpsData { flat_combiner, request_ids, local_updates, cell_permissions };
 
+        assert(thread_ops_data.request_ids@.len() == responses@.len());
+        assert(rids_match(thread_ops_data.flat_combiner@@.value.get_Responding_0(), thread_ops_data.request_ids@,
+               0, thread_ops_data.flat_combiner@@.value.get_Responding_0().len(), 0, thread_ops_data.request_ids@.len()));
         assert(thread_ops_data.distribute_thread_resps_pre(self.flat_combiner_instance, self.unbounded_log_instance@, num_ops_per_thread@, responses@, self.contexts@));
         let distribute_thread_resps_result = self.distribute_thread_resps(&mut responses, &mut num_ops_per_thread, Tracked(thread_ops_data));
 
