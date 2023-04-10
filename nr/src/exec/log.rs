@@ -6,7 +6,7 @@ use vstd::{
     prelude::*,
     map::Map,
     vec::Vec,
-    cell::{PCell},
+    cell::{PCell, CellId},
     atomic_ghost::{AtomicU64, AtomicBool},
     atomic_with_ghost,
 };
@@ -69,7 +69,7 @@ pub struct BufferEntry {
     ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
     ///  - Rust:  pub(crate) replica: usize,
     // pub(crate) replica: usize,
-    pub log_entry: PCell<ConcreteLogEntry>,
+    pub log_entry: PCell<Option<ConcreteLogEntry>>,
 
     /// Indicates whether this entry represents a valid operation when on the log.
     ///
@@ -189,6 +189,10 @@ pub open spec fn wf(&self) -> bool {
         &&& self.slog.len() == LOG_SIZE
 
         &&& self.slog.len() == self.cyclic_buffer_instance@.buffer_size()
+        &&& self.slog.len() == self.cyclic_buffer_instance@.cell_ids().len()
+        &&& (forall |i| #![trigger self.slog[i]] 0 <= i < self.slog.len() ==> {
+            &&& self.slog[i].log_entry.id() == (#[trigger]self.cyclic_buffer_instance@.cell_ids()[i])
+        })
 
         // && (forall i: nat | 0 <= i < LOG_SIZE as int :: buffer[i].WF(i, cb_loc_s))
         &&& (forall |i: nat| i < LOG_SIZE ==> (#[trigger] self.slog[i as int]).wf(i, self.cyclic_buffer_instance@))
@@ -202,7 +206,6 @@ pub open spec fn wf(&self) -> bool {
         // make sure we
         &&& self.unbounded_log_instance@.num_replicas() == self.num_replicas
         &&& self.cyclic_buffer_instance@.num_replicas() == self.num_replicas
-
         &&& self.cyclic_buffer_instance@.unbounded_log_instance() == self.unbounded_log_instance
     }
 
@@ -313,26 +316,31 @@ impl NrLog
             logical_log_idx = -log_size as int;
         }
 
-        let mut slog_entries : Vec<Option<PCell<ConcreteLogEntry>>> = Vec::with_capacity(log_size);
+        let mut slog_entries : Vec<Option<PCell<Option<ConcreteLogEntry>>>> = Vec::with_capacity(log_size);
+        let ghost mut cell_ids : Seq<CellId> = Seq::empty();
         let tracked mut contents: Map<LogicalLogIdx, StoredType> = Map::tracked_empty();
 
         let mut log_idx = 0;
         while log_idx < log_size
             invariant
                 0 <= log_idx <= log_size,
+                log_size == LOG_SIZE,
                 logical_log_idx == log_idx - log_size,
                 -log_size <= logical_log_idx <= 0,
                 slog_entries.len() == log_idx,
+                cell_ids.len() == log_idx,
                 forall |i| 0 <= i < log_idx ==> (#[trigger] slog_entries[i]).is_Some(),
+                forall |i| 0 <= i < log_idx ==> #[trigger] cell_ids[i] == (#[trigger]slog_entries[i]).get_Some_0().id(),
                 forall |i| -log_size <= i < logical_log_idx <==> #[trigger] contents.contains_key(i),
-                forall |i| #[trigger] contents.contains_key(i) ==> stored_type_inv(contents[i], i, unbounded_log_instance),
+                forall |i| #[trigger] contents.contains_key(i) ==> stored_type_inv(contents[i], i, cell_ids[log_entry_idx(i, log_size as nat) as int], unbounded_log_instance),
 
         {
             // pub log_entry: PCell<ConcreteLogEntry>,
             // create the log entry cell, TODO: create the concrete log entry here?
-            let (pcell, token) = PCell::empty(); // empty(); // new(v)
+            let (pcell, token) = PCell::new(Option::None);
 
-            // add the cell to the log entries for later
+            // add the cell to the log entries for later, store the id
+            proof { cell_ids = cell_ids.push(pcell.id()); }
             slog_entries.push(Option::Some(pcell));
 
             // create the stored type
@@ -341,11 +349,10 @@ impl NrLog
                 log_entry: Option::None
             };
 
-
             // TODO: we don't put anything in there yet... convert the entry to an option
             //       and keep in sync with the alive bit?
             assert(stored_type.cell_perms@.value.is_Some());
-            assert(stored_type_inv(stored_type, logical_log_idx, unbounded_log_instance));
+            assert(stored_type_inv(stored_type, logical_log_idx, cell_ids[log_idx as int], unbounded_log_instance));
 
             // add the stored type to the contents map
             proof {
@@ -359,6 +366,7 @@ impl NrLog
         }
         assert(log_idx == log_size);
         assert(logical_log_idx == 0);
+        assert(cell_ids.len() == log_size);
 
 
         //
@@ -382,7 +390,7 @@ impl NrLog
                 Tracked(cb_local_versions0), // Map<NodeId, CyclicBuffer::local_versions>;
                 Tracked(cb_alive_bits0), // Map<LogIdx, CyclicBuffer::alive_bits>;
                 Tracked(cb_combiner0), // Map<NodeId, CyclicBuffer::combiner>;
-            ) = CyclicBuffer::Instance::initialize(unbounded_log_instance, log_size as nat, num_replicas as nat, contents, contents);
+            ) = CyclicBuffer::Instance::initialize(log_size as nat, num_replicas as nat, contents, cell_ids, unbounded_log_instance, contents);
             cyclic_buffer_instance = cyclic_buffer_instance0;
             cb_head = cb_head0;
             cb_tail = cb_tail0;
@@ -402,7 +410,11 @@ impl NrLog
                 0 <= log_idx <= log_size,
                 slog_entries.len() == log_size,
                 slog.len() == log_idx,
-                forall |i| 0 <= i < log_idx ==> (#[trigger] slog[i]).wf(i as nat, cyclic_buffer_instance),
+                cell_ids.len() == log_size,
+                forall |i| #![trigger slog[i]] 0 <= i < log_idx ==> {
+                    &&& slog[i].wf(i as nat, cyclic_buffer_instance)
+                    &&& slog[i].log_entry.id() ==  (#[trigger]cell_ids[i])
+                },
                 forall |i| log_idx <= i < log_size ==> cb_alive_bits.contains_key(i),
                 forall |i| #![trigger cb_alive_bits[i]] log_idx <= i < log_size ==> {
                     &&& cb_alive_bits[i]@.key == i
@@ -410,7 +422,10 @@ impl NrLog
                     &&& cb_alive_bits[i]@.instance == cyclic_buffer_instance
                 },
                 forall |i| 0 <= i < log_idx ==> slog_entries.spec_index(i).is_None(),
-                forall |i| log_idx <= i < log_size ==> (#[trigger] slog_entries[i]).is_Some()
+                forall |i| #![trigger slog_entries[i]] log_idx <= i < log_size ==> {
+                    &&& slog_entries[i].is_Some()
+                    &&& slog_entries[i].get_Some_0().id() == cell_ids[i]
+                }
         {
             let tracked cb_alive_bit;
             proof {
@@ -929,27 +944,29 @@ impl NrLog
             }
 
 
-            assert(self.cyclic_buffer_instance@.buffer_size() == LOG_SIZE);
-            assert(forall |i| tail - LOG_SIZE <= i < new_tail - LOG_SIZE <==> cb_log_entries.contains_key(i));
-            assert(forall |i| cb_log_entries.contains_key(i) ==> {
-                &&& stored_type_inv(#[trigger] cb_log_entries.index(i), i, self.unbounded_log_instance@)
-            });
+            // assert(self.cyclic_buffer_instance@.buffer_size() == LOG_SIZE);
+            // assert(forall |i| tail - LOG_SIZE <= i < new_tail - LOG_SIZE <==> cb_log_entries.contains_key(i));
+            // assert(forall |i| cb_log_entries.contains_key(i) ==> {
+            //     &&& stored_type_inv(#[trigger] cb_log_entries.index(i), i, self.unbounded_log_instance@)
+            // });
 
-            assert(forall |i| 0 <= i < request_ids@.len() ==> #[trigger]log_entries.contains_key(i));
+            // assert(forall |i| 0 <= i < request_ids@.len() ==> #[trigger]log_entries.contains_key(i));
 
-            assert(forall |i| #![trigger log_entries[i]] 0 <= i < request_ids@.len() ==> {
-                &&& log_entries[i]@.instance == self.unbounded_log_instance@
-                });
-                assert(forall |i| #![trigger log_entries[i]] 0 <= i < request_ids@.len() ==> {
-                &&& log_entries[i]@.key == tail + i
-                });
+            // assert(forall |i| #![trigger log_entries[i]] 0 <= i < request_ids@.len() ==> {
+            //     &&& log_entries[i]@.instance == self.unbounded_log_instance@
+            //     });
+            //     assert(forall |i| #![trigger log_entries[i]] 0 <= i < request_ids@.len() ==> {
+            //     &&& log_entries[i]@.key == tail + i
+            //     });
 
-            assert(forall |i| #![trigger log_entries[i]] 0 <= i < request_ids@.len() ==> {
-                &&& #[trigger]log_entries.contains_key(i)
-                &&& log_entries[i]@.key == tail + i
-                &&& log_entries[i]@.instance == self.unbounded_log_instance@
-                });
+            // assert(forall |i| #![trigger log_entries[i]] 0 <= i < request_ids@.len() ==> {
+            //     &&& #[trigger]log_entries.contains_key(i)
+            //     &&& log_entries[i]@.key == tail + i
+            //     &&& log_entries[i]@.instance == self.unbounded_log_instance@
+            //     });
 
+            let ghost cell_ids = self.cyclic_buffer_instance@.cell_ids();
+            let ghost buffer_size = self.cyclic_buffer_instance@.buffer_size();
 
             // Successfully reserved entries on the shared log. Add the operations in.
             let mut idx = 0;
@@ -961,6 +978,9 @@ impl NrLog
                     tail + nops == new_tail,
                     nops == operations.len(),
                     nops == request_ids@.len(),
+                    buffer_size == LOG_SIZE,
+                    cell_ids == self.cyclic_buffer_instance@.cell_ids(),
+                    cell_ids.len() == buffer_size,
                     cb_combiner@.key == nid,
                     cb_combiner@.value.is_Appending(),
                     cb_combiner@.value.get_Appending_cur_idx() == tail + idx,
@@ -981,7 +1001,7 @@ impl NrLog
                         &&& local_updates[i]@.value.get_Placed_op() == operations[i as int]
                     },
                     forall |i| (tail + idx) - LOG_SIZE <= i < new_tail - LOG_SIZE <==> cb_log_entries.contains_key(i),
-                    forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i, self.unbounded_log_instance@),
+                    forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i, cell_ids[log_entry_idx(i, buffer_size) as int], self.unbounded_log_instance@),
                     // forall|i: int| idx <= i < nops ==> (#[trigger] cb_log_entries[i]).cell_perms@.pcell == self.slog.spec_index(
                     //     self.index_spec((tail + i) as nat) as int).log_entry.id(),
             {
@@ -1006,15 +1026,8 @@ impl NrLog
                     node_id: nid as u64,
                 };
 
-                // TODO: need to link the permission with the log entry cell
-                assert(cb_log_entry_perms@.pcell == self.slog.spec_index(log_idx as int).log_entry.id());
-
                 // update the log entry in the buffer
-                self.slog.index(log_idx).log_entry.replace(Tracked(&mut cb_log_entry_perms), new_log_entry);
-
-                assert(cb_log_entry_perms@.value.is_Some());
-                assert(cb_log_entry_perms@.value.get_Some_0().node_id == nid as u64);
-                assert(cb_log_entry_perms@.value.get_Some_0().op == operations.spec_index(idx as int));
+                self.slog.index(log_idx).log_entry.replace(Tracked(&mut cb_log_entry_perms), Option::Some(new_log_entry));
 
                 // unsafe { (*e).alivef.store(m, Ordering::Release) };
                 let m = self.is_alive_value(logical_log_idx as u64);
@@ -1032,7 +1045,7 @@ impl NrLog
 
                         let c_cur_idx = cb_combiner.view().value.get_Appending_cur_idx();
 
-                        assert(stored_type_inv(new_stored_type, c_cur_idx as int, self.unbounded_log_instance.view()));
+                        assert(stored_type_inv(new_stored_type, c_cur_idx as int, cb_log_entry_perms@.pcell, self.unbounded_log_instance.view()));
 
                         append_flip_bit_result = self.cyclic_buffer_instance.borrow()
                             .append_flip_bit(nid as NodeId, new_stored_type, new_stored_type, g, cb_combiner);
@@ -1364,13 +1377,13 @@ impl NrLog
             let log_entry = self.slog.index(phys_log_idx).log_entry.borrow(Tracked(&stored_entry.cell_perms));
 
             // actual_replica', ret := nrifc.do_update(actual_replica', log_entry.op);
-
-            let res = actual_replica.update(log_entry.op.clone());
+            assert(log_entry.is_Some());
+            let res = actual_replica.update(log_entry.as_ref().unwrap().op.clone());
 
             assert(stored_entry.log_entry.get_Some_0()@.instance == self.unbounded_log_instance);
             assert(stored_entry.log_entry.get_Some_0()@.key == combiner.view().value.get_Loop_lversion());
 
-            if log_entry.node_id == nid as u64 {
+            if log_entry.as_ref().unwrap().node_id == nid as u64 {
 
                 // assert(local_updates.contains_key(responses_idx as nat));
 
@@ -1380,29 +1393,21 @@ impl NrLog
                     if let Option::Some(e) = &stored_entry.log_entry {
                         assert(e.view().value.node_id == nid);
 
-                        assert(responses_idx < request_ids_new.len());
-                        let tracked local_update = local_updates.tracked_remove(responses_idx as nat);
-                        let rid = request_ids_new[responses_idx as int];
-
+                        // appeal to the state machien to get that response_idx < request_ids_new.len()
                         self.unbounded_log_instance.borrow().pre_exec_dispatch_local(
                             nid as nat,
                             e,
                             &combiner
                         );
 
-                        // let rid = combiner.view().value.get_Loop_queued_ops()[responses_idx as int];
-                        assert(local_update@.value.is_Placed());
+                        let tracked local_update = local_updates.tracked_remove(responses_idx as nat);
+
                         let tracked exec_dispatch_local_result = self.unbounded_log_instance.borrow()
                             .exec_dispatch_local(nid as nat, e, ghost_replica, local_update, combiner);
                         ghost_replica = exec_dispatch_local_result.0.get();
 
-                        assert(exec_dispatch_local_result.1@@.value.is_Applied());
-                        assert(exec_dispatch_local_result.1@@.value.get_Applied_ret() == res);
-
                         local_updates.tracked_insert(responses_idx as nat, exec_dispatch_local_result.1.get());
                         combiner = exec_dispatch_local_result.2.get();
-
-
                     } else {
                         assert(false);
                     }

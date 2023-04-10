@@ -5,11 +5,12 @@ use builtin_macros::*;
 use vstd::map::*;
 // #[allow(unused_imports)]
 use vstd::option::Option;
-// use vstd::seq::*;
+use vstd::seq::Seq;
+
 // use vstd::set::*;
 // use vstd::*;
 #[allow(unused_imports)] // XXX: should not be needed!
-use vstd::cell::{PCell, PointsTo};
+use vstd::cell::{PCell, CellId, PointsTo};
 
 use state_machines_macros::*;
 
@@ -45,19 +46,21 @@ verus! {
 
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
 pub struct StoredType {
-    pub cell_perms: PointsTo<ConcreteLogEntry>,
+    pub cell_perms: PointsTo<Option<ConcreteLogEntry>>,
     pub log_entry: Option<UnboundedLog::log>
 }
 
-pub open spec fn stored_type_inv(st: StoredType, idx: int, unbounded_log_instance: UnboundedLog::Instance) -> bool {
+pub open spec fn stored_type_inv(st: StoredType, idx: int, cell_id: CellId, unbounded_log_instance: UnboundedLog::Instance) -> bool {
     // also match the cell id
     &&& st.cell_perms@.value.is_Some()
+    &&& st.cell_perms@.pcell == cell_id
     &&& idx >= 0 ==> {
         &&& st.log_entry.is_Some()
         &&& st.log_entry.get_Some_0()@.key == idx
-        &&& st.cell_perms@.value.get_Some_0().node_id as NodeId == st.log_entry.get_Some_0()@.value.node_id
-        &&& st.cell_perms@.value.get_Some_0().op == st.log_entry.get_Some_0()@.value.op
         &&& st.log_entry.get_Some_0()@.instance == unbounded_log_instance
+        &&& st.cell_perms@.value.get_Some_0().is_Some()
+        &&& st.cell_perms@.value.get_Some_0().get_Some_0().node_id as NodeId == st.log_entry.get_Some_0()@.value.node_id
+        &&& st.cell_perms@.value.get_Some_0().get_Some_0().op == st.log_entry.get_Some_0()@.value.op
     }
     &&& idx < 0 ==> {
         &&& true
@@ -133,6 +136,9 @@ tokenized_state_machine! { CyclicBuffer {
         #[sharding(constant)]
         pub unbounded_log_instance: UnboundedLog::Instance,
 
+        #[sharding(constant)]
+        pub cell_ids: Seq<CellId>,
+
         /// the size of the buffer
         #[sharding(constant)]
         pub buffer_size: LogIdx,
@@ -191,6 +197,11 @@ tokenized_state_machine! { CyclicBuffer {
     }
 
     #[invariant]
+    pub spec fn cell_ids(&self) -> bool {
+        self.cell_ids.len() == self.buffer_size
+    }
+
+    #[invariant]
     pub spec fn complete(&self) -> bool {
         &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_versions.dom().contains(i))
         &&& (forall |i| 0 <= i < self.buffer_size  <==> self.alive_bits.dom().contains(i))
@@ -244,7 +255,7 @@ tokenized_state_machine! { CyclicBuffer {
     #[invariant]
     pub spec fn contents_meet_inv(&self) -> bool {
         forall |i: int| #[trigger] self.contents.dom().contains(i) ==>
-            stored_type_inv(self.contents[i], i, self.unbounded_log_instance)
+            stored_type_inv(self.contents[i], i, self.cell_ids[log_entry_idx(i, self.buffer_size) as int], self.unbounded_log_instance)
     }
 
     #[invariant]
@@ -334,11 +345,13 @@ tokenized_state_machine! { CyclicBuffer {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     init!{
-        initialize(unbounded_log_instance: UnboundedLog::Instance, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
+        initialize(buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>, cell_ids: Seq<CellId>, unbounded_log_instance: UnboundedLog::Instance, ) {
             require(num_replicas > 0);
             require(buffer_size == LOG_SIZE);
+            require(cell_ids.len() == buffer_size);
 
             init unbounded_log_instance = unbounded_log_instance;
+            init cell_ids = cell_ids;
             init buffer_size = buffer_size;
             init num_replicas = num_replicas;
             init head = 0;
@@ -346,7 +359,7 @@ tokenized_state_machine! { CyclicBuffer {
             init local_versions = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| 0);
 
             require(forall |i: int| (-buffer_size <= i < 0 <==> contents.dom().contains(i)));
-            require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i, unbounded_log_instance));
+            require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i, cell_ids[log_entry_idx(i, buffer_size) as int], unbounded_log_instance));
             init contents = contents;
 
             init alive_bits = Map::new(|i: nat| 0 <= i < buffer_size, |i: nat| !log_entry_alive_value(i as int, buffer_size));
@@ -416,7 +429,7 @@ tokenized_state_machine! { CyclicBuffer {
             ];
             guard contents >= [ cur as int => val ];
 
-            assert(stored_type_inv(val, cur as int, pre.unbounded_log_instance));
+            assert(stored_type_inv(val, cur as int, pre.cell_ids[log_entry_idx(cur as int, pre.buffer_size) as int],  pre.unbounded_log_instance));
         }
     }
 
@@ -556,11 +569,11 @@ tokenized_state_machine! { CyclicBuffer {
 
             assert forall
               |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                ==> stored_type_inv(#[trigger] withdrawn.index(i), i, pre.unbounded_log_instance) by {
+                ==> stored_type_inv(#[trigger] withdrawn.index(i), i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
 
                 assert forall
                   |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                    implies stored_type_inv(#[trigger] withdrawn.index(i), i, pre.unbounded_log_instance) by {
+                    implies stored_type_inv(#[trigger] withdrawn.index(i), i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
 
                         assert(pre.contents.dom().contains(i) && #[trigger] withdrawn.dom().contains(i)) by {
                             let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
@@ -571,7 +584,7 @@ tokenized_state_machine! { CyclicBuffer {
 
                         assert(pre.contents[i] == withdrawn[i]);
 
-                        assert(stored_type_inv(withdrawn.index(i), i, pre.unbounded_log_instance));
+                        assert(stored_type_inv(withdrawn.index(i), i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance));
                     };
                 };
         }
@@ -600,7 +613,7 @@ tokenized_state_machine! { CyclicBuffer {
             add    alive_bits += [ log_entry_idx(cur_idx as int, pre.buffer_size) => log_entry_alive_value(cur_idx  as int, pre.buffer_size) ];
 
             require(cur_idx < tail);
-            require(stored_type_inv(deposited, cur_idx as int, pre.unbounded_log_instance));
+            require(stored_type_inv(deposited, cur_idx as int, pre.cell_ids[log_entry_idx(cur_idx as int, pre.buffer_size) as int],  pre.unbounded_log_instance));
 
             deposit contents += [ cur_idx as int => deposited ] by {
                 map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
@@ -623,7 +636,7 @@ tokenized_state_machine! { CyclicBuffer {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     #[inductive(initialize)]
-    fn initialize_inductive(post: Self, unbounded_log_instance: UnboundedLog::Instance, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>) {
+    fn initialize_inductive(post: Self, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>, cell_ids: Seq<CellId>,  unbounded_log_instance: UnboundedLog::Instance, ) {
         assert forall |i| post.tail <= i < post.buffer_size implies !log_entry_is_alive(post.alive_bits, i, post.buffer_size) by {
             int_mod_less_than_same(i, post.buffer_size as int);
         }
