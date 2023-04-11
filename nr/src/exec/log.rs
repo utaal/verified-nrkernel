@@ -1173,6 +1173,51 @@ impl NrLog
         }
     }
 
+
+    proof fn execute_update_done_multiple(tracked &self, request_ids: Seq<ReqId>,
+        tracked local_updates: Map<nat, UnboundedLog::local_updates>, tracked version_upper_bound: &UnboundedLog::version_upper_bound)
+         -> (tracked res: Map<nat, UnboundedLog::local_updates>)
+        requires
+            self.wf(),
+            // request_ids.len() == responses.len(),
+            version_upper_bound@.instance == self.unbounded_log_instance@,
+            forall |i| #![trigger local_updates[i]]  0 <= i < request_ids.len() ==> {
+                &&& #[trigger]local_updates.contains_key(i)
+                &&& local_updates[i]@.key == request_ids[i as int]
+                &&& local_updates[i]@.instance == self.unbounded_log_instance@
+                &&& local_updates[i]@.value.is_Applied()
+                &&& local_updates[i]@.value.get_Applied_idx() < version_upper_bound@.value
+                // &&& updates'[i].us.idx < combinerState'.state.globalTail
+            },
+        ensures
+            forall |i| #![trigger local_updates[i]]  0 <= i < request_ids.len() ==> {
+                &&& #[trigger]res.contains_key(i)
+                &&& res[i]@.key == request_ids[i as int]
+                &&& res[i]@.instance == self.unbounded_log_instance@
+                &&& res[i]@.value.is_Done()
+                &&& res[i]@.value.get_Done_ret() == local_updates[i]@.value.get_Applied_ret()
+                // &&& updates'[i].us.idx < combinerState'.state.globalTail
+            }
+        decreases
+            request_ids.len()
+    {
+        if request_ids.len() == 0 {
+
+            return local_updates;
+        }
+        let tracked mut local_updates = local_updates;
+
+        let idx = (request_ids.len() - 1) as nat;
+
+        let tracked local_update = local_updates.tracked_remove(idx);
+        local_updates = self.execute_update_done_multiple(request_ids.subrange(0, request_ids.len() -1), local_updates, version_upper_bound);
+
+        let tracked update_done_result = self.unbounded_log_instance.borrow().update_done(request_ids.last(), version_upper_bound,  local_update);
+
+        local_updates.tracked_insert(idx, update_done_result);
+        return local_updates;
+    }
+
     /// Executes a passed in closure (`d`) on all operations starting from a
     /// replica's local tail on the shared log. The replica is identified
     /// through an `idx` passed in as an argument.
@@ -1212,7 +1257,7 @@ impl NrLog
                 assert(request_ids.len() == responses.len());
             } else {
                 assert(combiner@.value.is_Placed());
-                assert(ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
+                assert(combiner@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
             }
 
             assert(combiner@.value.is_Placed());
@@ -1281,6 +1326,8 @@ impl NrLog
 
         assert(local_version <= global_tail);
 
+        assert(combiner@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
+
 
         // Execute all operations from the passed in offset to the shared log's tail.
         // Check if the entry is live first; we could have a replica that has reserved
@@ -1291,12 +1338,14 @@ impl NrLog
         while local_version < global_tail
             invariant
                 self.wf(),
-                ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids,
-                ghost_data.combiner@@.value.is_Ready() ==> responses_idx == 0,
+                ghost_data.combiner@@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids,
+                ghost_data.combiner@@.value.is_Ready() ==> combiner@.value.get_Loop_queued_ops() == Seq::<ReqId>::empty(),
+                // ghost_data.combiner@@.value.is_Ready() ==> responses_idx == 0,
+                combiner@.value.queued_ops() == request_ids_new,
                 0 <= local_version <= global_tail,
                 0 <= responses_idx as nat <= request_ids_new.len(),
                 responses_idx == 0 ==> responses@ == responses_old && local_updates == local_updates_old,
-                responses.len() == responses_idx,
+                ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx,
                 request_ids_new.len() <= MAX_REQUESTS,
                 ghost_replica@.instance == self.unbounded_log_instance@,
                 ghost_replica@.key == nid as nat,
@@ -1325,12 +1374,13 @@ impl NrLog
                     // updates'[i] == Update(requestIds'[i], UpdatePlaced(node.nodeId as int, updates'[i].us.idx))
                 },
 
-                forall |i| #![trigger local_updates[i]]  0 <= i < responses_idx ==> {
+                ghost_data.combiner@@.value.is_Placed() ==> forall |i| #![trigger local_updates[i]]  0 <= i < responses_idx ==> {
                     &&& #[trigger]local_updates.contains_key(i)
                     &&& local_updates[i]@.key == request_ids_new[i as int]
                     &&& local_updates[i]@.instance == self.unbounded_log_instance@
                     &&& local_updates[i]@.value.is_Applied()
                     &&& local_updates[i]@.value.get_Applied_ret() == responses[i as int]
+                    &&& local_updates[i]@.value.get_Applied_idx() < combiner@.value.get_Loop_tail()
                     // &&& updates'[i].us.idx < combinerState'.state.globalTail
                 }
         {
@@ -1420,7 +1470,7 @@ impl NrLog
                             &combiner
                         );
 
-                        assert(!ghost_data.combiner@@.value.is_Ready());
+                        // assert(!ghost_data.combiner@@.value.is_Ready());
 
                         let tracked local_update = local_updates.tracked_remove(responses_idx as nat);
 
@@ -1471,16 +1521,24 @@ impl NrLog
         }
 
 
-        assert(cb_combiner@.value.is_Reading());
-        assert(cb_combiner@.value.get_Reading_0().is_Range());
-        assert(cb_combiner@.value.get_Reading_0().get_Range_cur() == cb_combiner@.value.get_Reading_0().get_Range_end());
+        // assert(cb_combiner@.value.is_Reading());
+        // assert(cb_combiner@.value.get_Reading_0().is_Range());
+        // assert(cb_combiner@.value.get_Reading_0().get_Range_cur() == cb_combiner@.value.get_Reading_0().get_Range_end());
 
-        assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
 
-        assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
-        assert(request_ids.len() == responses_idx);
-        assert(responses.len() == responses_idx);
-        assert(request_ids.len() == responses.len());
+
+        assert(ghost_data.combiner@@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
+        assert(ghost_data.combiner@@.value.is_Ready() ==> combiner@.value.get_Loop_queued_ops() == Seq::<ReqId>::empty());
+        assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx);
+        assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx);
+        assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == request_ids.len());
+
+        // assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
+
+        // assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
+        // assert(request_ids.len() == responses_idx);
+        // assert(responses.len() == responses_idx);
+        // assert(request_ids.len() == responses.len());
 
 
         // Update the completed tail after we've executed these operations. Also update
@@ -1493,6 +1551,30 @@ impl NrLog
             &self.version_upper_bound.0 => fetch_max(global_tail);
             ghost g => {
                 combiner = self.unbounded_log_instance.borrow().exec_update_version_upper_bound(nid as nat, &mut g, combiner);
+
+                if ghost_data.combiner@@.value.is_Placed() {
+                    assert(forall |i| #![trigger local_updates[i]]  0 <= i < request_ids_new.len() ==> {
+                        &&& #[trigger]local_updates.contains_key(i)
+                        &&& local_updates[i]@.key == request_ids_new[i as int]
+                        &&& local_updates[i]@.instance == self.unbounded_log_instance@
+                        &&& local_updates[i]@.value.is_Applied()
+                        // &&& local_updates[i]@.value.get_Applied_idx() < g@.value
+                        // &&& updates'[i].us.idx < combinerState'.state.globalTail
+                    });
+
+                    assert(forall |i| #![trigger local_updates[i]]  0 <= i < request_ids_new.len() ==> {
+                        &&& #[trigger]local_updates.contains_key(i)
+                        &&& local_updates[i]@.key == request_ids_new[i as int]
+                        &&& local_updates[i]@.instance == self.unbounded_log_instance@
+                        &&& local_updates[i]@.value.is_Applied()
+                        &&& local_updates[i]@.value.get_Applied_idx() < g@.value
+
+                        // &&& updates'[i].us.idx < combinerState'.state.globalTail
+                    });
+
+                    local_updates = self.execute_update_done_multiple(request_ids_new,  local_updates, &g);
+                }
+
                 // TODO: perform_UpdateDoneMultiple()
                 // local_updates = local_updates;
             });
@@ -1527,13 +1609,6 @@ impl NrLog
             cb_combiner,    // Tracked<CyclicBuffer::combiner>,
             request_ids,    // Ghost<Seq<ReqId>>,
         };
-
-        assert(forall |i| #![trigger ghost_data_ret.local_updates@[i]] 0 <= i < ghost_data_ret.request_ids@.len() ==> {
-            &&& ghost_data_ret.local_updates@.contains_key(i)
-            &&& ghost_data_ret.local_updates@[i]@.value.is_Done()
-            &&& ghost_data_ret.local_updates@[i]@.value.get_Done_ret() == responses[i as int]
-            &&& ghost_data_ret.local_updates@[i]@.key == ghost_data_ret.request_ids@[i as int]
-        });
 
         assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
@@ -1873,5 +1948,6 @@ pub open spec fn wf(&self, num_replicas: nat) -> bool {
 }
 
 } // struct_with_invariants!{
+
 
 } // verus!
