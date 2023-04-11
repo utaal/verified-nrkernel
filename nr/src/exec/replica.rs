@@ -582,7 +582,7 @@ impl Replica  {
 
         // Step 3: Append all operations to the log
 
-        assert(append_exec_ghost_data.append_pre(self.replica_token@, operations@,  data.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+        assert(append_exec_ghost_data.append_pre(self.replica_token@, data.interp(),  operations@,  self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
         assert(forall |i|  #[trigger] append_exec_ghost_data.local_updates@.contains_key(i) ==> {
             &&& (#[trigger] append_exec_ghost_data.local_updates@[i])@.instance == self.unbounded_log_instance@}
@@ -590,9 +590,10 @@ impl Replica  {
 
         let append_exec_ghost_data = slog.append(&self.replica_token, &operations, &mut responses, &mut data, Tracked(append_exec_ghost_data));
 
+        assert(append_exec_ghost_data@.execute_pre(self.replica_token@, data.interp(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+
 
         // Step 3: Execute all operations
-        assert(responses.len() == 0);
         let append_exec_ghost_data = slog.execute(&self.replica_token, &mut responses, &mut data, append_exec_ghost_data);
         let Tracked(append_exec_ghost_data) = append_exec_ghost_data;
         let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids } = append_exec_ghost_data;

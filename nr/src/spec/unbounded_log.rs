@@ -825,6 +825,7 @@ UnboundedLog {
                 // assert(lversion < tail);
                 // assert(pre.log.index(lversion).node_id == node_id);
             };
+            assert(queued_ops.len() > 0);
         }
     }
 
@@ -922,6 +923,7 @@ UnboundedLog {
             remove combiner -= [ node_id => let CombinerState::LoadedLocalVersion { queued_ops, lversion } ];
 
             require(lversion == pre.tail);
+            assert(queued_ops.len() == 0);
 
             add    combiner += [ node_id => CombinerState::Ready];
         }

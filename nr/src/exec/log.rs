@@ -738,7 +738,8 @@ impl NrLog
         requires
             self.wf(),
             replica_token@ < self.local_versions.len(),
-            ghost_data@.append_pre(replica_token@, operations@, old(actual_replica).interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+            old(responses).len() == 0,
+            ghost_data@.append_pre(replica_token@, old(actual_replica).interp(), operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
             operations.len() <= MAX_REQUESTS
         ensures
             result@.append_post(ghost_data@, replica_token@, actual_replica.interp(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
@@ -760,13 +761,14 @@ impl NrLog
                 self.wf(),
                 0 <= waitgc <= WARN_THRESHOLD,
                 0 <= iteration <= WARN_THRESHOLD,
+                responses.len() == 0,
                 replica_token@ < self.local_versions.len(),
                 nid == replica_token@,
                 nops == operations.len(),
                 nops <= MAX_REQUESTS,
                 ghost_data_new.cb_combiner@@.value == ghost_data@.cb_combiner@@.value,
                 ghost_data_new.request_ids@ == ghost_data@.request_ids@,
-                ghost_data_new.append_pre(replica_token@, operations@, actual_replica.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+                ghost_data_new.append_pre(replica_token@, actual_replica.interp(), operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         {
             // unpack stuff
             let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids} = ghost_data_new;
@@ -818,17 +820,28 @@ impl NrLog
                     cb_combiner = self.cyclic_buffer_instance.borrow().advance_tail_abort(nid as nat, cb_combiner);
                 }
 
-                let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates: Tracked(local_updates), ghost_replica, combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner), request_ids};
-                //
-                assert(responses.len() == 0);
+                // overwrite the request_ids here, as we're not executing any local updates
+                let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates: Tracked(local_updates), ghost_replica, combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner), request_ids: Ghost(Seq::empty())};
                 let ghost_data0 = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
+                // assert(responses.len() == 0);
+                // assert(ghost_data0@.request_ids@.len() == responses.len());
+
+                let tracked Tracked(ghost_data0) = ghost_data0;
+
+                proof {
+                    ghost_data_new = NrLogAppendExecDataGhost {
+                        local_updates: ghost_data0.local_updates,
+                        ghost_replica: ghost_data0.ghost_replica,
+                        combiner: ghost_data0.combiner,
+                        cb_combiner: ghost_data0.cb_combiner,
+                        request_ids
+                    };
+
+                }
+                assert(ghost_data_new.append_pre(replica_token@, actual_replica.interp(),  operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+
                 // upstream has an advance_head here, but dafny doesn't
                 // let ghost_data0 = self.advance_head(replica_token, responses, actual_replica, ghost_data0);
-                let tracked Tracked(ghost_data0) = ghost_data0;
-                proof {
-                    ghost_data_new = ghost_data0;
-                }
-                assert(ghost_data_new.append_pre(replica_token@, operations@, actual_replica.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
                 continue;
             }
 
@@ -1041,7 +1054,7 @@ impl NrLog
             }
 
             assert(combiner@.value.get_Placed_queued_ops() == request_ids@);
-            assert(request_ids@.len() <= responses.len());
+            // assert(request_ids@.len() <= responses.len());
 
             assert(forall |i| 0 <= i < request_ids@.len() ==> {
                 &&& #[trigger] local_updates.contains_key(i)
@@ -1063,12 +1076,9 @@ impl NrLog
             if advance {
                 // assert(ghost_data_new.advance_head_pre(replica_token.id_spec(), actual_replica.interp(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
                 let ghost_data_new = self.advance_head(replica_token, responses, actual_replica, Tracked(ghost_data_new));
-                assert(ghost_data@.request_ids@.len() <= responses.len());
-                assert(ghost_data_new@.request_ids@ == ghost_data@.request_ids@);
-                assert(ghost_data_new@.append_post(ghost_data@, replica_token@, actual_replica.interp(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
                 return ghost_data_new;
             } else {
-                assert(ghost_data_new.append_post(ghost_data@, replica_token@, actual_replica.interp(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+                // assert(ghost_data_new.append_post(ghost_data@, replica_token@, actual_replica.interp(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
                 return Tracked(ghost_data_new);
             }
         }
@@ -1159,7 +1169,6 @@ impl NrLog
 
             let tracked cb_combiner = Tracked(cb_combiner);
             let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
-            assert(responses.len() == 0);
             ghost_data_new = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
         }
     }
@@ -1174,10 +1183,11 @@ impl NrLog
     ) -> (result: Tracked<NrLogAppendExecDataGhost>)
         requires
             self.wf(),
-            old(responses).len() == 0,
+            // ghost_data@.combiner@@.value.is_Placed() ==> old(responses).len() == 0,
             replica_token@ < self.local_versions.len(),
             ghost_data@.execute_pre(replica_token@, old(actual_replica).interp(), old(responses)@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
         ensures
+            // ghost_data@.combiner@@.value.is_Ready() ==> old(responses) == responses,
             result@.execute_post(ghost_data@, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
     {
         let nid = replica_token.id() as usize;
@@ -1194,16 +1204,21 @@ impl NrLog
         // if the combiner in idle, we start it with the trival start transition
         proof {
             if combiner@.value.is_Ready() {
-                // assert(combiner@.value.is_Ready());
-                // assert(combiner@.key == nid);
-                // assert(combiner@.instance == self.unbounded_log_instance@);
+                assert(combiner@.value.is_Ready());
+                assert(combiner@.key == nid);
+                assert(combiner@.instance == self.unbounded_log_instance@);
                 combiner = self.unbounded_log_instance.borrow().exec_trivial_start(nid as nat, combiner);
                 request_ids_new = Seq::empty();
+                assert(request_ids.len() == responses.len());
+            } else {
+                assert(combiner@.value.is_Placed());
+                assert(ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
             }
 
             assert(combiner@.value.is_Placed());
             assert(combiner@.value.get_Placed_queued_ops() == request_ids_new);
         }
+
 
         // let ltail = self.ltails[idx.0 - 1].load(Ordering::Relaxed);
         let mut local_version = atomic_with_ghost!(
@@ -1225,6 +1240,7 @@ impl NrLog
             ghost g => {
                 if (local_version == global_tail) {
                     // there has ben no additional updates to be applied, combiner back to idle
+                    // assert(request_ids == combiner@.value.get_Placed_queued_ops());
                     combiner = self.unbounded_log_instance.borrow().exec_finish_no_change(nid as nat, &g.0, combiner);
                     cb_combiner = self.cyclic_buffer_instance.borrow().reader_abort(nid as nat, cb_combiner);
                 } else {
@@ -1242,6 +1258,22 @@ impl NrLog
                 cb_combiner: Tracked(cb_combiner),    // Tracked<CyclicBuffer::combiner>,
                 request_ids:Ghost(request_ids),    // Ghost<Seq<ReqId>>,
             };
+
+            // post
+            proof {
+                if ghost_data.combiner@@.value.is_Placed() {
+                    assert(ghost_data_ret.request_ids@.len() == 0);
+                    assert(responses.len() == 0);
+                    assert(ghost_data_ret.request_ids@.len() == responses.len());
+                } else {
+                    // here it was ready, so we were not adding stuff here before
+                    assert(ghost_data.combiner@@.value.is_Ready());
+                    assert(ghost_data_ret.request_ids@.len() == responses.len());
+                }
+            }
+            // assert(ghost_data_ret.request_ids@.len() == responses.len());
+            // assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+
             return Tracked(ghost_data_ret);
         }
 
@@ -1259,7 +1291,8 @@ impl NrLog
         while local_version < global_tail
             invariant
                 self.wf(),
-
+                ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids,
+                ghost_data.combiner@@.value.is_Ready() ==> responses_idx == 0,
                 0 <= local_version <= global_tail,
                 0 <= responses_idx as nat <= request_ids_new.len(),
                 responses_idx == 0 ==> responses@ == responses_old && local_updates == local_updates_old,
@@ -1372,7 +1405,6 @@ impl NrLog
             assert(stored_entry.log_entry.get_Some_0()@.key == combiner.view().value.get_Loop_lversion());
 
             if log_entry.as_ref().unwrap().node_id == nid as u64 {
-
                 // assert(local_updates.contains_key(responses_idx as nat));
 
                 // local dispatch
@@ -1387,6 +1419,8 @@ impl NrLog
                             e,
                             &combiner
                         );
+
+                        assert(!ghost_data.combiner@@.value.is_Ready());
 
                         let tracked local_update = local_updates.tracked_remove(responses_idx as nat);
 
@@ -1441,6 +1475,14 @@ impl NrLog
         assert(cb_combiner@.value.get_Reading_0().is_Range());
         assert(cb_combiner@.value.get_Reading_0().get_Range_cur() == cb_combiner@.value.get_Reading_0().get_Range_end());
 
+        assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
+
+        assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
+        assert(request_ids.len() == responses_idx);
+        assert(responses.len() == responses_idx);
+        assert(request_ids.len() == responses.len());
+
+
         // Update the completed tail after we've executed these operations. Also update
         // this replica's local tail.
         // Finds the maximum of the current value and the argument val, and sets the new value to the result.
@@ -1457,7 +1499,6 @@ impl NrLog
 
 
         // assert(global_tail < MAX_IDX);
-
 
         let tracked reader_finish_result : (Tracked<CyclicBuffer::local_versions>, Tracked<CyclicBuffer::combiner>);
         let tracked exec_finish_result : (Tracked<UnboundedLog::local_versions>, Tracked<UnboundedLog::combiner>);
@@ -1486,6 +1527,15 @@ impl NrLog
             cb_combiner,    // Tracked<CyclicBuffer::combiner>,
             request_ids,    // Ghost<Seq<ReqId>>,
         };
+
+        assert(forall |i| #![trigger ghost_data_ret.local_updates@[i]] 0 <= i < ghost_data_ret.request_ids@.len() ==> {
+            &&& ghost_data_ret.local_updates@.contains_key(i)
+            &&& ghost_data_ret.local_updates@[i]@.value.is_Done()
+            &&& ghost_data_ret.local_updates@[i]@.value.get_Done_ret() == responses[i as int]
+            &&& ghost_data_ret.local_updates@[i]@.key == ghost_data_ret.request_ids@[i as int]
+        });
+
+        assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
         Tracked(ghost_data_ret)
     }
@@ -1613,7 +1663,7 @@ impl NrLogAppendExecDataGhost {
         &&& self.request_ids@.len() <= MAX_REQUESTS
     }
 
-    pub open spec fn append_pre(&self,  nid: NodeId, ops: Seq<UpdateOp>,  data: DataStructureSpec, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn append_pre(&self,  nid: NodeId, data: DataStructureSpec, ops: Seq<UpdateOp>, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
         // |responses| == MAX_THREADS_PER_REPLICA as int
         &&& self.common_pred(nid, data, inst, cb_inst)
         &&& (forall |i| #![trigger self.local_updates@[i]]0 <= i < self.request_ids@.len() ==> {
@@ -1643,6 +1693,9 @@ impl NrLogAppendExecDataGhost {
         &&& self.cb_combiner@@.value.is_Idle()
         &&& self.combiner@@.value.is_Ready() || self.combiner@@.value.is_Placed()
         &&& self.combiner@@.value.is_Placed() ==> self.pre_exec(responses)
+        &&& self.combiner@@.value.is_Ready() ==> {
+            &&& self.request_ids@.len() == responses.len()
+        }
     }
 
     pub open spec fn execute_post(&self, pre: Self, nid: NodeId, data: DataStructureSpec, responses_old: Seq<ReturnType>, responses: Seq<ReturnType>, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
@@ -1677,6 +1730,7 @@ impl NrLogAppendExecDataGhost {
             &&& self.post_exec(self.request_ids@, responses)
         }
         &&& self.combiner@@.value.is_Placed() ==> {
+            &&& responses.len() == 0
             &&& self.local_updates == pre.local_updates
             &&& self.combiner@@.value == pre.combiner@@.value
             // I think those are needed as well
@@ -1688,7 +1742,8 @@ impl NrLogAppendExecDataGhost {
     pub open spec fn pre_exec(&self, responses: Seq<ReturnType>) -> bool {
         // && |responses| == MAX_THREADS_PER_REPLICA as int
         // && |requestIds| <= MAX_THREADS_PER_REPLICA as int
-        &&& self.request_ids@.len() <= responses.len()
+        // &&& self.request_ids@.len() <= responses.len()
+        &&& responses.len() == 0
         &&& self.combiner@@.value.is_Placed()
         &&& self.combiner@@.value.get_Placed_queued_ops() == self.request_ids
         &&& (forall |i| #![trigger self.local_updates@[i]]0 <= i < self.request_ids@.len() ==> {
@@ -1703,7 +1758,7 @@ impl NrLogAppendExecDataGhost {
     pub open spec fn post_exec(&self, request_ids: Seq<ReqId>, responses: Seq<ReturnType>) -> bool {
         // && |responses'| == MAX_THREADS_PER_REPLICA as int
         // && |requestIds| <= MAX_THREADS_PER_REPLICA as int
-        &&& request_ids.len() <= responses.len()
+        &&& request_ids.len() == responses.len()
         &&& self.combiner@@.value.is_Ready()
         &&& (forall |i| #![trigger self.local_updates@[i]] 0 <= i < request_ids.len() ==> {
             &&& self.local_updates@.contains_key(i)
