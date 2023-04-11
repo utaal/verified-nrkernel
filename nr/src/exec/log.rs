@@ -753,6 +753,8 @@ impl NrLog
         let mut iteration = 1;
         let mut waitgc = 1;
 
+        assert(ghost_data_new.request_ids@ == ghost_data@.request_ids@);
+
         loop
             invariant
                 self.wf(),
@@ -762,8 +764,8 @@ impl NrLog
                 nid == replica_token@,
                 nops == operations.len(),
                 nops <= MAX_REQUESTS,
-                // ghost_data@.append_pre(replica_token@, operations@, actual_replica.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
-                ghost_data@.cb_combiner@@.value == ghost_data_new.cb_combiner@@.value,
+                ghost_data_new.cb_combiner@@.value == ghost_data@.cb_combiner@@.value,
+                ghost_data_new.request_ids@ == ghost_data@.request_ids@,
                 ghost_data_new.append_pre(replica_token@, operations@, actual_replica.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         {
             // unpack stuff
@@ -944,6 +946,7 @@ impl NrLog
             let ghost cell_ids = self.cyclic_buffer_instance@.cell_ids();
             let ghost buffer_size = self.cyclic_buffer_instance@.buffer_size();
 
+
             // Successfully reserved entries on the shared log. Add the operations in.
             let mut idx = 0;
             while idx < nops
@@ -1055,8 +1058,6 @@ impl NrLog
                     request_ids,                            // Ghost<Seq<ReqId>>,
                 };
             }
-
-            assert(ghost_data_new.request_ids@ == ghost_data@.request_ids@);
 
             // assume(false);
             if advance {
