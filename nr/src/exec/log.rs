@@ -1190,7 +1190,7 @@ impl NrLog
                 // &&& updates'[i].us.idx < combinerState'.state.globalTail
             },
         ensures
-            forall |i| #![trigger local_updates[i]]  0 <= i < request_ids.len() ==> {
+            forall |i| #![trigger res[i]]  0 <= i < request_ids.len() ==> {
                 &&& #[trigger]res.contains_key(i)
                 &&& res[i]@.key == request_ids[i as int]
                 &&& res[i]@.instance == self.unbounded_log_instance@
@@ -1205,17 +1205,17 @@ impl NrLog
 
             return local_updates;
         }
-        let tracked mut local_updates = local_updates;
+        let tracked mut local_updates_new = local_updates;
 
         let idx = (request_ids.len() - 1) as nat;
 
-        let tracked local_update = local_updates.tracked_remove(idx);
-        local_updates = self.execute_update_done_multiple(request_ids.subrange(0, request_ids.len() -1), local_updates, version_upper_bound);
+        let tracked local_update = local_updates_new.tracked_remove(idx);
+        local_updates_new = self.execute_update_done_multiple(request_ids.subrange(0, request_ids.len() -1), local_updates_new, version_upper_bound);
 
         let tracked update_done_result = self.unbounded_log_instance.borrow().update_done(request_ids.last(), version_upper_bound,  local_update);
 
-        local_updates.tracked_insert(idx, update_done_result);
-        return local_updates;
+        local_updates_new.tracked_insert(idx, update_done_result);
+        return local_updates_new;
     }
 
     /// Executes a passed in closure (`d`) on all operations starting from a
@@ -1326,9 +1326,6 @@ impl NrLog
 
         assert(local_version <= global_tail);
 
-        assert(combiner@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
-
-
         // Execute all operations from the passed in offset to the shared log's tail.
         // Check if the entry is live first; we could have a replica that has reserved
         // entries, but not filled them into the log yet.
@@ -1338,7 +1335,10 @@ impl NrLog
         while local_version < global_tail
             invariant
                 self.wf(),
-                ghost_data.combiner@@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids,
+                ghost_data.combiner@@.value.is_Placed() ==> {
+                    &&& ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids
+                    &&& combiner@.value.get_Loop_queued_ops() == request_ids
+                },
                 ghost_data.combiner@@.value.is_Ready() ==> combiner@.value.get_Loop_queued_ops() == Seq::<ReqId>::empty(),
                 // ghost_data.combiner@@.value.is_Ready() ==> responses_idx == 0,
                 combiner@.value.queued_ops() == request_ids_new,
@@ -1525,13 +1525,18 @@ impl NrLog
         // assert(cb_combiner@.value.get_Reading_0().is_Range());
         // assert(cb_combiner@.value.get_Reading_0().get_Range_cur() == cb_combiner@.value.get_Reading_0().get_Range_end());
 
+        proof {
+            self.unbounded_log_instance.borrow().pre_exec_update_version_upper_bound(nid as nat, &combiner);
+        }
 
+        // assert(ghost_data.combiner@@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
+        // assert(ghost_data.combiner@@.value.is_Ready() ==> combiner@.value.get_Loop_queued_ops() == Seq::<ReqId>::empty());
 
-        assert(ghost_data.combiner@@.value.is_Placed() ==> ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids);
-        assert(ghost_data.combiner@@.value.is_Ready() ==> combiner@.value.get_Loop_queued_ops() == Seq::<ReqId>::empty());
-        assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx);
-        assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx);
-        assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == request_ids.len());
+        // assert(combiner@.value.get_Loop_idx() == responses_idx);
+
+        // assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx);
+        // assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == responses_idx);
+        // assert(ghost_data.combiner@@.value.is_Placed() ==> responses.len() == request_ids.len());
 
         // assert(combiner@.value.get_Loop_queued_ops() == request_ids_new);
 
