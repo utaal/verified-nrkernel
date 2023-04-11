@@ -332,7 +332,7 @@ pub fn main() {
         }
 
         // make sure to make progress on all replicas
-        for _ in 0..NUM_OPS_PER_THREAD  {
+        for _ in 0..NUM_OPS_PER_THREAD*2  {
             std::thread::yield_now();
             match counter.execute(ReadonlyOp::Get, tkn) {
                 Result::Ok((ret, t)) => {

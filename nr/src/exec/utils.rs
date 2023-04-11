@@ -104,18 +104,10 @@ pub proof fn rids_match_pop(
     } else {
         if bools[bools_end - 1].is_Some() {
         rids_match_pop(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, (rids_end - 1) as nat);
-        // if bools_end - 1 > bools_start {
-        //   rids_match_pop(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, (rids_end - 1) as nat);
-        // }
         } else {
         rids_match_pop(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, rids_end);
-        // if bools_end - 1 > bools_start {
-        //   rids_match_pop(bools, rids, bools_start, (bools_end - 1) as nat, rids_start, rids_end);
-        // }
         }
     }
 }
-
-
 
 } // verus!

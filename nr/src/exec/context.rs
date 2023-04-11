@@ -154,22 +154,16 @@ pub struct Context {
 
     /// ghost: identifier of the thread
     pub thread_id_g: Ghost<nat>,
-    // pub atomic_val: Ghost<nat>,
 
-    /// ghost: the flat combiner instance
     pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
 }
 
-// XXX: in Dafny, this predicate takes the thread id and the flat combiner instance as arguments,
-// but it seems that this is not possible here?
 pub open spec fn wf(&self, thread_idx: nat) -> bool {
     predicate {
         self.thread_id_g@ == thread_idx
     }
     invariant on atomic with (flat_combiner_instance, unbounded_log_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost) {
-        // (forall v, g :: atomic_inv(atomic.inner, v, g) <==> g.inv(v, i, cell.inner, fc_loc))
-        // &&& atomic_val == v
         &&& g.inv(v, thread_id_g@, batch.0, flat_combiner_instance@, unbounded_log_instance@)
     }
 }} // struct_with_invariants!
@@ -193,28 +187,19 @@ impl Context {
             thread_id_g = thread_id as nat;
         }
 
-        //
         // create the storage for storing the update operation
-        //
         let (batch, batch_perms) = PCell::empty();
         let batch = CachePadded(batch);
 
-        //
-        // create the ghost context
-        //
+        // create the atomic with the ghost context
         let tracked context_ghost = ContextGhost {
             batch_perms: None,
             slots: slot.get(),
             update: Option::None,
         };
-
-
         let atomic = AtomicU64::new(Ghost((flat_combiner_instance, unbounded_log_instance, batch, Ghost(thread_id_g))), 0, Tracked(context_ghost));
 
-        //
-        // Assemble the context
-        //
-
+        // Assemble the context, return with the permissions
         (Context {
             batch: batch,
             atomic: CachePadded(atomic),
@@ -234,11 +219,9 @@ impl Context {
         requires
             context_ghost@.enqueue_op_pre(self.thread_id_g@, op, self.batch.0.id(), self.flat_combiner_instance@, self.unbounded_log_instance@),
             self.wf(self.thread_id_g@),
-            // self.atomic_val == 0
         ensures
             res.1@.enqueue_op_post(context_ghost@),
             self.wf(self.thread_id_g@),
-            // self.atomic_val == 1
     {
         let tracked FCClientRequestResponseGhost { batch_perms: batch_perms, local_updates: local_updates, fc_clients: mut fc_clients } = context_ghost.get();
 
@@ -258,10 +241,8 @@ impl Context {
 
                 self.flat_combiner_instance.borrow().pre_send_request(tid, &fc_clients, &g.slots);
                 send_request_result = self.flat_combiner_instance.borrow().send_request(tid, rid, fc_clients, g.slots);
-                // update the flat combiner clients
                 fc_clients = send_request_result.0.get();
 
-                // update the ghost context
                 g.slots = send_request_result.1.get();
                 g.batch_perms = Some(batch_perms);
                 g.update = Some(local_updates);
@@ -295,23 +276,15 @@ impl Context {
             returning res;
             ghost g => {
                 if res == 0 {
-                    // TODO: if we call this function we should be waiting for a response,
                     batch_perms = g.batch_perms;
                     local_updates = g.update;
 
                     let tid = fc_clients.view().key;
                     let rid = fc_clients.view().value.get_Waiting_0();
-
                     self.flat_combiner_instance.borrow().pre_recv_response(tid, &fc_clients, &g.slots);
-
-                    assert(g.slots.view().value.is_Response());
-                    assert(g.slots.view().value.get_Response_0() == rid);
-
-                    assert(fc_clients.view().value.get_Waiting_0() == local_updates.get_Some_0().view().key);
-
                     recv_response_result = self.flat_combiner_instance.borrow().recv_response(tid, rid, fc_clients, g.slots);
-
                     fc_clients = recv_response_result.0.get();
+
                     g.slots = recv_response_result.1.get();
                     g.batch_perms = None;
                     g.update = None;
@@ -321,9 +294,7 @@ impl Context {
 
         if res == 0 {
             let tracked mut batch_perms = batch_perms.tracked_unwrap();
-
             let op = self.batch.0.take(Tracked(&mut batch_perms));
-
             let resp = op.resp.unwrap();
             let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perms), local_updates, fc_clients };
             (Some(resp), Tracked(new_context_ghost))
@@ -391,9 +362,6 @@ impl Context {
 
 
 
-
-
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Ghost Context
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -409,7 +377,6 @@ pub tracked struct ContextGhost {
     pub batch_perms: Option<PointsTo<PendingOperation>>,
 
     /// The flat combiner slot.
-    /// XXX: somehow can't make this tracked?
     ///
     ///  - Dafny: glinear fc: FCSlot,
     pub slots: FlatCombiner::slots,
@@ -423,39 +390,18 @@ pub tracked struct ContextGhost {
 //  - Dafny: predicate inv(v: uint64, i: nat, cell: Cell<OpResponse>, fc_loc_s: nat)
 pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc: FlatCombiner::Instance, inst: UnboundedLog::Instance) -> bool {
     predicate {
-        // // && fc.tid == i
         &&& self.slots@.key == tid
-
-        // && fc.loc_s == fc_loc_s
         &&& self.slots@.instance == fc
 
-        // && (v == 0 || v == 1)
         &&& ((v == 0) || (v == 1))
-
-        // && (v == 0 ==> fc.state.FCEmpty? || fc.state.FCResponse?)
         &&& (v == 0 ==> self.slots@.value.is_Empty() || self.slots@.value.is_Response())
-
-        // && (v == 1 ==> fc.state.FCRequest? || fc.state.FCInProgress?)
         &&& (v == 1 ==> self.slots@.value.is_Request() || self.slots@.value.is_InProgress())
 
-        // && (fc.state.FCEmpty? ==>
-        //   && update.glNone?
-        //   && contents.glNone?
-        // )
         &&& (self.slots@.value.is_Empty() ==> {
             &&& self.update.is_None()
             &&& self.batch_perms.is_None()
-            // &&& self.batch_perms@@.value.is_None()
         })
 
-        // && (fc.state.FCRequest? ==>
-        //   && update.glSome?
-        //   && update.value.us.UpdateInit?
-        //   && update.value.rid == fc.state.rid
-        //   && contents.glSome?
-        //   && contents.value.cell == cell
-        //   && contents.value.v.op == update.value.us.op
-        // )
         &&& (self.slots@.value.is_Request() ==> {
             &&& self.update.is_Some()
             &&& self.update.get_Some_0()@.value.is_Init()
@@ -468,23 +414,11 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
             &&& self.batch_perms.get_Some_0()@.value.get_Some_0().op == self.update.get_Some_0()@.value.get_Init_op()
         })
 
-        // && (fc.state.FCInProgress? ==>
-        //   && update.glNone?
-        //   && contents.glNone?
-        // )
         &&& (self.slots@.value.is_InProgress() ==> {
             &&& self.update.is_None()
             &&& self.batch_perms.is_None()
         })
 
-        // && (fc.state.FCResponse? ==>
-        //   && update.glSome?
-        //   && update.value.us.UpdateDone?
-        //   && update.value.rid == fc.state.rid
-        //   && contents.glSome?
-        //   && contents.value.cell == cell
-        //   && contents.value.v.ret == update.value.us.ret
-        // )
         &&& (self.slots@.value.is_Response() ==> {
             &&& self.update.is_Some()
             &&& self.update.get_Some_0()@.value.is_Done()
@@ -533,18 +467,17 @@ impl FCClientRequestResponseGhost {
         &&& self.fc_clients@.instance == pre.fc_clients@.instance
         &&& self.fc_clients@.key == pre.fc_clients@.key
 
-        // the rest is none
         &&& self.batch_perms.is_None()
         &&& self.local_updates.is_None()
     }
 
     pub open spec fn dequeue_resp_pre(&self, tid: nat, fc_inst: FlatCombiner::Instance) -> bool {
-        &&& self.batch_perms.is_None()
-        &&& self.local_updates.is_None()
-
         &&& self.fc_clients@.key == tid
         &&& self.fc_clients@.instance == fc_inst
         &&& self.fc_clients@.value.is_Waiting()
+
+        &&& self.batch_perms.is_None()
+        &&& self.local_updates.is_None()
     }
 
     pub open spec fn dequeue_resp_post(&self, pre: FCClientRequestResponseGhost, ret: Option<ReturnType>, inst: UnboundedLog::Instance) -> bool {
@@ -567,9 +500,5 @@ impl FCClientRequestResponseGhost {
         }
     }
 }
-
-
-
-
 
 } // verus!

@@ -31,7 +31,6 @@ use crate::exec::context::{Context, PendingOperation, ThreadId, ThreadToken, FCC
 use crate::exec::utils::{rids_match, rids_match_pop, rids_match_add_rid, rids_match_add_none};
 
 
-
 verus! {
 
 #[verifier(external_body)] /* vattr */
@@ -112,23 +111,15 @@ pub struct ReplicatedDataStructure {
 //  - Dafny: predicate WF(nodeId: nat, cb_loc_s: nat) {
 pub open spec fn wf(&self, nid: NodeId, inst: UnboundedLog::Instance, cb: CyclicBuffer::Instance) -> bool {
     predicate {
-        // combiner instance
         &&& self.combiner@@.instance == inst
         &&& self.replica@@.instance == inst
 
-        // && ghost_replica.state == nrifc.I(actual_replica)
         &&& self.replica@@.value == self.data.interp()
-        // && ghost_replica.nodeId == nodeId
         &&& self.replica@@.key == nid
-        // && combiner.state == CombinerReady
         &&& self.combiner@@.value.is_Ready()
-        // && combiner.nodeId == nodeId
         &&& self.combiner@@.key == nid
-        // && cb.nodeId == nodeId
         &&& self.cb_combiner@@.key == nid
-        // && cb.rs.CombinerIdle?
         &&& self.cb_combiner@@.value.is_Idle()
-        // && cb.cb_loc_s == cb_loc_s
         &&& self.cb_combiner@@.instance == cb
     }
 }} // struct_with_invariants
@@ -179,10 +170,9 @@ pub struct Replica {
     ///  - Rust:  buffer: RefCell<Vec<<D as Dispatch>::WriteOperation>>,
     pub collected_operations: PCell<Vec<UpdateOp>>,
 
-
-    // /// Number of operations collected by the combiner from each thread at any
-    // we just have one inflight operation per thread
-    // inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
+    /// Number of operations collected by the combiner from each thread at any
+    /// we just have one inflight operation per thread
+    /// inflight: RefCell<[usize; MAX_THREADS_PER_REPLICA]>,
     pub collected_operations_per_thread: PCell<Vec<usize>>,
 
     /// A buffer of results collected after flat combining. With the help of
@@ -195,20 +185,19 @@ pub struct Replica {
     ///  - Rust:  result: RefCell<Vec<<D as Dispatch>::Response>>,
     pub responses: PCell<Vec<ReturnType>>,
 
-
-    // The underlying data structure. This is shared among all threads that are
-    // registered with this replica. Each replica maintains its own copy of
-    // `data`.
-    //
-    //   - Dafny: linear replica: RwLock,
-    //   - Rust:  data: CachePadded<RwLock<D>>,
+    /// The underlying data structure. This is shared among all threads that are
+    /// registered with this replica. Each replica maintains its own copy of
+    /// `data`.
+    ///
+    ///   - Dafny: linear replica: RwLock,
+    ///   - Rust:  data: CachePadded<RwLock<D>>,
     pub data: CachePadded<RwLock<ReplicatedDataStructure>>,
 
-
-    /// Thread index that will be handed out to the next thread that registers
+    // Thread index that will be handed out to the next thread that registers
     // with the replica when calling [`Replica::register()`].
     // next: CachePadded<AtomicU64<_, FlatCombiner::num_threads, _>>,
-    // thread token that is handed out to the threads that register
+
+    /// thread token that is handed out to the threads that register
     pub /* REVIEW: (crate) */ thread_tokens: Vec<ThreadToken>,
 
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
@@ -219,46 +208,27 @@ pub struct Replica {
 pub open spec fn wf(&self) -> bool {
 
     predicate {
-        // && (forall i | 0 <= i < |contexts| :: i in contexts && contexts[i].WF(i, fc_loc))
         &&& (forall |i: int| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i]).wf(i as nat))
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i as int]).flat_combiner_instance == self.flat_combiner_instance)
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i as int]).unbounded_log_instance == self.unbounded_log_instance)
 
-        // && |contexts| == MAX_THREADS_PER_REPLICA as int
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
-        // && 0 <= nodeId as int < NUM_REPLICAS as int
         &&& 0 <= self.spec_id() < NUM_REPLICAS
-        // && replica.InternalInv()
         &&& self.data.0.wf()
-        // &&& self.data.0.internal_inv()
-        // TODO: is this the right way to do this?
         &&& (forall |v: ReplicatedDataStructure| #[trigger] self.data.0.inv(v) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
 
-        // XXX: the number of threads must agree here!, make this dynamic?
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
-
         &&& (forall |i| #![trigger self.thread_tokens[i]] 0 <= i < self.thread_tokens.len() ==> {
             self.thread_tokens[i].wf()
         })
-
-        // XXX: What is that one here???
-        // seems to refer to module NodeReplica(nrifc: NRIfc) refines ContentsTypeMod
-        // of the actual replica wrapping the data structure?
-        //&& (forall nodeReplica :: replica.inv(nodeReplica) <==> nodeReplica.WF(nodeId as int, nr.cb_loc_s))
     }
 
-    // (forall v, g :: atomic_inv(combiner_lock.inner, v, g) <==> CombinerLockInv(v, g, fc_loc, ops, responses))
     invariant on combiner with (flat_combiner_instance, responses, collected_operations, collected_operations_per_thread) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
-        // v != means lock is not taken,
+        // v != 0 means lock is not taken, if it's not taken, the ghost state is Some
         &&& (v == 0) <==> g.is_Some()
-        // the lock is not taken, the ghost state is Some
+        //
         &&& (g.is_Some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), collected_operations.id(), collected_operations_per_thread.id()))
     }
-
-    // invariant on next specifically (self.next.0) is (v: u64, g: FlatCombiner::num_threads) {
-    //     &&& 0 <= v < MAX_THREADS_PER_REPLICA
-    //     &&& v == g
-    // }
 }
 
 } // struct_with_invariants!
@@ -267,8 +237,6 @@ pub open spec fn wf(&self) -> bool {
 
 
 impl Replica  {
-
-    // needs some kind of ghost state
     pub fn new(replica_token: ReplicaToken, num_threads: usize, config: Tracked<ReplicaConfig>) -> (res: Self)
         requires
             num_threads == MAX_THREADS_PER_REPLICA,
@@ -470,8 +438,6 @@ impl Replica  {
             ghost g => {
                 if prev == 0 {
                     lock_g = g;    // obtain the protected lock state
-                    assert(next == 2);
-
                     g = Option::None;       // we took the lock, set the ghost state to None,
                 } else {
                     lock_g = None; // the lock was already taken, set it to None
@@ -496,17 +462,12 @@ impl Replica  {
             update old_val -> new_val;
             ghost g
             => {
-                // assert(old_val == v);
-                // assert(old_val != 0);
-                // assert(g.is_None());
                 g = Some(lock_state.get());
             });
     }
 
     /// Appends an operation to the log and attempts to perform flat combining.
     /// Accepts a thread `tid` as an argument. Required to acquire the combiner lock.
-    ///
-    /// https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/nr/replica.rs#L788
     fn try_combine(&self, slog: &NrLog)
         requires
           self.wf(),
@@ -516,7 +477,6 @@ impl Replica  {
     {
         // Step 1: try to take the combiner lock to become combiner
         let (acquired, combiner_lock) = self.acquire_combiner_lock();
-
 
         // Step 2: if we are the combiner then perform flat combining, else return
         if acquired {
@@ -530,8 +490,6 @@ impl Replica  {
     }
 
     /// Performs one round of flat combining. Collects, appends and executes operations.
-    ///
-    /// https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/nr/replica.rs#L835
     fn combine(&self, slog: &NrLog, combiner_lock: Tracked<CombinerLockStateGhost>)
             -> (result: Tracked<CombinerLockStateGhost>)
         requires
@@ -556,12 +514,11 @@ impl Replica  {
 
         let mut operations = self.collected_operations.take(Tracked(&mut collected_operations_perm));
 
-        assert(self.collected_operations_per_thread.id() == collected_operations_per_thread_perm@.pcell);
+        // assert(self.collected_operations_per_thread.id() == collected_operations_per_thread_perm@.pcell);
         let mut num_ops_per_thread = self.collected_operations_per_thread.take(Tracked(&mut collected_operations_per_thread_perm));
 
         // Step 1: collect the operations from the threads
         // self.collect_thread_ops(&mut buffer, operations.as_mut_slice());
-
         let Tracked(collect_res) = self.collect_thread_ops(&mut operations, &mut num_ops_per_thread, flat_combiner);
         let tracked ThreadOpsData { flat_combiner, local_updates, request_ids, cell_permissions } = collect_res;
 
@@ -572,25 +529,9 @@ impl Replica  {
         let combiner = replicated_data_structure.combiner;
         let cb_combiner = replicated_data_structure.cb_combiner;
 
-        let tracked append_exec_ghost_data = NrLogAppendExecDataGhost {
-            local_updates ,
-            ghost_replica ,
-            combiner ,
-            cb_combiner ,
-            request_ids ,
-        };
-
         // Step 3: Append all operations to the log
-
-        assert(append_exec_ghost_data.append_pre(self.replica_token@, data.interp(),  operations@,  self.unbounded_log_instance@, self.cyclic_buffer_instance@));
-
-        assert(forall |i|  #[trigger] append_exec_ghost_data.local_updates@.contains_key(i) ==> {
-            &&& (#[trigger] append_exec_ghost_data.local_updates@[i])@.instance == self.unbounded_log_instance@}
-        );
-
+        let tracked append_exec_ghost_data = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids};
         let append_exec_ghost_data = slog.append(&self.replica_token, &operations, &mut responses, &mut data, Tracked(append_exec_ghost_data));
-
-        assert(append_exec_ghost_data@.execute_pre(self.replica_token@, data.interp(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
 
         // Step 3: Execute all operations
@@ -601,19 +542,14 @@ impl Replica  {
         let tracked Tracked(combiner) = combiner;
         let tracked Tracked(cb_combiner) = cb_combiner;
 
-        assert(request_ids@.len() == responses@.len());
-
         // Step 4: release the R/W lock on the data structure
         let replicated_data_structure = ReplicatedDataStructure  { data, replica: Tracked(ghost_replica), combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner) };
         self.data.0.release_write(replicated_data_structure, write_handle);
 
-
-
         // Step 5: collect the results
         let tracked thread_ops_data = ThreadOpsData { flat_combiner, request_ids, local_updates, cell_permissions };
         let distribute_thread_resps_result = self.distribute_thread_resps(&mut responses, &mut num_ops_per_thread, Tracked(thread_ops_data));
-
-        let tracked ThreadOpsData { flat_combiner: flat_combiner, request_ids: request_ids, local_updates: local_updates, cell_permissions: cell_permissions } = distribute_thread_resps_result.get();
+        let tracked ThreadOpsData { flat_combiner, request_ids, local_updates, cell_permissions } = distribute_thread_resps_result.get();
 
         // clear the buffers again
         responses.clear();
@@ -640,9 +576,7 @@ impl Replica  {
             self.wf(),
             old(num_ops_per_thread).len() == 0,
             old(operations).len() == 0,
-            // requires flatCombiner.loc_s == node.fc_loc
             flat_combiner@@.instance == self.flat_combiner_instance@,
-            // requires flatCombiner.state == FC.FCCombinerCollecting([])
             flat_combiner@@.value.is_Collecting(),
             flat_combiner@@.value.get_Collecting_0().len() == 0,
         ensures
@@ -654,10 +588,6 @@ impl Replica  {
         let tracked mut updates: Map<nat, UnboundedLog::local_updates> = Map::tracked_empty();
         let tracked mut cell_permissions: Map<nat, PointsTo<PendingOperation>> = Map::tracked_empty();
         let ghost mut request_ids = Seq::empty();
-
-
-        assert(rids_match(flat_combiner@@.value.get_Collecting_0(), request_ids,
-        0, flat_combiner@@.value.get_Collecting_0().len(), 0, request_ids.len()));
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
@@ -698,35 +628,30 @@ impl Replica  {
                     0, flat_combiner@@.value.get_Collecting_0().len(), 0, request_ids.len())
 
         {
-            assert(self.contexts.spec_index(thread_idx as int).wf(thread_idx as nat));
-            assert(self.contexts.spec_index(thread_idx as int).thread_id_g == thread_idx as nat);
 
             let tracked update_req : Option<UnboundedLog::local_updates>;
             let tracked batch_perms : Option<PointsTo<PendingOperation>>;
-            // let tracked
-
             let num_ops = atomic_with_ghost!(
                 &self.contexts.index(thread_idx).atomic.0 => load();
                 returning num_ops;
                 ghost g // g : ContextGhost
             => {
-                assert(flat_combiner.view().view().value.get_Collecting_0().len() == thread_idx);
-
                 if num_ops == 1 {
                     self.flat_combiner_instance.borrow().pre_combiner_collect_request(&g.slots, flat_combiner.borrow());
 
-                    assert(g.slots.view().value.is_Request());
                     rids_match_add_rid(flat_combiner.view().view().value.get_Collecting_0(), request_ids,
                         0, flat_combiner.view().view().value.get_Collecting_0().len(), 0, request_ids.len(),g.update.get_Some_0().view().key);
 
-                    g.slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.slots, flat_combiner.borrow_mut());
                     update_req = g.update;
                     batch_perms = g.batch_perms;
+
+                    g.slots = self.flat_combiner_instance.borrow().combiner_collect_request(g.slots, flat_combiner.borrow_mut());
                     g.update = None;
                     g.batch_perms = None;
                 } else {
                     rids_match_add_none(flat_combiner.view().view().value.get_Collecting_0(), request_ids,
                         0, flat_combiner.view().view().value.get_Collecting_0().len(), 0, request_ids.len());
+
                     self.flat_combiner_instance.borrow().combiner_collect_empty(&g.slots, flat_combiner.borrow_mut());
                     update_req = None;
                     batch_perms = None;
@@ -734,38 +659,25 @@ impl Replica  {
             });
 
             if num_ops == 1 {
-                assert(batch_perms.is_Some());
-                assert(update_req.is_Some());
-                // reading the op cell
                 let tracked batch_token_value = batch_perms.tracked_unwrap();
                 let op = self.contexts.index(thread_idx).batch.0.borrow(Tracked(&batch_token_value)).op.clone();
 
                 let tracked update_req = update_req.tracked_unwrap();
-                assert(update_req@.instance == self.unbounded_log_instance);
-                assert(update_req@.value.is_Init());
-                assert(update_req@.value.get_Init_op() == op);
                 proof {
                     updates.tracked_insert(request_ids.len() as nat, update_req);
                     cell_permissions.tracked_insert(thread_idx as nat, batch_token_value);
                 }
 
-                // assert(operations.len() == request_ids.len());
                 proof {
                     request_ids = request_ids.push(update_req@.key);
                 }
                 operations.push(op);
-            } else {
-                // nothing here
-                // assert(operations.len() == request_ids.len());
             }
 
             // set the number of active operations per thread
             num_ops_per_thread.push(num_ops as usize);
-
             thread_idx = thread_idx + 1;
         }
-
-        assert(flat_combiner@@.value.get_Collecting_0().len() == num_registered_threads);
 
         proof {
             self.flat_combiner_instance.borrow().combiner_responding_start(flat_combiner.borrow_mut());
@@ -780,7 +692,7 @@ impl Replica  {
         Tracked(thread_ops_data)
     }
 
-    ///
+
     /// - Dafny: combine_respond
     fn distribute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>, thread_ops_data: Tracked<ThreadOpsData>)
         -> (res: Tracked<ThreadOpsData>)
@@ -807,11 +719,6 @@ impl Replica  {
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
         let num_registered_threads = MAX_THREADS_PER_REPLICA;
 
-        // TODO: not sure why this one here is needed?. it comes from the pre-conditin
-        assert(forall|i: nat| #![trigger updates[i]] 0 <= i < request_ids@.len() ==> updates.contains_key(i));
-        // TODO: that's literally from the `wf()`, why does that fail?
-        assert(self.flat_combiner_instance@.num_threads() == num_registered_threads);
-
         // let (mut s, mut f) = (0, 0);
         // for i in 1..num_registered_threads {
         let mut thread_idx = 0;
@@ -821,7 +728,6 @@ impl Replica  {
                 0 <= thread_idx <= num_registered_threads,
                 0 <= resp_idx <= responses.len(),
                 resp_idx <= thread_idx,
-                // thread_idx < num_registered_threads ==> resp_idx < responses.len(), // TODO do we actually need this?
                 num_ops_per_thread.len() == num_registered_threads,
                 request_ids@.len() == responses.len(),
                 num_registered_threads == MAX_THREADS_PER_REPLICA,
@@ -850,7 +756,6 @@ impl Replica  {
                     &&& updates[i]@.instance == self.unbounded_log_instance@
                     &&& updates[i]@.value.get_Done_ret() == responses[i as int]
                 },
-                // thread_idx as nat <= flat_combiner@.value.get_Responding_0().len(),
                 rids_match(flat_combiner@.value.get_Responding_0(), request_ids@,
                     thread_idx as nat, flat_combiner@.value.get_Responding_0().len(),
                     resp_idx as nat, request_ids@.len()),
@@ -865,7 +770,7 @@ impl Replica  {
 
             let num_ops = *num_ops_per_thread.index(thread_idx);
 
-            assert(flat_combiner@.value.get_Responding_1() < num_registered_threads);
+            // assert(flat_combiner@.value.get_Responding_1() < num_registered_threads);
 
             if num_ops == 0 {
                 // if operations[i - 1] == 0 {
@@ -875,24 +780,23 @@ impl Replica  {
                     self.flat_combiner_instance.borrow().combiner_responding_empty(&mut flat_combiner);
                 }
 
-                assert(forall|i: nat| #![trigger updates[i]] resp_idx <= i < request_ids@.len() ==> {
-                    &&& updates.contains_key(i)
-                });
+                // assert(forall|i: nat| #![trigger updates[i]] resp_idx <= i < request_ids@.len() ==> {
+                //     &&& updates.contains_key(i)
+                // });
 
             } else {
-
                 //     f += operations[i - 1];
                 //     self.contexts[i - 1].enqueue_resps(&results[s..f]);
                 //     s += operations[i - 1];
 
                 // obtain the element from the operation batch
-
                 let tracked mut permission = cell_permissions.tracked_remove(thread_idx as nat);
                 let mut op_resp = self.contexts.index(thread_idx).batch.0.take(Tracked(&mut permission));
 
                 // update with the response
                 let resp: ReturnType = responses.index(resp_idx).clone();
                 op_resp.resp = Some(resp);
+
                 // place the element back into the batch
                 self.contexts.index(thread_idx).batch.0.put(Tracked(&mut permission), op_resp);
 
@@ -908,10 +812,8 @@ impl Replica  {
                         g.update = Some(updates.tracked_remove(resp_idx as nat));
                     }
                 );
-
                 resp_idx = resp_idx + 1;
             }
-
             thread_idx = thread_idx + 1;
         }
 
@@ -960,19 +862,15 @@ impl Replica  {
     {
         let tracked local_reads : UnboundedLog::local_reads;
         proof {
-            // start the read transaction, get the ticket
-            // (Gho<Map<ReqId,ReadonlyState>>, Trk<local_reads>, Gho<Map<NodeId,CombinerState>>)
             let tracked ticket = self.unbounded_log_instance.borrow().readonly_start(op);
             local_reads = ticket.1.get();
         }
         let ghost rid = local_reads@.key;
         let ghost nid = tkn.replica_id_spec();
-        assert(nid == self.spec_id());
 
         // Step 1: Read the local tail value
         // let ctail = slog.get_ctail();
         let (version_upper_bound, local_reads) = slog.get_version_upper_bound(Tracked(local_reads));
-
 
         // Step 2: wait until the replica is synced for reads, try to combine in mean time
         // while !slog.is_replica_synced_for_reads(&self.log_tkn, ctail) {
@@ -996,7 +894,6 @@ impl Replica  {
                 local_reads@@.key == rid,
                 slog.unbounded_log_instance@ == self.unbounded_log_instance@,
                 slog.cyclic_buffer_instance@ == self.cyclic_buffer_instance@,
-
         {
             self.try_combine(slog);
             spin_loop_hint();
@@ -1011,18 +908,13 @@ impl Replica  {
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
         let read_handle = self.data.0.acquire_read();
         let replica = self.data.0.borrow(&read_handle);
-
-        assert(replica.wf(nid, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
-
         let result = replica.data.read(op);
-        assert(result == replica.replica@@.value.spec_read(op));
 
         let tracked local_reads = self.unbounded_log_instance.borrow().readonly_apply(rid, replica.replica.borrow(), local_reads, replica.combiner.borrow());
         self.data.0.release_read(read_handle);
 
         // Step 4: Finish the read-only transaction, return result
         let tracked local_reads = local_reads;
-        assert(local_reads@.value.get_Done_ret() == result);
         proof {
             self.unbounded_log_instance.borrow().readonly_finish(rid, op, result, local_reads);
         }
@@ -1052,7 +944,6 @@ impl Replica  {
         // start the update transaction
         let tracked local_updates : UnboundedLog::local_updates;
         proof {
-            //: (Gho<Map<ReqId, UpdateState>>, Trk<UnboundedLog::local_updates>, Gho<Map<NodeId, CombinerState>>)
             let tracked ticket = self.unbounded_log_instance.borrow().update_start(op);
             local_updates = ticket.1.get();
         }
@@ -1063,19 +954,15 @@ impl Replica  {
         // Step 1: Enqueue the operation onto the thread local batch
         // while !self.make_pending(op.clone(), idx.tid()) {}
         // Note: if we have the thread token, this will always succeed.
-
         let tracked context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perm.get()), local_updates: Some(local_updates), fc_clients: fc_client.get() };
 
         let mk_pending_res = self.make_pending(op, tid, Tracked(context_ghost));
         let context_ghost = mk_pending_res.1;
 
         // Step 2: Try to do flat combining to appy the update to the data structure
-        // self.try_combine(slog)?;
         self.try_combine(slog);
 
         // Step 3: Obtain the result form the responses
-
-        // Return the response to the caller function.
         let response = self.get_response(slog, tid, Ghost(req_id), context_ghost);
         let context_ghost = response.1;
 
@@ -1084,14 +971,9 @@ impl Replica  {
         let tracked batch_perms = batch_perms.tracked_unwrap();
 
         // finish the update transaction, return the result
-
-        // TODO: we should obtain this here!
-        assert(local_updates@.instance == self.unbounded_log_instance@);
         proof {
             self.unbounded_log_instance.borrow().update_finish(req_id, local_updates);
         }
-
-        assert(batch_perms@.value.is_None());
 
         Ok((
             response.0,
@@ -1151,7 +1033,6 @@ impl Replica  {
             }
 
             let deq_resp_result = context.dequeue_response(context_ghost_new);
-            assert(deq_resp_result.1@.dequeue_resp_post(context_ghost@, deq_resp_result.0, self.unbounded_log_instance@));
             r = deq_resp_result.0;
             context_ghost_new = deq_resp_result.1;
 
@@ -1194,7 +1075,6 @@ impl ReplicaConfig {
 }
 
 
-
 struct_with_invariants!{
 /// Ghost state that is protected by the combiner lock
 ///
@@ -1223,29 +1103,16 @@ pub tracked struct CombinerLockStateGhost {
 // Note: this predicate only holds when the lock is not taken.
 pub open spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses_id: CellId, op_buffer_id: CellId, thread_ops: CellId) -> bool {
     predicate {
-        // && g.value.flatCombiner.state == FC.FCCombinerCollecting([])
         &&& self.flat_combiner@@.value.is_Collecting()
         &&& self.flat_combiner@@.value.get_Collecting_0().len() == 0
-
-        // && g.value.flatCombiner.loc_s == fc_loc
         &&& self.flat_combiner@@.instance == combiner_instance
 
-        // && g.value.gops.v.Some?
         &&& self.collected_operations_perm@@.value.is_Some()
-
-        // && g.value.gresponses.lcell == responses
         &&& self.collected_operations_perm@@.pcell == op_buffer_id
-
-        // && |g.value.gops.v.value| == MAX_THREADS_PER_REPLICA as int
         &&& self.collected_operations_perm@@.value.get_Some_0().len() == 0 // we use vector push MAX_THREADS_PER_REPLICA
 
-        // && g.value.gresponses.v.Some?
         &&& self.responses_token@@.value.is_Some()
-
-        // && g.value.gops.lcell == ops
         &&& self.responses_token@@.pcell == responses_id
-
-        // && |g.value.gresponses.v.value| == MAX_THREADS_PER_REPLICA as int
         &&& self.responses_token@@.value.get_Some_0().len() == 0 // we use vector push MAX_THREADS_PER_REPLICA
 
         &&& self.collected_operations_per_thread_perm@@.value.is_Some()
@@ -1292,9 +1159,7 @@ impl ThreadOpsData {
                                         replica_contexts: Seq<Context>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
 
-        // &&& responses.len() == MAX_THREADS_PER_REPLICA
         &&& self.request_ids@.len() == responses.len()
-        // TODO: why does that need to be separate?
         &&& (forall |i| 0 <= i < self.request_ids@.len() ==> self.local_updates@.contains_key(i))
         &&& (forall|i: nat| #![trigger self.local_updates@[i]] i < self.request_ids@.len() ==> {
             &&& self.local_updates@.contains_key(i)
@@ -1315,13 +1180,11 @@ impl ThreadOpsData {
         &&& self.flat_combiner@@.value.get_Collecting_0().len() == 0
     }
 
-
     spec fn collect_thread_ops_post(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>,
                 unbounded_log_instance: UnboundedLog::Instance, num_ops_per_thread: Seq<usize>,
                 operations: Seq<UpdateOp>, replica_contexts: Seq<Context>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
         &&& self.request_ids@.len() == operations.len()
-        // TODO; why does that need to be separate?
         &&& (forall |i| 0 <= i < self.request_ids@.len() <==> self.local_updates@.contains_key(i))
         &&& (forall|i: nat| #![trigger self.local_updates@[i]] i < self.request_ids@.len() ==> {
             &&& #[trigger] self.local_updates@.contains_key(i)
@@ -1333,10 +1196,7 @@ impl ThreadOpsData {
 
         &&& rids_match(self.flat_combiner@@.value.get_Responding_0(), self.request_ids@,
                  0, self.flat_combiner@@.value.get_Responding_0().len(), 0, self.request_ids@.len())
-
     }
 }
 
-
-
-}
+} // verus!

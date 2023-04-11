@@ -23,8 +23,6 @@ verus! {
 pub tracked struct RwLockWriteGuard<#[verifier::maybe_negative] T> {
     handle: Tracked<RwLockSpec::writer<PointsTo<T>>>,
     perm: Tracked<PointsTo<T>>,
-    //foo: Tracked<T>,
-    // rw_lock : Ghost<DistRwLock::Instance<T>>,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -36,14 +34,11 @@ pub tracked struct RwLockWriteGuard<#[verifier::maybe_negative] T> {
 /// This structure is created by the read and try_read methods on RwLockSpec.
 pub tracked struct RwLockReadGuard<#[verifier::maybe_negative] T> {
     handle: Tracked<RwLockSpec::reader<PointsTo<T>>>,
-    // rw_lock : Ghost<DistRwLock::Instance<T>>,
 }
 
 impl<T> RwLockReadGuard<T> {
     pub closed spec fn view(&self) -> T {
         self.handle@@.key.view().value.get_Some_0()
-        //self.handle@@.key.get_Some_0()
-
     }
 }
 
@@ -76,12 +71,10 @@ pub closed spec fn wf(&self) -> bool {
     }
 
     invariant on exc with (inst) specifically (self.exc.0) is (v: bool, g: RwLockSpec::flag_exc<PointsTo<T>>) {
-        // g@ === RwLockSpec::token! [ inst => exc ==> v ]
         g@.instance == inst@ && g@.value == v
     }
 
     invariant on rc with (inst) specifically (self.rc.0) is (v: u64, g: RwLockSpec::flag_rc<PointsTo<T>>) {
-        // g@ === RwLockSpec::token! [ inst => rc ==> v ]
         g@.instance == inst@ && g@.value == v as nat
     }
 }
