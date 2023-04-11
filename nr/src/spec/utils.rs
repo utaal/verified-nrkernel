@@ -43,7 +43,7 @@ proof fn seq_to_set_rec_decreases<A>(seq: Seq<A>)
 {
     if seq.len() == 0 {
     } else {
-        assume(seq.drop_last().len() < seq.len()); // INCOMPLETENESS weird incompleteness again
+        assert(seq.drop_last().len() < seq.len()); // INCOMPLETENESS weird incompleteness again
     }
 }
 
