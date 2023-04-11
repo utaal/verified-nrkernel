@@ -2027,6 +2027,9 @@ impl PageTable {
             other.inv_at(layer, ptr, pt),
         decreases self.arch@.layers.len() - layer
     {
+        assert(forall|i: nat| i < other.arch@.num_entries(layer) ==> other.view_at(layer, ptr, i, pt) === self.view_at(layer, ptr, i, pt));
+        assert(forall|i: nat| i < other.arch@.num_entries(layer) ==> other.entry_at_spec(layer, ptr, i, pt) === self.entry_at_spec(layer, ptr, i, pt));
+
         assert(other.well_formed(layer, ptr));
         assert(other.memory.inv());
         assert(other.memory.regions().contains(pt.region));
@@ -2041,10 +2044,8 @@ impl PageTable {
                 entry.is_Directory() ==> {
                     &&& other.inv_at(layer + 1, entry.get_Directory_addr(), pt.entries[i as int].get_Some_0())
                 }
-            } by
-            {
+            } by {
                 let entry = other.view_at(layer, ptr, i, pt);
-                assert(entry === self.view_at(layer, ptr, i, pt));
                 if entry.is_Directory() {
                     assert(self.directories_obey_invariant_at(layer, ptr, pt));
                     assert(self.inv_at(layer + 1, entry.get_Directory_addr(), pt.entries[i as int].get_Some_0()));
@@ -2053,13 +2054,45 @@ impl PageTable {
                 }
             };
         };
-        assume(false);
         assert(other.ghost_pt_matches_structure(layer, ptr, pt));
         assert(other.ghost_pt_used_regions_rtrancl(layer, ptr, pt));
         assert(other.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
         assert(other.ghost_pt_region_notin_used_regions(layer, ptr, pt));
         assert(pt.used_regions.subset_of(other.memory.regions()));
         assert(other.entry_addrs_are_zero_padded(layer, ptr, pt));
+    }
+
+    proof fn lemma_interp_at_aux_doesnt_use_ghost_pt(self, other: Self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            other.memory === self.memory,
+            other.arch === self.arch,
+        ensures
+            self.interp_at_aux(layer, ptr, base, init, pt)
+                == other.interp_at_aux(layer, ptr, base, init, pt)
+        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 1nat)
+    {
+        self.lemma_inv_at_doesnt_use_ghost_pt(other, layer, ptr, pt);
+        assert(other.inv_at(layer, ptr, pt));
+        if init.len() >= self.arch@.num_entries(layer) {
+        } else {
+            let idx = init.len();
+            let entry = self.interp_at_entry(layer, ptr, base, idx, pt);
+            let entry_o = other.interp_at_entry(layer, ptr, base, idx, pt);
+
+            assert(entry == entry_o) by {
+                match self.view_at(layer, ptr, idx, pt) {
+                    GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                        let entry_base = self.arch@.entry_base(layer, base, idx);
+                        assert(entry_base == other.arch@.entry_base(layer, base, idx));
+                        self.lemma_interp_at_aux_doesnt_use_ghost_pt(other, layer + 1, dir_addr, entry_base, seq![], pt.entries[idx as int].get_Some_0());
+                    },
+                    GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } => { },
+                    GhostPageDirectoryEntry::Empty => { },
+                }
+            };
+            self.lemma_interp_at_aux_doesnt_use_ghost_pt(other, layer, ptr, base, init.add(seq![entry]), pt);
+        }
     }
 
     pub fn map_frame(&mut self, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
@@ -2103,14 +2136,11 @@ impl PageTable {
                 let self_before_pt_update: Ghost<Self> = ghost(*self);
                 let old_pt: Ghost<PTDir> = self.ghost_pt;
                 self.ghost_pt = pt_res;
-                // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
                 proof {
                     self_before_pt_update@.lemma_inv_at_doesnt_use_ghost_pt(*self, 0, cr3.base, pt_res@);
                     assert(self.inv_at(0, cr3.base, pt_res@));
-                }
-                // FIXME: prove lemma that interp_at is preserved when changing self.ghost_pt
-                assume(self.interp_at(0, cr3.base, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3.base, 0, pt_res@));
-                proof {
+                    self_before_pt_update@.lemma_interp_at_aux_doesnt_use_ghost_pt(*self, 0, cr3.base, 0, seq![], pt_res@);
+                    assert(self.interp_at(0, cr3.base, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3.base, 0, pt_res@));
                     // FIXME: add a postcondition to map_frame_aux, saying that cr3 and cr3_region
                     // remain unchanged. Will also need to add that fact to the memory
                     // postconditions for any functions with mutable borrows.
@@ -2163,9 +2193,9 @@ impl PageTable {
         true
     }
 
-    #[verifier(spinoff_prover)] #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
+    #[verifier(spinoff_prover)]
     fn unmap_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: Ghost<PTDir>)
-        -> (res: (Result<Ghost<(PTDir,Set<MemRegion>)>,()>))
+        -> (res: Result<Ghost<(PTDir,Set<MemRegion>)>,()>)
         requires
             old(self).inv_at(layer as nat, ptr, pt@),
             old(self).interp_at(layer as nat, ptr, base as nat, pt@).inv(),
@@ -2374,11 +2404,11 @@ impl PageTable {
                 assert(self.inv_at(0, cr3.base, pt_res@));
                 let self_before_pt_update: Ghost<Self> = ghost(*self);
                 self.ghost_pt = pt_res;
-                // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
-                assume(self.inv_at(0, cr3.base, pt_res@));
-                // FIXME: prove lemma that interp_at is preserved when changing self.ghost_pt
-                assume(self.interp_at(0, cr3.base, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3.base, 0, pt_res@));
                 proof {
+                    self_before_pt_update@.lemma_inv_at_doesnt_use_ghost_pt(*self, 0, cr3.base, pt_res@);
+                    assert(self.inv_at(0, cr3.base, pt_res@));
+                    self_before_pt_update@.lemma_interp_at_aux_doesnt_use_ghost_pt(*self, 0, cr3.base, 0, seq![], pt_res@);
+                    assert(self.interp_at(0, cr3.base, 0, self.ghost_pt@) === self_before_pt_update@.interp_at(0, cr3.base, 0, pt_res@));
                     // FIXME: add a postcondition to map_frame_aux, saying that cr3 and cr3_region
                     // remain unchanged. Will also need to add that fact to the memory
                     // postconditions for any functions with mutable borrows.
