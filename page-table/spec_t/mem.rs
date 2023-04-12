@@ -103,7 +103,8 @@ impl PageTableMemory {
             self.regions() === old(self).regions().insert(r@),
             self.region_view(r@) === new_seq::<u64>(512nat, 0u64),
             forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
-            self.inv()
+            self.cr3_spec() == old(self).cr3_spec(),
+            self.inv(),
     {
         unreached()
     }
@@ -120,7 +121,8 @@ impl PageTableMemory {
             self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(paddr as nat, region@.base)) as int, value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
             self.regions() === old(self).regions(),
-            old(self).alloc_available_pages() == self.alloc_available_pages()
+            old(self).alloc_available_pages() == self.alloc_available_pages(),
+            self.cr3_spec() == old(self).cr3_spec(),
     {
         let word_offset: isize = word_index(paddr) as isize;
         unsafe { self.phys_mem_ref.offset(word_offset).write(value); }
