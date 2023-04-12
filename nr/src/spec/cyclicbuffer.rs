@@ -799,9 +799,9 @@ pub open spec fn map_min_value(m: Map<NodeId, nat>, idx: nat) -> nat
 }
 
 proof fn map_min_value_smallest(m: Map<NodeId, nat>, idx: nat)
-    requires forall(|i| 0 <= i <= idx ==> m.dom().contains(i))
+    requires forall |i| 0 <= i <= idx ==> m.dom().contains(i)
     ensures
-       forall(|n| 0 <= n <= idx as nat ==> map_min_value(m, idx) <= m.index(n)),
+       forall |n| 0 <= n <= idx as nat ==> map_min_value(m, idx) <= m.index(n),
        map_contains_value(m, map_min_value(m, idx))
     decreases idx
 {

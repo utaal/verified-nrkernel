@@ -1152,7 +1152,7 @@ UnboundedLog {
         {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
-                    let ver = choose(|ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound))
+                    let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
                         && ret == compute_nrstate_at_version(pre.log, ver).spec_read(op));
                     compute_nrstate_at_version_preserves(pre.log, post.log, ver);
                 },
@@ -1214,7 +1214,7 @@ UnboundedLog {
         assert forall |rid| (#[trigger] post.local_reads.dom().contains(rid)) implies post.read_results_match(post.local_reads[rid]) by {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
-                    let ver = choose(|ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound))
+                    let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
                         && ret == compute_nrstate_at_version(post.log, ver).spec_read(op));
                     assert(rangeincl(version_upper_bound, ver, post.version_upper_bound));
                 },

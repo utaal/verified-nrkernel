@@ -202,10 +202,10 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
 
             assert(exists |version: nat| #[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, ret, version, op)) ;
 
-            let version : nat = choose(|version| {
+            let version : nat = choose |version| {
                 version_upper_bound <= version <= pre.version_upper_bound
                 && #[trigger] result_match(pre.log, ret, version, op)
-            });
+            };
 
             assert(version_in_log(pre.log, version));
             assert(version <= pre.version_upper_bound);

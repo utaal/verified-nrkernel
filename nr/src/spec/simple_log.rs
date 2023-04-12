@@ -72,21 +72,21 @@ state_machine! {
         /// all update responses must have version that are less than the length of the log
         #[invariant]
         pub fn inv_update_resp_version(&self) -> bool {
-            forall(|rid: ReqId| {
+            forall |rid: ReqId| {
                 #[trigger] self.update_resps.dom().contains(rid)
                 ==> self.update_resps[rid].0 < self.log.len()
-            })
+            }
         }
 
         /// all readonly requests must have a version that is less or equal to the log version
         #[invariant]
         pub fn inv_readonly_req_version(&self) -> bool {
-            forall(|rid: ReqId| {
+            forall |rid: ReqId| {
                 self.readonly_reqs.dom().contains(rid)
                 ==> if let ReadReq::Req { version, .. } = self.readonly_reqs[rid] {
                         version <= self.version}
                     else { true }
-            })
+            }
         }
 
 
@@ -208,7 +208,7 @@ state_machine! {
         transition!{
             update_add_ops_to_log(rids: Seq<ReqId>) {
                 // all request ids must be in the update requests
-                require(forall(|r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.dom().contains(r)));
+                require(forall |r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.dom().contains(r));
                 // the request ids must be unique, the sequence defines the update order
                 require(seq_unique(rids));
 
