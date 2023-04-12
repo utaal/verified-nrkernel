@@ -2177,15 +2177,14 @@ impl PageTable {
         let num_entries = self.arch.num_entries(layer);
         while idx < num_entries
             invariant
+                num_entries == self.arch@.num_entries(layer as nat),
                 self.inv_at(layer as nat, ptr, pt@),
                 forall|i: nat| i < idx ==> self.view_at(layer as nat, ptr, i, pt@).is_Empty(),
         {
-            assert(idx < num_entries);
-            // Any chance it's actually faster to just bitwise or all the entries together and check at the end?
             let entry = self.entry_at(layer, ptr, idx, pt);
             if entry.is_mapping() {
                 assert(!self.view_at(layer as nat, ptr, idx as nat, pt@).is_Empty());
-                assume(!self.empty_at(layer as nat, ptr, pt@));
+                assert(!self.empty_at(layer as nat, ptr, pt@));
                 return false;
             }
             idx = idx + 1;
