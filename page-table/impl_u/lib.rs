@@ -136,25 +136,25 @@ pub proof fn mult_leq_mono_both(a: nat, b: nat, c: nat, d: nat)
         // and non-nonlinear z3 can't even deal with that.
         0 <= a * b <= c * d;
 
-// #[verifier(nonlinear)]
-// pub proof fn mult_less_mono_both1(a: nat, b: nat, c: nat, d: nat)
-//     requires
-//         a < c,
-//         b <= d,
-//         0 < c,
-//         0 < d,
-//     ensures
-//         a * b < c * d;
+#[verifier(nonlinear)]
+pub proof fn mult_less_mono_both1(a: nat, b: nat, c: nat, d: nat)
+    requires
+        a < c,
+        b <= d,
+        0 < c,
+        0 < d,
+    ensures
+        a * b < c * d;
 
-// #[verifier(nonlinear)]
-// pub proof fn mult_less_mono_both2(a: nat, b: nat, c: nat, d: nat)
-//     requires
-//         a <= c,
-//         b < d,
-//         0 < c,
-//         0 < d,
-//     ensures
-//         a * b < c * d;
+#[verifier(nonlinear)]
+pub proof fn mult_less_mono_both2(a: nat, b: nat, c: nat, d: nat)
+    requires
+        a <= c,
+        b < d,
+        0 < c,
+        0 < d,
+    ensures
+        a * b < c * d;
 
 // TODO: what a horrible lemma name
 #[verifier(external_body)]
