@@ -743,6 +743,7 @@ impl Directory {
                 self.interp().map.dom().contains(base) &&
                 between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size),
     {
+        assert(0 < self.arch.entry_size(self.layer));
         assert forall|idx: nat, idx2: nat, base: nat, layer: nat|
             layer < self.arch.layers.len() && idx < idx2
             implies self.arch.entry_base(layer, base, idx) <  self.arch.entry_base(layer, base, idx2) by
@@ -760,6 +761,8 @@ impl Directory {
                               between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size);
             let p = self.interp().map.index(base);
             assert(self.interp().map.contains_pair(base, p));
+            assert(self.interp().map.dom().contains(base));
+            assert(self.interp().map.index(base) == p);
         }
     }
 

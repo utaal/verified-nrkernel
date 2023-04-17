@@ -117,6 +117,8 @@ pub proof fn lemma_entry_base_from_index_support(base: nat, idx: nat, entry_size
 }
 
 pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
+    requires
+        0 < entry_size,
     ensures
         forall|idx2: nat|
             #![trigger entry_base_from_index(base, idx, entry_size), entry_base_from_index(base, idx2, entry_size)]
@@ -130,9 +132,9 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
         next_entry_base_from_index(base, idx, entry_size) == entry_base_from_index(base, idx, entry_size) + entry_size,
         next_entry_base_from_index(base, idx, entry_size) == entry_size + entry_base_from_index(base, idx, entry_size),
         forall|n: nat|
-            aligned(base, n) && aligned(entry_size, n) ==> #[trigger] aligned(entry_base_from_index(base, idx, entry_size), n),
+            0 < n && aligned(base, n) && aligned(entry_size, n) ==> #[trigger] aligned(entry_base_from_index(base, idx, entry_size), n),
         forall|n: nat|
-            aligned(base, n) && aligned(entry_size, n) ==> #[trigger] aligned(next_entry_base_from_index(base, idx, entry_size), n),
+            0 < n && aligned(base, n) && aligned(entry_size, n) ==> #[trigger] aligned(next_entry_base_from_index(base, idx, entry_size), n),
         aligned(base, entry_size) ==> aligned(entry_base_from_index(base, idx, entry_size), entry_size),
         base <= entry_base_from_index(base, idx, entry_size),
         // forall|idx: nat, base: nat, layer: nat|
@@ -158,10 +160,10 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
             assert(entry_base_from_index(base, idx, entry_size) < entry_base_from_index(base, idx2, entry_size))
                 by(nonlinear_arith)
                 requires
-                    idx < idx2
+                    0 < entry_size,
+                    idx < idx2,
             {
-                // FIXME:
-                assume(false);
+                lib::mult_less_mono_both1(idx, entry_size, idx2, entry_size);
             };
         };
         assert forall|idx2: nat|
@@ -179,31 +181,49 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
         assert(next_entry_base_from_index(base, idx, entry_size) == entry_base_from_index(base, idx, entry_size) + entry_size) by(nonlinear_arith);
         assert(next_entry_base_from_index(base, idx, entry_size) == entry_size + entry_base_from_index(base, idx, entry_size));
         assert forall|n: nat|
-            aligned(base, n) && aligned(entry_size, n)
+            0 < n && aligned(base, n) && aligned(entry_size, n)
             implies #[trigger] aligned(entry_base_from_index(base, idx, entry_size), n) by
         {
             assert(aligned(entry_base_from_index(base, idx, entry_size), n))
                 by(nonlinear_arith)
                 requires
+                    0 < n,
+                    0 < entry_size,
                     aligned(base, n),
                     aligned(entry_size, n)
             {
-                // FIXME:
-                assume(false);
+                assert(aligned(idx * entry_size, entry_size)) by {
+                    lib::mod_of_mul(idx, entry_size);
+                };
+                assert(aligned(idx * entry_size, n)) by {
+                    lib::aligned_transitive(idx * entry_size, entry_size, n);
+                };
+                assert(aligned(base + idx * entry_size, n)) by {
+                    lib::mod_add_zero(base, idx * entry_size, n);
+                };
             };
         };
         assert forall|n: nat|
-            aligned(base, n) && aligned(entry_size, n)
+            0 < n && aligned(base, n) && aligned(entry_size, n)
             implies #[trigger] aligned(next_entry_base_from_index(base, idx, entry_size), n) by
         {
             assert(aligned(next_entry_base_from_index(base, idx, entry_size), n))
                 by(nonlinear_arith)
                 requires
+                    0 < n,
+                    0 < entry_size,
                     aligned(base, n),
                     aligned(entry_size, n)
             {
-                // FIXME:
-                assume(false);
+                assert(aligned((idx + 1) * entry_size, entry_size)) by {
+                    lib::mod_of_mul(idx + 1, entry_size);
+                };
+                assert(aligned((idx + 1) * entry_size, n)) by {
+                    lib::aligned_transitive((idx + 1) * entry_size, entry_size, n);
+                };
+                assert(aligned(base + (idx + 1) * entry_size, n)) by {
+                    lib::mod_add_zero(base, (idx + 1) * entry_size, n);
+                };
             };
         };
         assert(aligned(base, entry_size) ==> aligned(entry_base_from_index(base, idx, entry_size), entry_size));
