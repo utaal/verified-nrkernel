@@ -135,7 +135,7 @@ impl Directory {
             self.well_formed(),
             self.directories_are_in_next_layer(),
             self.directories_match_arch(),
-        decreases (self.arch.layers.len() - self.layer, 0nat)
+        decreases self.arch.layers.len() - self.layer, 0nat
     {
         if self.well_formed() && self.directories_are_in_next_layer() && self.directories_match_arch() {
             forall|i: nat| (i < self.entries.len() && self.entries.index(i as int).is_Directory())
@@ -210,7 +210,7 @@ impl Directory {
     }
 
     pub open spec fn interp_of_entry(self, entry: nat) -> l0::PageTableContents
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - entry, 0nat)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - entry, 0nat
     {
         if self.inv() && entry < self.entries.len() {
             let (lower, upper) = self.entry_bounds(entry);
@@ -238,8 +238,8 @@ impl Directory {
                 self.interp_of_entry(i).inv() &&
                 self.interp_of_entry(i).lower == self.entry_base(i) &&
                 self.interp_of_entry(i).upper == self.entry_base(i+1) &&
-                forall(|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
-                forall(|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
+                (forall|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
+                (forall|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
     {
         assert_forall_by(|i: nat| {
             requires(i < self.num_entries());
@@ -352,7 +352,7 @@ impl Directory {
     }
 
     pub open spec(checked) fn interp_aux(self, i: nat) -> l0::PageTableContents
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i, 1nat)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i, 1nat
     {
 
         if self.inv() {
@@ -397,7 +397,7 @@ impl Directory {
             i <= self.entries.len() ==> self.interp_aux(i).lower == self.entry_base(i),
             self.interp_aux(i).upper == self.upper_vaddr(),
             i == 0 ==> self.interp_aux(0).lower == self.base_vaddr,
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
         ambient_lemmas1();
 
@@ -526,7 +526,7 @@ impl Directory {
         ensures
             equal(self.interp_aux(i).map, Map::empty()),
             equal(self.interp_aux(i).map.dom(), Set::empty()),
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
         if i >= self.entries.len() {
         } else {
@@ -588,7 +588,7 @@ impl Directory {
             forall|va: nat|
                 between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
                 ==> !self.interp_aux(i).map.dom().contains(va),
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
         self.lemma_inv_implies_interp_aux_inv(i+1);
         self.lemma_inv_implies_interp_of_entry_inv(i);
@@ -688,7 +688,7 @@ impl Directory {
             forall|base: nat|
                 self.interp_aux(j).map.dom().contains(base) ==>
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base)
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - j)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - j
     {
         if j >= self.entries.len() {
         } else {
@@ -755,9 +755,9 @@ impl Directory {
         if exists|base:nat|
             self.interp().map.dom().contains(base) &&
             between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size) {
-            let base = choose(|base:nat|
+            let base = choose|base:nat|
                               self.interp().map.dom().contains(base) &&
-                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size));
+                              between(vaddr, base, base + (#[trigger] self.interp().map.index(base)).frame.size);
             let p = self.interp().map.index(base);
             assert(self.interp().map.contains_pair(base, p));
         }
@@ -833,9 +833,9 @@ impl Directory {
                            d.interp().map.dom().contains(base) &&
                            between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size));
 
-                    let base = choose(|base:nat|
+                    let base = choose|base:nat|
                                     d.interp().map.dom().contains(base) &&
-                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size));
+                                    between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size);
 
                     assert(self.interp().map.contains_pair(base, self.interp_of_entry(entry).map.index(base)));
 
@@ -1078,7 +1078,7 @@ impl Directory {
                 && self.interp().map.dom().contains(b)
                 && between(base, b, b + (#[trigger] self.interp().map.index(b)).frame.size),
 
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
 
         ambient_lemmas1();
@@ -1174,7 +1174,7 @@ impl Directory {
                 }),
         ensures
             equal(self.interp_aux(i).map.insert(base, pte), self.update(j, n).interp_aux(i).map),
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
         ambient_lemmas1();
         ambient_lemmas2();
@@ -1255,13 +1255,13 @@ impl Directory {
             !self.empty()
         ensures
             exists|b: nat| self.interp().map.dom().contains(b)
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
         ambient_lemmas1();
         ambient_lemmas2();
 
         assert(exists|i: nat| i < self.num_entries() && !self.entries.index(i as int).is_Empty());
-        let i = choose(|i: nat| i < self.num_entries() && !self.entries.index(i as int).is_Empty());
+        let i = choose|i: nat| i < self.num_entries() && !self.entries.index(i as int).is_Empty();
         assert(i < self.num_entries());
         assert(!self.entries.index(i as int).is_Empty());
         self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(i);
@@ -1271,7 +1271,7 @@ impl Directory {
             },
             NodeEntry::Directory(d) => {
                 d.lemma_nonempty_implies_exists_interp_dom_contains();
-                let b = choose(|b: nat| d.interp().map.dom().contains(b));
+                let b = choose|b: nat| d.interp().map.dom().contains(b);
                 assert(self.interp().map.dom().contains(b));
             },
             NodeEntry::Empty()      => (),
@@ -1305,7 +1305,7 @@ impl Directory {
                     }
                 },
             }
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
         ambient_lemmas1();
         ambient_lemmas2();
@@ -1358,7 +1358,7 @@ impl Directory {
         ensures
             self.map_frame(base, pte).is_Err() ==> self.map_frame(base, pte).get_Err_0() === self,
             result_map(self.map_frame(base, pte), |d: Directory| d.interp()) === self.interp().map_frame(base, pte),
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
         ambient_lemmas1();
         ambient_lemmas2();
@@ -1388,7 +1388,7 @@ impl Directory {
                 if self.entry_size() == pte.frame.size {
                     assert(self.map_frame(base, pte).is_Err());
                     d.lemma_nonempty_implies_exists_interp_dom_contains();
-                    let b = choose(|b: nat| d.interp().map.dom().contains(b));
+                    let b = choose|b: nat| d.interp().map.dom().contains(b);
                     assert(self.interp().map.dom().contains(b));
                     self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry);
 
@@ -1421,11 +1421,11 @@ impl Directory {
                             assert(d.interp().map_frame(base, pte).is_Err());
                             assert(d.interp().accepted_mapping(base, pte));
                             assert(!d.interp().valid_mapping(base, pte));
-                            let b = choose(|b: nat|
+                            let b = choose|b: nat|
                                            d.interp().map.dom().contains(b) && overlap(
                                                MemRegion { base: base, size: pte.frame.size },
                                                MemRegion { base: b, size: d.interp().map.index(b).frame.size }
-                                               ));
+                                               );
                             // FIXME: main_new problem
                             // let b = choose(|b: nat| #[auto_trigger]
                             //                d.interp().map.dom().contains(b) && overlap(
@@ -1560,7 +1560,7 @@ impl Directory {
             self.unmap(base).is_Ok(),
         ensures
             self.unmap(base).get_Ok_0().inv(),
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
         ambient_lemmas1();
         ambient_lemmas2();
@@ -1614,7 +1614,7 @@ impl Directory {
                 },
                 NodeEntry::Empty()      => true,
             }
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
         ambient_lemmas1();
         ambient_lemmas2();
@@ -1645,7 +1645,7 @@ impl Directory {
         ensures
             self.unmap(base).is_Err() ==> self.unmap(base).get_Err_0() === self,
             equal(result_map(self.unmap(base), |d: Directory| d.interp()), self.interp().unmap(base)),
-        decreases (self.arch.layers.len() - self.layer)
+        decreases self.arch.layers.len() - self.layer
     {
         ambient_lemmas1();
         ambient_lemmas2();
@@ -1738,7 +1738,7 @@ impl Directory {
             forall|j: int| i <= j && j < self.entries.len() ==> equal(self.entries.index(j), other.entries.index(j)),
         ensures
             equal(self.interp_aux(i), other.interp_aux(i)),
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
         if i >= self.entries.len() {
         } else {
@@ -1767,7 +1767,7 @@ impl Directory {
                 }),
         ensures
             equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map),
-        decreases (self.arch.layers.len() - self.layer, self.num_entries() - i)
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
 
         assert(j < self.entries.len());

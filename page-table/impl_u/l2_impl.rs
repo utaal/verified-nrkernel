@@ -284,17 +284,17 @@ impl PageDirectoryEntry {
         assert(address & MASK_ADDR == address);
         let or1 = MASK_FLAG_P;
         let a1 = address | or1;
-        let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 };
+        let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS as u64 }  else { 0 };
         let a2 = a1 | or2;
-        let or3 = if is_writable           { MASK_FLAG_RW }        else { 0 };
+        let or3 = if is_writable           { MASK_FLAG_RW as u64 }        else { 0 };
         let a3 = a2 | or3;
-        let or4 = if is_supervisor         { 0 }                   else { MASK_FLAG_US };
+        let or4 = if is_supervisor         { 0 }                   else { MASK_FLAG_US as u64 };
         let a4 = a3 | or4;
-        let or5 = if is_writethrough       { MASK_FLAG_PWT }       else { 0 };
+        let or5 = if is_writethrough       { MASK_FLAG_PWT as u64 }       else { 0 };
         let a5 = a4 | or5;
-        let or6 = if disable_cache         { MASK_FLAG_PCD }       else { 0 };
+        let or6 = if disable_cache         { MASK_FLAG_PCD as u64 }       else { 0 };
         let a6 = a5 | or6;
-        let or7 = if disable_execute       { MASK_FLAG_XD }        else { 0 };
+        let or7 = if disable_execute       { MASK_FLAG_XD as u64 }        else { 0 };
         let a7 = a6 | or7;
         let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
         assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> ((a & bit!(x) == bit!(x)) == false)) by(bit_vector);
@@ -406,7 +406,7 @@ impl PageDirectoryEntry {
                 | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 }
             },
-            layer: Ghost::new(layer as nat),
+            layer: Ghost(layer as nat),
         };
 
         proof {
@@ -531,7 +531,7 @@ impl PageTable {
     pub open spec fn entry_at_spec(self, layer: nat, ptr: usize, i: nat, pt: PTDir) -> PageDirectoryEntry {
         PageDirectoryEntry {
             entry: self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region),
-            layer: Ghost::new(layer),
+            layer: Ghost(layer),
         }
     }
 
@@ -539,7 +539,7 @@ impl PageTable {
     pub open spec fn view_at(self, layer: nat, ptr: usize, i: nat, pt: PTDir) -> GhostPageDirectoryEntry {
         PageDirectoryEntry {
             entry: self.memory.spec_read(ptr as nat + (i * WORD_SIZE as nat), pt.region),
-            layer: Ghost::new(layer),
+            layer: Ghost(layer),
         }@
     }
 
@@ -564,8 +564,8 @@ impl PageTable {
             let x = self.entry_at_spec(layer as nat, ptr, i as nat, pt@);
         }
         PageDirectoryEntry {
-            entry: self.memory.read(ptr + i * WORD_SIZE, Ghost::new(pt@.region)),
-            layer: (Ghost::new(layer as nat)),
+            entry: self.memory.read(ptr + i * WORD_SIZE, Ghost(pt@.region)),
+            layer: (Ghost(layer as nat)),
         }
     }
 
@@ -578,7 +578,7 @@ impl PageTable {
     }
 
     pub open spec fn directories_obey_invariant_at(self, layer: nat, ptr: usize, pt: PTDir) -> bool
-        decreases (self.arch@.layers.len() - layer, 0nat)
+        decreases self.arch@.layers.len() - layer, 0nat
     {
         decreases_when(self.well_formed(layer, ptr) && self.layer_in_range(layer));
         forall|i: nat| i < self.arch@.num_entries(layer) ==> {
@@ -656,7 +656,7 @@ impl PageTable {
     }
 
     pub open spec fn interp_at(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir) -> l1::Directory
-        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 2nat)
+        decreases self.arch@.layers.len() - layer, self.arch@.num_entries(layer), 2nat
     {
         decreases_when(self.inv_at(layer, ptr, pt));
         l1::Directory {
@@ -668,7 +668,7 @@ impl PageTable {
     }
 
     pub open spec fn interp_at_entry(self, layer: nat, ptr: usize, base_vaddr: nat, idx: nat, pt: PTDir) -> l1::NodeEntry
-        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - idx, 0nat)
+        decreases self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - idx, 0nat
     {
         decreases_when(self.inv_at(layer, ptr, pt));
         match self.view_at(layer, ptr, idx, pt) {
@@ -692,7 +692,7 @@ impl PageTable {
     }
 
     pub open spec fn interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, pt: PTDir) -> Seq<l1::NodeEntry>
-        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 1nat)
+        decreases self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 1nat
     {
         decreases_when(self.inv_at(layer, ptr, pt));
         decreases_by(Self::termination_interp_at_aux);
@@ -884,7 +884,7 @@ impl PageTable {
                     })
                 &&& (forall|j: nat| init.len() <= j && j < res.len() ==> res[j as int] === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt))
             }),
-        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
+        decreases self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat
     {
         if init.len() >= self.arch@.num_entries(layer) {
         } else {
@@ -912,7 +912,7 @@ impl PageTable {
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
         let entry      = self.entry_at(layer, ptr, idx, pt);
-        let interp: Ghost<l1::Directory> = Ghost::new(self.interp_at(layer as nat, ptr, base as nat, pt@));
+        let interp: Ghost<l1::Directory> = Ghost(self.interp_at(layer as nat, ptr, base as nat, pt@));
         assert(entry.addr_is_zero_padded());
         proof {
             interp@.lemma_resolve_structure_assertions(vaddr as nat, idx as nat);
@@ -930,7 +930,7 @@ impl PageTable {
                 assert(entry@.is_Directory());
                 let dir_addr = entry.address() as usize;
                 assert(pt@.entries[idx as int].is_Some());
-                let dir_pt: Ghost<PTDir> = Ghost::new(pt@.entries.index(idx as int).get_Some_0());
+                let dir_pt: Ghost<PTDir> = Ghost(pt@.entries.index(idx as int).get_Some_0());
                 assert(self.directories_obey_invariant_at(layer as nat, ptr, pt@));
                 proof {
                     assert(interp@.inv());
@@ -990,7 +990,7 @@ impl PageTable {
     {
         proof { ambient_arith(); }
         let cr3 = self.memory.cr3();
-        let res = self.resolve_aux(0, cr3.base, 0, vaddr, self.ghost_pt);
+        let res = self.resolve_aux(0, cr3.base, 0, vaddr, Ghost(self.ghost_pt@));
         res
     }
 
@@ -1052,9 +1052,9 @@ impl PageTable {
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
-        let idxg: Ghost<usize> = Ghost::new(idx);
+        let idxg: Ghost<usize> = Ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);
-        let interp: Ghost<l1::Directory> = Ghost::new(self.interp_at(layer as nat, ptr, base as nat, pt@));
+        let interp: Ghost<l1::Directory> = Ghost(self.interp_at(layer as nat, ptr, base as nat, pt@));
         proof {
             interp@.lemma_map_frame_structure_assertions(vaddr as nat, pte@, idx as nat);
             self.lemma_interp_at_facts(layer as nat, ptr, base as nat, pt@);
@@ -1082,13 +1082,13 @@ impl PageTable {
                 } else {
                     let dir_addr = entry.address() as usize;
                     assert(pt@.entries[idx as int].is_Some());
-                    let dir_pt: Ghost<PTDir> = Ghost::new(pt@.entries.index(idx as int).get_Some_0());
+                    let dir_pt: Ghost<PTDir> = Ghost(pt@.entries.index(idx as int).get_Some_0());
                     assert(self.directories_obey_invariant_at(layer as nat, ptr, pt@));
                     assert(self.memory.alloc_available_pages() == old(self).memory.alloc_available_pages());
                     match self.map_frame_aux(layer + 1, dir_addr, entry_base, vaddr, pte, dir_pt) {
                         Ok(rec_res) => {
-                            let dir_pt_res: Ghost<PTDir> = Ghost::new(rec_res@.0);
-                            let new_regions: Ghost<Set<MemRegion>> = Ghost::new(rec_res@.1);
+                            let dir_pt_res: Ghost<PTDir> = Ghost(rec_res@.0);
+                            let new_regions: Ghost<Set<MemRegion>> = Ghost(rec_res@.1);
 
                             assert(dir_pt_res@.used_regions === dir_pt@.used_regions.union(new_regions@));
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] dir_pt@.used_regions.contains(r)));
@@ -1097,7 +1097,7 @@ impl PageTable {
                                    === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@).map_frame(vaddr as nat, pte@));
                             assert(idx == idxg@);
                             assert(idxg@ < pt@.entries.len());
-                            let pt_res: Ghost<PTDir> = Ghost::new(
+                            let pt_res: Ghost<PTDir> = Ghost(
                                 PTDir {
                                     region: pt@.region,
                                     entries: pt@.entries.update(idx as int, Some(dir_pt_res@)),
@@ -1109,7 +1109,7 @@ impl PageTable {
                             assert(!new_regions@.contains(pt_res@.region));
                             assert(!dir_pt_res@.used_regions.contains(pt_res@.region));
 
-                            let ptrg: Ghost<usize> = Ghost::new(ptr);
+                            let ptrg: Ghost<usize> = Ghost(ptr);
                             assert(self.inv_at(layer as nat, ptr, pt_res@)
                                 && Ok(self.interp_at(layer as nat, ptr, base as nat, pt_res@)) === old(self).interp_at(layer as nat, ptr, base as nat, pt@).map_frame(vaddr as nat, pte@)) by
                             {
@@ -1308,7 +1308,7 @@ impl PageTable {
                             assert(self.arch === old(self).arch);
                             assert(pt_res@.region === pt@.region);
 
-                            let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost::new((pt_res@,new_regions@));
+                            let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost((pt_res@,new_regions@));
                             Ok(res)
                         },
                         Err(e) => {
@@ -1346,12 +1346,12 @@ impl PageTable {
                 assume(ptr < 100);
                 assert(aligned((ptr + idx * WORD_SIZE) as nat, 8));
                 let write_addr = ptr + idx * WORD_SIZE;
-                let pwmem: Ghost<mem::PageTableMemory> = Ghost::new(self.memory);
-                self.memory.write(write_addr, Ghost::new(pt@.region), new_page_entry.entry);
+                let pwmem: Ghost<mem::PageTableMemory> = Ghost(self.memory);
+                self.memory.write(write_addr, Ghost(pt@.region), new_page_entry.entry);
                 assert(self.memory.region_view(pt@.region) === pwmem@.region_view(pt@.region).update(idx as int, new_page_entry.entry));
                 assert(self.memory.region_view(pt@.region).len() == self.arch@.num_entries(layer as nat));
 
-                let ptrg: Ghost<usize> = Ghost::new(ptr);
+                let ptrg: Ghost<usize> = Ghost(ptr);
                 assert forall|i: nat| i < self.arch@.num_entries(layer as nat)
                     implies {
                         let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
@@ -1470,12 +1470,12 @@ impl PageTable {
                 assert(self.arch === old(self).arch);
                 assert(pt@.region === pt@.region);
 
-                Ok(Ghost::new((pt@, set![])))
+                Ok(Ghost((pt@, set![])))
             } else {
                 let new_dir_region = self.memory.alloc_page();
                 let new_dir_ptr = new_dir_region.base;
                 let new_dir_ptr_u64 = new_dir_ptr as u64;
-                let new_dir_pt: Ghost<PTDir> = Ghost::new(
+                let new_dir_pt: Ghost<PTDir> = Ghost(
                     PTDir {
                         region: new_dir_region@,
                         entries: new_seq::<Option<PTDir>>(self.arch@.num_entries(layer as nat), None),
@@ -1489,12 +1489,12 @@ impl PageTable {
                 assume(ptr < 100);
                 let write_addr = ptr + idx * WORD_SIZE;
                 assert(aligned(write_addr as nat, 8));
-                self.memory.write(write_addr, Ghost::new(pt@.region), new_dir_entry.entry);
+                self.memory.write(write_addr, Ghost(pt@.region), new_dir_entry.entry);
 
 
                 // After writing the new empty directory entry we prove that the resulting state
                 // satisfies the invariant and that the interpretation remains unchanged.
-                let pt_with_empty: Ghost<PTDir> = Ghost::new(
+                let pt_with_empty: Ghost<PTDir> = Ghost(
                     PTDir {
                         region:       pt@.region,
                         entries:      pt@.entries.update(idx as int, Some(new_dir_pt@)),
@@ -1503,7 +1503,7 @@ impl PageTable {
                 // For easier reference we take a snapshot of self here. In the subsequent proofs
                 // (after the recursive call) we have old(self), self_with_empty and self to refer
                 // to each relevant state.
-                let self_with_empty: Ghost<Self> = Ghost::new(*self);
+                let self_with_empty: Ghost<Self> = Ghost(*self);
                 proof {
                     assert(self.arch === old(self).arch);
                     assert(pt_with_empty@.region === pt@.region);
@@ -1642,15 +1642,15 @@ impl PageTable {
                 assert(self.memory.alloc_available_pages() >= 3 - (layer + 1));
                 match self.map_frame_aux(layer + 1, new_dir_ptr, entry_base, vaddr, pte, new_dir_pt) {
                     Ok(rec_res) => {
-                        let dir_pt_res: Ghost<PTDir> = Ghost::new(rec_res@.0);
-                        let dir_new_regions: Ghost<Set<MemRegion>> = Ghost::new(rec_res@.1);
-                        let pt_final: Ghost<PTDir> = Ghost::new(
+                        let dir_pt_res: Ghost<PTDir> = Ghost(rec_res@.0);
+                        let dir_new_regions: Ghost<Set<MemRegion>> = Ghost(rec_res@.1);
+                        let pt_final: Ghost<PTDir> = Ghost(
                             PTDir {
                                 region:       pt_with_empty@.region,
                                 entries:      pt_with_empty@.entries.update(idx as int, Some(dir_pt_res@)),
                                 used_regions: pt_with_empty@.used_regions.union(dir_new_regions@),
                             });
-                        let new_regions: Ghost<Set<MemRegion>> = Ghost::new(dir_new_regions@.insert(new_dir_region@));
+                        let new_regions: Ghost<Set<MemRegion>> = Ghost(dir_new_regions@.insert(new_dir_region@));
                         proof {
                             let ptrg = ptr;
                             assert(idx < pt_with_empty@.entries.len());
@@ -1898,7 +1898,7 @@ impl PageTable {
                             };
                             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt@.used_regions.contains(r)));
                         }
-                        Ok(Ghost::new((pt_final@, new_regions@)))
+                        Ok(Ghost((pt_final@, new_regions@)))
                     },
                     Err(e) => {
                         assert(false); // We always successfully insert into an empty directory
@@ -1978,7 +1978,7 @@ impl PageTable {
             &&& res.len() === self.arch@.num_entries(layer)
             &&& forall|i: nat| i < res.len() ==> res[i as int] === l1::NodeEntry::Empty()
             })
-        decreases (self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat)
+        decreases self.arch@.layers.len() - layer, self.arch@.num_entries(layer) - init.len(), 0nat
     {
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
         let entry_ptr = self.view_at(layer, ptr, idx, pt).get_Directory_addr();
@@ -2094,13 +2094,12 @@ impl PageTable {
     {
         proof { ambient_arith(); }
         let cr3 = self.memory.cr3();
-        match self.map_frame_aux(0, cr3.base, 0, vaddr, pte, self.ghost_pt) {
+        match self.map_frame_aux(0, cr3.base, 0, vaddr, pte, Ghost(self.ghost_pt@)) {
             Ok(res) => {
-                let pt_res: Ghost<PTDir> = Ghost::new(res@.0);
-                let new_regions: Ghost<Set<MemRegion>> = Ghost::new(res@.1);
+                let pt_res: Ghost<PTDir> = Ghost(res@.0);
+                let new_regions: Ghost<Set<MemRegion>> = Ghost(res@.1);
                 assert(self.inv_at(0, cr3.base, pt_res@));
-                let self_before_pt_update: Ghost<Self> = Ghost::new(*self);
-                let old_pt: Ghost<PTDir> = self.ghost_pt;
+                let self_before_pt_update: Ghost<Self> = Ghost(*self);
                 self.ghost_pt = pt_res;
                 // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
                 proof {
@@ -2135,26 +2134,26 @@ impl PageTable {
         }
     }
 
-    fn is_directory_empty(&self, layer: usize, ptr: usize, pt: Ghost<PTDir>) -> (res: bool)
+    fn is_directory_empty(&self, layer: usize, ptr: usize, Ghost(pt): Ghost<PTDir>) -> (res: bool)
         requires
-            self.inv_at(layer as nat, ptr, pt@),
+            self.inv_at(layer as nat, ptr, pt),
         ensures
-            res === self.empty_at(layer as nat, ptr, pt@)
+            res === self.empty_at(layer as nat, ptr, pt)
     {
-        assert(self.directories_obey_invariant_at(layer as nat, ptr, pt@));
+        assert(self.directories_obey_invariant_at(layer as nat, ptr, pt));
         let mut idx = 0;
         let num_entries = self.arch.num_entries(layer);
         while idx < num_entries
             invariant
-                self.inv_at(layer as nat, ptr, pt@),
-                forall|i: nat| i < idx ==> self.view_at(layer as nat, ptr, i, pt@).is_Empty(),
+                self.inv_at(layer as nat, ptr, pt),
+                forall|i: nat| i < idx ==> self.view_at(layer as nat, ptr, i, pt).is_Empty(),
         {
             assert(idx < num_entries);
             // Any chance it's actually faster to just bitwise or all the entries together and check at the end?
-            let entry = self.entry_at(layer, ptr, idx, pt);
+            let entry = self.entry_at(layer, ptr, idx, Ghost(pt));
             if entry.is_mapping() {
-                assert(!self.view_at(layer as nat, ptr, idx as nat, pt@).is_Empty());
-                assume(!self.empty_at(layer as nat, ptr, pt@));
+                assert(!self.view_at(layer as nat, ptr, idx as nat, pt).is_Empty());
+                assume(!self.empty_at(layer as nat, ptr, pt));
                 return false;
             }
             idx = idx + 1;
@@ -2206,9 +2205,9 @@ impl PageTable {
         // decreases self.arch@.layers.len() - layer
     {
         let idx: usize = self.arch.index_for_vaddr(layer, base, vaddr);
-        let idxg: Ghost<usize> = Ghost::new(idx);
+        let idxg: Ghost<usize> = Ghost(idx);
         let entry = self.entry_at(layer, ptr, idx, pt);
-        let interp: Ghost<l1::Directory> = Ghost::new(self.interp_at(layer as nat, ptr, base as nat, pt@));
+        let interp: Ghost<l1::Directory> = Ghost(self.interp_at(layer as nat, ptr, base as nat, pt@));
         proof {
             interp@.lemma_unmap_structure_assertions(vaddr as nat, idx as nat);
             self.lemma_interp_at_facts(layer as nat, ptr, base as nat, pt@);
@@ -2224,12 +2223,12 @@ impl PageTable {
             if entry.is_dir(layer) {
                 let dir_addr = entry.address() as usize;
                 assert(pt@.entries[idx as int].is_Some());
-                let dir_pt: Ghost<PTDir> = Ghost::new(pt@.entries.index(idx as int).get_Some_0());
+                let dir_pt: Ghost<PTDir> = Ghost(pt@.entries.index(idx as int).get_Some_0());
                 assert(self.directories_obey_invariant_at(layer as nat, ptr, pt@));
                 match self.unmap_aux(layer + 1, dir_addr, entry_base, vaddr, dir_pt) {
                     Ok(rec_res) => {
-                        let dir_pt_res: Ghost<PTDir> = Ghost::new(rec_res@.0);
-                        let removed_regions: Ghost<Set<MemRegion>> = Ghost::new(rec_res@.1);
+                        let dir_pt_res: Ghost<PTDir> = Ghost(rec_res@.0);
+                        let removed_regions: Ghost<Set<MemRegion>> = Ghost(rec_res@.1);
 
                         assert(self.inv_at((layer + 1) as nat, dir_addr, dir_pt_res@));
                         assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt_res@))
@@ -2242,16 +2241,16 @@ impl PageTable {
                             assume(pt@.region.contains(write_addr as nat));
                             assume(self.memory.regions().contains(pt@.region));
                             assume(self.memory.inv());
-                            self.memory.write(write_addr, Ghost::new(pt@.region), 0u64);
+                            self.memory.write(write_addr, Ghost(pt@.region), 0u64);
 
-                            let pt_res: Ghost<PTDir> = Ghost::new(
+                            let pt_res: Ghost<PTDir> = Ghost(
                                 PTDir {
                                     region: pt@.region,
                                     entries: pt@.entries.update(idx as int, None),
                                     used_regions: pt@.used_regions.difference(removed_regions@).remove(dir_pt_res@.region),
                                 });
 
-                            let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost::new((pt_res@,removed_regions@));
+                            let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost((pt_res@,removed_regions@));
                             // Refinement
                             assume(Ok(self.interp_at(layer as nat, ptr, base as nat, pt_res@)) === old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat));
                             // postconditions
@@ -2267,8 +2266,8 @@ impl PageTable {
                             Ok(res)
                         } else {
                             // FIXME: main_new problem example
-                            // let idx_int: Ghost<int> = Ghost::new(idx as int);
-                            let pt_res: Ghost<PTDir> = Ghost::new(
+                            // let idx_int: Ghost<int> = Ghost(idx as int);
+                            let pt_res: Ghost<PTDir> = Ghost(
                                 PTDir {
                                     region: pt@.region,
                                     entries: pt@.entries.update(idx as int, Some(dir_pt_res@)),
@@ -2278,7 +2277,7 @@ impl PageTable {
                             assert(idx < pt@.entries.len());
                             assert(pt_res@.region === pt@.region);
 
-                            let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost::new((pt_res@,removed_regions@));
+                            let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost((pt_res@,removed_regions@));
                             // Refinement
                             assume(Ok(self.interp_at(layer as nat, ptr, base as nat, pt_res@)) === old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat));
                             // postconditions
@@ -2305,11 +2304,11 @@ impl PageTable {
                 if aligned_exec(vaddr, self.arch.entry_size(layer)) {
                     let write_addr = ptr + idx * WORD_SIZE;
                     assume(pt@.region.contains(write_addr as nat));
-                    self.memory.write(write_addr, Ghost::new(pt@.region), 0u64);
+                    self.memory.write(write_addr, Ghost(pt@.region), 0u64);
 
-                    let pt_res: Ghost<PTDir> = pt;
-                    let removed_regions: Ghost<Set<MemRegion>> = Ghost::new(Set::empty());
-                    let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost::new((pt_res@, removed_regions@));
+                    let pt_res: Ghost<PTDir> = Ghost(pt@);
+                    let removed_regions: Ghost<Set<MemRegion>> = Ghost(Set::empty());
+                    let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost((pt_res@, removed_regions@));
 
                     // Refinement
                     assume(Ok(self.interp_at(layer as nat, ptr, base as nat, pt_res@)) === old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat));
@@ -2369,11 +2368,11 @@ impl PageTable {
     {
         proof { ambient_arith(); }
         let cr3 = self.memory.cr3();
-        match self.unmap_aux(0, cr3.base, 0, vaddr, self.ghost_pt) {
+        match self.unmap_aux(0, cr3.base, 0, vaddr, Ghost(self.ghost_pt@)) {
             Ok(res) => {
-                let pt_res: Ghost<PTDir> = Ghost::new(res@.0);
+                let pt_res: Ghost<PTDir> = Ghost(res@.0);
                 assert(self.inv_at(0, cr3.base, pt_res@));
-                let self_before_pt_update: Ghost<Self> = Ghost::new(*self);
+                let self_before_pt_update: Ghost<Self> = Ghost(*self);
                 self.ghost_pt = pt_res;
                 // FIXME: prove lemma that inv_at is preserved when changing self.ghost_pt
                 assume(self.inv_at(0, cr3.base, pt_res@));

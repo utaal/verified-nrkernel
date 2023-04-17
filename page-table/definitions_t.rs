@@ -458,7 +458,7 @@ impl Arch {
             j < self.layers.len(),
         ensures
             aligned(self.entry_size(i), self.entry_size(j))
-        decreases (self.layers.len() - i)
+        decreases self.layers.len() - i
     {
         if i == j {
             assert(aligned(self.entry_size(i), self.entry_size(j))) by (nonlinear_arith)

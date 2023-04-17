@@ -170,7 +170,7 @@ pub proof fn leq_add_aligned_less(a: nat, b: nat, c: nat) {
 
 #[verifier(external_body)]
 pub proof fn aligned_transitive_auto() {
-    ensures(forall(|a: nat, b: nat, c: nat| 0 < b && 0 < c && aligned(a, b) && aligned(b, c) ==> aligned(a, c)));
+    ensures(forall|a: nat, b: nat, c: nat| 0 < b && 0 < c && aligned(a, b) && aligned(b, c) ==> aligned(a, c));
 }
 
 #[verifier(external_body)]
