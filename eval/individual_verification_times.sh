@@ -4,23 +4,20 @@
 # set -euo pipefail
 # set -x
 
-RUST_VERIFY=/st/verus/verif/verus/source/tools/rust-verify.sh
+RUST_VERIFY=/st/verus/verif/verus_main_new/source/tools/rust-verify.sh
 PT_PATH=/st/verus/verified-nrkernel/page-table/
-NUM_RUNS=2
+NUM_RUNS=1
 
-# modules=(impl_u::indexing definitions_t impl_u::l0 impl_u::l1 impl_u::l2_impl impl_u::l2_refinement impl_u::lib impl_u::spec_pt impl_u::mem_t spec_t::hardware spec_t::hlspec spec_t::impl_spec spec_t::os)
 
 # exclamation mark ignores return code for that command
-modules=$(! "$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 --deprecated-enhanced-typecheck $PT_PATH/main.rs --verify-module xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
+modules=$(! "$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 $PT_PATH/main.rs --verify-module xxxxx 2>&1 | grep '    -' | tr -s ' ' | cut -d ' ' -f 3 | awk '/prelude/,EOF { print $0 }' | tail -n+2)
+
 
 for module in $modules; do
-  # echo "$module"
-  functions=$(! "$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 --deprecated-enhanced-typecheck $PT_PATH/main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | grep '   -' | tr -s ' ' | cut -d ' ' -f 3)
-  # module="impl_u::l2_impl"
+  functions=$(! "$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 $PT_PATH/main.rs --verify-module "$module" --verify-function xxxxx 2>&1 | grep '    -' | tr -s ' ' | cut -d ' ' -f 3)
 
   for function in $functions; do
-    # function="PageTable::map_frame_aux"
-    output=$(strace -f -s99999 -e trace=execve "$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 --deprecated-enhanced-typecheck $PT_PATH/main.rs --time --verify-module "$module" --verify-function "$function" 2>&1)
+    output=$(strace -f -s99999 -e trace=execve "$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 $PT_PATH/main.rs --time --verify-module "$module" --verify-function "$function" 2>&1)
     if [[ $? -gt 0 ]]; then
       echo "$module,$function,failed"
       continue
@@ -34,7 +31,7 @@ for module in $modules; do
       time_acc5=0
       # rerun the query to avoid slowdown due to strace
       for i in $(seq 1 $NUM_RUNS); do
-        output=$("$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 --deprecated-enhanced-typecheck $PT_PATH/main.rs --time --verify-module "$module" --verify-function "$function" 2>&1)
+        output=$("$RUST_VERIFY" --arch-word-bits 64 --rlimit 200 $PT_PATH/main.rs --time --verify-module "$module" --verify-function "$function" 2>&1)
         time1=$(echo "$output" | grep total-time | tr -s ' ' | cut -d ' ' -f 2)
         time2=$(echo "$output" | grep rust-time | tr -s ' ' | cut -d ' ' -f 3)
         time3=$(echo "$output" | grep vir-time | tr -s ' ' | cut -d ' ' -f 3)

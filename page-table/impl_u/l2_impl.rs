@@ -2296,8 +2296,6 @@ impl PageTable {
                             assume(self.memory.cr3_spec() == old(self).memory.cr3_spec());
                             Ok(res)
                         } else {
-                            // FIXME: main_new problem example
-                            // let idx_int: Ghost<int> = Ghost(idx as int);
                             let pt_res: Ghost<PTDir> = Ghost(
                                 PTDir {
                                     region: pt@.region,
