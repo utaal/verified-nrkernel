@@ -1,5 +1,6 @@
 #![allow(unused_imports)]
-use crate::pervasive::*;
+use vstd::*;
+use vstd::prelude::arbitrary;
 use builtin::*;
 use builtin_macros::*;
 use map::*;

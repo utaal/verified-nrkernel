@@ -2,7 +2,7 @@
 use builtin_macros::*;
 use builtin::*;
 use crate::spec_t::hlspec;
-use crate::pervasive::*;
+use vstd::*;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult, ResolveResultExec, PageTableEntry };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;

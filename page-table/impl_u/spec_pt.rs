@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use crate::pervasive::*;
+use vstd::*;
 use builtin::*;
 use builtin_macros::*;
 

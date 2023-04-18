@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use crate::pervasive::*;
+use vstd::*;
 use modes::*;
 use seq::*;
 use option::{*, Option::*};
@@ -45,6 +45,11 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         }
     }
 
+    proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory)
+    {
+        assume(false);
+    }
+
     fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
         // requires
         assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr as nat, pte@));
@@ -57,7 +62,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             ||| pte.frame.size == L1_ENTRY_SIZE
         });
         assert(self.ispec_inv(memory));
-        let ghost_pt: Ghost<l2_impl::PTDir> = ghost(
+        let ghost_pt: Ghost<l2_impl::PTDir> = Ghost(
             choose|ghost_pt: l2_impl::PTDir| {
                 let page_table = l2_impl::PageTable {
                     memory: memory,
@@ -107,7 +112,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
         assert(page_table.arch@.upper_vaddr(0, 0) == page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0));
         assert(page_table.arch@.upper_vaddr(0, 0) <= MAX_BASE);
-        let old_page_table: Ghost<l2_impl::PageTable> = ghost(page_table);
+        let old_page_table: Ghost<l2_impl::PageTable> = Ghost(page_table);
         let res = page_table.map_frame(vaddr, pte);
         assert(page_table.inv());
         assert(page_table.interp().inv());
@@ -139,7 +144,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
 
     fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResultExec, mem::PageTableMemory)) {
         assert(self.ispec_inv(memory));
-        let ghost_pt: Ghost<l2_impl::PTDir> = ghost(
+        let ghost_pt: Ghost<l2_impl::PTDir> = Ghost(
             choose|ghost_pt: l2_impl::PTDir| {
                 let page_table = l2_impl::PageTable {
                     memory: memory,
