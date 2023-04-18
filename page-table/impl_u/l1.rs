@@ -29,20 +29,13 @@ pub proof fn ambient_lemmas2()
         forall|d: Directory| d.inv() ==> (#[trigger] d.interp()).upper == d.upper_vaddr(),
         forall|d: Directory| d.inv() ==> (#[trigger] d.interp()).lower == d.base_vaddr,
 {
-    assert_forall_by(|d: Directory, i: nat| {
-        requires(d.inv() && i < d.num_entries() && d.entries.index(i as int).is_Directory());
-        ensures(d.entries.index(i as int).get_Directory_0().inv());
-        // FIXME: main_new problem
-        // ensures(#[auto_trigger] d.entries.index(i as int).get_Directory_0().inv());
+    assert forall #![auto] |d: Directory, i: nat| d.inv() && i < d.num_entries() && d.entries.index(i as int).is_Directory()
+        implies d.entries.index(i as int).get_Directory_0().inv() by {
         assert(d.directories_obey_invariant());
-    });
-    assert_forall_by(|d: Directory| {
-        requires(d.inv());
-        ensures(d.interp().upper == d.upper_vaddr() && d.interp().lower == d.base_vaddr);
-        // FIXME: main_new problem
-        // ensures(#[auto_trigger] d.interp().upper == d.upper_vaddr() && d.interp().lower == d.base_vaddr);
+    };
+    assert forall #![auto] |d: Directory| d.inv() implies d.interp().upper == d.upper_vaddr() && d.interp().lower == d.base_vaddr by {
         d.lemma_inv_implies_interp_inv();
-    });
+    };
 }
 
 // Simply uncommenting this thing slows down verification of this file by 2.5x
@@ -241,19 +234,12 @@ impl Directory {
                 (forall|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
                 (forall|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
     {
-        assert_forall_by(|i: nat| {
-            requires(i < self.num_entries());
-            ensures(
+        assert forall #![auto] |i: nat| i < self.num_entries() implies 
                      self.interp_of_entry(i).inv() &&
                      self.interp_of_entry(i).lower == self.entry_base(i) &&
-                     self.interp_of_entry(i).upper == self.entry_base(i+1));
-            // FIXME: main_new problem
-            // ensures( #[auto_trigger]
-            //          self.interp_of_entry(i).inv() &&
-            //          self.interp_of_entry(i).lower == self.entry_base(i) &&
-            //          self.interp_of_entry(i).upper == self.entry_base(i+1));
+                     self.interp_of_entry(i).upper == self.entry_base(i+1) by {
             self.lemma_inv_implies_interp_of_entry_inv(i);
-        });
+        };
     }
 
     proof fn lemma_inv_implies_interp_of_entry_inv(self, i: nat)
@@ -694,20 +680,16 @@ impl Directory {
         } else {
             let _ = self.interp_of_entry(j);
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
-            assert_forall_by(|base: nat, pte: PageTableEntry| {
-                requires(self.interp_aux(j).map.contains_pair(base, pte));
-                ensures(exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte));
-                // FIXME: main_new problem
-                // ensures(exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte));
+            assert forall #![auto] |base: nat, pte: PageTableEntry|
+                self.interp_aux(j).map.contains_pair(base, pte) implies
+                exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte) by {
                 if self.interp_aux(j+1).map.contains_pair(base, pte) { } else { }
-            });
-            assert_forall_by(|base: nat| {
-                requires(self.interp_aux(j).map.dom().contains(base));
-                ensures(exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base));
-                // FIXME: main_new problem
-                // ensures(exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base));
+            };
+            assert forall #![auto] |base: nat|
+                self.interp_aux(j).map.dom().contains(base) implies
+                exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base) by {
                 if self.interp_aux(j+1).map.dom().contains(base) { } else { }
-            });
+            };
         }
     }
 
@@ -717,14 +699,10 @@ impl Directory {
         ensures
             forall|base: nat, pte: PageTableEntry|
                 self.interp().map.contains_pair(base, pte) ==>
-                exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
-                // FIXME: main_new problem
-                // exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
             forall|base: nat|
                 self.interp().map.dom().contains(base) ==>
-                exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base),
-                // FIXME: main_new problem
-                // exists|i: nat| #[auto_trigger] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base),
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base),
     {
         self.lemma_interp_aux_contains_implies_interp_of_entry_contains(0);
     }
@@ -1424,17 +1402,11 @@ impl Directory {
                             assert(d.interp().map_frame(base, pte).is_Err());
                             assert(d.interp().accepted_mapping(base, pte));
                             assert(!d.interp().valid_mapping(base, pte));
-                            let b = choose|b: nat|
+                            let b = choose|b: nat| #![auto]
                                            d.interp().map.dom().contains(b) && overlap(
                                                MemRegion { base: base, size: pte.frame.size },
                                                MemRegion { base: b, size: d.interp().map.index(b).frame.size }
                                                );
-                            // FIXME: main_new problem
-                            // let b = choose(|b: nat| #[auto_trigger]
-                            //                d.interp().map.dom().contains(b) && overlap(
-                            //                    MemRegion { base: base, size: pte.frame.size },
-                            //                    MemRegion { base: b, size: d.interp().map.index(b).frame.size }
-                            //                    ));
                             let bbase = d.interp().map.index(b).frame.base;
                             let bsize = d.interp().map.index(b).frame.size;
                             assert(d.interp().map.contains_pair(b, d.interp().map.index(b)));
@@ -1857,6 +1829,8 @@ pub open spec(checked) fn result_map<A,B>(res: Result<A,A>, f: FnSpec(A) -> B) -
 }
 
 // FIXME: main_new problem
+// @utaal: this is now disallowed, as we need to respect rust's rules for inherent impls
+// (i.e. not allowed on types defined outside the crate)
 // impl<A,B> Result<A,B> {
 //     pub open spec(checked) fn map_ok<C>(self, f: FnSpec(A) -> C) -> Result<C,B> {
 //         match self {
