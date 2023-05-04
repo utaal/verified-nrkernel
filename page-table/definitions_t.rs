@@ -3,6 +3,7 @@ use builtin::*;
 use builtin_macros::*;
 use vstd::modes::*;
 use vstd::seq::*;
+use vstd::seq_lib::*;
 use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
@@ -24,7 +25,7 @@ pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
 pub const L0_ENTRY_SIZE: usize = 512 * L1_ENTRY_SIZE;
 
 pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
-    base + pte.frame.size < x86_arch.upper_vaddr(0, 0)
+    base + pte.frame.size < x86_arch_spec.upper_vaddr(0, 0)
 }
 
 pub open spec fn candidate_mapping_overlaps_existing_vmem(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
@@ -540,37 +541,61 @@ impl Arch {
     }
 }
 
-#[verifier(external_body)]
-pub open spec fn x86_arch_exec_spec() -> ArchExec {
-    ArchExec {
-        layers: Vec { vec: vec![
-            ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
-        ] },
-    }
-}
+// Why does this exec_spec function even exist:
+// - In some places we need to refer to the `Exec` versions of the structs in spec mode.
+// - We can't make x86_arch_exec a const because Verus panics if we initialize the vec directly,
+//   i.e. we need to push to a mut vec instead. (Does rust even support vecs in a const? Otherwise
+//   would need arrays.)
+// - Since x86_arch_exec is a function it has to have a mode, i.e. we need a version for exec usage
+//   and a version for spec usage. In the spec version we can't initialize the vec (same problem as
+//   above and can't use mut), i.e. we have to axiomatize their equivalence.
+// - We can't even have a proof function axiom because we need to show
+//   `x86_arch_exec_spec() == x86_arch_exec()`, where the second function call is an exec function.
+//   Thus the axiom is an assumed postcondition on the exec function itself.
+// - In addition to adding the postcondition, we also need a separate axiom to show that the view
+//   of x86_arch_exec_spec is the same as x86_arch_spec. This is provable but only with the
+//   postconditions on x86_arch_exec, which is an exec function. Consequently we can't use that
+//   postcondition in proof mode.
+// - All this mess should go away as soon as we can make that exec function the constant it ought
+//   to be.
+pub open spec fn x86_arch_exec_spec() -> ArchExec;
 
-
-// FIXME: can we get rid of this somehow?
 #[verifier(external_body)]
+pub proof fn axiom_x86_arch_exec_spec()
+    ensures
+        x86_arch_exec_spec()@ == x86_arch_spec;
+
 pub exec fn x86_arch_exec() -> (res: ArchExec)
     ensures
-        res@ === x86_arch,
-        x86_arch_exec_spec()@ === x86_arch,
-{
-    ArchExec {
-        layers: Vec { vec: vec![
+        res.layers@ == seq![
             ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
             ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
             ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
             ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
-        ] },
+        ],
+        res@ === x86_arch_spec,
+        res === x86_arch_exec_spec(),
+{
+    // Can we somehow just initialize an immutable vec directly? Verus panics when I try do so
+    // (unless the function is external_body).
+    let mut v = Vec::new();
+    v.push(ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 });
+    v.push(ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 });
+    v.push(ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 });
+    v.push(ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 });
+    let res = ArchExec {
+        layers: v,
+    };
+    proof {
+        assert_seqs_equal!(res@.layers, x86_arch_spec.layers);
+        // This is an axiom to establish the equivalence with x86_arch_exec_spec; See comments
+        // further up for explanation why this workaround is necessary.
+        assume(res === x86_arch_exec_spec());
     }
+    res
 }
 
-pub spec const x86_arch: Arch = Arch {
+pub spec const x86_arch_spec: Arch = Arch {
     layers: seq![
         ArchLayer { entry_size: L0_ENTRY_SIZE as nat, num_entries: 512 },
         ArchLayer { entry_size: L1_ENTRY_SIZE as nat, num_entries: 512 },
@@ -582,21 +607,21 @@ pub spec const x86_arch: Arch = Arch {
 #[verifier(nonlinear)]
 pub proof fn x86_arch_inv()
     ensures
-        x86_arch.inv()
+        x86_arch_spec.inv()
 {
-    assert(x86_arch.entry_size(3) == 4096);
-    assert(x86_arch.contains_entry_size(4096));
-    assert(x86_arch.layers.len() <= MAX_NUM_LAYERS);
-    assert forall|i:nat| i < x86_arch.layers.len() implies {
-            &&& 0 < #[trigger] x86_arch.entry_size(i)  <= MAX_ENTRY_SIZE
-            &&& 0 < #[trigger] x86_arch.num_entries(i) <= MAX_NUM_ENTRIES
-            &&& x86_arch.entry_size_is_next_layer_size(i)
+    assert(x86_arch_spec.entry_size(3) == 4096);
+    assert(x86_arch_spec.contains_entry_size(4096));
+    assert(x86_arch_spec.layers.len() <= MAX_NUM_LAYERS);
+    assert forall|i:nat| i < x86_arch_spec.layers.len() implies {
+            &&& 0 < #[trigger] x86_arch_spec.entry_size(i)  <= MAX_ENTRY_SIZE
+            &&& 0 < #[trigger] x86_arch_spec.num_entries(i) <= MAX_NUM_ENTRIES
+            &&& x86_arch_spec.entry_size_is_next_layer_size(i)
         } by {
-        assert(0 < #[trigger] x86_arch.entry_size(i)  <= MAX_ENTRY_SIZE);
-        assert(0 < #[trigger] x86_arch.num_entries(i) <= MAX_NUM_ENTRIES);
-        assert(x86_arch.entry_size_is_next_layer_size(i));
+        assert(0 < #[trigger] x86_arch_spec.entry_size(i)  <= MAX_ENTRY_SIZE);
+        assert(0 < #[trigger] x86_arch_spec.num_entries(i) <= MAX_NUM_ENTRIES);
+        assert(x86_arch_spec.entry_size_is_next_layer_size(i));
     }
-    assert(x86_arch.inv());
+    assert(x86_arch_spec.inv());
 }
 
 }

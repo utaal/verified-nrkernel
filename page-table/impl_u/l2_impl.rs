@@ -13,7 +13,7 @@ use vstd::vec::*;
 use vstd::result::{*, Result::*};
 
 use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds };
-use crate::definitions_t::{ x86_arch, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE };
+use crate::definitions_t::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::mem;

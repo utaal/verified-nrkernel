@@ -14,7 +14,7 @@ use crate::spec_t::mem;
 
 use result::{*, Result::*};
 
-use crate::definitions_t::{ MemRegionExec, Flags, x86_arch, x86_arch_exec, x86_arch_exec_spec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
+use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
@@ -75,22 +75,14 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             }
         );
 
-        let x86_arch_exec_v = x86_arch_exec();
-        // FIXME: problem with definition
-        assume(x86_arch_exec_spec() === x86_arch_exec_v);
-        assert(x86_arch_exec_spec()@ === x86_arch);
-
         let mut page_table = l2_impl::PageTable {
             memory:    memory,
-            arch:      x86_arch_exec_v,
+            arch:      x86_arch_exec(),
             ghost_pt:  ghost_pt,
         };
         assert(page_table.inv());
         assert(page_table.arch@.inv());
         assert(page_table.interp().inv());
-
-        assert(x86_arch_exec_spec()@ === page_table.arch@);
-        assert(page_table.arch@ === x86_arch);
 
         assert(page_table.accepted_mapping(vaddr as nat, pte@)) by {
             reveal(l2_impl::PageTable::accepted_mapping);
@@ -157,22 +149,17 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             }
         );
 
-        let x86_arch_exec_v = x86_arch_exec();
-        // FIXME: problem with definition
-        assume(x86_arch_exec_spec() === x86_arch_exec_v);
-        assert(x86_arch_exec_spec()@ === x86_arch);
-
         let page_table = l2_impl::PageTable {
             memory:    memory,
-            arch:      x86_arch_exec_v,
+            arch:      x86_arch_exec(),
             ghost_pt:  ghost_pt,
         };
+        proof {
+            x86_arch_inv();
+        }
         assert(page_table.inv());
         assert(page_table.arch@.inv());
         assert(page_table.interp().inv());
-
-        assert(x86_arch_exec_spec()@ === page_table.arch@);
-        assert(page_table.arch@ === x86_arch);
 
         proof {
             let cr3 = page_table.memory.cr3_spec();
@@ -220,9 +207,9 @@ proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
         ghost_pt: Ghost::new(pt),
     };
     assert(page_table.inv()) by {
-        // FIXME: problem with definition
-        assume(x86_arch_exec_spec()@ === x86_arch);
         x86_arch_inv();
+        axiom_x86_arch_exec_spec();
+        assert(x86_arch_exec_spec()@ === x86_arch_spec);
         assert(page_table.well_formed(0, ptr));
         assert(page_table.memory.inv());
         assert(page_table.memory.regions().contains(pt.region));
