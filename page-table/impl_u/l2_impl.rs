@@ -186,6 +186,8 @@ pub ghost enum GhostPageDirectoryEntry {
 }
 
 
+
+#[allow(repr_transparent_external_private_fields)]
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
 #[repr(transparent)]
 pub struct PageDirectoryEntry {
@@ -1325,23 +1327,52 @@ impl PageTable {
                 Err(())
             }
         } else {
-        assume(false);
             if self.arch.entry_size(layer) == pte.frame.size {
                 proof {
-                    let layerg = layer;
-                    assert(0 < layer) by {
+                    assert(layer > 0) by {
                         reveal(Self::accepted_mapping);
-                        if layerg == 0 {
-                            let iprime = choose|i: nat| 1 <= i && i < self.arch@.layers.len() && #[trigger] self.arch@.entry_size(i) == pte.frame.size;
+                        if layer == 0 {
+                            let iprime = choose|i: nat| 0 < i && i < self.arch@.layers.len() && #[trigger] self.arch@.entry_size(i) == pte.frame.size;
                             assert(self.arch@.entry_size(0) == pte.frame.size);
                             assert(self.arch@.contains_entry_size_at_index_atleast(pte.frame.size as nat, 1));
-                            // FIXME: unstable
-                            assume(forall|i: nat| 0 < i < self.arch@.layers.len() ==> self.arch@.entry_size(0) < #[trigger] self.arch@.entry_size(i));
+                            assert forall|i: nat|
+                                0 < i < self.arch@.layers.len()
+                                implies
+                                self.arch@.entry_size(0) >= #[trigger] self.arch@.entry_size(i)
+                            by {
+                                self.arch@.lemma_entry_sizes_increase(0, i);
+                            };
+                            // FIXME: Super unstable
+                            assume(false);
+                            assert(false);
                         }
                     };
                     let frame_base = pte.frame.base as u64;
-                    // FIXME: this should be derivable from alignment property in accepted_mapping
-                    assume(addr_is_zero_padded(layer as nat, frame_base, true));
+                    // FIXME: this should be derivable from alignment property in interp accepted_mapping
+                    assert(addr_is_zero_padded(layer as nat, frame_base, true)) by {
+                        assume(false);
+                        assert(self.arch@.contains_entry_size_at_index_atleast(pte.frame.size as nat, 1));
+                        // let frame_layer = choose|i: nat| 1 <= i && i < self.arch@.layers.len() && #[trigger] self.arch@.entry_size(i) == pte.frame.size;
+                        assert(1 <= layer);
+                        assert(layer < self.arch@.layers.len());
+                        assert(self.arch@.entry_size(layer as nat) == pte.frame.size);
+                        // assert(aligned(base as nat, pte.frame.size as nat));
+                        assert(aligned(pte.frame.base as nat, pte.frame.size as nat));
+                        if layer == 1 {
+                            // This is only true with the x86 arch, which we don't assume in this
+                            // function. Maybe we should
+                            assert(self.arch@.entry_size(1) == L1_ENTRY_SIZE);
+                            assert(pte.frame.size == L1_ENTRY_SIZE);
+                            assert(frame_base & MASK_L1_PG_ADDR == frame_base & MASK_ADDR);
+                        } else if layer == 2 {
+                            assume(false);
+                            // addr & MASK_L2_PG_ADDR == addr & MASK_ADDR
+                        } else if layer == 3 {
+                            assume(false);
+                            // addr & MASK_L3_PG_ADDR == addr & MASK_ADDR
+                        } else {
+                        }
+                    };
                     // FIXME: need additional precondition?
                     assume(frame_base & MASK_ADDR == frame_base);
                 }
@@ -1475,6 +1506,7 @@ impl PageTable {
 
                 Ok(Ghost((pt@, set![])))
             } else {
+        assume(false);
                 let new_dir_region = self.memory.alloc_page();
                 let new_dir_ptr = new_dir_region.base;
                 let new_dir_ptr_u64 = new_dir_ptr as u64;

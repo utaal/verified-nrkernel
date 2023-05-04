@@ -682,12 +682,12 @@ impl Directory {
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
             assert forall #![auto] |base: nat, pte: PageTableEntry|
                 self.interp_aux(j).map.contains_pair(base, pte) implies
-                exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte) by {
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte) by {
                 if self.interp_aux(j+1).map.contains_pair(base, pte) { } else { }
             };
             assert forall #![auto] |base: nat|
                 self.interp_aux(j).map.dom().contains(base) implies
-                exists|i: nat| i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base) by {
+                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base) by {
                 if self.interp_aux(j+1).map.dom().contains(base) { } else { }
             };
         }

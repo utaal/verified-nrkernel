@@ -515,6 +515,29 @@ impl Arch {
         // base + (idx + 1) * self.entry_size(layer)
         indexing::next_entry_base_from_index(base, idx, self.entry_size(layer))
     }
+
+    pub proof fn lemma_entry_sizes_increase(self, i: nat, j: nat)
+        requires
+            self.inv(),
+            i < j,
+            j < self.layers.len(),
+        ensures
+            self.entry_size(i) >= self.entry_size(j),
+        decreases j - i
+    {
+        assert(self.entry_size(i) >= self.entry_size(i + 1))
+            by (nonlinear_arith)
+            requires
+                i + 1 < self.layers.len(),
+                self.entry_size_is_next_layer_size(i),
+                self.num_entries(i + 1) > 0,
+        { };
+        if j == i + 1 {
+        } else {
+            self.lemma_entry_sizes_increase(i + 1, j);
+
+        }
+    }
 }
 
 #[verifier(external_body)]
