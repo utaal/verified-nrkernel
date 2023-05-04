@@ -1813,6 +1813,8 @@ impl Directory {
     }
 }
 
+// FIXME: Something like these functions should probably be added to vstd. One problem with that:
+// May want exec versions of the functions but can't give them the same name.
 pub open spec(checked) fn result_map_ok<A,B,C>(res: Result<A,B>, f: FnSpec(A) -> C) -> Result<C,B> {
     match res {
         Ok(a)  => Ok(f(a)),
@@ -1826,26 +1828,5 @@ pub open spec(checked) fn result_map<A,B>(res: Result<A,A>, f: FnSpec(A) -> B) -
         Err(a) => Err(f(a)),
     }
 }
-
-// FIXME: main_new problem
-// @utaal: this is now disallowed, as we need to respect rust's rules for inherent impls
-// (i.e. not allowed on types defined outside the crate)
-// impl<A,B> Result<A,B> {
-//     pub open spec(checked) fn map_ok<C>(self, f: FnSpec(A) -> C) -> Result<C,B> {
-//         match self {
-//             Ok(a)  => Ok(f(a)),
-//             Err(b) => Err(b),
-//         }
-//     }
-// }
-
-// impl<A> Result<A,A> {
-//     pub open spec(checked) fn map<B>(self, f: FnSpec(A) -> B) -> Result<B,B> {
-//         match self {
-//             Ok(a)  => Ok(f(a)),
-//             Err(a) => Err(f(a)),
-//         }
-//     }
-// }
 
 }

@@ -15,8 +15,20 @@ use crate::impl_u::indexing;
 
 verus! {
 
-pub const X86_NUM_LAYERS: usize = 4;
+pub const X86_NUM_LAYERS:  usize = 4;
 pub const X86_NUM_ENTRIES: usize = 512;
+pub const MAXPHYADDR_BITS: u64 = 52;
+// FIXME: is this correct?
+// spec const MAXPHYADDR: nat      = ((1u64 << 52u64) - 1u64) as nat;
+// TODO: Probably easier to use computed constant because verus can't deal with the shift except in
+// bitvector assertions.
+pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
+
+pub const WORD_SIZE: usize = 8;
+pub const PAGE_SIZE: usize = 4096;
+
+pub spec const X86_MAX_ENTRY_SIZE: nat = 512 * 1024 * 1024 * 1024;
+pub spec const MAX_BASE:           nat = X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES as nat);
 
 pub spec const PT_BOUND_LOW:  nat = 0;
 // Upper bound for x86 4-level paging.
@@ -334,8 +346,9 @@ impl ArchExec {
             res == self@.entry_base(layer as nat, base as nat, idx as nat)
     {
         proof {
-            assume(false); // FIXME: main_new problem
-            // lib::mult_leq_mono_both(idx as nat, self@.entry_size(layer as nat), X86_NUM_ENTRIES, X86_MAX_ENTRY_SIZE);
+            // FIXME: Weird error message when using the spec const here
+            // lib::mult_leq_mono_both(idx as nat, self@.entry_size(layer as nat), X86_NUM_ENTRIES as nat, X86_MAX_ENTRY_SIZE);
+            lib::mult_leq_mono_both(idx as nat, self@.entry_size(layer as nat), X86_NUM_ENTRIES as nat, 512 * 1024 * 1024 * 1024);
         }
         base + idx * self.entry_size(layer)
     }
@@ -380,20 +393,6 @@ pub struct Arch {
     // [512G, 1G  , 2M  , 4K  ]
     // [512 , 512 , 512 , 512 ]
 }
-
-
-pub const MAXPHYADDR_BITS: u64 = 52;
-// FIXME: is this correct?
-// spec const MAXPHYADDR: nat      = ((1u64 << 52u64) - 1u64) as nat;
-// TODO: Probably easier to use computed constant because verus can't deal with the shift except in
-// bitvector assertions.
-pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
-
-pub const WORD_SIZE: usize = 8;
-pub const PAGE_SIZE: usize = 4096;
-
-pub spec const X86_MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
-pub spec const MAX_BASE:         nat = X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES as nat);
 
 // Sometimes z3 needs these concrete bounds to prove the no-overflow VC
 pub proof fn overflow_bounds()
