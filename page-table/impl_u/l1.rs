@@ -15,7 +15,6 @@ use crate::definitions_t::{new_seq, lemma_new_seq};
 use crate::impl_u::lib;
 use crate::impl_u::indexing;
 
-use crate::definitions_t::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE };
 use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
 use crate::impl_u::l0::{ self, ambient_arith, ambient_lemmas1 };
 

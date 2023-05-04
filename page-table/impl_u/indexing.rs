@@ -273,6 +273,6 @@ pub proof fn lemma_index_from_base_and_addr(base: nat, addr: nat, entry_size: na
     // {
     //     assume(false);
     // };
-    // assert(idx < MAX_NUM_ENTRIES);
+    // assert(idx < X86_NUM_ENTRIES);
 }
 }

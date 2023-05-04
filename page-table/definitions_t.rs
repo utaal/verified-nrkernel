@@ -15,6 +15,9 @@ use crate::impl_u::indexing;
 
 verus! {
 
+pub const X86_NUM_LAYERS: usize = 4;
+pub const X86_NUM_ENTRIES: usize = 512;
+
 pub spec const PT_BOUND_LOW:  nat = 0;
 // Upper bound for x86 4-level paging.
 // 512 entries, each mapping 512*1024*1024*1024 bytes
@@ -326,13 +329,13 @@ impl ArchExec {
             self@.inv(),
             layer < self@.layers.len(),
             base <= MAX_BASE,
-            idx <= MAX_NUM_ENTRIES,
+            idx <= X86_NUM_ENTRIES,
         ensures
             res == self@.entry_base(layer as nat, base as nat, idx as nat)
     {
         proof {
             assume(false); // FIXME: main_new problem
-            // lib::mult_leq_mono_both(idx as nat, self@.entry_size(layer as nat), MAX_NUM_ENTRIES, MAX_ENTRY_SIZE);
+            // lib::mult_leq_mono_both(idx as nat, self@.entry_size(layer as nat), X86_NUM_ENTRIES, X86_MAX_ENTRY_SIZE);
         }
         base + idx * self.entry_size(layer)
     }
@@ -342,22 +345,22 @@ impl ArchExec {
             self@.inv(),
             layer < self@.layers.len(),
             base <= MAX_BASE,
-            idx <= MAX_NUM_ENTRIES,
+            idx <= X86_NUM_ENTRIES,
         ensures
             res == self@.next_entry_base(layer as nat, base as nat, idx as nat)
     {
         proof {
             overflow_bounds();
             let es = self@.entry_size(layer as nat);
-            assert(0 <= (idx + 1) * es <= MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1)) by (nonlinear_arith)
-                requires es <= MAX_ENTRY_SIZE, idx <= MAX_NUM_ENTRIES
+            assert(0 <= (idx + 1) * es <= X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1)) by (nonlinear_arith)
+                requires es <= X86_MAX_ENTRY_SIZE, idx <= X86_NUM_ENTRIES
                 { /* New instability with z3 4.10.1 */ };
         }
         let offset = (idx + 1) * self.entry_size(layer);
         proof {
-            assert(base + offset <= MAX_BASE + MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1)) by (nonlinear_arith)
+            assert(base + offset <= MAX_BASE + X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1)) by (nonlinear_arith)
                 requires
-                    0 <= offset <= MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1),
+                    0 <= offset <= X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1),
                     0 <= base <= MAX_BASE,
                 {};
         }
@@ -389,19 +392,17 @@ pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
 pub const WORD_SIZE: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
-pub spec const MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
-pub spec const MAX_NUM_LAYERS:   nat = 4;
-pub spec const MAX_NUM_ENTRIES:  nat = 512;
-pub spec const MAX_BASE:         nat = MAX_ENTRY_SIZE * MAX_NUM_ENTRIES;
+pub spec const X86_MAX_ENTRY_SIZE:   nat = 512 * 1024 * 1024 * 1024;
+pub spec const MAX_BASE:         nat = X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES as nat);
 
 // Sometimes z3 needs these concrete bounds to prove the no-overflow VC
 pub proof fn overflow_bounds()
     ensures
-        MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000,
-        MAX_BASE + MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000,
+        X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1) < 0x10000000000000000,
+        MAX_BASE + X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1) < 0x10000000000000000,
 {
-    assert(MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000) by (nonlinear_arith);
-    assert(MAX_BASE + MAX_ENTRY_SIZE * (MAX_NUM_ENTRIES + 1) < 0x10000000000000000) by (nonlinear_arith);
+    assert(X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1) < 0x10000000000000000) by (nonlinear_arith);
+    assert(MAX_BASE + X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES + 1) < 0x10000000000000000) by (nonlinear_arith);
 }
 
 impl Arch {
@@ -426,13 +427,13 @@ impl Arch {
     }
 
     pub open spec(checked) fn inv(&self) -> bool {
-        &&& self.layers.len() <= MAX_NUM_LAYERS
+        &&& self.layers.len() <= X86_NUM_LAYERS
         &&& forall|i:nat|
             #![trigger self.entry_size(i)]
             #![trigger self.num_entries(i)]
             i < self.layers.len() ==> {
-                &&& 0 < self.entry_size(i)  <= MAX_ENTRY_SIZE
-                &&& 0 < self.num_entries(i) <= MAX_NUM_ENTRIES
+                &&& 0 < self.entry_size(i)  <= X86_MAX_ENTRY_SIZE
+                &&& 0 < self.num_entries(i) <= X86_NUM_ENTRIES
                 &&& self.entry_size_is_next_layer_size(i)
             }
     }
@@ -611,14 +612,14 @@ pub proof fn x86_arch_inv()
 {
     assert(x86_arch_spec.entry_size(3) == 4096);
     assert(x86_arch_spec.contains_entry_size(4096));
-    assert(x86_arch_spec.layers.len() <= MAX_NUM_LAYERS);
+    assert(x86_arch_spec.layers.len() <= X86_NUM_LAYERS);
     assert forall|i:nat| i < x86_arch_spec.layers.len() implies {
-            &&& 0 < #[trigger] x86_arch_spec.entry_size(i)  <= MAX_ENTRY_SIZE
-            &&& 0 < #[trigger] x86_arch_spec.num_entries(i) <= MAX_NUM_ENTRIES
+            &&& 0 < #[trigger] x86_arch_spec.entry_size(i)  <= X86_MAX_ENTRY_SIZE
+            &&& 0 < #[trigger] x86_arch_spec.num_entries(i) <= X86_NUM_ENTRIES
             &&& x86_arch_spec.entry_size_is_next_layer_size(i)
         } by {
-        assert(0 < #[trigger] x86_arch_spec.entry_size(i)  <= MAX_ENTRY_SIZE);
-        assert(0 < #[trigger] x86_arch_spec.num_entries(i) <= MAX_NUM_ENTRIES);
+        assert(0 < #[trigger] x86_arch_spec.entry_size(i)  <= X86_MAX_ENTRY_SIZE);
+        assert(0 < #[trigger] x86_arch_spec.num_entries(i) <= X86_NUM_ENTRIES);
         assert(x86_arch_spec.entry_size_is_next_layer_size(i));
     }
     assert(x86_arch_spec.inv());

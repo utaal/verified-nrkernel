@@ -12,7 +12,7 @@ use vstd::vec::*;
 use vstd::result::{*, Result::*};
 
 use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry };
-use crate::definitions_t::{ MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
+use crate::definitions_t::{ WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::impl_u::indexing;

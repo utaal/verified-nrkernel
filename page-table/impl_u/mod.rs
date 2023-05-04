@@ -5,4 +5,4 @@ pub mod l2_refinement;
 pub mod spec_pt;
 pub mod lib;
 pub mod indexing;
-// pub mod os_refinement;
+pub mod os_refinement;

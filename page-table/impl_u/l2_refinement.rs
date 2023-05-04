@@ -14,7 +14,7 @@ use crate::spec_t::mem;
 
 use result::{*, Result::*};
 
-use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, MAX_NUM_ENTRIES, MAX_NUM_LAYERS, MAX_ENTRY_SIZE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
+use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::impl_spec;
@@ -36,7 +36,6 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         exists|ghost_pt: l2_impl::PTDir| {
             let page_table = l2_impl::PageTable {
                 memory: memory,
-                arch: x86_arch_exec_spec(),
                 ghost_pt: Ghost::new(ghost_pt),
             };
             &&& page_table.inv()
@@ -66,7 +65,6 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             choose|ghost_pt: l2_impl::PTDir| {
                 let page_table = l2_impl::PageTable {
                     memory: memory,
-                    arch: x86_arch_exec_spec(),
                     ghost_pt: Ghost::new(ghost_pt),
                 };
                 &&& page_table.inv()
@@ -77,11 +75,9 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
 
         let mut page_table = l2_impl::PageTable {
             memory:    memory,
-            arch:      x86_arch_exec(),
             ghost_pt:  ghost_pt,
         };
         assert(page_table.inv());
-        assert(page_table.arch@.inv());
         assert(page_table.interp().inv());
 
         assert(page_table.accepted_mapping(vaddr as nat, pte@)) by {
@@ -95,15 +91,15 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         proof {
             let cr3 = page_table.memory.cr3_spec();
             page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
-            assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
+            assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
         }
         assert(page_table.interp().accepted_mapping(vaddr as nat, pte@));
-        assert(page_table.arch@.num_entries(0) == 512);
+        assert(x86_arch_spec.num_entries(0) == 512);
         // FIXME: incompleteness?
-        assume(page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0) == 512 * L0_ENTRY_SIZE);
+        assume(x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0) == 512 * L0_ENTRY_SIZE);
         assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
-        assert(page_table.arch@.upper_vaddr(0, 0) == page_table.arch@.num_entries(0) * page_table.arch@.entry_size(0));
-        assert(page_table.arch@.upper_vaddr(0, 0) <= MAX_BASE);
+        assert(x86_arch_spec.upper_vaddr(0, 0) == x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0));
+        assert(x86_arch_spec.upper_vaddr(0, 0) <= MAX_BASE);
         let old_page_table: Ghost<l2_impl::PageTable> = Ghost(page_table);
         let res = page_table.map_frame(vaddr, pte);
         assert(page_table.inv());
@@ -140,7 +136,6 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             choose|ghost_pt: l2_impl::PTDir| {
                 let page_table = l2_impl::PageTable {
                     memory: memory,
-                    arch: x86_arch_exec_spec(),
                     ghost_pt: Ghost::new(ghost_pt),
                 };
                 &&& page_table.inv()
@@ -151,20 +146,18 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
 
         let page_table = l2_impl::PageTable {
             memory:    memory,
-            arch:      x86_arch_exec(),
             ghost_pt:  ghost_pt,
         };
         proof {
             x86_arch_inv();
         }
         assert(page_table.inv());
-        assert(page_table.arch@.inv());
         assert(page_table.interp().inv());
 
         proof {
             let cr3 = page_table.memory.cr3_spec();
             page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
-            assert(page_table.interp().upper_vaddr() == page_table.arch@.upper_vaddr(0, 0));
+            assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
         }
         assume(false);
         match page_table.resolve(vaddr) {
@@ -185,7 +178,6 @@ proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
         exists|ghost_pt: l2_impl::PTDir| {
                     let page_table = l2_impl::PageTable {
                         memory: memory,
-                        arch: x86_arch_exec_spec(),
                         ghost_pt: Ghost::new(ghost_pt),
                     };
                     &&& page_table.inv()
@@ -203,7 +195,6 @@ proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
     lemma_new_seq::<Option<l2_impl::PTDir>>(512, Option::None);
     let page_table = l2_impl::PageTable {
         memory: memory,
-        arch: x86_arch_exec_spec(),
         ghost_pt: Ghost::new(pt),
     };
     assert(page_table.inv()) by {
@@ -217,7 +208,7 @@ proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
         assert(pt.region.size == PAGE_SIZE);
         assert(page_table.memory.region_view(pt.region).len() == pt.entries.len());
         assert(page_table.layer_in_range(0));
-        assert(pt.entries.len() == page_table.arch@.num_entries(0));
+        assert(pt.entries.len() == x86_arch_spec.num_entries(0));
         page_table.lemma_zeroed_page_implies_empty_at(0, ptr, pt);
         assert(page_table.directories_obey_invariant_at(0, ptr, pt));
         assert(page_table.ghost_pt_matches_structure(0, ptr, pt));
