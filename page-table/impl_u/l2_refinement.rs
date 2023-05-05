@@ -201,7 +201,7 @@ proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
         x86_arch_inv();
         axiom_x86_arch_exec_spec();
         assert(x86_arch_exec_spec()@ === x86_arch_spec);
-        assert(page_table.well_formed(0, ptr));
+        assert(page_table.well_formed(ptr));
         assert(page_table.memory.inv());
         assert(page_table.memory.regions().contains(pt.region));
         assert(pt.region.base == ptr);

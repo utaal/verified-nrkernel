@@ -109,39 +109,72 @@ impl PageTableMemory {
     }
 
     #[verifier(external_body)]
-    pub fn write(&mut self, paddr: usize, region: Ghost<MemRegion>, value: u64)
+    /// Write value to physical address `pbase + idx * WORD_SIZE`
+    pub fn write(&mut self, pbase: usize, idx: usize, region: Ghost<MemRegion>, value: u64)
         requires
-            aligned(paddr as nat, 8),
+            pbase == region@.base,
+            aligned(pbase as nat, WORD_SIZE as nat),
             old(self).inv(),
             old(self).regions().contains(region@),
-            region@.contains(paddr as nat),
-            word_index_spec(sub(paddr as nat, region@.base)) < 512,
+            idx < 512,
         ensures
-            self.region_view(region@) === old(self).region_view(region@).update(word_index_spec(sub(paddr as nat, region@.base)) as int, value),
+            self.region_view(region@) === old(self).region_view(region@).update(idx as int, value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
             self.regions() === old(self).regions(),
             old(self).alloc_available_pages() == self.alloc_available_pages(),
             self.cr3_spec() == old(self).cr3_spec(),
     {
-        let word_offset: isize = word_index(paddr) as isize;
+        let word_offset: isize = (word_index(pbase) + idx) as isize;
         unsafe { self.phys_mem_ref.offset(word_offset).write(value); }
     }
 
     #[verifier(external_body)]
-    pub fn read(&self, paddr: usize, region: Ghost<MemRegion>) -> (res: u64)
+    /// Read value at physical address `pbase + idx * WORD_SIZE`
+    pub fn read(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>) -> (res: u64)
         requires
-            aligned(paddr as nat, 8),
+            pbase == region@.base,
+            aligned(pbase as nat, WORD_SIZE as nat),
             self.regions().contains(region@),
-            word_index_spec(sub(paddr as nat, region@.base)) < 512,
+            idx < 512,
         ensures
-            res == self.spec_read(paddr as nat, region@)
+            res == self.spec_read(idx as nat, region@)
     {
-        let word_offset: isize = word_index(paddr) as isize;
+        let word_offset: isize = (word_index(pbase) + idx) as isize;
         unsafe { self.phys_mem_ref.offset(word_offset).read() }
     }
 
-    pub open spec fn spec_read(self, paddr: nat, region: MemRegion) -> (res: u64) {
-        self.region_view(region)[word_index_spec(sub(paddr, region.base)) as int]
+    pub open spec fn spec_read(self, idx: nat, region: MemRegion) -> (res: u64) {
+        self.region_view(region)[idx as int]
+    }
+
+    /// This function manually does the address computation which `read` and `write` rely on not
+    /// overflowing. Since this function is not `external_body`, Verus checks that there's no
+    /// overflow. The preconditions are those of `read`, which are a subset of the `write`
+    /// preconditions.
+    fn check_overflow(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>)
+        requires
+            pbase == region@.base,
+            aligned(pbase as nat, WORD_SIZE as nat),
+            self.regions().contains(region@),
+            idx < 512,
+    {
+        // FIXME: Make assumptions and then do the proof
+        // pub const KERNEL_BASE: u64 = 0x4000_0000_0000;
+        // (I think KERNEL_BASE is phys_mem_ref?)
+        assume(false);
+        let word_offset: isize = (word_index(pbase) + idx) as isize;
+        let phys_mem_ref: isize = self.phys_mem_ref_as_usize() as isize;
+        let raw_ptr_offset = phys_mem_ref + word_offset * (WORD_SIZE as isize);
+    }
+
+    #[verifier(external_body)]
+    spec fn phys_mem_ref_as_usize_spec(&self) -> usize;
+
+    #[verifier(external_body)]
+    fn phys_mem_ref_as_usize(&self) -> (res: usize)
+        ensures res == self.phys_mem_ref_as_usize_spec()
+    {
+        unsafe { self.phys_mem_ref as usize }
     }
 }
 
