@@ -164,6 +164,8 @@ impl PageTableMemory {
         assume(false);
         let word_offset: isize = (word_index(pbase) + idx) as isize;
         let phys_mem_ref: isize = self.phys_mem_ref_as_usize() as isize;
+        // https://dev-doc.rust-lang.org/beta/std/primitive.pointer.html#method.offset
+        // This needs to fit into an isize
         let raw_ptr_offset = phys_mem_ref + word_offset * (WORD_SIZE as isize);
     }
 

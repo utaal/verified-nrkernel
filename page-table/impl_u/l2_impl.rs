@@ -41,19 +41,6 @@ macro_rules! bitmask_inc {
 // }
 
 
-proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
-    ensures forall|addr: u64| addr <= MAXPHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
-{
-    assert forall|addr: u64|
-        addr <= MAXPHYADDR &&
-        #[trigger] aligned(addr as nat, PAGE_SIZE as nat)
-        implies
-        addr & MASK_DIR_ADDR == addr
-    by {
-        assert(addr <= 0xFFFFFFFFFFFFFu64 && addr % 4096u64 == 0 ==> addr & bitmask_inc!(12u64,52u64) == addr) by(bit_vector);
-    };
-}
-
 // layer:
 // 0 -> PML4
 // 1 -> PDPT, Page Directory Pointer Table
@@ -61,7 +48,7 @@ proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
 // 3 -> PT, Page Table
 
 
-// MASK_FLAG_* are flags valid for all entries.
+// MASK_FLAG_* are flags valid for entries at all levels.
 pub const MASK_FLAG_P:    u64 = bit!(0u64);
 pub const MASK_FLAG_RW:   u64 = bit!(1u64);
 pub const MASK_FLAG_US:   u64 = bit!(2u64);
@@ -102,7 +89,6 @@ proof fn lemma_addr_masks_facts(address: u64)
         MASK_L2_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
         MASK_L1_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
 {
-    // TODO: can we get support for consts in bit vector reasoning?
     assert((bitmask_inc!(21u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
     assert((bitmask_inc!(30u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
 }
@@ -116,40 +102,60 @@ proof fn lemma_addr_masks_facts2(address: u64)
     assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(30u64, 52u64)) == (address & bitmask_inc!(30u64, 52u64))) by (bit_vector);
 }
 
-spec fn dummy_trigger(a: u64, x: u64, i: u64) -> bool {
-    true
+proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
+    ensures forall|addr: u64| addr <= MAXPHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
+{
+    assert forall|addr: u64|
+        addr <= MAXPHYADDR &&
+        #[trigger] aligned(addr as nat, PAGE_SIZE as nat)
+        implies
+        addr & MASK_DIR_ADDR == addr
+    by {
+        assert(addr <= 0xFFFFFFFFFFFFFu64 && addr % 4096u64 == 0 ==> addr & bitmask_inc!(12u64,52u64) == addr) by(bit_vector);
+    };
 }
 
 proof fn lemma_aligned_addr_mask_facts(addr: u64)
     ensures
         aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR),
         aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR),
-        aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_L3_PG_ADDR == addr & MASK_ADDR),
+        (addr & MASK_L3_PG_ADDR == addr & MASK_ADDR),
         addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
         addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
         addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
 {
-    // TODO: These shouldn't be too hard to prove, check
-    // lemma_page_aligned_implies_mask_dir_addr_is_identity, which already mostly proves the second
-    // three posts.
-    assume(forall|i: u64| #![auto] MAXPHYADDR_BITS < i && i < 64 ==> (L1_ENTRY_SIZE as u64) & bit!(i) == 0);
-    assume(L1_ENTRY_SIZE == (1u64 << 30));
-    assume(L2_ENTRY_SIZE == (1u64 << 21));
-    assume(L3_ENTRY_SIZE == (1u64 << 12));
     assert(aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR)) by {
         if aligned(addr as nat, L1_ENTRY_SIZE as nat) {
-            assert(aligned(addr as nat, (1u64 << 30) as nat));
-            assume(aligned(addr as nat, (1u64 << 12) as nat));
-            lib::lemma_bv_aligned_mask(addr, 30);
-            // lib::lemma_bv_bitmask_facts(addr, 30, MAXPHYADDR_BITS);
-            assume(false);
+            assert(addr % 0x40000000u64 == 0 ==> addr & bitmask_inc!(30u64,52u64) == addr & bitmask_inc!(12u64,52u64)) by(bit_vector);
         }
     };
-    assume(false);
+    assert(aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR)) by {
+        if aligned(addr as nat, L2_ENTRY_SIZE as nat) {
+            assert(addr % 0x200000u64 == 0 ==> addr & bitmask_inc!(21u64,52u64) == addr & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        }
+    };
+    assert(addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) {
+            assert(aligned(L1_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
+            lib::aligned_transitive(addr as nat, L1_ENTRY_SIZE as nat, PAGE_SIZE as nat);
+            lemma_page_aligned_implies_mask_dir_addr_is_identity();
+        }
+    };
+    assert(addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) {
+            assert(aligned(L2_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
+            lib::aligned_transitive(addr as nat, L2_ENTRY_SIZE as nat, PAGE_SIZE as nat);
+            lemma_page_aligned_implies_mask_dir_addr_is_identity();
+        }
+    };
+    assert(addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) {
+            assert(aligned(L3_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
+            lib::aligned_transitive(addr as nat, L3_ENTRY_SIZE as nat, PAGE_SIZE as nat);
+            lemma_page_aligned_implies_mask_dir_addr_is_identity();
+        }
+    };
 }
-
-// // MASK_PD_* are flags valid for all entries pointing to another directory
-// const MASK_PD_ADDR:      u64 = bitmask!(12,52);
 
 pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bool {
     is_page ==> {
@@ -552,7 +558,7 @@ impl PageTable {
         &&& x86_arch_spec.inv()
         // Make sure each page directory fits in one page:
         &&& forall|layer: nat| layer < X86_NUM_LAYERS ==> x86_arch_spec.num_entries(layer) == 512
-        &&& aligned(ptr as nat, PAGE_SIZE as nat)
+        &&& ptr % PAGE_SIZE == 0
     }
 
     pub open spec(checked) fn inv(&self) -> bool {
@@ -577,10 +583,6 @@ impl PageTable {
         }@
     }
 
-    // FIXME: Absolutely ridiculous stability problem here. If this function isn't spun off with
-    // spinoff_prover or nonlinear, two assertions in other functions
-    // (`assert(other.well_formed(ptr))`) fail to verify.
-    #[verifier(spinoff_prover)]
     /// Get the entry at address ptr + i * WORD_SIZE
     fn entry_at(&self, layer: usize, ptr: usize, i: usize, pt: Ghost<PTDir>) -> (res: PageDirectoryEntry)
         requires
@@ -595,14 +597,12 @@ impl PageTable {
         assert(aligned((ptr + i * WORD_SIZE) as nat, 8)) by {
             assert(self.inv_at(layer as nat, ptr, pt@));
             assert(self.well_formed(ptr));
-            assume(aligned(ptr as nat, PAGE_SIZE as nat));
-            // FIXME: Weirdness here.
+            assume(ptr % PAGE_SIZE == 0);
+            // FIXME: Verus weirdness here?
             // 1. The assume above is literally a conjunct in well_formed and should be completely
             //    trivial to prove but if I make it an assertion it fails.
-            // 2. Even with this assumption how the hell does the outer assertion go through
+            // 2. Even with this assumption, how the hell does the outer assertion go through
             //    without nonlinear enabled?!
-            // 3. Maybe this has something to do with the fact that this function has to use
-            //    spinoff_prover (see comment above).
         };
 
         assert(self.memory.inv());
@@ -1041,10 +1041,6 @@ impl PageTable {
         res
     }
 
-    // I have no reason to believe that this functions is particularly problematic and should be
-    // opaque. However, after changing it slightly map_frame_aux was timing out and this is a
-    // bandaid that allows me to continue without refactoring that entire function's proofs.
-    #[verifier(opaque)]
     pub open spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
         // Can't map pages in PML4, i.e. layer 0
         &&& x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size, 1)
@@ -1372,7 +1368,6 @@ impl PageTable {
             if x86_arch_exec().entry_size(layer) == pte.frame.size {
                 proof {
                     assert(layer > 0) by {
-                        reveal(Self::accepted_mapping);
                         if layer == 0 {
                             let iprime = choose|i: nat| 0 < i && i < X86_NUM_LAYERS && #[trigger] x86_arch_spec.entry_size(i) == pte.frame.size;
                             assert(x86_arch_spec.entry_size(0) == pte.frame.size);
@@ -1407,7 +1402,6 @@ impl PageTable {
                         }
                     };
                     assert(frame_base & MASK_ADDR == frame_base) by {
-                        reveal(Self::accepted_mapping);
                         lemma_aligned_addr_mask_facts(frame_base);
                     };
                 }
@@ -1546,10 +1540,9 @@ impl PageTable {
                         entries: new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None),
                         used_regions: set![new_dir_region@],
                     });
-                proof {
+                assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64) by {
                     lemma_page_aligned_implies_mask_dir_addr_is_identity();
-                    assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64);
-                }
+                };
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 self.memory.write(ptr, idx, Ghost(pt@.region), new_dir_entry.entry);
 
