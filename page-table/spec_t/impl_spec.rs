@@ -26,8 +26,7 @@ pub trait InterfaceSpec {
 
     fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory))
         requires
-            memory.alloc_available_pages() >= 3, // TODO: maybe this shouldn't be here and instead
-                                                 // we add and call a "refill" method in map_frame?
+            memory.alloc_available_pages() >= 3,
             spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr as nat, pte@),
             self.ispec_inv(memory),
         ensures

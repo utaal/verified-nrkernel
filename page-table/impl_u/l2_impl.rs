@@ -19,6 +19,7 @@ use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::indexing;
+use crate::impl_u::lib;
 
 verus! {
 
@@ -113,6 +114,38 @@ proof fn lemma_addr_masks_facts2(address: u64)
 {
     assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(21u64, 52u64)) == (address & bitmask_inc!(21u64, 52u64))) by (bit_vector);
     assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(30u64, 52u64)) == (address & bitmask_inc!(30u64, 52u64))) by (bit_vector);
+}
+
+spec fn dummy_trigger(a: u64, x: u64, i: u64) -> bool {
+    true
+}
+
+proof fn lemma_aligned_addr_mask_facts(addr: u64)
+    ensures
+        aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR),
+        aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR),
+        aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_L3_PG_ADDR == addr & MASK_ADDR),
+        addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+{
+    // TODO: These shouldn't be too hard to prove, check
+    // lemma_page_aligned_implies_mask_dir_addr_is_identity, which already mostly proves the second
+    // three posts.
+    assume(forall|i: u64| #![auto] MAXPHYADDR_BITS < i && i < 64 ==> (L1_ENTRY_SIZE as u64) & bit!(i) == 0);
+    assume(L1_ENTRY_SIZE == (1u64 << 30));
+    assume(L2_ENTRY_SIZE == (1u64 << 21));
+    assume(L3_ENTRY_SIZE == (1u64 << 12));
+    assert(aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR)) by {
+        if aligned(addr as nat, L1_ENTRY_SIZE as nat) {
+            assert(aligned(addr as nat, (1u64 << 30) as nat));
+            assume(aligned(addr as nat, (1u64 << 12) as nat));
+            lib::lemma_bv_aligned_mask(addr, 30);
+            // lib::lemma_bv_bitmask_facts(addr, 30, MAXPHYADDR_BITS);
+            assume(false);
+        }
+    };
+    assume(false);
 }
 
 // // MASK_PD_* are flags valid for all entries pointing to another directory
@@ -1005,7 +1038,8 @@ impl PageTable {
     #[verifier(opaque)]
     pub open spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
         // Can't map pages in PML4, i.e. layer 0
-        x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size, 1)
+        &&& x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size, 1)
+        &&& pte.frame.base <= MAXPHYADDR
     }
 
     // FIXME: pub const KERNEL_BASE: u64 = 0x4000_0000_0000;
@@ -1348,33 +1382,28 @@ impl PageTable {
                         }
                     };
                     let frame_base = pte.frame.base as u64;
-                    // FIXME: this should be derivable from alignment property in interp accepted_mapping
                     assert(addr_is_zero_padded(layer as nat, frame_base, true)) by {
-                        assume(false);
                         assert(x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, 1));
-                        // let frame_layer = choose|i: nat| 1 <= i && i < X86_NUM_LAYERS && #[trigger] x86_arch_spec.entry_size(i) == pte.frame.size;
-                        assert(1 <= layer);
-                        assert(layer < X86_NUM_LAYERS);
                         assert(x86_arch_spec.entry_size(layer as nat) == pte.frame.size);
-                        // assert(aligned(base as nat, pte.frame.size as nat));
                         assert(aligned(pte.frame.base as nat, pte.frame.size as nat));
+                        lemma_aligned_addr_mask_facts(frame_base);
                         if layer == 1 {
-                            // This is only true with the x86 arch, which we don't assume in this
-                            // function. Maybe we should
                             assert(x86_arch_spec.entry_size(1) == L1_ENTRY_SIZE);
-                            assert(pte.frame.size == L1_ENTRY_SIZE);
                             assert(frame_base & MASK_L1_PG_ADDR == frame_base & MASK_ADDR);
                         } else if layer == 2 {
-                            assume(false);
-                            // addr & MASK_L2_PG_ADDR == addr & MASK_ADDR
+                            assert(x86_arch_spec.entry_size(2) == L2_ENTRY_SIZE);
+                            assert(frame_base & MASK_L2_PG_ADDR == frame_base & MASK_ADDR);
                         } else if layer == 3 {
-                            assume(false);
-                            // addr & MASK_L3_PG_ADDR == addr & MASK_ADDR
+                            assert(x86_arch_spec.entry_size(3) == L3_ENTRY_SIZE);
+                            assert(frame_base & MASK_L3_PG_ADDR == frame_base & MASK_ADDR);
                         } else {
+                            assert(false);
                         }
                     };
-                    // FIXME: need additional precondition?
-                    assume(frame_base & MASK_ADDR == frame_base);
+                    assert(frame_base & MASK_ADDR == frame_base) by {
+                        reveal(Self::accepted_mapping);
+                        lemma_aligned_addr_mask_facts(frame_base);
+                    };
                 }
                 let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte);
                 assume(ptr < 100);

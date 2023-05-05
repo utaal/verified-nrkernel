@@ -7,6 +7,42 @@ use vstd::map::*;
 
 verus! {
 
+// TODO: Figure out macro importing in rust. These macros are duplicated in l2_impl.
+macro_rules! bit {
+    ($v:expr) => {
+        1u64 << $v
+    }
+}
+
+// Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
+macro_rules! bitmask_inc {
+    ($low:expr,$high:expr) => {
+        (!(!0u64 << (($high+1u64)-$low))) << $low
+    }
+}
+
+#[verifier(external_body)]
+pub proof fn lemma_bv_bitmask_facts(a: u64, lo: u64, hi: u64)
+    requires
+        lo < hi,
+        hi < 64,
+        forall|i: u64| hi < i && i < 64 ==> #[trigger] (a & bit!(i)) == 0,
+        forall|i: u64| i < lo ==> #[trigger] (a & bit!(i)) == 0,
+    ensures
+        a & bitmask_inc!(lo, hi) == a,
+{
+}
+
+#[verifier(external_body)]
+pub proof fn lemma_bv_aligned_mask(a: u64, x: u64)
+    requires
+        x < 64,
+        aligned(a as nat, (1u64 << x) as nat),
+    ensures
+        forall|i: u64| i < x ==> #[trigger] (a & bit!(i)) == 0
+{
+}
+
 #[verifier(external_body)]
 pub proof fn mod_of_mul_auto() {
     ensures(forall_arith(|a: nat, b: nat| b > 0 ==> aligned(#[trigger] (a * b), b)));
