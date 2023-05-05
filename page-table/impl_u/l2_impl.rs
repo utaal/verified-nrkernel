@@ -542,6 +542,7 @@ impl PageDirectoryEntry {
 }
 
 pub struct PTDir {
+    /// Region of physical memory in which this PTDir is stored
     pub region: MemRegion,
     pub entries: Seq<Option<PTDir>>,
     /// reflexive-transitive closure of `region` over `entries`

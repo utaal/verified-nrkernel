@@ -68,6 +68,7 @@ impl PageTableMemory {
     pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
 
     pub open spec fn inv(self) -> bool {
+        &&& self.phys_mem_ref_as_usize_spec() <= 0x7FE0_0000_0000_0000
         &&& forall|s1: MemRegion, s2: MemRegion| self.regions().contains(s1) && self.regions().contains(s2) && s1 !== s2 ==> !overlap(s1, s2)
     }
 
@@ -103,6 +104,7 @@ impl PageTableMemory {
             self.region_view(r@) === new_seq::<u64>(512nat, 0u64),
             forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.cr3_spec() == old(self).cr3_spec(),
+            self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
             self.inv(),
     {
         unreached()
@@ -121,8 +123,9 @@ impl PageTableMemory {
             self.region_view(region@) === old(self).region_view(region@).update(idx as int, value),
             forall|r: MemRegion| r !== region@ ==> self.region_view(r) === old(self).region_view(r),
             self.regions() === old(self).regions(),
-            old(self).alloc_available_pages() == self.alloc_available_pages(),
+            self.alloc_available_pages() == old(self).alloc_available_pages(),
             self.cr3_spec() == old(self).cr3_spec(),
+            self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
     {
         let word_offset: isize = (word_index(pbase) + idx) as isize;
         unsafe { self.phys_mem_ref.offset(word_offset).write(value); }
@@ -151,26 +154,50 @@ impl PageTableMemory {
     /// overflowing. Since this function is not `external_body`, Verus checks that there's no
     /// overflow. The preconditions are those of `read`, which are a subset of the `write`
     /// preconditions.
+    /// (This is an exec function so it generates the normal overflow VCs.)
     fn check_overflow(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>)
         requires
+            pbase <= MAXPHYADDR,
+            self.phys_mem_ref_as_usize_spec() <= 0x7FE0_0000_0000_0000,
             pbase == region@.base,
             aligned(pbase as nat, WORD_SIZE as nat),
             self.regions().contains(region@),
             idx < 512,
     {
-        // FIXME: Make assumptions and then do the proof
-        // pub const KERNEL_BASE: u64 = 0x4000_0000_0000;
-        // (I think KERNEL_BASE is phys_mem_ref?)
-        assume(false);
-        let word_offset: isize = (word_index(pbase) + idx) as isize;
-        let phys_mem_ref: isize = self.phys_mem_ref_as_usize() as isize;
         // https://dev-doc.rust-lang.org/beta/std/primitive.pointer.html#method.offset
-        // This needs to fit into an isize
+        // The raw pointer offset computation needs to fit in an isize.
+        // isize::MAX is   0x7FFF_FFFF_FFFF_FFFF
+        //
+        // `pbase` is a physical address, so we know it's <= MAXPHYADDR (2^52-1).
+        // The no-overflow assertions below require phys_mem_ref <= 0x7FEFFFFFFFFFF009.
+        // In the invariant we require the (arbitrarily chosen) nicer number
+        // 0x7FE0_0000_0000_0000 as an upper bound for phys_mem_ref.
+        // (In practice the address has to be smaller anyway, because the address space
+        // isn't that large.) NrOS uses 0x4000_0000_0000.
+        assert(word_index_spec(pbase as nat) < 0x2_0000_0000_0000) by(nonlinear_arith)
+            requires
+                aligned(pbase as nat, WORD_SIZE as nat),
+                pbase <= MAXPHYADDR,
+            {};
+        let word_offset: isize = (word_index(pbase) + idx) as isize;
+        assert(word_offset < 0x2_0000_0000_01FF) by(nonlinear_arith)
+            requires
+                idx < 512,
+                word_offset == word_index_spec(pbase as nat) + idx,
+                word_index_spec(pbase as nat) < 0x2_0000_0000_0000,
+            {};
+        let phys_mem_ref: isize = self.phys_mem_ref_as_usize() as isize;
+
+        assert(word_offset * WORD_SIZE < 0x10_0000_0000_0FF8) by(nonlinear_arith)
+            requires
+                word_offset < 0x2_0000_0000_01FF,
+            {};
+        let byte_offset: isize = word_offset * (WORD_SIZE as isize);
         let raw_ptr_offset = phys_mem_ref + word_offset * (WORD_SIZE as isize);
     }
 
     #[verifier(external_body)]
-    spec fn phys_mem_ref_as_usize_spec(&self) -> usize;
+    pub spec fn phys_mem_ref_as_usize_spec(&self) -> usize;
 
     #[verifier(external_body)]
     fn phys_mem_ref_as_usize(&self) -> (res: usize)
