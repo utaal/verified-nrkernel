@@ -558,7 +558,6 @@ impl PageTable {
         &&& x86_arch_spec.inv()
         // Make sure each page directory fits in one page:
         &&& forall|layer: nat| layer < X86_NUM_LAYERS ==> x86_arch_spec.num_entries(layer) == 512
-        &&& ptr % PAGE_SIZE == 0
     }
 
     pub open spec(checked) fn inv(&self) -> bool {
@@ -597,19 +596,10 @@ impl PageTable {
         assert(aligned((ptr + i * WORD_SIZE) as nat, 8)) by {
             assert(self.inv_at(layer as nat, ptr, pt@));
             assert(self.well_formed(ptr));
-            assume(ptr % PAGE_SIZE == 0);
-            // FIXME: Verus weirdness here?
-            // 1. The assume above is literally a conjunct in well_formed and should be completely
-            //    trivial to prove but if I make it an assertion it fails.
-            // 2. Even with this assumption, how the hell does the outer assertion go through
-            //    without nonlinear enabled?!
+            assert(ptr % PAGE_SIZE == 0);
         };
-
-        assert(self.memory.inv());
-        proof {
-            // triggering
-            let x = self.entry_at_spec(layer as nat, ptr, i as nat, pt@);
-        }
+        // triggering
+        proof { let x = self.entry_at_spec(layer as nat, ptr, i as nat, pt@); }
         PageDirectoryEntry {
             entry: self.memory.read(ptr, i, Ghost(pt@.region)),
             layer: (Ghost(layer as nat)),
@@ -649,6 +639,7 @@ impl PageTable {
     pub open spec(checked) fn inv_at(self, layer: nat, ptr: usize, pt: PTDir) -> bool
         decreases X86_NUM_LAYERS - layer
     {
+        &&& ptr % PAGE_SIZE == 0
         &&& self.well_formed(ptr)
         &&& self.memory.inv()
         &&& self.memory.regions().contains(pt.region)
@@ -1964,6 +1955,7 @@ impl PageTable {
 
     pub proof fn lemma_zeroed_page_implies_empty_at(self, layer: nat, ptr: usize, pt: PTDir)
         requires
+            ptr % PAGE_SIZE == 0,
             self.well_formed(ptr),
             self.memory.inv(),
             self.memory.regions().contains(pt.region),
