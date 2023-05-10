@@ -27,6 +27,36 @@ verus! {
 
 pub struct PageTableImpl {}
 
+proof fn lemma_no_entries_implies_interp_at_aux_no_entries(pt: l2_impl::PageTable, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, ghost_pt: l2_impl::PTDir)
+    requires
+        pt.memory.regions() == set![pt.memory.cr3_spec()@],
+        (forall|i: nat| i < 512 ==> pt.memory.region_view(pt.memory.cr3_spec()@)[i as int] == 0),
+        layer == 0,
+        pt.inv_at(layer, ptr, ghost_pt),
+        forall|i: nat| i < init.len() ==> init[i as int] == l1::NodeEntry::Empty(),
+        init.len() <= 512,
+    ensures
+        ({ let res = pt.interp_at_aux(layer, ptr, base_vaddr, init, ghost_pt);
+            &&& res.len() == 512
+            &&& forall|i: nat| i < res.len() ==> res[i as int] == l1::NodeEntry::Empty()
+        })
+    decreases 512 - init.len()
+{
+    lemma_new_seq::<Option<l2_impl::PTDir>>(512, Option::None);
+    let res = pt.interp_at_aux(layer, ptr, base_vaddr, init, ghost_pt);
+    if init.len() >= 512 {
+    } else {
+        let entry = pt.interp_at_entry(layer, ptr, base_vaddr, init.len(), ghost_pt);
+        assert(pt.ghost_pt_matches_structure(layer, ptr, ghost_pt));
+        assert forall|i: nat| i < 512 implies pt.view_at(layer, ptr, i, ghost_pt).is_Empty() by {
+            let entry = pt.memory.spec_read(i, ghost_pt.region);
+            assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
+        };
+        assert(entry == l1::NodeEntry::Empty());
+        lemma_no_entries_implies_interp_at_aux_no_entries(pt, layer, ptr, base_vaddr, init.add(seq![entry]), ghost_pt);
+    }
+}
+
 spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
     true
 }
@@ -44,9 +74,28 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
         }
     }
 
-    proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory)
-    {
-        assume(false);
+    proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory) {
+        let ptr: usize = memory.cr3_spec().base;
+        memory.cr3_facts();
+        let pt = l2_impl::PTDir {
+            region: memory.cr3_spec()@,
+            entries: new_seq(512, Option::None),
+            used_regions: set![memory.cr3_spec()@],
+        };
+        lemma_new_seq::<Option<l2_impl::PTDir>>(512, Option::None);
+        let page_table = l2_impl::PageTable {
+            memory: memory,
+            ghost_pt: Ghost::new(pt),
+        };
+        assert(page_table.inv()) by {
+            x86_arch_inv();
+            axiom_x86_arch_exec_spec();
+            page_table.lemma_zeroed_page_implies_empty_at(0, ptr, pt);
+        };
+
+        lemma_no_entries_implies_interp_at_aux_no_entries(page_table, 0, ptr, 0, seq![], pt);
+        assert(page_table.interp().inv());
+        assert(dummy_trigger(pt));
     }
 
     fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
@@ -165,63 +214,6 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             Err(e)      => (ResolveResultExec::ErrUnmapped, page_table.memory),
         }
     }
-}
-
-// Can't directly do it in trait because of Verus bug.
-proof fn ispec_init_implies_inv(memory: mem::PageTableMemory)
-    requires
-        memory.inv(),
-        memory.regions() === set![memory.cr3_spec()@],
-        memory.region_view(memory.cr3_spec()@).len() == 512,
-        (forall|i: nat| i < 512 ==> memory.region_view(memory.cr3_spec()@)[i as int] == 0),
-    ensures
-        exists|ghost_pt: l2_impl::PTDir| {
-                    let page_table = l2_impl::PageTable {
-                        memory: memory,
-                        ghost_pt: Ghost::new(ghost_pt),
-                    };
-                    &&& page_table.inv()
-                    &&& page_table.interp().inv()
-                    &&& #[trigger] dummy_trigger(ghost_pt)
-                }
-{
-    let ptr: usize = memory.cr3_spec().base;
-    memory.cr3_facts();
-    let pt = l2_impl::PTDir {
-        region: memory.cr3_spec()@,
-        entries: new_seq(512, Option::None),
-        used_regions: set![memory.cr3_spec()@],
-    };
-    lemma_new_seq::<Option<l2_impl::PTDir>>(512, Option::None);
-    let page_table = l2_impl::PageTable {
-        memory: memory,
-        ghost_pt: Ghost::new(pt),
-    };
-    assert(page_table.inv()) by {
-        x86_arch_inv();
-        axiom_x86_arch_exec_spec();
-        assert(x86_arch_exec_spec()@ === x86_arch_spec);
-        assert(page_table.well_formed(ptr));
-        assert(page_table.memory.inv());
-        assert(page_table.memory.regions().contains(pt.region));
-        assert(pt.region.base == ptr);
-        assert(pt.region.size == PAGE_SIZE);
-        assert(page_table.memory.region_view(pt.region).len() == pt.entries.len());
-        assert(page_table.layer_in_range(0));
-        assert(pt.entries.len() == x86_arch_spec.num_entries(0));
-        page_table.lemma_zeroed_page_implies_empty_at(0, ptr, pt);
-        assert(page_table.directories_obey_invariant_at(0, ptr, pt));
-        assert(page_table.ghost_pt_matches_structure(0, ptr, pt));
-        assert(page_table.ghost_pt_used_regions_rtrancl(0, ptr, pt));
-        assert(page_table.ghost_pt_used_regions_pairwise_disjoint(0, ptr, pt));
-        assert(page_table.ghost_pt_region_notin_used_regions(0, ptr, pt));
-        assert(pt.used_regions.subset_of(page_table.memory.regions()));
-        assert(page_table.entry_addrs_are_zero_padded(0, ptr, pt));
-    };
-
-    // FIXME:
-    assume(page_table.interp().inv());
-    assert(dummy_trigger(pt));
 }
 
 }
