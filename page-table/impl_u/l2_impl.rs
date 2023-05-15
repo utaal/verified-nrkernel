@@ -939,8 +939,7 @@ impl PageTable {
         }
     }
 
-    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: Ghost<PTDir>) -> (res: (Result<(usize, PageTableEntryExec), ()>))
+    fn resolve_aux(&self, layer: usize, ptr: usize, base: usize, vaddr: usize, pt: Ghost<PTDir>) -> (res: Result<(usize, PageTableEntryExec), ()>)
         requires
             self.inv_at(layer as nat, ptr, pt@),
             self.interp_at(layer as nat, ptr, base as nat, pt@).inv(),
@@ -1014,8 +1013,7 @@ impl PageTable {
         }
     }
 
-    #[allow(unused_parens)] // https://github.com/secure-foundations/verus/issues/230
-    pub fn resolve(&self, vaddr: usize) -> (res: (Result<(usize, PageTableEntryExec),()>))
+    pub fn resolve(&self, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec),()>)
         requires
             self.inv(),
             self.interp().inv(),

@@ -8,7 +8,7 @@ use map::*;
 use option::{*, Option::*};
 use crate::impl_u::l0;
 use crate::definitions_t::{ PageTableEntry, MapResult, UnmapResult, ResolveResult, Arch, overlap, MemRegion, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
-use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAXPHYADDR };
+use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAXPHYADDR, MAX_BASE };
 
 verus! {
 
@@ -79,6 +79,7 @@ pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vadd
 
 pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
+    &&& vaddr < MAX_BASE
 }
 
 pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: ResolveResult) -> bool {

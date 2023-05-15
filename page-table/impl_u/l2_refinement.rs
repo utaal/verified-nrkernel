@@ -14,13 +14,13 @@ use crate::spec_t::mem;
 
 use result::{*, Result::*};
 
-use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
+use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv, between };
 use crate::impl_u::l1;
-use crate::impl_u::l0::{ambient_arith};
+use crate::impl_u::l0;
 use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec };
+use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec };
 use crate::spec_t::hardware::{interp_pt_mem,axiom_page_table_walk_interp};
 
 verus! {
@@ -143,9 +143,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
         }
         assert(page_table.interp().accepted_mapping(vaddr as nat, pte@));
-        assert(x86_arch_spec.num_entries(0) == 512);
-        // FIXME: incompleteness?
-        assume(x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0) == 512 * L0_ENTRY_SIZE);
+        assert(x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0) == 512 * L0_ENTRY_SIZE);
         assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
         assert(x86_arch_spec.upper_vaddr(0, 0) == x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0));
         assert(x86_arch_spec.upper_vaddr(0, 0) <= MAX_BASE);
@@ -207,10 +205,14 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             let cr3 = page_table.memory.cr3_spec();
             page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
             assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
+            assert(page_table.interp().interp().upper == x86_arch_spec.upper_vaddr(0, 0));
+            assert(MAX_BASE == x86_arch_spec.upper_vaddr(0, 0)) by(nonlinear_arith);
+            assert(page_table.interp().interp().accepted_resolve(vaddr as nat));
+            axiom_page_table_walk_interp();
         }
-        assume(false);
+        assert(page_table.interp().interp().map == interp_pt_mem(memory));
         match page_table.resolve(vaddr) {
-            Ok((v,pte)) => (ResolveResultExec::Ok(v,pte), page_table.memory),
+            Ok((v,pte)) => (ResolveResultExec::Ok(v,pte),   page_table.memory),
             Err(e)      => (ResolveResultExec::ErrUnmapped, page_table.memory),
         }
     }
