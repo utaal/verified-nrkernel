@@ -307,31 +307,13 @@ impl ArchExec {
             res == indexing::index_from_base_and_addr(base as nat, vaddr as nat, self@.entry_size(layer as nat)),
     {
         let es = self.entry_size(layer);
-        assert(es == self@.entry_size(layer as nat));
         let offset = vaddr - base;
-        assert((vaddr as nat - base as nat) == (vaddr - base) as nat);
-        assume((offset as nat) / (es as nat) < 0x1_0000_0000);
-        // by (nonlinear_arith)
-        //     requires
-        //         offset as nat == (vaddr as nat - base as nat),
-        //         ...
-        // {}
         let res = offset / es;
-
-        // NOTE: necessary to prove
-        //   (assert (=
-        //    (uClip SZ (EucDiv (uClip SZ offset) es))
-        //    (nClip (EucDiv (nClip offset) es))
-        //   ))
         assert(res as nat == offset as nat / es as nat) by (nonlinear_arith)
             requires
                 res == offset / es,
-                (offset as nat) / (es as nat) < 0x1_0000_0000,
-                0 <= offset as int,
                 0 < es as int,
-        {
-            assert(0 <= (offset as nat) / (es as nat));
-        }
+        { };
         res
     }
 
