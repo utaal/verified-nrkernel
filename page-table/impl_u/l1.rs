@@ -1345,6 +1345,9 @@ impl Directory {
         self.lemma_inv_implies_interp_inv();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
+        assert(aligned(self.base_vaddr, self.entry_size())) by {
+            lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+        };
 
         let res = self.map_frame(base, pte).get_Ok_0();
         if self.map_frame(base, pte).is_Ok() {
@@ -1596,6 +1599,9 @@ impl Directory {
 
         indexing::lemma_entry_base_from_index(self.base_vaddr, idx, self.entry_size());
         indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
+        assert(aligned(self.base_vaddr, self.entry_size())) by {
+            lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+        };
 
         match self.entries.index(self.index_for_vaddr(base) as int) {
             NodeEntry::Page(p) => {

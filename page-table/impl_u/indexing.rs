@@ -23,36 +23,12 @@ verus! {
 ///! functions (e.g. in mem) are fully defined in their own modules
 
 
-// pub fn index_from_offset(offset: usize, entry_size: usize) -> (res: usize)
-//     requires
-//         entry_size > 0,
-//     ensures
-//         res as nat === index_from_offset_spec(offset, entry_size)
-// {
-//     let res = offset / entry_size;
-//     assume(false);
-//     res
-// }
-
 pub open spec fn index_from_offset(offset: nat, entry_size: nat) -> (res: nat)
     recommends
         entry_size > 0,
 {
     offset / entry_size
 }
-
-// /// Compute `(addr - base) / entry_size`
-// pub fn index_from_base_and_addr(base: usize, addr: usize, entry_size: usize) -> (res: usize)
-//     requires
-//         addr >= base,
-//         entry_size > 0,
-//     ensures
-//         res as nat === index_from_base_and_addr_spec(base, addr, entry_size)
-// {
-//     let offset = addr - base;
-//     let res = index_from_offset(offset, entry_size);
-//     res
-// }
 
 pub open spec fn index_from_base_and_addr(base: nat, addr: nat, entry_size: nat) -> nat
     recommends
@@ -61,21 +37,6 @@ pub open spec fn index_from_base_and_addr(base: nat, addr: nat, entry_size: nat)
 {
     index_from_offset(sub(addr, base), entry_size)
 }
-
-// /// Compute `base + idx * entry_size`
-// #[verifier(nonlinear)]
-// pub fn entry_base_from_index(base: usize, idx: usize, entry_size: usize) -> (res: usize)
-//     // FIXME: Are these bounds okay for the memory indexing?
-//     requires
-//         base       < 0x8000_0000_0000_0000, // 2^63
-//         idx        < 0x8000_0000_0000_0000, // 2^63
-//         idx        <= 0x100_0000, // 2^24
-//         entry_size <= 0x80_0000_0000, // 2^39
-//     ensures
-//         res == entry_base_from_index_spec(base, idx, entry_size)
-// {
-//     base + idx * entry_size
-// }
 
 pub open spec fn entry_base_from_index(base: nat, idx: nat, entry_size: nat) -> nat {
     base + idx * entry_size
@@ -240,39 +201,34 @@ pub proof fn lemma_index_from_base_and_addr(base: nat, addr: nat, entry_size: na
             let idx = index_from_base_and_addr(base, addr, entry_size);
             &&& idx < num_entries
             &&& between(addr, entry_base_from_index(base, idx, entry_size), next_entry_base_from_index(base, idx, entry_size))
-            &&& aligned(addr, entry_size) ==> addr == entry_base_from_index(base, idx, entry_size)
+            &&& aligned(base, entry_size) && aligned(addr, entry_size) ==> addr == entry_base_from_index(base, idx, entry_size)
         }),
 {
-    assume(false);
-    // // FIXME: prove all this stuff
-    // let idx = self.index_for_vaddr(layer, base, vaddr);
-    // assert(idx < self.num_entries(layer)) by(nonlinear_arith)
-    //     requires
-    //         self.inv(),
-    //         layer < self.layers.len(),
-    //         between(vaddr, base, self.upper_vaddr(layer, base)),
-    //         idx == self.index_for_vaddr(layer, base, vaddr),
-    // { };
-    // assert(between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx))) by(nonlinear_arith)
-    //     requires
-    //         self.inv(),
-    //         layer < self.layers.len(),
-    //         between(vaddr, base, self.upper_vaddr(layer, base)),
-    //         idx == self.index_for_vaddr(layer, base, vaddr),
-    //         idx < self.num_entries(layer),
-    // { };
-    // assert(aligned(vaddr, self.entry_size(layer)) ==> vaddr == self.entry_base(layer, base, idx)) by (nonlinear_arith)
-    //     requires
-    //         self.inv(),
-    //         layer < self.layers.len(),
-    //         base <= vaddr,
-    //         vaddr < self.upper_vaddr(layer, base),
-    //         idx == self.index_for_vaddr(layer, base, vaddr),
-    //         idx < self.num_entries(layer),
-    //         between(vaddr, self.entry_base(layer, base, idx), self.next_entry_base(layer, base, idx)),
-    // {
-    //     assume(false);
-    // };
-    // assert(idx < X86_NUM_ENTRIES);
+    let idx = index_from_base_and_addr(base, addr, entry_size);
+    assert(idx < num_entries) by(nonlinear_arith)
+        requires
+            addr >= base,
+            addr < entry_base_from_index(base, num_entries, entry_size),
+            entry_size > 0,
+            idx == index_from_offset(sub(addr, base), entry_size),
+    { };
+    assert(between(addr, entry_base_from_index(base, idx, entry_size), next_entry_base_from_index(base, idx, entry_size))) by(nonlinear_arith)
+        requires
+            addr >= base,
+            addr < entry_base_from_index(base, num_entries, entry_size),
+            entry_size > 0,
+            idx == index_from_offset(sub(addr, base), entry_size),
+    { };
+    assert(aligned(base, entry_size) && aligned(addr, entry_size) ==> addr == entry_base_from_index(base, idx, entry_size)) by(nonlinear_arith)
+        requires
+            addr >= base,
+            entry_size > 0,
+            idx == index_from_offset(sub(addr, base), entry_size),
+    {
+        if aligned(base, entry_size) && aligned(addr, entry_size) {
+            lib::subtract_mod_eq_zero(base, addr, entry_size);
+            lib::div_mul_cancel(sub(addr, base), entry_size);
+        }
+    };
 }
 }

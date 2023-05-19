@@ -1092,7 +1092,11 @@ impl PageTable {
                 &&& aligned(vaddr as nat, x86_arch_spec.entry_size(layer as nat)) ==> vaddr == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat)
                 &&& idx < X86_NUM_ENTRIES }) by
             {
-                indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
+                let es = x86_arch_spec.entry_size(layer as nat);
+                assert(aligned(base as nat, es)) by {
+                    lib::mod_mult_zero_implies_mod_zero(base as nat, es, X86_NUM_ENTRIES as nat);
+                };
+                indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, es, X86_NUM_ENTRIES as nat);
             };
         }
         let entry = self.entry_at(layer, ptr, idx, pt);
