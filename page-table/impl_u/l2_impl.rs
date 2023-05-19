@@ -752,8 +752,11 @@ impl PageTable {
         let num_entries: nat = X86_NUM_ENTRIES as nat;
         if init.len() >= num_entries {
         } else {
-            // FIXME: Verus bug? If I remove either the interp_at_entry or the interp_at_aux call
-            // from the function, the termination check succeeds but if both are present, it fails.
+            // Can't assert this for the actual entry because we'd have to call `interp_at_entry`
+            // whose termination depends on this function's termination.
+            assert(forall|e: l1::NodeEntry| #![auto] init.add(seq![e]).len() == init.len() + 1);
+            assert(forall|e: l1::NodeEntry| #![auto] X86_NUM_ENTRIES - init.add(seq![e]).len() < X86_NUM_ENTRIES - init.len());
+            // FIXME: Verus incompleteness?
             assume(false);
         }
     }
