@@ -2059,6 +2059,37 @@ impl PageTable {
         self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, seq![], idx, pt);
     }
 
+    proof fn lemma_not_empty_at_implies_interp_at_aux_not_empty(self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, nonempty_idx: nat, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            nonempty_idx < X86_NUM_ENTRIES,
+            !self.view_at(layer, ptr, nonempty_idx, pt).is_Empty(),
+            nonempty_idx < init.len() ==> !init[nonempty_idx as int].is_Empty()
+        ensures
+            !self.interp_at_aux(layer, ptr, base, init, pt)[nonempty_idx as int].is_Empty()
+        decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
+    {
+        let num_entries: nat = X86_NUM_ENTRIES as nat;
+        if init.len() >= num_entries {
+        } else {
+            let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
+            let new_init = init.add(seq![entry]);
+            self.lemma_not_empty_at_implies_interp_at_aux_not_empty(layer, ptr, base, new_init, nonempty_idx, pt);
+        }
+    }
+
+    proof fn lemma_not_empty_at_implies_interp_at_not_empty(self, layer: nat, ptr: usize, base: nat, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            !self.empty_at(layer, ptr, pt),
+        ensures
+            !self.interp_at(layer, ptr, base, pt).empty()
+    {
+        assert(exists|i: nat| i < X86_NUM_ENTRIES && !self.view_at(layer, ptr, i, pt).is_Empty());
+        let i = choose|i: nat| i < X86_NUM_ENTRIES && !self.view_at(layer, ptr, i, pt).is_Empty();
+        self.lemma_not_empty_at_implies_interp_at_aux_not_empty(layer, ptr, base, seq![], i, pt);
+    }
+
     proof fn lemma_inv_at_doesnt_use_ghost_pt(self, other: Self, layer: nat, ptr: usize, pt: PTDir)
         requires
             self.inv_at(layer, ptr, pt),
@@ -2366,24 +2397,17 @@ impl PageTable {
                                     };
                                 };
 
-                                // postconditions xxx
+                                // postconditions
                                 assert_sets_equal!(old(self).memory.regions(), self.memory.regions().union(removed_regions@));
                                 assert_sets_equal!(pt@.used_regions, pt_res@.used_regions.union(removed_regions@));
-                                assert(old(self).memory.regions() === self.memory.regions().union(removed_regions@));
-                                assert((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] self.memory.regions().contains(r))));
-                                assert((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] pt_res@.used_regions.contains(r))));
-                                assert(pt@.used_regions === pt_res@.used_regions.union(removed_regions@));
+                                // unstable
                                 assert(forall|r: MemRegion| !(#[trigger] pt_res@.used_regions.contains(r))
                                        ==> self.memory.region_view(r) === old(self).memory.region_view(r));
                                 assert(pt_res@.region === pt@.region);
                                 assert(self.memory.cr3_spec() == old(self).memory.cr3_spec());
                                 // Refinement
                                 assert(Ok(self.interp_at(layer as nat, ptr, base as nat, pt_res@)) === old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat)) by {
-                                    old(self).lemma_interp_at_aux_facts(layer as nat, ptr, base as nat, seq![], pt@); // xxx
                                     self.lemma_interp_at_aux_facts(layer as nat, ptr, base as nat, seq![], pt_res@);
-                                    assert(self.interp_at(layer as nat, ptr, base as nat, pt_res@).entries.len() == X86_NUM_ENTRIES);
-                                    assert(old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat).get_Ok_0().entries.len() == X86_NUM_ENTRIES);
-
                                     assert forall|i: nat|
                                         i < X86_NUM_ENTRIES
                                         implies
@@ -2391,29 +2415,14 @@ impl PageTable {
                                         old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat).get_Ok_0().entries[i as int] by
                                     {
                                         if i == idx {
-                                            assert(Ok(self.interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt_res@))
-                                                   === old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@).unmap(vaddr as nat));
-
                                             assert(self.interp_at(layer as nat, ptr, base as nat, pt_res@).entries[idx as int]
                                                    == l1::NodeEntry::Directory(self.interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt_res@)));
-
                                             assert(old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@).unmap(vaddr as nat).is_Ok());
-
                                             assert(old(self).interp_at(layer as nat, ptr, base as nat, pt@).entries[idx as int] == old(self).interp_at_entry(layer as nat, ptr, base as nat, idx as nat, pt@));
-                                            // assert(old(self).interp_at_entry(layer as nat, ptr, base as nat, idx as nat, pt@));
                                             let old_interp = old(self).interp_at(layer as nat, ptr, base as nat, pt@);
-                                            assert(old_interp.inv());
-                                            assert(old_interp.accepted_unmap(vaddr as nat));
-                                            let entry_idx = old_interp.index_for_vaddr(vaddr as nat);
-                                            assert(entry_idx == idx);
-                                            assert(old_interp.entries[entry_idx as int].is_Directory());
-                                            assert(old_interp.entries[entry_idx as int].get_Directory_0() == old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@));
                                             assert(old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@).unmap(vaddr as nat).is_Ok());
-                                            assume(!old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@).unmap(vaddr as nat).get_Ok_0().empty());
 
-                                            assert(old_interp.unmap(vaddr as nat).get_Ok_0().entries[idx as int]
-                                                   === l1::NodeEntry::Directory(old(self).interp_at((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt@).unmap(vaddr as nat).get_Ok_0()));
-
+                                            self.lemma_not_empty_at_implies_interp_at_not_empty((layer + 1) as nat, dir_addr, entry_base as nat, dir_pt_res@);
                                             assert(self.interp_at(layer as nat, ptr, base as nat, pt_res@).entries[idx as int] ==
                                                    old(self).interp_at(layer as nat, ptr, base as nat, pt@).unmap(vaddr as nat).get_Ok_0().entries[idx as int]);
                                         } else {
