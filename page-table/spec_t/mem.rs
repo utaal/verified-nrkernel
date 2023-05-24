@@ -1,7 +1,6 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use vstd::prelude::unreached;
 use vstd::modes::*;
 use vstd::seq::*;
 use vstd::option::{*, Option::*};
@@ -50,7 +49,7 @@ impl TLB {
             forall|base, pte| self.view().contains_pair(base, pte) ==> old(self).view().contains_pair(base, pte),
             !self.view().dom().contains(vbase as nat),
     {
-        unreached()
+        unimplemented!()
     }
 }
 
@@ -76,7 +75,7 @@ impl PageTableMemory {
     #[verifier(external_body)]
     pub fn cr3(&self) -> (res: MemRegionExec)
         ensures res === self.cr3_spec()
-    { unreached() }
+    { unimplemented!() }
 
     pub open spec fn cr3_spec(&self) -> MemRegionExec;
 
@@ -107,7 +106,23 @@ impl PageTableMemory {
             self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
             self.inv(),
     {
-        unreached()
+        unimplemented!()
+    }
+
+    /// Deallocates a page
+    #[verifier(external_body)]
+    pub fn dealloc_page(&mut self, r: MemRegionExec)
+        requires
+            old(self).inv(),
+            old(self).regions().contains(r@),
+        ensures
+            self.regions() === old(self).regions().remove(r@),
+            forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
+            self.cr3_spec() == old(self).cr3_spec(),
+            self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
+            self.inv(),
+    {
+        unimplemented!()
     }
 
     #[verifier(external_body)]
