@@ -6,7 +6,7 @@
 
 VERUS_BIN=/st/verus/verif/verus/source/target-verus/release/verus
 PT_PATH=/st/verus/verified-nrkernel/page-table/
-NUM_RUNS=1
+NUM_RUNS=3
 
 
 # exclamation mark ignores return code for that command
