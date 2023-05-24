@@ -6,7 +6,7 @@
 
 VERUS_BIN=/st/verus/verif/verus/source/target-verus/release/verus
 PT_PATH=/st/verus/verified-nrkernel/page-table/
-NUM_RUNS=3
+NUM_RUNS=1
 
 
 # exclamation mark ignores return code for that command
@@ -23,7 +23,7 @@ for module in $modules; do
       continue
     fi
     # Check whether there even was a z3 query, if not we do not want to report 0ms
-    if [[ "$output" =~ .*z3.* ]]; then
+    if [[ "$output" =~ execve.*\/z3\" ]]; then
       time_acc1=0
       time_acc2=0
       time_acc3=0
