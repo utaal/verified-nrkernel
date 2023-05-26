@@ -2375,7 +2375,6 @@ impl PageTable {
                                 });
                             self.memory.write(ptr, idx, Ghost(pt@.region), 0u64);
                             self.memory.dealloc_page(MemRegionExec { base: dir_addr, size: PAGE_SIZE, });
-                            assert(!self.memory.regions().contains(dir_pt_res@.region)); // xxx
 
                             let removed_regions: Ghost<Set<MemRegion>> = Ghost(removed_regions@.insert(dir_pt_res@.region));
                             let pt_res: Ghost<PTDir> = Ghost(
