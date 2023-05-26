@@ -173,8 +173,40 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
     }
 
     fn ispec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
-        assume(false);
-        (UnmapResult::Ok, memory)
+        assert(self.ispec_inv(memory));
+        let ghost_pt: Ghost<l2_impl::PTDir> = Ghost(
+            choose|ghost_pt: l2_impl::PTDir| {
+                let page_table = l2_impl::PageTable {
+                    memory: memory,
+                    ghost_pt: Ghost::new(ghost_pt),
+                };
+                &&& page_table.inv()
+                &&& page_table.interp().inv()
+                &&& #[trigger] dummy_trigger(ghost_pt)
+            }
+        );
+
+        let mut page_table = l2_impl::PageTable {
+            memory:    memory,
+            ghost_pt:  ghost_pt,
+        };
+        proof {
+            let cr3 = page_table.memory.cr3_spec();
+            page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
+            page_table.interp().lemma_inv_implies_interp_inv();
+        }
+        let res = page_table.unmap(vaddr);
+        // ensures
+        proof {
+            assert(self.ispec_inv(page_table.memory)) by {
+                assert(dummy_trigger(page_table.ghost_pt@));
+            };
+            axiom_page_table_walk_interp();
+            page_table.interp().lemma_inv_implies_interp_inv();
+            assert(spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr as nat, res));
+        }
+        (res, page_table.memory)
+
     }
 
     fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResultExec, mem::PageTableMemory)) {
