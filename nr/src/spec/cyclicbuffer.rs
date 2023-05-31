@@ -203,32 +203,32 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[invariant]
     pub spec fn complete(&self) -> bool {
-        &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_versions.dom().contains(i))
-        &&& (forall |i| 0 <= i < self.buffer_size  <==> self.alive_bits.dom().contains(i))
-        &&& (forall |i| 0 <= i < self.num_replicas <==> self.combiner.dom().contains(i))
-        &&& (forall |i| self.contents.dom().contains(i) ==> -self.buffer_size <= i < self.tail)
+        &&& (forall |i| 0 <= i < self.num_replicas <==> self.local_versions.contains_key(i))
+        &&& (forall |i| 0 <= i < self.buffer_size  <==> self.alive_bits.contains_key(i))
+        &&& (forall |i| 0 <= i < self.num_replicas <==> self.combiner.contains_key(i))
+        &&& (forall |i| self.contents.contains_key(i) ==> -self.buffer_size <= i < self.tail)
     }
 
     #[invariant]
     pub spec fn pointer_ordering(&self) -> bool {
         &&& self.head <= self.tail
-        &&& (forall |i| #[trigger] self.local_versions.dom().contains(i) ==>
-            self.head <= self.local_versions.index(i) <= self.tail)
-        &&& (forall |i| #[trigger] self.local_versions.dom().contains(i) ==>
-            self.tail <= self.local_versions.index(i) +  self.buffer_size)
+        &&& (forall |i| #[trigger] self.local_versions.contains_key(i) ==>
+            self.head <= self.local_versions[i] <= self.tail)
+        &&& (forall |i| #[trigger] self.local_versions.contains_key(i) ==>
+            self.tail <= self.local_versions[i] +  self.buffer_size)
     }
 
     #[invariant]
     pub spec fn pointer_differences(&self) -> bool {
-        forall |i| self.local_versions.dom().contains(i) ==>
-            self.local_versions.index(i)
+        forall |i| self.local_versions.contains_key(i) ==>
+            self.local_versions[i]
             <= self.tail
-            <= self.local_versions.index(i) + self.buffer_size
+            <= self.local_versions[i] + self.buffer_size
     }
 
     #[invariant]
     pub spec fn ranges_no_overlap(&self) -> bool {
-        (forall |i, j| self.combiner.dom().contains(i) && self.combiner.dom().contains(j) && i != j ==>
+        (forall |i, j| self.combiner.contains_key(i) && self.combiner.contains_key(j) && i != j ==>
             self.combiner[i].no_overlap_with(self.combiner[j])
         )
     }
@@ -247,20 +247,20 @@ tokenized_state_machine! { CyclicBuffer {
             (log_entry_is_alive(self.alive_bits, i, self.buffer_size) ||
                 i < map_min_value(self.local_versions, (self.num_replicas - 1) as nat))
             <==>
-            #[trigger] self.contents.dom().contains(i)
+            #[trigger] self.contents.contains_key(i)
         ))
-        &&& (forall |i: int| self.tail <= i ==> ! #[trigger] self.contents.dom().contains(i))
+        &&& (forall |i: int| self.tail <= i ==> ! #[trigger] self.contents.contains_key(i))
     }
 
     #[invariant]
     pub spec fn contents_meet_inv(&self) -> bool {
-        forall |i: int| #[trigger] self.contents.dom().contains(i) ==>
+        forall |i: int| #[trigger] self.contents.contains_key(i) ==>
             stored_type_inv(self.contents[i], i, self.cell_ids[log_entry_idx(i, self.buffer_size) as int], self.unbounded_log_instance)
     }
 
     #[invariant]
     pub spec fn all_reader_state_valid(&self) -> bool {
-        forall |node_id| #[trigger] self.combiner.dom().contains(node_id) && self.combiner[node_id].is_Reading() ==>
+        forall |node_id| #![trigger self.combiner[node_id]] #[trigger] self.combiner.contains_key(node_id) && self.combiner[node_id].is_Reading() ==>
           self.reader_state_valid(node_id, self.combiner[node_id].get_Reading_0())
     }
 
@@ -283,7 +283,7 @@ tokenized_state_machine! { CyclicBuffer {
                 // the entries up to, and including  current must be alive
                 &&& (forall |i| start <= i < cur ==> log_entry_is_alive(self.alive_bits, i, self.buffer_size))
                 // the entries up to, and including current must have something in the log
-                &&& (forall |i| start <= i < cur ==> self.contents.dom().contains(i))
+                &&& (forall |i| start <= i < cur ==> self.contents.contains_key(i))
             }
             ReaderState::Guard{start, end, cur, val} => {
                 // the start must be our local tail
@@ -297,9 +297,9 @@ tokenized_state_machine! { CyclicBuffer {
                 // the entries up to, and including  current must be alive
                 &&& (forall |i| start <= i <= cur ==> log_entry_is_alive(self.alive_bits, i, self.buffer_size))
                 // the entries up to, and including current must have something in the log
-                &&& (forall |i| start <= i <= cur ==> self.contents.dom().contains(i))
+                &&& (forall |i| start <= i <= cur ==> self.contents.contains_key(i))
                 // the thing we are ready should match the log content
-                &&& self.contents.dom().contains(cur as int)
+                &&& self.contents.contains_key(cur as int)
                 &&& self.contents[cur as int] === val
             }
         }
@@ -307,7 +307,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[invariant]
     pub spec fn all_combiner_valid(&self) -> bool {
-        forall |node_id| #[trigger] self.combiner.dom().contains(node_id) ==>
+        forall |node_id| #[trigger] self.combiner.contains_key(node_id) ==>
           self.combiner_valid(node_id, self.combiner[node_id])
     }
 
@@ -358,8 +358,8 @@ tokenized_state_machine! { CyclicBuffer {
             init tail = 0;
             init local_versions = Map::new(|i: NodeId| 0 <= i < num_replicas, |i: NodeId| 0);
 
-            require(forall |i: int| (-buffer_size <= i < 0 <==> contents.dom().contains(i)));
-            require(forall |i: int| #[trigger] contents.dom().contains(i) ==> stored_type_inv(contents[i], i, cell_ids[log_entry_idx(i, buffer_size) as int], unbounded_log_instance));
+            require(forall |i: int| (-buffer_size <= i < 0 <==> contents.contains_key(i)));
+            require(forall |i: int| #[trigger] contents.contains_key(i) ==> stored_type_inv(contents[i], i, cell_ids[log_entry_idx(i, buffer_size) as int], unbounded_log_instance));
             init contents = contents;
 
             init alive_bits = Map::new(|i: nat| 0 <= i < buffer_size, |i: nat| !log_entry_alive_value(i as int, buffer_size));
@@ -549,7 +549,7 @@ tokenized_state_machine! { CyclicBuffer {
             // construct the entries in the log we withdraw
             birds_eye let withdrawn = Map::new(
                 |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size,
-                |i: int| pre.contents.index(i),
+                |i: int| pre.contents[i],
             );
 
             withdraw contents -= (withdrawn)
@@ -557,7 +557,7 @@ tokenized_state_machine! { CyclicBuffer {
                 assert forall |i: int|
                     pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
                     implies
-                    pre.contents.dom().contains(i)
+                    pre.contents.contains_key(i)
                 by {
                     let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
                     map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
@@ -569,13 +569,13 @@ tokenized_state_machine! { CyclicBuffer {
 
             assert forall
               |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                ==> stored_type_inv(#[trigger] withdrawn.index(i), i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
+                ==> stored_type_inv(#[trigger] withdrawn[i], i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
 
                 assert forall
                   |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                    implies stored_type_inv(#[trigger] withdrawn.index(i), i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
+                    implies stored_type_inv(#[trigger] withdrawn[i], i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
 
-                        assert(pre.contents.dom().contains(i) && #[trigger] withdrawn.dom().contains(i)) by {
+                        assert(pre.contents.contains_key(i) && #[trigger] withdrawn.contains_key(i)) by {
                             let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
                             map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
                             assert(map_contains_value(pre.local_versions, min_local_head));
@@ -584,7 +584,7 @@ tokenized_state_machine! { CyclicBuffer {
 
                         assert(pre.contents[i] == withdrawn[i]);
 
-                        assert(stored_type_inv(withdrawn.index(i), i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance));
+                        assert(stored_type_inv(withdrawn[i], i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance));
                     };
                 };
         }
@@ -653,13 +653,13 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(advance_head_finish)]
     fn advance_head_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_versions.dom().contains(node_id));
+        assert(post.local_versions.contains_key(node_id));
     }
 
     #[inductive(advance_tail_start)]
     fn advance_tail_start_inductive(pre: Self, post: Self, node_id: NodeId) {
         assert forall |n| 0 <= n < post.num_replicas as nat implies post.head <= post.local_versions[n] by {
-            assert(post.local_versions.dom().contains(n));
+            assert(post.local_versions.contains_key(n));
         }
      }
 
@@ -668,7 +668,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(advance_tail_finish)]
     fn advance_tail_finish_inductive(pre: Self, post: Self, node_id: NodeId, new_tail: nat) {
-        assert(post.local_versions.dom().contains(node_id));
+        assert(post.local_versions.contains_key(node_id));
 
         let mycur_idx = post.combiner[node_id].get_Appending_cur_idx();
         let mytail = post.combiner[node_id].get_Appending_tail();
@@ -681,7 +681,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(append_flip_bit)]
     fn append_flip_bit_inductive(pre: Self, post: Self, node_id: NodeId, deposited: StoredType) {
-        assert(post.local_versions.dom().contains(node_id));
+        assert(post.local_versions.contains_key(node_id));
 
         let myidx = pre.combiner[node_id].get_Appending_cur_idx();
         let mytail = pre.combiner[node_id].get_Appending_tail();
@@ -708,13 +708,13 @@ tokenized_state_machine! { CyclicBuffer {
             log_entry_is_alive(pre.alive_bits, i, pre.buffer_size) == log_entry_is_alive(post.alive_bits, i, post.buffer_size));
 
         // overlap check
-        assert forall |i, j| post.combiner.dom().contains(i) && post.combiner.dom().contains(j) && i != j
+        assert forall |i, j| post.combiner.contains_key(i) && post.combiner.contains_key(j) && i != j
             implies post.combiner[i].no_overlap_with(post.combiner[j]) by {
             assert(pre.combiner[i].no_overlap_with(pre.combiner[j]));
         }
 
         // combiner state
-        assert forall |nid| #[trigger] post.combiner.dom().contains(nid) implies
+        assert forall |nid| #[trigger] post.combiner.contains_key(nid) implies
             post.combiner_valid(nid, post.combiner[nid]) by
         {
             if nid != node_id {
@@ -731,13 +731,13 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(reader_enter)]
     fn reader_enter_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_versions.dom().contains(node_id));
+        assert(post.local_versions.contains_key(node_id));
     }
 
     #[inductive(reader_guard)]
     fn reader_guard_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_versions.dom().contains(node_id));
-        assert forall |i, j| post.combiner.dom().contains(i) && post.combiner.dom().contains(j) && i != j
+        assert(post.local_versions.contains_key(node_id));
+        assert forall |i, j| post.combiner.contains_key(i) && post.combiner.contains_key(j) && i != j
         implies post.combiner[i].no_overlap_with(post.combiner[j]) by {
             if (j == node_id && post.combiner[i].is_Appending()) {
                 let cur = post.combiner[j].get_Reading_0().get_Guard_cur();
@@ -751,7 +751,7 @@ tokenized_state_machine! { CyclicBuffer {
 
     #[inductive(reader_finish)]
     fn reader_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_versions.dom().contains(node_id));
+        assert(post.local_versions.contains_key(node_id));
 
         let min_local_versions_pre = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
         let min_local_versions_post = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
@@ -767,7 +767,7 @@ tokenized_state_machine! { CyclicBuffer {
 
             assert(min_local_versions_pre < min_local_versions_post);
 
-            assert(forall |i| #[trigger] pre.local_versions.dom().contains(i) && i != node_id
+            assert(forall |i| #[trigger] pre.local_versions.contains_key(i) && i != node_id
                 ==> pre.local_versions[i] == post.local_versions[i]);
 
             assert(pre.local_versions[node_id] != post.local_versions[node_id]);
@@ -799,18 +799,18 @@ pub open spec fn map_min_value(m: Map<NodeId, nat>, idx: nat) -> nat
 }
 
 proof fn map_min_value_smallest(m: Map<NodeId, nat>, idx: nat)
-    requires forall |i| 0 <= i <= idx ==> m.dom().contains(i)
+    requires forall |i| 0 <= i <= idx ==> m.contains_key(i)
     ensures
        forall |n| 0 <= n <= idx as nat ==> map_min_value(m, idx) <= m.index(n),
        map_contains_value(m, map_min_value(m, idx))
     decreases idx
 {
     if idx == 0 {
-        assert(m.dom().contains(0));
+        assert(m.contains_key(0));
     } else {
         map_min_value_smallest(m, (idx - 1) as nat);
         if m.index(idx) < map_min_value(m, (idx - 1) as nat) {
-            assert(m.dom().contains(idx));
+            assert(m.contains_key(idx));
         }
     }
 }
@@ -860,7 +860,7 @@ spec fn add_buffersize(i: int, buffer_size: nat) -> int {
 proof fn log_entry_alive_wrap_around(alive_bits: Map<LogIdx, bool>,  buffer_size: nat,  low: nat, high: nat)
     requires
         buffer_size == LOG_SIZE,
-        forall |i:nat| i < buffer_size <==> alive_bits.dom().contains(i),
+        forall |i:nat| i < buffer_size <==> alive_bits.contains_key(i),
         low <= high <= low + buffer_size,
     ensures
         forall |i:int| low <= i < high ==>  log_entry_is_alive(alive_bits, i, buffer_size) == ! #[trigger] log_entry_is_alive(alive_bits,  add_buffersize(i, buffer_size), buffer_size)
@@ -871,7 +871,7 @@ proof fn log_entry_alive_wrap_around(alive_bits: Map<LogIdx, bool>,  buffer_size
 proof fn log_entry_alive_wrap_around_helper(alive_bits: Map<LogIdx, bool>, buffer_size: nat,  low: nat, high: nat)
     requires
         buffer_size == LOG_SIZE,
-        // forall |i:nat| i < buffer_size ==> alive_bits.dom().contains(i),
+        // forall |i:nat| i < buffer_size ==> alive_bits.contains_key(i),
         low <= high <= low + buffer_size,
         forall |i:int| low <= i < high ==> ! #[trigger] log_entry_is_alive(alive_bits, add_buffersize(i, buffer_size), buffer_size)
     ensures forall |i:int| low + buffer_size <= i < high  + buffer_size ==> ! #[trigger] log_entry_is_alive(alive_bits, i, buffer_size)

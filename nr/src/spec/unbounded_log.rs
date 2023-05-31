@@ -323,45 +323,45 @@ UnboundedLog {
     // #[invariant]
     // pub fn inv_replicas_complete(&self) -> bool {
     //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
-    //         self.replicas.dom().contains(node_id)
+    //         self.replicas.contains_key(node_id)
     // }
 
     // /// ther emust be a local version for all nodes
     // #[invariant]
     // pub fn inv_local_versions_complete(&self) -> bool {
     //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
-    //         self.local_versions.dom().contains(node_id)
+    //         self.local_versions.contains_key(node_id)
     // }
 
     /// there must be a combiner for all node
     #[invariant]
     pub fn inv_local_combiner_complete(&self) -> bool {
         forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
-            self.combiner.dom().contains(node_id)
+            self.combiner.contains_key(node_id)
     }
 
     #[invariant]
     pub fn combiner_local_versions_domains(&self) -> bool {
-        forall |k| self.local_versions.dom().contains(k) <==> self.combiner.dom().contains(k)
+        forall |k| self.local_versions.contains_key(k) <==> self.combiner.contains_key(k)
     }
 
     #[invariant]
     pub fn combiner_replicas_domains(&self) -> bool {
-        forall |k| self.replicas.dom().contains(k) <==> self.combiner.dom().contains(k)
+        forall |k| self.replicas.contains_key(k) <==> self.combiner.contains_key(k)
     }
 
     pub open spec fn wf_node_id(&self, node_id: NodeId) -> bool {
         // 0 <= node_id < self.num_replicas
-        &&& self.combiner.dom().contains(node_id)
-        &&& self.local_versions.dom().contains(node_id)
-        &&& self.replicas.dom().contains(node_id)
+        &&& self.combiner.contains_key(node_id)
+        &&& self.local_versions.contains_key(node_id)
+        &&& self.replicas.contains_key(node_id)
     }
 
 
     // #[invariant]
     // pub fn inv_queued_ops_in_local_updates(&self) -> bool {
     //     forall |node_id, rid|
-    //         (#[trigger] self.combiner.dom().contains(node_id) && !(#[trigger] self.local_updates.dom().contains(rid)))
+    //         (#[trigger] self.combiner.contains_key(node_id) && !(#[trigger] self.local_updates.contains_key(rid)))
     //             ==> !self.combiner[node_id].queued_ops().contains(rid)
     // }
 
@@ -382,7 +382,7 @@ UnboundedLog {
     /// Inv_CompletedTailLowerBound && Inv_GlobalTailLowerBound(s)
     #[invariant]
     pub fn inv_local_version_upper_bound_heads(&self) -> bool {
-        forall |node_id| (#[trigger]  self.local_versions.dom().contains(node_id))
+        forall |node_id| (#[trigger]  self.local_versions.contains_key(node_id))
             ==> self.local_versions[node_id] <= self.version_upper_bound
     }
 
@@ -391,7 +391,7 @@ UnboundedLog {
     /// Inv_ReadRequest_WF(s) && Inv_ReadOnlyCtailsCompleteTailOrdering(s) && Inv_ReadOnlyStateNodeIdExists(s)
     #[invariant]
     pub fn inv_readonly_requests_wf(&self) -> bool {
-        forall |rid| (#[trigger] self.local_reads.dom().contains(rid))
+        forall |rid| (#[trigger] self.local_reads.contains_key(rid))
              ==> self.wf_readstate(self.local_reads[rid])
     }
 
@@ -421,7 +421,7 @@ UnboundedLog {
     /// Inv_CombinerStateValid(s)
     #[invariant]
     pub open spec fn combiner_states_wf(&self) -> bool {
-        forall |node_id| (#[trigger] self.combiner.dom().contains(node_id))
+        forall |node_id| (#[trigger] self.combiner.contains_key(node_id))
              ==> self.wf_combiner_for_node_id(node_id)
     }
 
@@ -431,12 +431,12 @@ UnboundedLog {
         match self.combiner[node_id] {
             CombinerState::Ready => {
                 // from other inv
-                // &&& self.local_versions.dom().contains(node_id)
+                // &&& self.local_versions.contains_key(node_id)
                 // &&& self.local_versions[node_id] <= self.tail
                 &&& LogRangeNoNodeId(self.log, self.local_versions[node_id], self.tail, node_id)
             }
             CombinerState::Placed { queued_ops } => {
-                // &&& self.local_versions.dom().contains(node_id)
+                // &&& self.local_versions.contains_key(node_id)
                 // &&& self.local_versions[node_id] <= self.tail
                 &&& LogRangeMatchesQueue(queued_ops, self.log, 0, self.local_versions[node_id], self.tail, node_id, self.local_updates)
                 &&& QueueRidsUpdatePlaced(queued_ops, self.local_updates, 0)
@@ -501,7 +501,7 @@ UnboundedLog {
     /// Inv_LocalUpdatesIdx(s)
     #[invariant]
     pub fn inv_local_updates(&self) -> bool {
-        forall |rid| (#[trigger] self.local_updates.dom().contains(rid))
+        forall |rid| (#[trigger] self.local_updates.contains_key(rid))
             ==>  self.inv_local_updates_wf(self.local_updates[rid])
     }
 
@@ -509,15 +509,15 @@ UnboundedLog {
         match update {
             UpdateState::Init { op } => { true },
             UpdateState::Placed { op: _, idx } => {
-                &&& self.log.dom().contains(idx)
+                &&& self.log.contains_key(idx)
                 &&& idx < self.tail
             },
             UpdateState::Applied { ret, idx } => {
-                &&& self.log.dom().contains(idx)
+                &&& self.log.contains_key(idx)
                 &&& idx < self.tail
             },
             UpdateState::Done { ret, idx } => {
-                &&& self.log.dom().contains(idx)
+                &&& self.log.contains_key(idx)
                 &&& idx < self.version_upper_bound
             },
         }
@@ -528,7 +528,7 @@ UnboundedLog {
     /// Inv_ReadOnlyResult(s)
     #[invariant]
     pub fn inv_read_results(&self) -> bool {
-        forall |rid| (#[trigger] self.local_reads.dom().contains(rid))
+        forall |rid| (#[trigger] self.local_reads.contains_key(rid))
             ==>  self.read_results_match(self.local_reads[rid])
     }
 
@@ -547,7 +547,7 @@ UnboundedLog {
     /// Inv_UpdateResults(s)
     #[invariant]
     pub fn inv_update_results(&self) -> bool {
-        forall |rid| (#[trigger] self.local_updates.dom().contains(rid))
+        forall |rid| (#[trigger] self.local_updates.contains_key(rid))
             ==>  self.update_results_match(self.local_updates[rid])
     }
 
@@ -570,8 +570,8 @@ UnboundedLog {
     pub fn inv_combiner_rids_distinct(&self) -> bool
     {
       forall |node_id1, node_id2|
-          (#[trigger] self.combiner.dom().contains(node_id1)
-          && #[trigger] self.combiner.dom().contains(node_id2)
+          (#[trigger] self.combiner.contains_key(node_id1)
+          && #[trigger] self.combiner.contains_key(node_id2)
           && node_id1 != node_id2) ==>
             seq_disjoint(self.combiner[node_id1].queued_ops(), self.combiner[node_id2].queued_ops())
     }
@@ -580,7 +580,7 @@ UnboundedLog {
     /// the state of the replica must match the current version of the log
     #[invariant]
     pub open spec fn replica_state(&self) -> bool {
-        forall |node_id| (#[trigger] self.replicas.dom().contains(node_id)) ==>
+        forall |node_id| (#[trigger] self.replicas.contains_key(node_id)) ==>
             self.replicas[node_id] == compute_nrstate_at_version(self.log, self.current_local_version(node_id))
     }
 
@@ -612,7 +612,7 @@ UnboundedLog {
     /// Read Request: Enter the read request operation into the system
     transition!{
         readonly_start(op: ReadonlyOp) {
-            //birds_eye let rid_fn = |rid| !pre.local_reads.dom().contains(rid);
+            //birds_eye let rid_fn = |rid| !pre.local_reads.contains_key(rid);
             birds_eye let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
             add local_reads += [ rid => ReadonlyState::Init {op} ] by {
                 get_fresh_nat_not_in(pre.local_reads.dom(), pre.combiner);
@@ -677,7 +677,7 @@ UnboundedLog {
         update_start(op: UpdateOp) {
 
             birds_eye let combiner = pre.combiner;
-            birds_eye let rid_fn = |rid| !pre.local_updates.dom().contains(rid)
+            birds_eye let rid_fn = |rid| !pre.local_updates.contains_key(rid)
                             && combiner_request_id_fresh(combiner, rid);
             birds_eye let rid = get_fresh_nat(pre.local_updates.dom(), combiner);
             add local_updates += [ rid => UpdateState::Init { op } ] by {
@@ -691,8 +691,8 @@ UnboundedLog {
     }
 
     pub open spec fn request_id_fresh(&self, rid: ReqId) -> bool {
-        &&& !self.local_reads.dom().contains(rid)
-        &&& !self.local_updates.dom().contains(rid)
+        &&& !self.local_reads.contains_key(rid)
+        &&& !self.local_updates.contains_key(rid)
         &&& combiner_request_id_fresh(self.combiner, rid)
     }
 
@@ -711,11 +711,11 @@ UnboundedLog {
             remove local_updates -= (old_updates);
 
              require(forall(|rid|
-                 old_updates.dom().contains(rid) >>=
+                 old_updates.contains_key(rid) >>=
                      old_updates[rid].is_Init() && request_ids.contains(rid)));
              require(forall(|i|
                  0 <= i && i < request_ids.len() >>=
-                     old_updates.dom().contains(request_ids.index(i))));
+                     old_updates.contains_key(request_ids.index(i))));
 
              remove updates -= (old_updates);
              remove combiner -= [node_id => Combiner::Ready];
@@ -728,7 +728,7 @@ UnboundedLog {
                  },
              );
              let new_updates = Map::<nat, UpdateState>::new(
-                 |rid| old_updates.dom().contains(rid),
+                 |rid| old_updates.contains_key(rid),
                  |rid| UpdateState::Placed{
                      op: old_updates[rid].get_Init_op(),
                      idx: idx_of(request_ids, rid),
@@ -944,18 +944,18 @@ UnboundedLog {
         assert(cmap.dom().finite()) by {
             map_new_rec_dom_finite(max_dom, CombinerState::Ready);
         }
-        assert(forall |n: nat| 0 <= n < post.num_replicas <==> post.combiner.dom().contains(n));
-        assert(forall |n: nat| 0 <= n <= max_dom <==> cmap.dom().contains(n)) by {
+        assert(forall |n: nat| 0 <= n < post.num_replicas <==> post.combiner.contains_key(n));
+        assert(forall |n: nat| 0 <= n <= max_dom <==> cmap.contains_key(n)) by {
             map_new_rec_dom_finite(max_dom, CombinerState::Ready);
         }
-        assert(forall |n: nat| 0 <= n <= max_dom <==> cmap.dom().contains(n));
-        assert(forall |n: nat| 0 <= n < post.num_replicas <==> cmap.dom().contains(n));
+        assert(forall |n: nat| 0 <= n <= max_dom <==> cmap.contains_key(n));
+        assert(forall |n: nat| 0 <= n < post.num_replicas <==> cmap.contains_key(n));
 
-        assert(forall |n: nat| post.combiner.dom().contains(n) <==> #[trigger]cmap.dom().contains(n));
+        assert(forall |n: nat| post.combiner.contains_key(n) <==> #[trigger]cmap.contains_key(n));
         assert(post.combiner.dom().ext_equal(cmap.dom()));
-        assert(forall |n| #[trigger]post.combiner.dom().contains(n) ==> post.combiner[n] == CombinerState::Ready);
+        assert(forall |n| #[trigger]post.combiner.contains_key(n) ==> post.combiner[n] == CombinerState::Ready);
 
-        assert(forall |n| #[trigger]cmap.dom().contains(n) ==> cmap[n] == CombinerState::Ready) by {
+        assert(forall |n| #[trigger]cmap.contains_key(n) ==> cmap[n] == CombinerState::Ready) by {
             map_new_rec_dom_finite(max_dom, CombinerState::Ready);
         }
         assert(post.combiner.ext_equal(cmap));
@@ -972,9 +972,9 @@ UnboundedLog {
     fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: ReqId, node_id: NodeId) {
         match post.local_reads[rid] {
             ReadonlyState::ReadyToRead{op, node_id, version_upper_bound} => {
-                assert(post.combiner.dom().contains(node_id));
-                assert(post.local_versions.dom().contains(node_id));
-                assert(post.replicas.dom().contains(node_id));
+                assert(post.combiner.contains_key(node_id));
+                assert(post.local_versions.contains_key(node_id));
+                assert(post.replicas.contains_key(node_id));
                 assert(version_upper_bound <= post.version_upper_bound);
                 assert(version_upper_bound <= post.current_local_version(node_id));
             }
@@ -1002,7 +1002,7 @@ UnboundedLog {
                 && post.local_updates == pre.local_updates.insert(rid, UpdateState::Init { op })
                 && combiner_request_id_fresh(pre.combiner, rid);
 
-        assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
+        assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
             assert(post.combiner[node_id] == pre.combiner[node_id]);
             match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
@@ -1023,7 +1023,7 @@ UnboundedLog {
 
     #[inductive(update_done)]
     fn update_done_inductive(pre: Self, post: Self, rid: ReqId) {
-        assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
+        assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
             match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
                     LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
@@ -1042,7 +1042,7 @@ UnboundedLog {
 
     #[inductive(update_finish)]
     fn update_finish_inductive(pre: Self, post: Self, rid: ReqId) {
-        assert forall |node_id| #[trigger] post.combiner.dom().contains(node_id) implies post.wf_combiner_for_node_id(node_id) by {
+        assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
             match post.combiner[node_id] {
                 CombinerState::Placed { queued_ops } => {
                     LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
@@ -1094,7 +1094,7 @@ UnboundedLog {
 
         assert(post.inv_local_updates_wf(post.local_updates[rid]));
 
-        assert forall |node_id1| #[trigger] post.combiner.dom().contains(node_id1)
+        assert forall |node_id1| #[trigger] post.combiner.contains_key(node_id1)
             && node_id1 != node_id
             implies post.wf_combiner_for_node_id(node_id1)
         by {
@@ -1127,13 +1127,13 @@ UnboundedLog {
             }
         }
 
-        assert forall |nid| (#[trigger] post.replicas.dom().contains(nid)) implies
+        assert forall |nid| (#[trigger] post.replicas.contains_key(nid)) implies
             post.replicas[nid] == compute_nrstate_at_version(post.log, post.current_local_version(nid)) by
         {
             compute_nrstate_at_version_preserves(pre.log, post.log, post.current_local_version(nid));
         }
 
-        assert forall |rid| (#[trigger] post.local_updates.dom().contains(rid))
+        assert forall |rid| (#[trigger] post.local_updates.contains_key(rid))
             implies post.update_results_match(post.local_updates[rid]) by
         {
             match post.local_updates[rid] {
@@ -1147,7 +1147,7 @@ UnboundedLog {
             }
         }
 
-        assert forall |rid| (#[trigger] post.local_reads.dom().contains(rid))
+        assert forall |rid| (#[trigger] post.local_reads.contains_key(rid))
             implies post.read_results_match(post.local_reads[rid]) by
         {
             match post.local_reads[rid] {
@@ -1179,7 +1179,7 @@ UnboundedLog {
 
         let c = pre.combiner[node_id];
         let rid = c.get_Loop_queued_ops().index(c.get_Loop_idx() as int);
-        assert forall |node_id0| #[trigger] post.combiner.dom().contains(node_id0) && node_id0 != node_id
+        assert forall |node_id0| #[trigger] post.combiner.contains_key(node_id0) && node_id0 != node_id
             implies post.wf_combiner_for_node_id(node_id0)
         by {
             match pre.combiner[node_id0] {
@@ -1211,7 +1211,7 @@ UnboundedLog {
         // assert(post.log == pre.log);
         assert(post.version_upper_bound >= pre.version_upper_bound);
 
-        assert forall |rid| (#[trigger] post.local_reads.dom().contains(rid)) implies post.read_results_match(post.local_reads[rid]) by {
+        assert forall |rid| (#[trigger] post.local_reads.contains_key(rid)) implies post.read_results_match(post.local_reads[rid]) by {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                     let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
@@ -1245,7 +1245,7 @@ UnboundedLog {
     }
 
     // pub open spec fn combiners_fresh_req_id(&self, rid: ReqId) -> bool {
-    //     forall |n| self.combiner.dom().contains(n)
+    //     forall |n| self.combiner.contains_key(n)
     //         ==> !self.combiner[n].queued_ops().contains(rid)
     // }
 }
@@ -1316,7 +1316,7 @@ pub proof fn combiner_request_ids_proof(combiners: Map<NodeId, CombinerState>) -
 
 pub open spec fn combiner_request_id_fresh(combiners: Map<NodeId, CombinerState>, rid: ReqId) -> bool
 {
-    forall |n| (#[trigger] combiners.dom().contains(n)) ==> !combiners[n].queued_ops().contains(rid)
+    forall |n| (#[trigger] combiners.contains_key(n)) ==> !combiners[n].queued_ops().contains(rid)
 }
 
 pub proof fn combiner_request_ids_not_contains(combiners: Map<NodeId, CombinerState>, rid: ReqId)
@@ -1331,9 +1331,9 @@ pub proof fn combiner_request_ids_not_contains(combiners: Map<NodeId, CombinerSt
 
         if !combiners[node_id].queued_ops().contains(rid) {
             if combiner_request_id_fresh(combiners.remove(node_id),rid) {
-                assert forall |n| (#[trigger] combiners.dom().contains(n)) implies !combiners[n].queued_ops().contains(rid) by {
+                assert forall |n| (#[trigger] combiners.contains_key(n)) implies !combiners[n].queued_ops().contains(rid) by {
                     if n != node_id {
-                        assert(combiners.remove(node_id).dom().contains(n));
+                        assert(combiners.remove(node_id).contains_key(n));
                     }
                 }
             }
@@ -1438,12 +1438,12 @@ pub proof fn get_fresh_nat_not_in(reqs: Set<ReqId>, combiner: Map<NodeId, Combin
 
 /// the log contains all entries up to, but not including the provided end
 pub open spec fn LogContainsEntriesUpToHere(log: Map<LogIdx, LogEntry>, end: LogIdx) -> bool {
-    forall |i: nat| 0 <= i < end ==> log.dom().contains(i)
+    forall |i: nat| 0 <= i < end ==> log.contains_key(i)
 }
 
 /// the log doesn't contain any entries at or above the provided start index
 pub open spec fn LogNoEntriesFromHere(log: Map<LogIdx, LogEntry>, start: LogIdx) -> bool {
-    forall |i: nat| start <= i ==> !log.dom().contains(i)
+    forall |i: nat| start <= i ==> !log.contains_key(i)
 }
 
 /// the log contains no entries with the given node id between the supplied indices
@@ -1453,7 +1453,7 @@ pub open spec fn LogRangeNoNodeId(log: Map<LogIdx, LogEntry>, start: LogIdx, end
   decreases(end - start);
 
   (start < end ==> {
-    &&& log.dom().contains(start)
+    &&& log.contains_key(start)
     &&& log.index(start).node_id != node_id
     &&& LogRangeNoNodeId(log, start +  1, end, node_id)
   })
@@ -1472,12 +1472,12 @@ pub open spec fn LogRangeMatchesQueue(queue: Seq<ReqId>, log: Map<LogIdx, LogEnt
   &&& (logIndexLower == logIndexUpper ==> queueIndex == queue.len())
   // otherwise, we check the log
   &&& (logIndexLower < logIndexUpper ==> {
-    &&& log.dom().contains(logIndexLower)
+    &&& log.contains_key(logIndexLower)
     // local case: the entry has been written by the local node
     &&& (log.index(logIndexLower).node_id == nodeId ==> {
       // there must be an entry in the queue that matches the log entry
       &&& queueIndex < queue.len()
-      &&& updates.dom().contains(queue.index(queueIndex as int))
+      &&& updates.contains_key(queue.index(queueIndex as int))
       &&& updates.index(queue.index(queueIndex as int)).is_Placed()
       &&& updates.index(queue.index(queueIndex as int)).get_Placed_idx() == logIndexLower
       &&& LogRangeMatchesQueue(queue, log, queueIndex + 1, logIndexLower + 1, logIndexUpper, nodeId, updates)
@@ -1502,12 +1502,12 @@ pub open spec fn LogRangeMatchesQueue2(queue: Seq<ReqId>, log: Map<LogIdx, LogEn
     &&& (logIndexLower == logIndexUpper ==> queueIndex == queue.len())
     // otherwise, we check the log
     &&& (logIndexLower < logIndexUpper ==> {
-        &&& log.dom().contains(logIndexLower)
+        &&& log.contains_key(logIndexLower)
         // local case: the entry has been written by the local node
         &&& (log.index(logIndexLower).node_id == nodeId ==> {
             // there must be an entry in the queue that matches the log entry
             &&& queueIndex < queue.len()
-            // &&& updates.dom().contains(queue.index(queueIndex as int))
+            // &&& updates.contains_key(queue.index(queueIndex as int))
             // &&& updates.index(queue.index(queueIndex as int)).is_Placed()
             // &&& updates.index(queue.index(queueIndex as int)).get_Placed_idx() == logIndexLower
             &&& LogRangeMatchesQueue2(queue, log, queueIndex + 1, logIndexLower + 1, logIndexUpper, nodeId, updates)
@@ -1527,9 +1527,9 @@ requires
     0 <= queueIndex <= queue.len(),
     logIndexLower <= logIndexUpper,
     LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
-    forall |rid| #[trigger] updates1.dom().contains(rid) ==>
+    forall |rid| #[trigger] updates1.contains_key(rid) ==>
       updates1[rid].is_Placed() && logIndexLower <= updates1[rid].get_Placed_idx() < logIndexUpper ==>
-          updates2.dom().contains(rid) && updates2[rid] === updates1[rid],
+          updates2.contains_key(rid) && updates2[rid] === updates1[rid],
 ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2)
 decreases logIndexUpper - logIndexLower
 {
@@ -1553,8 +1553,8 @@ requires
     0 <= queueIndex <= queue.len(),
     logIndexLower <= logIndexUpper,
     LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
-    forall |rid| #[trigger] updates1.dom().contains(rid) ==> queue.contains(rid) ==>
-          updates2.dom().contains(rid) && updates2[rid] === updates1[rid],
+    forall |rid| #[trigger] updates1.contains_key(rid) ==> queue.contains(rid) ==>
+          updates2.contains_key(rid) && updates2[rid] === updates1[rid],
 ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2),
 decreases logIndexUpper - logIndexLower,
 {
@@ -1580,14 +1580,14 @@ proof fn LogRangeMatchesQueue_append(
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper,
         log_entry.node_id == node_id,
-        new_updates.dom().contains(new_rid),
+        new_updates.contains_key(new_rid),
         new_updates.index(new_rid) === (UpdateState::Placed{
             op: log_entry.op,
             idx: logIndexUpper,
         }),
         !queue.contains(new_rid),
-        forall |rid| #[trigger] updates.dom().contains(rid) && rid != new_rid ==>
-            new_updates.dom().contains(rid)
+        forall |rid| #[trigger] updates.contains_key(rid) && rid != new_rid ==>
+            new_updates.contains_key(rid)
             && new_updates[rid] === updates[rid],
         LogRangeMatchesQueue(queue, log,
             queueIndex, logIndexLower, logIndexUpper, node_id, updates),
@@ -1602,10 +1602,10 @@ proof fn LogRangeMatchesQueue_append(
 {
   if logIndexLower == logIndexUpper + 1 {
   } else if logIndexLower == logIndexUpper {
-     assert( new_log.dom().contains(logIndexLower) );
+     assert( new_log.contains_key(logIndexLower) );
      if new_log.index(logIndexLower).node_id == node_id {
         assert( queueIndex < queue.push(new_rid).len());
-        assert( new_updates.dom().contains(queue.push(new_rid).index(queueIndex as int)));
+        assert( new_updates.contains_key(queue.push(new_rid).index(queueIndex as int)));
         assert( new_updates.index(queue.push(new_rid).index(queueIndex as int)).is_Placed());
         assert( new_updates.index(queue.push(new_rid).index(queueIndex as int)).get_Placed_idx() == logIndexLower);
         assert( LogRangeMatchesQueue(queue.push(new_rid), new_log, queueIndex+1, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
@@ -1621,11 +1621,11 @@ proof fn LogRangeMatchesQueue_append(
 
         /*assert( queueIndex < queue.push(new_rid).len());
 
-        assert( updates.dom().contains(queue.index(queueIndex)));
+        assert( updates.contains_key(queue.index(queueIndex)));
         let q = queue.push(new_rid).index(queueIndex);
-        assert( updates.dom().contains(q));
+        assert( updates.contains_key(q));
         assert(q != new_rid);
-        assert( new_updates.dom().contains(q));
+        assert( new_updates.contains_key(q));
 
         assert( new_updates.index(queue.push(new_rid).index(queueIndex)).is_Placed());
         assert( new_updates.index(queue.push(new_rid).index(queueIndex)).get_Placed_idx() == logIndexLower);
@@ -1652,14 +1652,14 @@ proof fn LogRangeMatchesQueue_append_other(
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper <= logLen,
         log_entry.node_id != node_id,
-        new_updates.dom().contains(new_rid),
+        new_updates.contains_key(new_rid),
         new_updates.index(new_rid) === (UpdateState::Placed{
             op: log_entry.op,
             idx: logLen,
         }),
         !queue.contains(new_rid),
-        forall |rid| #[trigger] updates.dom().contains(rid) && rid != new_rid ==>
-            new_updates.dom().contains(rid)
+        forall |rid| #[trigger] updates.contains_key(rid) && rid != new_rid ==>
+            new_updates.contains_key(rid)
             && new_updates[rid] === updates[rid],
         LogRangeMatchesQueue(queue, log,
             queueIndex, logIndexLower, logIndexUpper, node_id, updates),
@@ -1673,7 +1673,7 @@ proof fn LogRangeMatchesQueue_append_other(
     decreases(logIndexUpper - logIndexLower),
 {
   if logIndexLower == logIndexUpper {
-     //assert( new_log.dom().contains(logIndexLower) );
+     //assert( new_log.contains_key(logIndexLower) );
      //assert(new_log.index(logIndexLower).node_id != node_id);
      //assert(LogRangeMatchesQueue(queue, new_log, queueIndex, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
   } else {
@@ -1698,14 +1698,14 @@ proof fn LogRangeMatchesQueue_append_other_augment(
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper,
         log_entry.node_id != node_id,
-        new_updates.dom().contains(new_rid),
+        new_updates.contains_key(new_rid),
         new_updates.index(new_rid) === (UpdateState::Placed{
             op: log_entry.op,
             idx: logIndexUpper,
         }),
         !queue.contains(new_rid),
-        forall |rid| #[trigger] updates.dom().contains(rid) && rid != new_rid ==>
-            new_updates.dom().contains(rid)
+        forall |rid| #[trigger] updates.contains_key(rid) && rid != new_rid ==>
+            new_updates.contains_key(rid)
             && new_updates[rid] === updates[rid],
         LogRangeMatchesQueue(queue, log,
             queueIndex, logIndexLower, logIndexUpper, node_id, updates),
@@ -1720,7 +1720,7 @@ proof fn LogRangeMatchesQueue_append_other_augment(
 {
   if logIndexLower == logIndexUpper + 1 {
   } else if logIndexLower == logIndexUpper {
-     assert( new_log.dom().contains(logIndexLower) );
+     assert( new_log.contains_key(logIndexLower) );
      assert(new_log.index(logIndexLower).node_id != node_id);
      assert(LogRangeMatchesQueue(queue, new_log, queueIndex, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
   } else {
@@ -1756,7 +1756,7 @@ proof fn LogRangeNoNodeId_append_other(
 {
   if logIndexLower == logIndexUpper + 1 {
   } else if logIndexLower == logIndexUpper {
-     assert( new_log.dom().contains(logIndexLower) );
+     assert( new_log.contains_key(logIndexLower) );
      assert(new_log.index(logIndexLower).node_id != node_id);
      assert(LogRangeNoNodeId(new_log, logIndexLower+1, logIndexUpper+1, node_id));
   } else {
@@ -1781,12 +1781,12 @@ proof fn LogRangeNoNodeId_append_other(
 pub open spec fn QueueRidsUpdateDone(queued_ops: Seq<ReqId>, localUpdates: Map<ReqId, UpdateState>, bound: nat) -> bool
     recommends 0 <= bound <= queued_ops.len(),
 {
-    // Note that use localUpdates.dom().contains(queued_ops[j]) as a *hypothesis*
+    // Note that use localUpdates.contains_key(queued_ops[j]) as a *hypothesis*
     // here. This is because the model actually allows an update to "leave early"
     // before the combiner phase completes. (This is actually an instance of our
     // model being overly permissive.)
     forall |j| 0 <= j < bound ==>
-        localUpdates.dom().contains(#[trigger] queued_ops[j]) ==> {
+        localUpdates.contains_key(#[trigger] queued_ops[j]) ==> {
             ||| localUpdates.index(queued_ops[j]).is_Applied()
             ||| localUpdates.index(queued_ops[j]).is_Done()
         }
@@ -1797,7 +1797,7 @@ pub open spec fn QueueRidsUpdatePlaced(queued_ops: Seq<ReqId>, localUpdates: Map
     recommends 0 <= bound <= queued_ops.len(),
 {
     forall |j| bound <= j < queued_ops.len() ==> {
-        &&& localUpdates.dom().contains(#[trigger] queued_ops[j])
+        &&& localUpdates.contains_key(#[trigger] queued_ops[j])
         &&& localUpdates.index(queued_ops[j]).is_Placed()
     }
 }
@@ -1831,7 +1831,7 @@ decreases b - a
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given  version.
 pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version: LogIdx) -> DataStructureSpec
-    recommends forall |i| 0 <= i < version ==> log.dom().contains(i)
+    recommends forall |i| 0 <= i < version ==> log.contains_key(i)
     decreases version
 {
     // decreases_when(version >= 0);
@@ -1846,8 +1846,8 @@ pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version:
 
 pub proof fn compute_nrstate_at_version_preserves(a: Map<LogIdx, LogEntry>, b: Map<LogIdx, LogEntry>, version: LogIdx)
     requires
-        forall |i| 0 <= i < version ==> a.dom().contains(i),
-        forall |i| 0 <= i < version ==> a.dom().contains(i),
+        forall |i| 0 <= i < version ==> a.contains_key(i),
+        forall |i| 0 <= i < version ==> a.contains_key(i),
         forall |i| 0 <= i < version ==> a[i] == b[i]
     ensures compute_nrstate_at_version(a, version) == compute_nrstate_at_version(b, version)
     decreases version
