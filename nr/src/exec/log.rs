@@ -1163,6 +1163,10 @@ impl NrLog
                 cb_combiner   : Tracked(cb_combiner),    // Tracked<CyclicBuffer::combiner>,
                 request_ids   : Ghost(request_ids),      // Ghost<Seq<ReqId>>,
             };
+
+            // not sure why this one needs to be here?
+            assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+
             return Tracked(ghost_data_ret);
         }
 
@@ -1367,6 +1371,9 @@ impl NrLog
             cb_combiner: Tracked(cb_combiner),    // Tracked<CyclicBuffer::combiner>,
             request_ids: Ghost(request_ids),    // Ghost<Seq<ReqId>>,
         };
+
+        // not sure why this one needs to be here?
+        assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
         Tracked(ghost_data_ret)
     }
