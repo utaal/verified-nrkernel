@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use builtin::*;
 #[allow(unused_imports)]
-use vstd::{ prelude::*, multiset::*, option::* };
+use vstd::{ prelude::*, multiset::*};
 use state_machines_macros::tokenized_state_machine;
 
 

@@ -440,7 +440,7 @@ impl Replica  {
                     lock_g = g;    // obtain the protected lock state
                     g = Option::None;       // we took the lock, set the ghost state to None,
                 } else {
-                    lock_g = None; // the lock was already taken, set it to None
+                    lock_g = Option::None; // the lock was already taken, set it to None
                 }
             }
         );
@@ -448,7 +448,7 @@ impl Replica  {
         if let Result::Ok(val) = res {
             (val == 0, Tracked(lock_g))
         } else {
-            (false, Tracked(None))
+            (false, Tracked(Option::None))
         }
     }
 
@@ -462,7 +462,7 @@ impl Replica  {
             update old_val -> new_val;
             ghost g
             => {
-                g = Some(lock_state.get());
+                g = Option::Some(lock_state.get());
             });
     }
 
@@ -629,8 +629,8 @@ impl Replica  {
 
         {
 
-            let tracked update_req : Option<UnboundedLog::local_updates>;
-            let tracked batch_perms : Option<PointsTo<PendingOperation>>;
+            let tracked update_req : std::option::Option<UnboundedLog::local_updates>;
+            let tracked batch_perms : std::option::Option<PointsTo<PendingOperation>>;
             let num_ops = atomic_with_ghost!(
                 &self.contexts.index(thread_idx).atomic.0 => load();
                 returning num_ops;
@@ -837,7 +837,7 @@ impl Replica  {
         if self.thread_tokens.len() > 0 {
             Option::Some(self.thread_tokens.pop())
         } else {
-            None
+            Option::None
         }
     }
 

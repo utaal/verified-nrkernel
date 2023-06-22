@@ -194,7 +194,7 @@ impl NodeReplicated {
             self.replicas.insert(replica_id, replica);
             res
         } else {
-            None
+            Option::None
         }
     }
 

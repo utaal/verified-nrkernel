@@ -4,7 +4,6 @@ use builtin_macros::*;
 
 use vstd::map::*;
 // #[allow(unused_imports)]
-use vstd::option::Option;
 use vstd::seq::Seq;
 
 // use vstd::set::*;
@@ -18,6 +17,8 @@ use super::types::*;
 use super::unbounded_log::UnboundedLog;
 #[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
+
+use vstd::prelude::OptionAdditionalFns;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
