@@ -10,6 +10,7 @@ use vstd::set::*;
 use vstd::set_lib::*;
 use vstd::vec::*;
 use vstd::result::{*, Result::*};
+use vstd::view::View;
 use crate::impl_u::lib;
 use crate::impl_u::indexing;
 
