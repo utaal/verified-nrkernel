@@ -3,14 +3,9 @@ use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
 
-// use pervasive::*;
-use vstd::map::*;
-use vstd::seq::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::set::*;
+use vstd::prelude::*;
 
 use super::types::*;
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -73,7 +68,7 @@ state_machine! {
         #[invariant]
         pub fn inv_update_resp_version(&self) -> bool {
             forall |rid: ReqId| {
-                #[trigger] self.update_resps.dom().contains(rid)
+                #[trigger] self.update_resps.contains_key(rid)
                 ==> self.update_resps[rid].0 < self.log.len()
             }
         }
@@ -82,7 +77,7 @@ state_machine! {
         #[invariant]
         pub fn inv_readonly_req_version(&self) -> bool {
             forall |rid: ReqId| {
-                self.readonly_reqs.dom().contains(rid)
+                self.readonly_reqs.contains_key(rid)
                 ==> if let ReadReq::Req { version, .. } = self.readonly_reqs[rid] {
                         version <= self.version}
                     else { true }
@@ -137,11 +132,11 @@ state_machine! {
         /// Read Request: Enter the read request operation into the system
         transition!{
             readonly_start(rid: ReqId, op: ReadonlyOp) {
-                require(!pre.readonly_reqs.dom().contains(rid));
+                require(!pre.readonly_reqs.contains_key(rid));
 
                 // XXX: do we actually care whether an update request has the same id as an readonly request?
-                // require(!pre.update_reqs.dom().contains(rid));
-                // require(!pre.update_resps.dom().contains(rid));
+                // require(!pre.update_reqs.contains_key(rid));
+                // require(!pre.update_resps.contains_key(rid));
 
                 update readonly_reqs[rid] = ReadReq::Init{ op };
             }
@@ -150,7 +145,7 @@ state_machine! {
         /// Read Request: Read the current version of the log
         transition!{
             readonly_read_version(rid: ReqId) {
-                require(pre.readonly_reqs.dom().contains(rid));
+                require(pre.readonly_reqs.contains_key(rid));
                 require let ReadReq::Init { op } = pre.readonly_reqs.index(rid);
 
                 update readonly_reqs[rid] = ReadReq::Req { op, version: pre.version };
@@ -162,7 +157,7 @@ state_machine! {
         /// This computes the state at version the request started
         transition!{
             readonly_finish(rid: ReqId, version: LogIdx, ret: ReturnType) {
-                require(pre.readonly_reqs.dom().contains(rid));
+                require(pre.readonly_reqs.contains_key(rid));
 
                 require let ReadReq::Req { op, version: current } = pre.readonly_reqs.index(rid);
 
@@ -193,9 +188,9 @@ state_machine! {
         transition!{
             update_start(rid: ReqId, op: UpdateOp) {
                 // XXX: do we actually care whether an readonly request has the same id as an update request?
-                // require(!pre.readonly_reqs.dom().contains(rid));
-                require(!pre.update_reqs.dom().contains(rid));
-                require(!pre.update_resps.dom().contains(rid));
+                // require(!pre.readonly_reqs.contains_key(rid));
+                require(!pre.update_reqs.contains_key(rid));
+                require(!pre.update_resps.contains_key(rid));
 
                 update update_reqs[rid] = op;
             }
@@ -208,7 +203,7 @@ state_machine! {
         transition!{
             update_add_ops_to_log(rids: Seq<ReqId>) {
                 // all request ids must be in the update requests
-                require(forall |r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.dom().contains(r));
+                require(forall |r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.contains_key(r));
                 // the request ids must be unique, the sequence defines the update order
                 require(seq_unique(rids));
 
@@ -233,7 +228,7 @@ state_machine! {
         transition!{
             update_add_ops_to_log_one(rid: ReqId) {
                 // all request ids must be in the update requests
-                require(pre.update_reqs.dom().contains(rid));
+                require(pre.update_reqs.contains_key(rid));
 
                 // add the update operations to the log
                 update log = pre.log.push(pre.update_reqs[rid]);
@@ -260,7 +255,7 @@ state_machine! {
         /// Update: Finish the update operation by removing it from the update responses
         transition!{
             update_finish(rid: nat) {
-                require(pre.update_resps.dom().contains(rid));
+                require(pre.update_resps.contains_key(rid));
                 let uidx = pre.update_resps.index(rid).0;
 
                 require(pre.version > uidx);

@@ -6,8 +6,6 @@ use builtin_macros::*;
 use vstd::{
     prelude::*,
     map::Map,
-    vec::Vec,
-    option::Option,
     cell::{PCell, PointsTo, CellId},
     atomic_ghost::AtomicU64,
     atomic_with_ghost,
@@ -632,7 +630,7 @@ impl Replica  {
             let tracked update_req : std::option::Option<UnboundedLog::local_updates>;
             let tracked batch_perms : std::option::Option<PointsTo<PendingOperation>>;
             let num_ops = atomic_with_ghost!(
-                &self.contexts.index(thread_idx).atomic.0 => load();
+                &self.contexts[thread_idx].atomic.0 => load();
                 returning num_ops;
                 ghost g // g : ContextGhost
             => {
@@ -660,7 +658,7 @@ impl Replica  {
 
             if num_ops == 1 {
                 let tracked batch_token_value = batch_perms.tracked_unwrap();
-                let op = self.contexts.index(thread_idx).batch.0.borrow(Tracked(&batch_token_value)).op.clone();
+                let op = self.contexts[thread_idx].batch.0.borrow(Tracked(&batch_token_value)).op.clone();
 
                 let tracked update_req = update_req.tracked_unwrap();
                 proof {
@@ -768,7 +766,7 @@ impl Replica  {
                     resp_idx as nat, request_ids@.len());
             }
 
-            let num_ops = *num_ops_per_thread.index(thread_idx);
+            let num_ops = num_ops_per_thread[thread_idx];
 
             // assert(flat_combiner@.value.get_Responding_1() < num_registered_threads);
 
@@ -791,18 +789,18 @@ impl Replica  {
 
                 // obtain the element from the operation batch
                 let tracked mut permission = cell_permissions.tracked_remove(thread_idx as nat);
-                let mut op_resp = self.contexts.index(thread_idx).batch.0.take(Tracked(&mut permission));
+                let mut op_resp = self.contexts[thread_idx].batch.0.take(Tracked(&mut permission));
 
                 // update with the response
-                let resp: ReturnType = responses.index(resp_idx).clone();
+                let resp: ReturnType = responses[resp_idx].clone();
                 op_resp.resp = Some(resp);
 
                 // place the element back into the batch
-                self.contexts.index(thread_idx).batch.0.put(Tracked(&mut permission), op_resp);
+                self.contexts[thread_idx].batch.0.put(Tracked(&mut permission), op_resp);
 
                 //     operations[i - 1] = 0;
                 atomic_with_ghost!(
-                    &self.contexts.index(thread_idx).atomic.0 => store(0);
+                    &self.contexts[thread_idx].atomic.0 => store(0);
                     update prev -> next;
                     ghost g // g : ContextGhost
                     => {
@@ -834,11 +832,7 @@ impl Replica  {
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
     /// registration was successfull. None if the registration failed.
     pub fn register(&mut self) -> Option<ThreadToken> {
-        if self.thread_tokens.len() > 0 {
-            Option::Some(self.thread_tokens.pop())
-        } else {
-            Option::None
-        }
+        self.thread_tokens.pop()
     }
 
     #[verifier(external_body)] /* vattr */
@@ -992,7 +986,7 @@ impl Replica  {
         ensures
             res.1@.enqueue_op_post(context_ghost@)
     {
-        let context = self.contexts.index(tid as usize);
+        let context = &self.contexts[tid as usize];
         context.enqueue_op(op, context_ghost)
     }
 
@@ -1010,7 +1004,7 @@ impl Replica  {
             res.1@.dequeue_resp_post(context_ghost@, Some(res.0), self.unbounded_log_instance@),
     {
         let mut context_ghost_new = context_ghost;
-        let context = self.contexts.index(tid as usize);
+        let context = &self.contexts[tid as usize];
 
         let mut iter : usize = 0;
         let mut r = None;

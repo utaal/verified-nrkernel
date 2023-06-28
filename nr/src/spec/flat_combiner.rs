@@ -1,22 +1,13 @@
-// rust_verify/tests/example.rs ignore
-
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
 
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::map::*;
-use vstd::option::Option;
-use vstd::seq::*;
-// use vstd::set::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::pervasive::arbitrary;
+use vstd::prelude::*;
 
 use state_machines_macros::*;
 
 use super::types::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use super::utils::*;
+// use super::utils::*;
 
 verus! {
 

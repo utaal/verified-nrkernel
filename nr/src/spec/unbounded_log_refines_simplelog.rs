@@ -4,30 +4,24 @@
 use builtin::*;
 use builtin_macros::*;
 
-#[allow(unused_imports)] // XXX: should not be needed!
+use vstd::prelude::*;
+
 use vstd::pervasive::arbitrary;
 use vstd::map::*;
-#[allow(unused_imports)] // XXX: should not be needed!
 use vstd::seq::Seq;
 use vstd::seq_lib::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::set::*;
 
 use state_machines_macros::*;
 
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::simple_log::{
     compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
     UpdateResp as SUpdateResp,
 };
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::types::*;
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::unbounded_log::{
-    combiner_request_id_fresh, compute_nrstate_at_version as i_nrstate_at_version, get_fresh_nat,
-    CombinerState, ReadonlyState, UnboundedLog, UpdateState,
+    compute_nrstate_at_version as i_nrstate_at_version, get_fresh_nat,
+    ReadonlyState, UnboundedLog, UpdateState,
 };
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -52,7 +46,7 @@ spec fn interp_log(global_tail: nat, log: Map<nat, LogEntry>) -> Seq<UpdateOp> {
 
 spec fn interp_readonly_reqs(local_reads: Map<nat, ReadonlyState>) -> Map<ReqId, SReadReq> {
     Map::new(
-        |rid| local_reads.dom().contains(rid),
+        |rid| local_reads.contains_key(rid),
         |rid| match local_reads.index(rid) {
             ReadonlyState::Init { op } => SReadReq::Init { op },
             ReadonlyState::VersionUpperBound { version_upper_bound: idx, op } => SReadReq::Req { op, version: idx },
@@ -64,7 +58,7 @@ spec fn interp_readonly_reqs(local_reads: Map<nat, ReadonlyState>) -> Map<ReqId,
 
 spec fn interp_update_reqs(local_updates: Map<LogIdx, UpdateState>) -> Map<LogIdx, UpdateOp> {
     Map::new(
-        |rid| local_updates.dom().contains(rid) && local_updates.index(rid).is_Init(),
+        |rid| local_updates.contains_key(rid) && local_updates.index(rid).is_Init(),
         |rid| match local_updates.index(rid) {
             UpdateState::Init{op} => op,
             _ => arbitrary(),
@@ -74,7 +68,7 @@ spec fn interp_update_reqs(local_updates: Map<LogIdx, UpdateState>) -> Map<LogId
 
 spec fn interp_update_resps(local_updates: Map<nat, UpdateState>) -> Map<ReqId, SUpdateResp> {
     Map::new(
-        |rid| local_updates.dom().contains(rid) && !local_updates.index(rid).is_Init(),
+        |rid| local_updates.contains_key(rid) && !local_updates.index(rid).is_Init(),
         |rid| match local_updates.index(rid) {
             UpdateState::Init{op} => arbitrary(),
             UpdateState::Placed{op, idx} => SUpdateResp(idx),
@@ -341,7 +335,7 @@ pub open spec fn result_match(log: Map<LogIdx, LogEntry>,  output: ReturnType, v
 
 proof fn state_at_version_refines(s_log: Seq<UpdateOp>, i_log: Map<LogIdx, LogEntry>, gtail: nat, idx:nat)
     requires
-      forall |i| 0 <= i < gtail ==> i_log.dom().contains(i),
+      forall |i| 0 <= i < gtail ==> i_log.contains_key(i),
       0 <= idx <= s_log.len(),
       idx <= gtail,
       s_log == interp_log(gtail, i_log),

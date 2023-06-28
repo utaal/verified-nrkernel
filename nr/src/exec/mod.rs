@@ -2,11 +2,7 @@
 use builtin::*;
 use builtin_macros::*;
 
-use vstd::{
-    option::Option,
-    prelude::*,
-    vec::Vec,
-};
+use vstd::prelude::*;
 
 // spec imports
 use crate::spec::{
@@ -76,7 +72,7 @@ impl NodeReplicated {
         &&& self.cyclic_buffer_instance@ == self.log.cyclic_buffer_instance@
 
         // the number of replicas should be the as configured
-        &&& self.replicas.spec_len() == NUM_REPLICAS
+        &&& self.replicas.len() == NUM_REPLICAS
 
         // the replicas should be well-formed and the instances match
         &&& (forall |i| 0 <= i < self.replicas.len() ==> {
@@ -154,7 +150,7 @@ impl NodeReplicated {
             let tracked combiner = combiners.tracked_remove(idx_ghost);
             let tracked cb_combiner = cb_combiners.tracked_remove(idx_ghost);
             let tracked replica = replicas.tracked_remove(idx_ghost);
-            let replica_token = replica_tokens.index(idx).clone();
+            let replica_token = replica_tokens[idx].clone();
             let tracked config = ReplicaConfig {
                 replica,
                 combiner,
@@ -214,7 +210,7 @@ impl NodeReplicated {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            self.replicas.index(replica_id).execute_mut(&self.log, op, tkn)
+            (&self.replicas[replica_id]).execute_mut(&self.log, op, tkn)
         } else {
             Err(tkn)
         }
@@ -237,7 +233,7 @@ impl NodeReplicated {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            self.replicas.index(replica_id).execute(&self.log, op, tkn)
+            (&self.replicas[replica_id]).execute(&self.log, op, tkn)
         } else {
             Err(tkn)
         }

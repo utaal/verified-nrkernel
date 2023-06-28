@@ -4,19 +4,14 @@
 use builtin::*;
 use builtin_macros::*;
 
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::pervasive::arbitrary;
-#[allow(unused_imports)] // XXX: should not be needed!
+use vstd::prelude::*;
 use vstd::map::Map;
 use vstd::seq::Seq;
-#[allow(unused_imports)] // XXX: should not be needed!
 use vstd::set::Set;
 
 use state_machines_macros::*;
-// use crate::assert_maps_equal;
 
 use super::types::*;
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -952,13 +947,13 @@ UnboundedLog {
         assert(forall |n: nat| 0 <= n < post.num_replicas <==> cmap.contains_key(n));
 
         assert(forall |n: nat| post.combiner.contains_key(n) <==> #[trigger]cmap.contains_key(n));
-        assert(post.combiner.dom().ext_equal(cmap.dom()));
+        assert(post.combiner.dom() =~= cmap.dom());
         assert(forall |n| #[trigger]post.combiner.contains_key(n) ==> post.combiner[n] == CombinerState::Ready);
 
         assert(forall |n| #[trigger]cmap.contains_key(n) ==> cmap[n] == CombinerState::Ready) by {
             map_new_rec_dom_finite(max_dom, CombinerState::Ready);
         }
-        assert(post.combiner.ext_equal(cmap));
+        assert(post.combiner =~= cmap);
         // assert_maps_equal!(post.combiner, cmap);
     }
 
@@ -1324,7 +1319,7 @@ pub proof fn combiner_request_ids_not_contains(combiners: Map<NodeId, CombinerSt
     ensures combiner_request_id_fresh(combiners,rid) <==> !combiner_request_ids(combiners).contains(rid)
     decreases combiners.dom().len()
 {
-    if !combiners.dom().ext_equal(Set::empty()) {
+    if !(combiners.dom() =~= Set::empty()) {
         let node_id = combiners.dom().choose();
         combiner_request_ids_not_contains(combiners.remove(node_id), rid);
         assert(combiner_request_id_fresh(combiners.remove(node_id),rid) <==> !combiner_request_ids(combiners.remove(node_id)).contains(rid));

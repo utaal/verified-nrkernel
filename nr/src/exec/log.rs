@@ -5,7 +5,6 @@ use builtin_macros::*;
 use vstd::{
     prelude::*,
     map::Map,
-    vec::Vec,
     cell::{PCell, CellId},
     atomic_ghost::{AtomicU64, AtomicBool},
     atomic_with_ghost,
@@ -374,7 +373,7 @@ impl NrLog
             }
 
             let mut log_entry = Option::None;
-            slog_entries.swap(log_idx, &mut log_entry);
+            slog_entries.set_and_swap(log_idx, &mut log_entry);
             assert(log_entry.is_Some());
             let log_entry = log_entry.unwrap();
 
@@ -494,7 +493,7 @@ impl NrLog
             self.slog.len() == LOG_SIZE
         ensures
             result as nat == self.index_spec(logical as nat),
-            result == log_entry_idx(logical as int, self.slog.spec_len() as nat),
+            result == log_entry_idx(logical as int, self.slog.len() as nat),
             result < self.slog.len()
     {
         (logical as usize) % self.slog.len()
@@ -512,7 +511,7 @@ impl NrLog
             self.slog.len() == LOG_SIZE
         ensures
             result == self.is_alive_value_spec(logical as int),
-            result == log_entry_alive_value(logical as int, self.slog.spec_len() as nat)
+            result == log_entry_alive_value(logical as int, self.slog.len() as nat)
     {
         ((logical as usize) / LOG_SIZE % 2) == 0
     }
@@ -585,7 +584,7 @@ impl NrLog
         let tracked new_local_reads_g: UnboundedLog::local_reads;
 
         // obtain the local version
-        let local_version = &self.local_versions.index(node_id as usize).0;
+        let local_version = &self.local_versions[node_id as usize].0;
 
         let res = atomic_with_ghost!(
             local_version => load();
@@ -833,9 +832,9 @@ impl NrLog
                             combiner = append_entries_ghost_state.combiner;
                             unbounded_tail = append_entries_ghost_state.tail;
                             local_updates = append_entries_ghost_state.local_updates;
-                            assert(combiner@.value.get_Placed_queued_ops().ext_equal(request_ids@));
+                            assert(combiner@.value.get_Placed_queued_ops() =~= request_ids@);
                         } else {
-                            assert(combiner@.value.get_Placed_queued_ops().ext_equal(request_ids@));
+                            assert(combiner@.value.get_Placed_queued_ops() =~= request_ids@);
                         }
 
                         g = (unbounded_tail, cb_tail);
@@ -884,11 +883,11 @@ impl NrLog
                     cb_combiner@.value.get_Appending_cur_idx() <= cb_combiner@.value.get_Appending_tail(),
                     cb_combiner@.instance == self.cyclic_buffer_instance@,
                     forall |i| #![trigger log_entries[i]] idx <= i < request_ids@.len() ==> {
-                        &&& #[trigger]log_entries.contains_key(i)
+                        &&& (#[trigger]log_entries.contains_key(i))
                         &&& log_entries[i]@.key == tail + i
                         &&& log_entries[i]@.instance == self.unbounded_log_instance@
                         &&& log_entries[i]@.value.node_id == nid as nat
-                        &&& log_entries[i]@.value.op == operations[i as int]
+                        &&& log_entries[i]@.value.op == &operations[i as int]
                     },
                     forall |i| (tail + idx) - LOG_SIZE <= i < new_tail - LOG_SIZE <==> cb_log_entries.contains_key(i),
                     forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i, cell_ids[log_entry_idx(i, buffer_size) as int], self.unbounded_log_instance@),
@@ -907,18 +906,18 @@ impl NrLog
                 // unsafe { (*e).operation = Some(op.clone()) };
                 // unsafe { (*e).replica = idx.0 };
                 let new_log_entry = ConcreteLogEntry {
-                    op: operations.index(idx as usize).clone(),
+                    op: operations[idx as usize].clone(),
                     node_id: nid as u64,
                 };
 
                 // update the log entry in the buffer
-                self.slog.index(log_idx).log_entry.replace(Tracked(&mut cb_log_entry_perms), Option::Some(new_log_entry));
+                self.slog[log_idx].log_entry.replace(Tracked(&mut cb_log_entry_perms), Option::Some(new_log_entry));
 
                 // unsafe { (*e).alivef.store(m, Ordering::Release) };
                 let m = self.is_alive_value(logical_log_idx as u64);
 
                 atomic_with_ghost!(
-                    &self.slog.index(log_idx).alive => store(m);
+                    &self.slog[log_idx].alive => store(m);
                     ghost g => {
                         let tracked new_stored_type = StoredType {
                             cell_perms: cb_log_entry_perms,
@@ -936,6 +935,17 @@ impl NrLog
 
                 idx = idx + 1;
             }
+
+            assert(forall |i| #![trigger log_entries[i]] idx <= i < request_ids@.len() ==> {
+                &&& #[trigger]log_entries.contains_key(i)
+                &&& log_entries[i]@.key == tail + i
+                &&& log_entries[i]@.instance == self.unbounded_log_instance@
+                &&& log_entries[i]@.value.node_id == nid as nat
+                &&& log_entries[i]@.value.op == operations[i as int]
+            });
+            assert(forall |i| (tail + idx) - LOG_SIZE <= i < new_tail - LOG_SIZE <==> cb_log_entries.contains_key(i));
+            assert(forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i, cell_ids[log_entry_idx(i, buffer_size) as int], self.unbounded_log_instance@));
+
 
             proof {
                 cb_combiner = self.cyclic_buffer_instance.borrow().append_finish(nid as nat, cb_combiner);
@@ -1128,7 +1138,7 @@ impl NrLog
 
         // let ltail = self.ltails[idx.0 - 1].load(Ordering::Relaxed);
         let mut local_version = atomic_with_ghost!(
-            &self.local_versions.index(nid).0 => load();
+            &self.local_versions[nid].0 => load();
             returning ret;
             ghost g => {
                 // this kicks of the state transition in both the cyclic buffer and the unbounded log
@@ -1165,7 +1175,21 @@ impl NrLog
             };
 
             // not sure why this one needs to be here?
-            assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+
+            assert(ghost_data_ret.common_pred(replica_token@, actual_replica.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+
+            // assert(ghost_data_ret.cb_combiner@@.value  == ghost_data.cb_combiner@@.value);
+            // assert(ghost_data_ret.request_ids == ghost_data.request_ids);
+            // assert(ghost_data.combiner@@.value.is_Placed() ==> {
+            //     &&& ghost_data_ret.post_exec(ghost_data.request_ids@, responses@)
+            // });
+            // assert(ghost_data.combiner@@.value.is_Ready() ==> {
+            //     &&& ghost_data_ret.combiner@@.value  == ghost_data.combiner@@.value
+            //     &&& ghost_data_ret.local_updates == ghost_data.local_updates
+            //     &&& responses@ == old(responses)@
+            // });
+
+            // assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
             return Tracked(ghost_data_ret);
         }
@@ -1258,7 +1282,7 @@ impl NrLog
                 }
 
                 let alive_bit = atomic_with_ghost!(
-                    &self.slog.index(phys_log_idx).alive => load();
+                    &self.slog[phys_log_idx].alive => load();
                     returning alive_bit;
                     ghost g => {
                         if alive_bit == is_alive_value {
@@ -1280,7 +1304,7 @@ impl NrLog
             }
 
             // read the entry
-            let log_entry = self.slog.index(phys_log_idx).log_entry.borrow(Tracked(&stored_entry.cell_perms));
+            let log_entry = self.slog[phys_log_idx].log_entry.borrow(Tracked(&stored_entry.cell_perms));
 
             // perform the update
             let res = actual_replica.update(log_entry.as_ref().unwrap().op.clone());
@@ -1351,7 +1375,7 @@ impl NrLog
 
         // self.ltails[idx.0 - 1].store(gtail, Ordering::Relaxed);
         atomic_with_ghost!(
-            &self.local_versions.index(nid).0 => store(global_tail);
+            &self.local_versions[nid].0 => store(global_tail);
             ghost g => {
                 let tracked (Tracked(ul_local_versions), Tracked(ul_combiner))
                     = self.unbounded_log_instance.borrow().exec_finish(nid as nat, g.0, combiner);
@@ -1408,7 +1432,7 @@ impl NrLog
 
         // let (mut min_replica_idx, mut min_local_tail) = (0, self.ltails[0].load(Ordering::Relaxed));
         let mut min_local_version = atomic_with_ghost!(
-            &self.local_versions.index(0).0 => load();
+            &self.local_versions[0].0 => load();
             returning ret;
             ghost g => {
                 g_cb_comb_new = self.cyclic_buffer_instance.borrow()
@@ -1435,7 +1459,7 @@ impl NrLog
         {
             // let cur_local_tail = self.ltails[idx - 1].load(Ordering::Relaxed);
             let cur_local_tail = atomic_with_ghost!(
-                &self.local_versions.index(idx).0 => load();
+                &self.local_versions[idx].0 => load();
                 returning ret;
                 ghost g => {
                     g_cb_comb_new = self.cyclic_buffer_instance.borrow()

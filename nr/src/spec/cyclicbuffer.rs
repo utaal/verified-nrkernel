@@ -2,20 +2,14 @@
 use builtin::*;
 use builtin_macros::*;
 
-use vstd::map::*;
-// #[allow(unused_imports)]
-use vstd::seq::Seq;
+use vstd::prelude::*;
 
-// use vstd::set::*;
-// use vstd::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::cell::{PCell, CellId, PointsTo};
+use vstd::cell::{CellId, PointsTo};
 
 use state_machines_macros::*;
 
 use super::types::*;
 use super::unbounded_log::UnboundedLog;
-#[allow(unused_imports)] // XXX: should not be needed!
 use super::utils::*;
 
 use vstd::prelude::OptionAdditionalFns;

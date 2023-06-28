@@ -1,13 +1,7 @@
 // the verus dependencies
 #[allow(unused_imports)]
 use builtin::*;
-
-use vstd::{
-    option::Option,
-    prelude::*,
-    vec::Vec,
-    *,
-};
+use vstd::*;
 
 mod spec;
 mod exec;
@@ -119,7 +113,7 @@ pub fn main() {
     let mut threads = Vec::with_capacity(NUM_THREADS);
     for idx in 0..NUM_THREADS {
         let counter = nr_counter.clone();
-        let tkn = thread_tokens.pop();
+        let tkn = thread_tokens.pop().unwrap();
         threads.push(std::thread::spawn(move || {
             thread_loop(NrCounter(counter, tkn));
         }));
@@ -129,14 +123,14 @@ pub fn main() {
 
     // Wait for all the threads to finish
     for idx in 0..NUM_THREADS {
-        let thread = threads.pop();
+        let thread = threads.pop().unwrap();
         thread.join().unwrap();
     }
 
     println!("Obtain final result...");
 
     for idx in 0..NUM_REPLICAS {
-        let tkn = thread_tokens.pop();
+        let tkn = thread_tokens.pop().unwrap();
         match nr_counter.execute(ReadonlyOp::Get, tkn) {
             Result::Ok((ret, t)) => {
                 match ret {

@@ -3,8 +3,8 @@ use builtin::*;
 use builtin_macros::*;
 
 use vstd::{
+    prelude::*,
     seq::Seq,
-    option::Option,
 };
 
 use crate::spec::types::{ReqId};

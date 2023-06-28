@@ -2,13 +2,7 @@
 use builtin::*;
 use builtin_macros::*;
 
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::pervasive::arbitrary;
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::map::*;
-#[allow(unused_imports)] // XXX: should not be needed!
-use vstd::seq::*;
-#[allow(unused_imports)] // XXX: should not be needed!
+use vstd::prelude::*;
 use vstd::set::Set;
 
 verus! {
@@ -70,7 +64,7 @@ proof fn seq_to_set_rec_contains<A>(seq: Seq<A>)
             seq_to_set_rec_contains(seq.drop_last());
         }
 
-        assert(seq.ext_equal(seq.drop_last().push(seq.last())));
+        assert(seq =~= seq.drop_last().push(seq.last()));
         assert forall |a| #[trigger] seq.contains(a) <==> seq_to_set_rec(seq).contains(a) by {
             if !seq.drop_last().contains(a) {
                 if a == seq.last() {
@@ -91,7 +85,7 @@ proof fn seq_to_set_equal_rec<A>(seq: Seq<A>)
         seq_to_set_rec_contains(seq);
     }
     assert(forall |n| #[trigger] seq.contains(n) <==> seq_to_set(seq).contains(n));
-    assert(seq_to_set(seq).ext_equal(seq_to_set_rec(seq)));
+    assert(seq_to_set(seq) =~= seq_to_set_rec(seq));
 }
 
 pub open spec fn seq_to_set<A>(seq: Seq<A>) -> Set<A>
@@ -121,8 +115,8 @@ pub open spec fn map_new_rec<V>(dom: nat, val: V) -> Map<nat, V>
 pub proof fn map_new_rec_dom_finite<V>(dom: nat, val: V)
    ensures
       map_new_rec(dom, val).dom().finite(),
-      forall |n: nat| 0 <= n <= dom <==> map_new_rec(dom, val).dom().contains(n),
-      forall |n| #[trigger] map_new_rec(dom, val).dom().contains(n) ==> map_new_rec(dom, val)[n] == val
+      forall |n: nat| 0 <= n <= dom <==> map_new_rec(dom, val).contains_key(n),
+      forall |n| (#[trigger] map_new_rec(dom, val).contains_key(n)) ==> map_new_rec(dom, val)[n] == val
    decreases dom
 {
     if dom == 0 {
@@ -134,13 +128,15 @@ pub proof fn map_new_rec_dom_finite<V>(dom: nat, val: V)
             map_new_rec_dom_finite(sub_dom, val);
         }
 
-        assert(forall |n: nat| 0 <= n <= sub_dom <==> sub_map.dom().contains(n)) by {
+        assert(forall |n: nat| (#[trigger] sub_map.contains_key(n)) <==> 0 <= n <= sub_dom ) by {
             map_new_rec_dom_finite(sub_dom, val);
         }
 
-        assert(forall |n: nat| #[trigger] sub_map.dom().contains(n) ==> sub_map[n] == val) by {
+        assert(forall |n: nat| (#[trigger] sub_map.contains_key(n)) ==> sub_map[n] == val) by {
             map_new_rec_dom_finite(sub_dom, val);
         }
+
+
     }
 }
 
@@ -149,7 +145,7 @@ pub proof fn map_new_rec_dom_finite<V>(dom: nat, val: V)
 pub open spec fn map_contains_value<K, V>(map: Map<K, V>, val: V) -> bool
     // where K: PartialEq + Structural
 {
-    exists|i: K| #[trigger] map.dom().contains(i) && map.index(i) == val
+    exists|i: K| #[trigger] map.contains_key(i) && map.index(i) == val
 }
 
 
