@@ -2,10 +2,10 @@
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
+use vstd::prelude::*;
 use vstd::map::*;
 use vstd::seq::*;
 use vstd::set::*;
-use vstd::option::{ *, Option::* };
 use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };

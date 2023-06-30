@@ -1,11 +1,11 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
+use vstd::prelude::*;
 use vstd::map::*;
 use vstd::seq::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use vstd::option::{ *, Option::* };
 
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;

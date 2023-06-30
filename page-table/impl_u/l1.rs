@@ -1,16 +1,13 @@
 #![allow(unused_imports)]
-use vstd::prelude::arbitrary;
+use vstd::prelude::*;
 use builtin::*;
 use builtin_macros::*;
 use vstd::modes::*;
 use vstd::seq::*;
 use vstd::seq_lib::*;
-use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use vstd::vec::*;
-use vstd::result::{*, Result::*};
 use crate::definitions_t::{new_seq, lemma_new_seq};
 use crate::impl_u::lib;
 use crate::impl_u::indexing;

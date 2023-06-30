@@ -1,14 +1,13 @@
 #![allow(unused_imports)]
 use builtin_macros::*;
 use builtin::*;
+use vstd::prelude::*;
 use crate::spec_t::hlspec;
-use vstd::*;
 use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult, ResolveResultExec, PageTableEntry };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
 use crate::spec_t::mem;
-use option::*;
-use set::*;
+use vstd::set::*;
 
 verus! {
 

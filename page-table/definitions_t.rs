@@ -1,15 +1,13 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
+use vstd::prelude::*;
 use vstd::modes::*;
 use vstd::seq::*;
 use vstd::seq_lib::*;
-use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use vstd::vec::*;
-use vstd::result::{*, Result::*};
 use vstd::view::View;
 use crate::impl_u::lib;
 use crate::impl_u::indexing;
@@ -288,14 +286,14 @@ impl ArchExec {
         requires layer < self@.layers.len()
         ensures  res == self@.entry_size(layer as nat)
     {
-        self.layers.index(layer).entry_size
+        self.layers[layer].entry_size
     }
 
     pub fn num_entries(&self, layer: usize) -> (res: usize)
         requires layer < self@.layers.len()
         ensures  res == self@.num_entries(layer as nat)
     {
-        self.layers.index(layer).num_entries
+        self.layers[layer].num_entries
     }
 
     pub fn index_for_vaddr(&self, layer: usize, base: usize, vaddr: usize) -> (res: usize)

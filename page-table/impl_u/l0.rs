@@ -1,15 +1,13 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use vstd::prelude::arbitrary;
+use vstd::prelude::*;
 use vstd::modes::*;
 use vstd::seq::*;
 use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use vstd::vec::*;
-use vstd::result::{*, Result::*};
 use crate::impl_u::lib;
 use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
 

@@ -2,17 +2,14 @@
 use builtin::*;
 use builtin_macros::*;
 use vstd::*;
+use vstd::prelude::*;
 use modes::*;
 use seq::*;
-use option::{*, Option::*};
 use map::*;
 use set::*;
 use set_lib::*;
 use seq_lib::*;
-use vec::*;
 use crate::spec_t::mem;
-
-use result::{*, Result::*};
 
 use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv, between };
 use crate::impl_u::l1;

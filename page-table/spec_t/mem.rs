@@ -1,14 +1,12 @@
 #![allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
+use vstd::prelude::*;
 use vstd::modes::*;
 use vstd::seq::*;
-use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use vstd::vec::*;
-use vstd::result::{*, Result::*};
 
 use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry };
 use crate::definitions_t::{ WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
