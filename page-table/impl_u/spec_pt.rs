@@ -16,16 +16,6 @@ pub struct PageTableVariables {
     pub map: Map<nat /* VAddr */, PageTableEntry>,
 }
 
-impl PageTableVariables {
-    pub open spec fn mappings_dont_overlap(self) -> bool {
-        forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
-            self.map.contains_pair(b1, pte1) && self.map.contains_pair(b2, pte2) ==>
-            ((b1 == b2) || !overlap(
-                    MemRegion { base: b1, size: pte1.frame.size },
-                    MemRegion { base: b2, size: pte2.frame.size }))
-    }
-}
-
 pub enum PageTableStep {
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },
