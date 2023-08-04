@@ -77,6 +77,7 @@ impl PageTableMemory {
 
     pub open spec fn cr3_spec(&self) -> MemRegionExec;
 
+    // TODO: Could this be part of the invariant instead?
     #[verifier(external_body)]
     pub proof fn cr3_facts(&self)
         ensures

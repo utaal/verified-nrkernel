@@ -6,7 +6,7 @@ use vstd::prelude::*;
 use vstd::map::*;
 use vstd::seq::*;
 use vstd::set::*;
-use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned };
+use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned, MemRegion, x86_arch_spec, Flags, PAGE_SIZE, MAX_BASE };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::l0;
@@ -29,8 +29,170 @@ pub enum HWStep {
     TLBEvict { vaddr: nat},
 }
 
+// Duplicate macro because I still don't understand how to import Rust macros
+macro_rules! bitmask_inc {
+    ($low:expr,$high:expr) => {
+        (!(!0u64 << (($high+1u64)-$low))) << $low
+    }
+}
+
+macro_rules! l0_bits {
+    ($addr:expr) => { $addr & bitmask_inc!(12u64,21u64) }
+}
+
+macro_rules! l1_bits {
+    ($addr:expr) => { $addr & bitmask_inc!(21u64,30u64) }
+}
+
+macro_rules! l2_bits {
+    ($addr:expr) => { $addr & bitmask_inc!(30u64,39u64) }
+}
+
+macro_rules! l3_bits {
+    ($addr:expr) => { $addr & bitmask_inc!(39u64,48u64) }
+}
+
+// Currently ignoring supervisor bits
+pub open spec fn pt_walk(pt_mem: mem::PageTableMemory, addr: u64) -> Option<PageTableEntry> {
+    let l0_idx: nat = l0_bits!(addr) as nat;
+    let l1_idx: nat = l1_bits!(addr) as nat;
+    let l2_idx: nat = l2_bits!(addr) as nat;
+    let l3_idx: nat = l3_bits!(addr) as nat;
+    // TODO: maybe just don't need this and should be recommends instead
+    if pt_mem.inv() {
+        // TODO: Invariant might need to say that cr3 region is in regions()
+        let l0_tbl = pt_mem.region_view(pt_mem.cr3_spec()@);
+        let l0_ent = l2_impl::PageDirectoryEntry { entry: l0_tbl[l0_idx as int], layer: Ghost(0) }@;
+        match l0_ent {
+            l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                let l1_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+                let l1_ent = l2_impl::PageDirectoryEntry { entry: l1_tbl[l1_idx as int], layer: Ghost(1) }@;
+                match l1_ent {
+                    l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                        let l2_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+                        let l2_ent = l2_impl::PageDirectoryEntry { entry: l2_tbl[l2_idx as int], layer: Ghost(2) }@;
+                        match l2_ent {
+                            l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+                                let l3_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+                                let l3_ent = l2_impl::PageDirectoryEntry { entry: l3_tbl[l3_idx as int], layer: Ghost(3) }@;
+                                match l3_ent {
+                                    l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => None,
+                                    l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+                                        Some(PageTableEntry {
+                                            frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(3) },
+                                            flags: Flags {
+                                                is_writable:     flag_RW,
+                                                is_supervisor:   !flag_US,
+                                                disable_execute: flag_XD,
+                                            }
+                                        }),
+                                    l2_impl::GhostPageDirectoryEntry::Empty => None,
+                                }
+                            },
+                            l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+                                Some(PageTableEntry {
+                                    frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(2) },
+                                    flags: Flags {
+                                        is_writable:     flag_RW,
+                                        is_supervisor:   !flag_US,
+                                        disable_execute: flag_XD,
+                                    }
+                                }),
+                            l2_impl::GhostPageDirectoryEntry::Empty => None,
+                        }
+                    },
+                    l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+                        Some(PageTableEntry {
+                            frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(1) },
+                            flags: Flags {
+                                is_writable:     flag_RW,
+                                is_supervisor:   !flag_US,
+                                disable_execute: flag_XD,
+                            }
+                        }),
+                    l2_impl::GhostPageDirectoryEntry::Empty => None,
+                }
+            },
+            // Pages can't be *that* huge.
+            // TODO: I think this is already taken care of in the PageDirectoryEntry constructor?
+            l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } => None,
+            l2_impl::GhostPageDirectoryEntry::Empty => None,
+        }
+    } else {
+        arbitrary()
+    }
+}
+
 // Page table walker interpretation of the page table memory
-pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
+pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry> {
+    if pt_mem.inv() {
+        // Domain:
+        // - Addresses in the region [0, MAX_BASE)
+        // - Must decode to a mapping
+        // - The address must be the base address for that mapping
+        //   (That's the `aligned` in the Some branch of the match.)
+        Map::new(
+            |addr: nat|
+                0 <= addr && addr < MAX_BASE
+                && aligned(addr, PAGE_SIZE as nat)
+                // Casting to u64 is okay since MAX_BASE < u64::MAX
+                && match pt_walk(pt_mem, addr as u64) {
+                        Some(pte) => aligned(addr as nat, pte.frame.size as nat),
+                        None => false,
+                },
+            |addr: nat| match pt_walk(pt_mem, addr as u64) {
+                Some(pte) => pte,
+                None => arbitrary(),
+            })
+    } else {
+        arbitrary()
+    }
+}
+
+// // Page table walker interpretation of the page table memory
+// pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
+
+pub proof fn lemma_page_table_walk_interp(pt: l2_impl::PageTable)
+    requires
+        pt.inv()
+    ensures
+        pt.interp().interp().map === interp_pt_mem(pt.memory)
+{
+    let m1 = pt.interp().interp().map;
+    let m2 = interp_pt_mem(pt.memory);
+        assert forall|addr: nat, pte: PageTableEntry|
+            m2.contains_pair(addr, pte) implies #[trigger] m1.contains_pair(addr, pte) by
+        {
+            assert(m2.dom().contains(addr));
+            assert(m2[addr] == pte);
+            assert(pt.memory.inv());
+            assert(0 <= addr && addr < MAX_BASE);
+            assert(aligned(addr, PAGE_SIZE as nat));
+            assert(pt_walk(pt.memory, addr as u64) == Some(pte));
+            assert(aligned(addr as nat, pte.frame.size as nat));
+            assume(false);
+        };
+        assert forall|addr: nat, pte: PageTableEntry|
+            m1.contains_pair(addr, pte) implies #[trigger] m2.contains_pair(addr, pte) by
+        {
+            assume(false);
+        };
+        assert forall|addr: nat| m1.dom().contains(addr) <==> m2.dom().contains(addr) by {
+            if m1.dom().contains(addr) {
+                assert(m1.contains_pair(addr, m1[addr]));
+                assert(m2.contains_pair(addr, m1[addr]));
+            }
+            if m2.dom().contains(addr) {
+                assert(m2.contains_pair(addr, m2[addr]));
+                assert(m1.contains_pair(addr, m2[addr]));
+            }
+        };
+        assert forall|addr: nat| #[trigger] m1.dom().contains(addr) && m2.dom().contains(addr) implies m1[addr] == m2[addr] by {
+            assert(m1.contains_pair(addr, m1[addr]));
+            assert(m2.contains_pair(addr, m1[addr]));
+        };
+        assert(m1 =~= m2);
+}
 
 /// We axiomatize the page table walker with the implementation's interpretation function.
 #[verifier(external_body)]
@@ -43,9 +205,8 @@ pub open spec fn init(s: HWVariables) -> bool {
     &&& interp_pt_mem(s.pt_mem) === Map::empty()
 }
 
-// TODO: we only allow aligned accesses, need to argue in report that that's fine. can think of
-// unaligned accesses as two aligned accesses. when we get to concurrency we may have to change
-// that.
+// We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
+// get to concurrency we may have to change that.
 pub open spec fn step_ReadWrite(s1: HWVariables, s2: HWVariables, vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>) -> bool {
     &&& aligned(vaddr, 8)
     &&& s2.pt_mem === s1.pt_mem
