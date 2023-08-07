@@ -57,6 +57,7 @@ impl TLB {
 pub struct PageTableMemory {
     /// `phys_mem_ref` is the starting address of the physical memory linear mapping
     phys_mem_ref: *mut u64,
+    cr3: u64,
 }
 
 impl PageTableMemory {
@@ -67,21 +68,26 @@ impl PageTableMemory {
     pub open spec fn inv(self) -> bool {
         &&& self.phys_mem_ref_as_usize_spec() <= 0x7FE0_0000_0000_0000
         &&& forall|s1: MemRegion, s2: MemRegion| self.regions().contains(s1) && self.regions().contains(s2) && s1 !== s2 ==> !overlap(s1, s2)
+        &&& aligned(self.cr3_spec().base as nat, PAGE_SIZE as nat)
+        &&& self.cr3_spec().size == PAGE_SIZE
+    }
+
+    pub open spec fn init(self) -> bool {
+        &&& self.inv()
     }
 
     /// `cr3` returns a MemRegion whose base is the address at which the layer 0 page directory is mapped
     #[verifier(external_body)]
     pub fn cr3(&self) -> (res: MemRegionExec)
         ensures res === self.cr3_spec()
-    { unimplemented!() }
+    {
+        MemRegionExec {
+            base: self.cr3 as usize,
+            size: PAGE_SIZE,
+        }
+    }
 
     pub open spec fn cr3_spec(&self) -> MemRegionExec;
-
-    #[verifier(external_body)]
-    pub proof fn cr3_facts(&self)
-        ensures
-            aligned(self.cr3_spec().base as nat, PAGE_SIZE as nat),
-            self.cr3_spec().size == PAGE_SIZE;
 
     // We assume that alloc_page never fails. In practice we can just keep a buffer of 3+ pages
     // that are allocated before we use map_frame.

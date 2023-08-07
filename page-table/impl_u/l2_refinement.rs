@@ -73,7 +73,6 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
 
     proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory) {
         let ptr: usize = memory.cr3_spec().base;
-        memory.cr3_facts();
         let pt = l2_impl::PTDir {
             region: memory.cr3_spec()@,
             entries: new_seq(512, Option::None),
