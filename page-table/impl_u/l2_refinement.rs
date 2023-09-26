@@ -54,12 +54,12 @@ proof fn lemma_no_entries_implies_interp_at_aux_no_entries(pt: l2_impl::PageTabl
     }
 }
 
-spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
+pub open spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
     true
 }
 
 impl impl_spec::InterfaceSpec for PageTableImpl {
-    spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
+    open spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
         exists|ghost_pt: l2_impl::PTDir| {
             let page_table = l2_impl::PageTable {
                 memory: memory,

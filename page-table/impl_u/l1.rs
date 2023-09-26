@@ -25,11 +25,11 @@ pub proof fn ambient_lemmas2()
         forall|d: Directory| d.inv() ==> (#[trigger] d.interp()).upper == d.upper_vaddr(),
         forall|d: Directory| d.inv() ==> (#[trigger] d.interp()).lower == d.base_vaddr,
 {
-    assert forall #![auto] |d: Directory, i: nat| d.inv() && i < d.num_entries() && d.entries.index(i as int).is_Directory()
+    assert forall |d: Directory, i: nat| #![auto] d.inv() && i < d.num_entries() && d.entries.index(i as int).is_Directory()
         implies d.entries.index(i as int).get_Directory_0().inv() by {
         assert(d.directories_obey_invariant());
     };
-    assert forall #![auto] |d: Directory| d.inv() implies d.interp().upper == d.upper_vaddr() && d.interp().lower == d.base_vaddr by {
+    assert forall |d: Directory| #![auto] d.inv() implies d.interp().upper == d.upper_vaddr() && d.interp().lower == d.base_vaddr by {
         d.lemma_inv_implies_interp_inv();
     };
 }
@@ -230,7 +230,7 @@ impl Directory {
                 (forall|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
                 (forall|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
     {
-        assert forall #![auto] |i: nat| i < self.num_entries() implies 
+        assert forall |i: nat| #![auto] i < self.num_entries() implies
                      self.interp_of_entry(i).inv() &&
                      self.interp_of_entry(i).lower == self.entry_base(i) &&
                      self.interp_of_entry(i).upper == self.entry_base(i+1) by {
@@ -676,12 +676,12 @@ impl Directory {
         } else {
             let _ = self.interp_of_entry(j);
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
-            assert forall #![auto] |base: nat, pte: PageTableEntry|
+            assert forall |base: nat, pte: PageTableEntry| #![auto]
                 self.interp_aux(j).map.contains_pair(base, pte) implies
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte) by {
                 if self.interp_aux(j+1).map.contains_pair(base, pte) { } else { }
             };
-            assert forall #![auto] |base: nat|
+            assert forall |base: nat| #![auto]
                 self.interp_aux(j).map.dom().contains(base) implies
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.dom().contains(base) by {
                 if self.interp_aux(j+1).map.dom().contains(base) { } else { }
