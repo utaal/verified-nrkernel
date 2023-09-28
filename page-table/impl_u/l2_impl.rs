@@ -1675,7 +1675,7 @@ impl PageTable {
                 }
 
                 assert(self.accepted_mapping(vaddr as nat, pte@)) by {
-                    reveal(Self::accepted_mapping);
+                    reveal(PageTable::accepted_mapping);
                 };
                 assert(self.memory.alloc_available_pages() >= 2 - layer);
                 assert(self.memory.alloc_available_pages() >= 3 - (layer + 1));

@@ -59,7 +59,7 @@ spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
 }
 
 impl impl_spec::InterfaceSpec for PageTableImpl {
-    spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
+    closed spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
         exists|ghost_pt: l2_impl::PTDir| {
             let page_table = l2_impl::PageTable {
                 memory: memory,
