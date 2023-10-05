@@ -18,7 +18,7 @@ use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
 use crate::impl_u::spec_pt;
 use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec };
-use crate::spec_t::hardware::{interp_pt_mem,axiom_page_table_walk_interp};
+use crate::spec_t::hardware::{interp_pt_mem,lemma_page_table_walk_interp};
 
 verus! {
 
@@ -154,7 +154,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(self.ispec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
-            axiom_page_table_walk_interp();
+            lemma_page_table_walk_interp();
             old_page_table@.interp().lemma_inv_implies_interp_inv();
             page_table.interp().lemma_inv_implies_interp_inv();
             if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr as nat, pte@) {
@@ -198,7 +198,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(self.ispec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table.ghost_pt@));
             };
-            axiom_page_table_walk_interp();
+            lemma_page_table_walk_interp();
             page_table.interp().lemma_inv_implies_interp_inv();
             assert(spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr as nat, res));
         }
@@ -237,7 +237,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(page_table.interp().interp().upper == x86_arch_spec.upper_vaddr(0, 0));
             assert(MAX_BASE == x86_arch_spec.upper_vaddr(0, 0)) by(nonlinear_arith);
             assert(page_table.interp().interp().accepted_resolve(vaddr as nat));
-            axiom_page_table_walk_interp();
+            lemma_page_table_walk_interp();
         }
         assert(page_table.interp().interp().map == interp_pt_mem(memory));
         match page_table.resolve(vaddr) {

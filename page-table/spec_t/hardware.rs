@@ -6,7 +6,8 @@ use vstd::prelude::*;
 use vstd::map::*;
 use vstd::seq::*;
 use vstd::set::*;
-use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned, MemRegion, x86_arch_spec, Flags, PAGE_SIZE, MAX_BASE };
+use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned, MemRegion, x86_arch_spec, Flags };
+use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::l0;
@@ -29,10 +30,171 @@ pub enum HWStep {
     TLBEvict { vaddr: nat},
 }
 
-// Duplicate macro because I still don't understand how to import Rust macros
+// Duplicate macros because I still don't understand how to import Rust macros
 macro_rules! bitmask_inc {
     ($low:expr,$high:expr) => {
         (!(!0u64 << (($high+1u64)-$low))) << $low
+    }
+}
+macro_rules! bit {
+    ($v:expr) => {
+        1u64 << $v
+    }
+}
+
+#[is_variant]
+pub ghost enum GhostPageDirectoryEntry {
+    Directory {
+        addr: usize,
+        /// Present; must be 1 to map a page or reference a directory
+        flag_P: bool,
+        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+        flag_RW: bool,
+        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
+        flag_US: bool,
+        /// Page-level write-through
+        flag_PWT: bool,
+        /// Page-level cache disable
+        flag_PCD: bool,
+        /// Accessed; indicates whether software has accessed the page referenced by this entry
+        flag_A: bool,
+        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+        /// the page controlled by this entry); otherwise, reserved (must be 0)
+        flag_XD: bool,
+    },
+    Page {
+        addr: usize,
+        /// Present; must be 1 to map a page or reference a directory
+        flag_P: bool,
+        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
+        flag_RW: bool,
+        /// User/supervisor; if 0, user-mode accesses are not allowed to the page controlled by this entry
+        flag_US: bool,
+        /// Page-level write-through
+        flag_PWT: bool,
+        /// Page-level cache disable
+        flag_PCD: bool,
+        /// Accessed; indicates whether software has accessed the page referenced by this entry
+        flag_A: bool,
+        /// Dirty; indicates whether software has written to the page referenced by this entry
+        flag_D: bool,
+        // /// Page size; must be 1 (otherwise, this entry references a directory)
+        // flag_PS: Option<bool>,
+        // PS is entirely determined by the Page variant and the layer
+        /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
+        flag_G: bool,
+        /// Indirectly determines the memory type used to access the page referenced by this entry
+        flag_PAT: bool,
+        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
+        /// the page controlled by this entry); otherwise, reserved (must be 0)
+        flag_XD: bool,
+    },
+    Empty,
+}
+
+
+// layer:
+// 0 -> PML4
+// 1 -> PDPT, Page Directory Pointer Table
+// 2 -> PD, Page Directory
+// 3 -> PT, Page Table
+
+
+// MASK_FLAG_* are flags valid for entries at all levels.
+pub const MASK_FLAG_P:    u64 = bit!(0u64);
+pub const MASK_FLAG_RW:   u64 = bit!(1u64);
+pub const MASK_FLAG_US:   u64 = bit!(2u64);
+pub const MASK_FLAG_PWT:  u64 = bit!(3u64);
+pub const MASK_FLAG_PCD:  u64 = bit!(4u64);
+pub const MASK_FLAG_A:    u64 = bit!(5u64);
+pub const MASK_FLAG_XD:   u64 = bit!(63u64);
+// We can use the same address mask for all layers as long as we preserve the invariant that the
+// lower bits that *should* be masked off are already zero.
+pub const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
+// const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
+
+// MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
+// layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
+pub const MASK_PG_FLAG_D:    u64 = bit!(6u64);
+pub const MASK_PG_FLAG_G:    u64 = bit!(8u64);
+pub const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
+
+pub const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
+pub const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
+
+pub const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
+
+// const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
+// const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
+// const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
+// const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
+pub const MASK_DIR_ADDR:           u64 = MASK_ADDR;
+
+// We should be able to always use the 12:52 mask and have the invariant state that in the
+// other cases, the lower bits are already zero anyway.
+pub const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
+pub const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
+pub const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
+
+#[allow(repr_transparent_external_private_fields)]
+// An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
+#[repr(transparent)]
+pub struct PageDirectoryEntry {
+    pub entry: u64,
+    pub layer: Ghost<nat>,
+}
+
+// This impl defines everything necessary to define the page table walk semantics.
+// PageDirectoryEntry is reused in the implementation, which has an additional impl block for it in
+// `impl_u::l2_impl`.
+impl PageDirectoryEntry {
+    pub open spec fn view(self) -> GhostPageDirectoryEntry {
+        if self.layer() <= 3 {
+            let v = self.entry;
+            if v & MASK_FLAG_P == MASK_FLAG_P { // Is the Present bit set?
+                let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
+                let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
+                let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
+                let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
+                let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
+                let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
+                let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
+                if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
+                    // This is a page mapping, either because the PS flag is set (huge page) or
+                    // because we're in the bottom-most layer.
+                    let addr =
+                        if self.layer() == 3 {
+                            (v & MASK_L3_PG_ADDR) as usize
+                        } else if self.layer() == 2 {
+                            (v & MASK_L2_PG_ADDR) as usize
+                        } else {
+                            (v & MASK_L1_PG_ADDR) as usize
+                        };
+                    let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
+                    let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
+                    let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
+                    GhostPageDirectoryEntry::Page {
+                        addr,
+                        flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
+                        flag_A, flag_D, flag_G, flag_PAT, flag_XD,
+                    }
+                } else {
+                    // This mapping is a directory for the next layer.
+                    let addr = (v & MASK_ADDR) as usize;
+                    GhostPageDirectoryEntry::Directory {
+                        addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
+                    }
+                }
+            } else {
+                GhostPageDirectoryEntry::Empty
+            }
+        } else {
+            arbitrary()
+        }
+    }
+
+    pub open spec fn layer(self) -> nat {
+        self.layer@
     }
 }
 
@@ -52,107 +214,212 @@ macro_rules! l3_bits {
     ($addr:expr) => { $addr & bitmask_inc!(39u64,48u64) }
 }
 
-// Currently ignoring supervisor bits
-pub open spec fn pt_walk(pt_mem: mem::PageTableMemory, addr: u64) -> Option<PageTableEntry> {
+
+// Alternative idea:
+//
+// axiomatic definitions
+// pt_walk_huge_page(pt_mem, addr, PageTableEntry) -> bool {
+//  &&& aligned(addr, 2MB)
+//  &&& l0_idx blabla
+//  &&& l1_idx blabla
+//  &&& l2 entry maps a page
+// }
+//
+// pt_walk_normal_page
+// pt_walk_super_page
+//
+// These should yield a mutually disjoint set of addresses
+//
+// interp_pt_mem = anything for which one of the above predicates is true
+
+pub open spec fn read_entry(pt_mem: mem::PageTableMemory, dir_addr: nat, layer: nat, idx: nat) -> GhostPageDirectoryEntry {
+    let directory = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+    PageDirectoryEntry { entry: directory[idx as int], layer: Ghost(layer) }@
+}
+
+pub open spec fn valid_pt_walk_maps_normal_page(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
     let l0_idx: nat = l0_bits!(addr) as nat;
     let l1_idx: nat = l1_bits!(addr) as nat;
     let l2_idx: nat = l2_bits!(addr) as nat;
     let l3_idx: nat = l3_bits!(addr) as nat;
-    // TODO: maybe just don't need this and should be recommends instead
-    if pt_mem.inv() {
-        // TODO: Invariant might need to say that cr3 region is in regions()
-        let l0_tbl = pt_mem.region_view(pt_mem.cr3_spec()@);
-        let l0_ent = l2_impl::PageDirectoryEntry { entry: l0_tbl[l0_idx as int], layer: Ghost(0) }@;
-        match l0_ent {
-            l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-                let l1_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
-                let l1_ent = l2_impl::PageDirectoryEntry { entry: l1_tbl[l1_idx as int], layer: Ghost(1) }@;
-                match l1_ent {
-                    l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-                        let l2_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
-                        let l2_ent = l2_impl::PageDirectoryEntry { entry: l2_tbl[l2_idx as int], layer: Ghost(2) }@;
-                        match l2_ent {
-                            l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
-                                let l3_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
-                                let l3_ent = l2_impl::PageDirectoryEntry { entry: l3_tbl[l3_idx as int], layer: Ghost(3) }@;
-                                match l3_ent {
-                                    l2_impl::GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => None,
-                                    l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
-                                        Some(PageTableEntry {
-                                            frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(3) },
-                                            flags: Flags {
-                                                is_writable:     flag_RW,
-                                                is_supervisor:   !flag_US,
-                                                disable_execute: flag_XD,
-                                            }
-                                        }),
-                                    l2_impl::GhostPageDirectoryEntry::Empty => None,
+    aligned(addr as nat, L3_ENTRY_SIZE as nat) &&
+    if let GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =
+        read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
+            if let GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =
+                read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
+                    if let GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =
+                        read_entry(pt_mem, dir_addr as nat, 2, l2_idx) {
+                            if let GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =
+                            read_entry(pt_mem, dir_addr as nat, 3, l3_idx) {
+                                pte == PageTableEntry {
+                                    frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(3) },
+                                    flags: Flags { is_writable: flag_RW, is_supervisor: !flag_US, disable_execute: flag_XD }
                                 }
-                            },
-                            l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
-                                Some(PageTableEntry {
-                                    frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(2) },
-                                    flags: Flags {
-                                        is_writable:     flag_RW,
-                                        is_supervisor:   !flag_US,
-                                        disable_execute: flag_XD,
-                                    }
-                                }),
-                            l2_impl::GhostPageDirectoryEntry::Empty => None,
-                        }
-                    },
-                    l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
-                        Some(PageTableEntry {
-                            frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(1) },
-                            flags: Flags {
-                                is_writable:     flag_RW,
-                                is_supervisor:   !flag_US,
-                                disable_execute: flag_XD,
-                            }
-                        }),
-                    l2_impl::GhostPageDirectoryEntry::Empty => None,
-                }
-            },
-            // Pages can't be *that* huge.
-            // TODO: I think this is already taken care of in the PageDirectoryEntry constructor?
-            l2_impl::GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } => None,
-            l2_impl::GhostPageDirectoryEntry::Empty => None,
-        }
-    } else {
-        arbitrary()
-    }
+                            } else { false }
+                        } else { false }
+                } else { false }
+        } else { false }
 }
+
+pub open spec fn valid_pt_walk_maps_huge_page(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
+    let l0_idx: nat = l0_bits!(addr) as nat;
+    let l1_idx: nat = l1_bits!(addr) as nat;
+    let l2_idx: nat = l2_bits!(addr) as nat;
+    aligned(addr as nat, L2_ENTRY_SIZE as nat) &&
+    if let GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =
+        read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
+            if let GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =
+                read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
+                    if let GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =
+                        read_entry(pt_mem, dir_addr as nat, 2, l2_idx) {
+                            pte == PageTableEntry {
+                                frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(2) },
+                                flags: Flags { is_writable: flag_RW, is_supervisor: !flag_US, disable_execute: flag_XD }
+                            }
+                        } else { false }
+                } else { false }
+        } else { false }
+}
+
+pub open spec fn valid_pt_walk_maps_super_page(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
+    let l0_idx: nat = l0_bits!(addr) as nat;
+    let l1_idx: nat = l1_bits!(addr) as nat;
+    aligned(addr as nat, L1_ENTRY_SIZE as nat) &&
+    if let GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } =
+        read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
+            if let GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =
+                read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
+                    pte == PageTableEntry {
+                        frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(2) },
+                        flags: Flags { is_writable: flag_RW, is_supervisor: !flag_US, disable_execute: flag_XD }
+                    }
+                } else { false }
+        } else { false }
+}
+
+pub proof fn pt_walk_cases_disjoint(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry)
+    ensures
+        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
+{ }
+
+pub open spec fn valid_pt_walk(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
+    ||| valid_pt_walk_maps_normal_page(pt_mem, addr, pte)
+    ||| valid_pt_walk_maps_huge_page(pt_mem, addr, pte)
+    ||| valid_pt_walk_maps_super_page(pt_mem, addr, pte)
+}
+
+// FIXME:
+// There's a number of bits that are reserved/must-be-zero. Non-zero bits result in a page-fault.
+// Need to consider that in pt_walk def.
+//
+// Also should consider supervisor bits on intermediate entries
+//
+// Won't have to change the interp function but add conjuncts to the invariant saying that
+// 1. supervisor bit on directories is never set
+// 2. mb0 bits are unset
+// (but changing the pagedirectoryentry view *will* change the interp, still should be easy with
+// invariant change)
+//
+// pub open spec fn pt_walk(pt_mem: mem::PageTableMemory, addr: u64) -> Option<PageTableEntry> {
+//     let l0_idx: nat = l0_bits!(addr) as nat;
+//     let l1_idx: nat = l1_bits!(addr) as nat;
+//     let l2_idx: nat = l2_bits!(addr) as nat;
+//     let l3_idx: nat = l3_bits!(addr) as nat;
+//     let l0_tbl = pt_mem.region_view(pt_mem.cr3_spec()@);
+//     let l0_ent = PageDirectoryEntry { entry: l0_tbl[l0_idx as int], layer: Ghost(0) }@;
+//     match l0_ent {
+//         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+//             let l1_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+//             let l1_ent = PageDirectoryEntry { entry: l1_tbl[l1_idx as int], layer: Ghost(1) }@;
+//             match l1_ent {
+//                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+//                     let l2_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+//                     let l2_ent = PageDirectoryEntry { entry: l2_tbl[l2_idx as int], layer: Ghost(2) }@;
+//                     match l2_ent {
+//                         GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+//                             let l3_tbl = pt_mem.region_view(MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat });
+//                             let l3_ent = PageDirectoryEntry { entry: l3_tbl[l3_idx as int], layer: Ghost(3) }@;
+//                             match l3_ent {
+//                                 GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => None,
+//                                 GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+//                                     Some(PageTableEntry {
+//                                         frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(3) },
+//                                         flags: Flags { is_writable: flag_RW, is_supervisor: !flag_US, disable_execute: flag_XD }
+//                                     }),
+//                                 GhostPageDirectoryEntry::Empty => None,
+//                             }
+//                         },
+//                         GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+//                             Some(PageTableEntry {
+//                                 frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(2) },
+//                                 flags: Flags { is_writable: flag_RW, is_supervisor: !flag_US, disable_execute: flag_XD }
+//                             }),
+//                         GhostPageDirectoryEntry::Empty => None,
+//                     }
+//                 },
+//                 GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+//                     Some(PageTableEntry {
+//                         frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(1) },
+//                         flags: Flags { is_writable: flag_RW, is_supervisor: !flag_US, disable_execute: flag_XD }
+//                     }),
+//                 GhostPageDirectoryEntry::Empty => None,
+//             }
+//         },
+//         // Pages can't be *that* huge.
+//         // TODO: I think this is already taken care of in the PageDirectoryEntry constructor?
+//         GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } => None,
+//         GhostPageDirectoryEntry::Empty => None,
+//     }
+// }
 
 // Page table walker interpretation of the page table memory
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry> {
-    if pt_mem.inv() {
-        // Domain:
-        // - Addresses in the region [0, MAX_BASE)
-        // - Must decode to a mapping
-        // - The address must be the base address for that mapping
-        //   (That's the `aligned` in the Some branch of the match.)
-        Map::new(
-            |addr: nat|
-                0 <= addr && addr < MAX_BASE
-                && aligned(addr, PAGE_SIZE as nat)
-                // Casting to u64 is okay since MAX_BASE < u64::MAX
-                && match pt_walk(pt_mem, addr as u64) {
-                        Some(pte) => aligned(addr as nat, pte.frame.size as nat),
-                        None => false,
-                },
-            |addr: nat| match pt_walk(pt_mem, addr as u64) {
-                Some(pte) => pte,
-                None => arbitrary(),
-            })
-    } else {
-        arbitrary()
+    // Domain:
+    // - Addresses in the region [0, MAX_BASE)
+    // - Must decode to a mapping
+    // - The address must be the base address for that mapping
+    //   (That's the `aligned` in the Some branch of the match.)
+    Map::new(
+        |addr: nat|
+            0 <= addr && addr < MAX_BASE
+            // Casting addr to u64 is okay since addr < MAX_BASE < u64::MAX
+            && (exists|pte: PageTableEntry| #![trigger] valid_pt_walk(pt_mem, addr as u64, pte)),
+        |addr: nat|
+            choose|pte: PageTableEntry| valid_pt_walk(pt_mem, addr as u64, pte))
+    // Map::new(
+    //     |addr: nat|
+    //         0 <= addr && addr < MAX_BASE
+    //         && aligned(addr, PAGE_SIZE as nat)
+    //         // Casting to u64 is okay since MAX_BASE < u64::MAX
+    //         && match pt_walk(pt_mem, addr as u64) {
+    //                 Some(pte) => aligned(addr as nat, pte.frame.size as nat),
+    //                 None => false,
+    //         },
+    //     |addr: nat| match pt_walk(pt_mem, addr as u64) {
+    //         Some(pte) => pte,
+    //         None => arbitrary(),
+    //     })
+}
+
+pub proof fn lemma_page_table_walk_interp()
+    ensures
+        forall|pt: l2_impl::PageTable| #![auto] pt.inv() ==> pt.interp().interp().map === interp_pt_mem(pt.memory)
+{
+    assert forall|pt: l2_impl::PageTable| #![auto]
+        pt.inv()
+        implies
+        pt.interp().interp().map === interp_pt_mem(pt.memory) by
+    {
+        lemma_page_table_walk_interp_aux(pt);
     }
 }
 
-// // Page table walker interpretation of the page table memory
-// pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry>;
-
-pub proof fn lemma_page_table_walk_interp(pt: l2_impl::PageTable)
+pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
     requires
         pt.inv()
     ensures
@@ -168,8 +435,8 @@ pub proof fn lemma_page_table_walk_interp(pt: l2_impl::PageTable)
             assert(pt.memory.inv());
             assert(0 <= addr && addr < MAX_BASE);
             assert(aligned(addr, PAGE_SIZE as nat));
-            assert(pt_walk(pt.memory, addr as u64) == Some(pte));
-            assert(aligned(addr as nat, pte.frame.size as nat));
+            // assert(pt_walk(pt.memory, addr as u64) == Some(pte));
+            // assert(aligned(addr as nat, pte.frame.size as nat));
             assume(false);
         };
         assert forall|addr: nat, pte: PageTableEntry|
@@ -193,12 +460,6 @@ pub proof fn lemma_page_table_walk_interp(pt: l2_impl::PageTable)
         };
         assert(m1 =~= m2);
 }
-
-/// We axiomatize the page table walker with the implementation's interpretation function.
-#[verifier(external_body)]
-pub proof fn axiom_page_table_walk_interp()
-    ensures
-        forall|pt: l2_impl::PageTable| pt.inv() ==> #[trigger] pt.interp().interp().map === interp_pt_mem(pt.memory);
 
 pub open spec fn init(s: HWVariables) -> bool {
     &&& s.tlb.dom() === Set::empty()

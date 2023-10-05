@@ -18,6 +18,11 @@ use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::indexing;
 use crate::impl_u::lib;
+use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry};
+use crate::spec_t::hardware::{MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD,
+MASK_FLAG_A, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_D, MASK_PG_FLAG_G, MASK_PG_FLAG_PAT,
+MASK_L1_PG_FLAG_PS, MASK_L2_PG_FLAG_PS, MASK_L3_PG_FLAG_PAT, MASK_DIR_ADDR, MASK_L1_PG_ADDR,
+MASK_L2_PG_ADDR, MASK_L3_PG_ADDR};
 
 verus! {
 
@@ -38,49 +43,6 @@ macro_rules! bitmask_inc {
 //     }
 // }
 
-
-// layer:
-// 0 -> PML4
-// 1 -> PDPT, Page Directory Pointer Table
-// 2 -> PD, Page Directory
-// 3 -> PT, Page Table
-
-
-// MASK_FLAG_* are flags valid for entries at all levels.
-pub const MASK_FLAG_P:    u64 = bit!(0u64);
-pub const MASK_FLAG_RW:   u64 = bit!(1u64);
-pub const MASK_FLAG_US:   u64 = bit!(2u64);
-pub const MASK_FLAG_PWT:  u64 = bit!(3u64);
-pub const MASK_FLAG_PCD:  u64 = bit!(4u64);
-pub const MASK_FLAG_A:    u64 = bit!(5u64);
-pub const MASK_FLAG_XD:   u64 = bit!(63u64);
-// We can use the same address mask for all layers as long as we preserve the invariant that the
-// lower bits that *should* be masked off are already zero.
-pub const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
-// const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
-
-// MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
-// layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
-pub const MASK_PG_FLAG_D:    u64 = bit!(6u64);
-pub const MASK_PG_FLAG_G:    u64 = bit!(8u64);
-pub const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
-
-pub const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
-pub const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
-
-pub const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
-
-// const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
-// const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
-// const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
-// const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
-pub const MASK_DIR_ADDR:           u64 = MASK_ADDR;
-
-// We should be able to always use the 12:52 mask and have the invariant state that in the
-// other cases, the lower bits are already zero anyway.
-pub const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
-pub const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
-pub const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
 
 proof fn lemma_addr_masks_facts(address: u64)
     ensures
@@ -170,119 +132,11 @@ pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bo
 }
 
 
-// FIXME: We can probably remove bits from here that we don't use, e.g. accessed, dirty, PAT. (And
-// set them to zero when we create a new entry.)
-#[is_variant]
-pub ghost enum GhostPageDirectoryEntry {
-    Directory {
-        addr: usize,
-        /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
-        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
-        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
-        /// Page-level write-through
-        flag_PWT: bool,
-        /// Page-level cache disable
-        flag_PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
-        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-        /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
-    },
-    Page {
-        addr: usize,
-        /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
-        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
-        /// User/supervisor; if 0, user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
-        /// Page-level write-through
-        flag_PWT: bool,
-        /// Page-level cache disable
-        flag_PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
-        /// Dirty; indicates whether software has written to the page referenced by this entry
-        flag_D: bool,
-        // /// Page size; must be 1 (otherwise, this entry references a directory)
-        // flag_PS: Option<bool>,
-        // PS is entirely determined by the Page variant and the layer
-        /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
-        flag_G: bool,
-        /// Indirectly determines the memory type used to access the page referenced by this entry
-        flag_PAT: bool,
-        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-        /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
-    },
-    Empty,
-}
-
-
-
-#[allow(repr_transparent_external_private_fields)]
-// An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
-#[repr(transparent)]
-pub struct PageDirectoryEntry {
-    pub entry: u64,
-    // pub view: Ghost<GhostPageDirectoryEntry>,
-    pub layer: Ghost<nat>,
-}
-
+// PageDirectoryEntry is defined in crate::spec_t::hardware to define the page table walk
+// semantics. Here we reuse it for the implementation and add exec functions to it.
 impl PageDirectoryEntry {
-
-    pub open spec fn view(self) -> GhostPageDirectoryEntry {
-        if self.layer() <= 3 {
-            let v = self.entry;
-            if v & MASK_FLAG_P == MASK_FLAG_P {
-                let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
-                let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
-                let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
-                let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
-                let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
-                let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
-                let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
-                if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
-                    let addr     =
-                        if self.layer() == 3 {
-                            (v & MASK_L3_PG_ADDR) as usize
-                        } else if self.layer() == 2 {
-                            (v & MASK_L2_PG_ADDR) as usize
-                        } else {
-                            (v & MASK_L1_PG_ADDR) as usize
-                        };
-                    let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
-                    let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
-                    let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
-                    GhostPageDirectoryEntry::Page {
-                        addr,
-                        flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
-                        flag_A, flag_D, flag_G, flag_PAT, flag_XD,
-                    }
-                } else {
-                    let addr = (v & MASK_ADDR) as usize;
-                    GhostPageDirectoryEntry::Directory {
-                        addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
-                    }
-                }
-            } else {
-                GhostPageDirectoryEntry::Empty
-            }
-        } else {
-            arbitrary()
-        }
-    }
-
     pub open spec fn addr_is_zero_padded(self) -> bool {
         addr_is_zero_padded(self.layer@, self.entry, self@.is_Page())
-    }
-
-    pub open spec fn layer(self) -> nat {
-        self.layer@
     }
 
     pub proof fn lemma_zero_is_empty(self)
@@ -756,10 +610,7 @@ impl PageTable {
     proof fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, pt: PTDir) {
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
         assert(self.inv_at(layer, ptr, pt));
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             // Can't assert this for the actual entry because we'd have to call `interp_at_entry`
             // whose termination depends on this function's termination.
@@ -938,10 +789,7 @@ impl PageTable {
             }),
         decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
     {
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr, pt));
             let entry = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
@@ -2024,10 +1872,7 @@ impl PageTable {
         let res = self.interp_at_aux(layer + 1, entry_ptr, entry_base, init, entry_pt);
         assert(self.inv_at(layer + 1, entry_ptr, entry_pt));
 
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let entry = self.interp_at_entry(layer + 1, entry_ptr, entry_base, init.len(), entry_pt);
             assert(entry === l1::NodeEntry::Empty());
@@ -2066,8 +1911,7 @@ impl PageTable {
             !self.interp_at_aux(layer, ptr, base, init, pt)[nonempty_idx as int].is_Empty()
         decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
     {
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
             let new_init = init.add(seq![entry]);
@@ -2085,8 +1929,7 @@ impl PageTable {
             forall|i: nat| i < self.interp_at_aux(layer, ptr, base, init, pt).len() ==> self.interp_at_aux(layer, ptr, base, init, pt)[i as int] == l1::NodeEntry::Empty(),
         decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
     {
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
             let new_init = init.add(seq![entry]);
@@ -2171,10 +2014,7 @@ impl PageTable {
     {
         self.lemma_inv_at_doesnt_use_ghost_pt(other, layer, ptr, pt);
         assert(other.inv_at(layer, ptr, pt));
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let idx = init.len();
             let entry = self.interp_at_entry(layer, ptr, base, idx, pt);
