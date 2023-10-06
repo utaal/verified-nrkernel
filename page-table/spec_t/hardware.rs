@@ -354,19 +354,8 @@ pub open spec fn valid_pt_walk_maps_super_page(pt_mem: mem::PageTableMemory, add
     } else { false }
 }
 
-pub proof fn pt_walk_cases_disjoint(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry)
-    ensures
-        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
-{ }
-
-
-
 // TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics)
+//
 // The intended semantics for valid_pt_walk is this:
 // Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the
 // MMU's page table walk arrives at an entry mapping the frame `pte.frame`. The properties in
@@ -413,6 +402,16 @@ pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTab
         |addr: nat|
             choose|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte))
 }
+
+pub proof fn pt_walk_cases_disjoint(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry)
+    ensures
+        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
+        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
+{ }
 
 pub proof fn lemma_page_table_walk_interp()
     ensures
