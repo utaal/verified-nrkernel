@@ -10,7 +10,7 @@ use vstd::set_lib::*;
 use vstd::seq_lib::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec };
+use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, permissive_flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec };
 use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
@@ -268,8 +268,19 @@ impl PageDirectoryEntry {
             r@.is_Directory(),
             r.layer@ == layer,
             r@.get_Directory_addr() == address,
+            r@.get_Directory_flag_RW(),
+            r@.get_Directory_flag_US(),
+            !r@.get_Directory_flag_XD(),
     {
-        Self::new_entry(layer, address, false, true, false, false, false, false)
+        Self::new_entry(
+            layer,
+            address,
+            false, // is_page
+            true,  // is_writable
+            false, // is_supervisor
+            false, // is_writethrough
+            false, // disable_cache
+            false) // disable_execute
     }
 
     pub fn new_entry(
@@ -406,6 +417,8 @@ impl PageDirectoryEntry {
     }
 }
 
+/// PTDir is used in the `ghost_pt` field of the PageTable. It's used to keep track of the memory
+/// regions in which the corresponding translation structures are stored.
 pub struct PTDir {
     /// Region of physical memory in which this PTDir is stored
     pub region: MemRegion,
@@ -515,12 +528,20 @@ impl PageTable {
         &&& self.layer_in_range(layer)
         &&& pt.entries.len() == X86_NUM_ENTRIES
         &&& self.directories_obey_invariant_at(layer, ptr, pt)
+        &&& self.directories_have_flags(layer, ptr, pt)
         &&& self.ghost_pt_matches_structure(layer, ptr, pt)
         &&& self.ghost_pt_used_regions_rtrancl(layer, ptr, pt)
         &&& self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt)
         &&& self.ghost_pt_region_notin_used_regions(layer, ptr, pt)
         &&& pt.used_regions.subset_of(self.memory.regions())
         &&& self.entry_addrs_are_zero_padded(layer, ptr, pt)
+    }
+
+    pub open spec fn directories_have_flags(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+        forall|i: nat| i < X86_NUM_ENTRIES ==> {
+            let entry = #[trigger] self.view_at(layer, ptr, i, pt);
+            entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+        }
     }
 
     pub open spec fn entry_addrs_are_zero_padded(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
@@ -566,6 +587,9 @@ impl PageTable {
             layer: layer,
             base_vaddr,
             arch: x86_arch_spec,
+            // We don't have to check the flags because we know (from the invariant) that all
+            // directories have these flags set.
+            flags: permissive_flags,
         }
     }
 
@@ -662,6 +686,25 @@ impl PageTable {
             assert(entry === self_entry);
         };
         assert(other.entry_addrs_are_zero_padded(layer, ptr, pt));
+
+        assert forall|i: nat|
+        i < X86_NUM_ENTRIES implies {
+            let entry = #[trigger] other.view_at(layer, ptr, i, pt);
+            entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+        } by {
+            let entry = other.view_at(layer, ptr, i, pt);
+            let o_entry = other.entry_at_spec(layer, ptr, i, pt);
+            let s_entry = self.entry_at_spec(layer, ptr, i, pt);
+            assert(o_entry@ == entry);
+            assert(o_entry == s_entry);
+            if entry.is_Directory() {
+                assert(self.directories_have_flags(layer, ptr, pt));
+                assert(self.view_at(layer, ptr, i, pt).get_Directory_flag_RW());
+                assert(self.view_at(layer, ptr, i, pt).get_Directory_flag_US());
+                assert(!self.view_at(layer, ptr, i, pt).get_Directory_flag_XD());
+            }
+        };
+        assert(other.directories_have_flags(layer, ptr, pt));
 
         assert forall|i: nat|
         i < X86_NUM_ENTRIES implies {
@@ -1109,6 +1152,21 @@ impl PageTable {
                                 };
                                 assert(self.directories_obey_invariant_at(layer as nat, ptr, pt_res@));
 
+                                assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                    let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt_res@);
+                                    entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                                } by {
+                                    assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
+                                    let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt_res@);
+                                    let old_entry = old(self).view_at(layer as nat, ptr, i, pt@);
+                                    assert(old_entry == entry);
+                                    assert(old(self).directories_have_flags(layer as nat, ptr, pt@));
+                                    if old_entry.is_Directory() {
+                                        assert(old_entry.get_Directory_flag_RW() && old_entry.get_Directory_flag_US() && !old_entry.get_Directory_flag_XD());
+                                    }
+                                };
+                                assert(self.directories_have_flags(layer as nat, ptr, pt_res@));
+
                                 assert(self.entry_addrs_are_zero_padded(layer as nat, ptr, pt_res@)) by {
                                     assert forall|i: nat|
                                         i < X86_NUM_ENTRIES
@@ -1268,8 +1326,7 @@ impl PageTable {
                         entry.is_Directory() ==> {
                             &&& self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i as int].get_Some_0())
                         }
-                    }
-                    by {
+                    } by {
                         let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
                         let byte_addr = (ptr + i * WORD_SIZE) as nat;
                         assert(i < self.memory.region_view(pt@.region).len());
@@ -1290,6 +1347,23 @@ impl PageTable {
                         }
                     };
                     assert(self.directories_obey_invariant_at(layer as nat, ptr, pt@));
+
+                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                        let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
+                        entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                    }
+                    by {
+                        let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
+                        assert(i < self.memory.region_view(pt@.region).len());
+                        if i == idx {
+                        } else {
+                            assert(old(self).directories_have_flags(layer as nat, ptr, pt@));
+                            assert(entry === old(self).view_at(layer as nat, ptr, i, pt@));
+                            if entry.is_Directory() {
+                            }
+                        }
+                    };
+                    assert(self.directories_have_flags(layer as nat, ptr, pt@));
 
                     assert(self.ghost_pt_used_regions_rtrancl(layer as nat, ptr, pt@));
                     assert(self.ghost_pt_used_regions_pairwise_disjoint(layer as nat, ptr, pt@));
@@ -1380,7 +1454,6 @@ impl PageTable {
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 self.memory.write(ptr, idx, Ghost(pt@.region), new_dir_entry.entry);
 
-
                 // After writing the new empty directory entry we prove that the resulting state
                 // satisfies the invariant and that the interpretation remains unchanged.
                 let pt_with_empty: Ghost<PTDir> = Ghost(
@@ -1458,6 +1531,22 @@ impl PageTable {
                                         assert(self_with_empty@.memory.regions().contains(pt_entry.region));
                                         old(self).lemma_inv_at_different_memory(self_with_empty@, (layer + 1) as nat, entry.get_Directory_addr(), pt_entry);
                                         assert(self_with_empty@.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt_with_empty@.entries[i as int].get_Some_0()));
+                                    }
+                                }
+                            };
+                        };
+                        assert(self_with_empty@.directories_have_flags(layer as nat, ptr, pt_with_empty@)) by {
+                            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                let entry = #[trigger] self_with_empty@.view_at(layer as nat, ptr, i, pt_with_empty@);
+                                entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                            } by {
+                                let entry = self_with_empty@.view_at(layer as nat, ptr, i, pt_with_empty@);
+                                if i == idx {
+                                } else {
+                                    if entry.is_Directory() {
+                                        assert(self_with_empty@.memory.spec_read(i, pt_with_empty@.region)
+                                               === old(self).memory.spec_read(i, pt@.region));
+                                        assert(entry === old(self).view_at(layer as nat, ptr, i, pt@));
                                     }
                                 }
                             };
@@ -1605,6 +1694,24 @@ impl PageTable {
                                         }
                                     };
                                 };
+
+                                assert(self.directories_have_flags(layer as nat, ptr, pt_final@)) by {
+                                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                        let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt_final@);
+                                        entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                                    } by {
+                                        let entry = self.view_at(layer as nat, ptr, i, pt_final@);
+                                        if i == idx {
+                                        } else {
+                                            if entry.is_Directory() {
+                                                assert(self.memory.spec_read(i, pt_final@.region)
+                                                       === self_with_empty@.memory.spec_read(i, pt_with_empty@.region));
+                                                assert(entry === self_with_empty@.view_at(layer as nat, ptr, i, pt_with_empty@));
+                                            }
+                                        }
+                                    };
+                                };
+
                                 assert(pt_final@.entries.len() == pt_with_empty@.entries.len());
                                 assert(forall|i: nat| i != idx && i < pt_final@.entries.len() ==> pt_final@.entries[i as int] === pt_with_empty@.entries[i as int]);
                                 assert(self.ghost_pt_used_regions_rtrancl(layer as nat, ptr, pt_final@)) by {

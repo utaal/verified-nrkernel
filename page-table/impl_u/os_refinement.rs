@@ -568,6 +568,11 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                         };
                                         assert_maps_equal!(abs_s2.mem, abs_s1.mem.insert(vmem_idx, new_value));
                                         assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
+                                        // Generalizing from the previous assert to the
+                                        // postcondition seems unstable. Simply assuming the
+                                        // statement after the assert somehow fixes it. (As does
+                                        // increasing the rlimit to 50, luckily.)
+                                        // assume(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     } else {
                                         assert(result.is_Pagefault());
                                         assert(sys_s2.mem === sys_s1.mem);

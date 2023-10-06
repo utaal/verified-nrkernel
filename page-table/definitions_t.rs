@@ -203,6 +203,13 @@ pub struct Flags {
     pub disable_execute: bool,
 }
 
+// We always set permissive flags on directories. Restrictions happen on the frame mapping.
+pub spec const permissive_flags: Flags = Flags {
+    is_writable:     true,
+    is_supervisor:   false,
+    disable_execute: false,
+};
+
 pub struct PageTableEntry {
     pub frame: MemRegion,
     pub flags: Flags,
