@@ -212,6 +212,11 @@ pub spec const permissive_flags: Flags = Flags {
 
 pub struct PageTableEntry {
     pub frame: MemRegion,
+    /// The `flags` field on a `PageTableEntry` denotes the combined flags of the entire
+    /// translation path to the entry. (See page table walk definition in hardware model,
+    /// `spec_t::hardware`.) However, because we always set the flags on directories to be
+    /// permissive these flags also correspond to the flags that we set for the frame mapping
+    /// corresponding to this `PageTableEntry`.
     pub flags: Flags,
 }
 

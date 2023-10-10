@@ -89,6 +89,9 @@ pub ghost enum GhostPageDirectoryEntry {
         /// the page controlled by this entry); otherwise, reserved (must be 0)
         flag_XD: bool,
     },
+    /// An `Empty` entry is an entry that does not contain a valid mapping. I.e. the entry is
+    /// either empty or has a bit set that the intel manual designates as must-be-zero. Both empty
+    /// and invalid entries cause a page fault if used during translation.
     Empty,
 }
 
@@ -136,6 +139,7 @@ pub const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
 pub const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
 pub const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
 
+
 #[allow(repr_transparent_external_private_fields)]
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
 #[repr(transparent)]
@@ -148,39 +152,65 @@ pub struct PageDirectoryEntry {
 // PageDirectoryEntry is reused in the implementation, which has an additional impl block for it in
 // `impl_u::l2_impl`.
 impl PageDirectoryEntry {
-
     pub open spec fn view(self) -> GhostPageDirectoryEntry {
-        if self.layer() <= 3 {
-            let v = self.entry;
-            if v & MASK_FLAG_P == MASK_FLAG_P {
-                let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
-                let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
-                let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
-                let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
-                let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
-                let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
-                let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
-                if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
-                    let addr     =
-                        if self.layer() == 3 {
-                            (v & MASK_L3_PG_ADDR) as usize
-                        } else if self.layer() == 2 {
-                            (v & MASK_L2_PG_ADDR) as usize
-                        } else {
-                            (v & MASK_L1_PG_ADDR) as usize
-                        };
-                    let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
-                    let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
-                    let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
+        let v = self.entry;
+        let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
+        let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
+        let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
+        let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
+        let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
+        let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
+        let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
+        let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
+        let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
+        if self.layer@ <= 3 {
+            if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
+                if self.layer == 0 {
+                    let addr = (v & MASK_ADDR) as usize;
+                    GhostPageDirectoryEntry::Directory {
+                        addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
+                    }
+                } else if self.layer == 1 {
+                    if v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
+                        // super page mapping
+                        let addr = (v & MASK_L1_PG_ADDR) as usize;
+                        let flag_PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
+                        GhostPageDirectoryEntry::Page {
+                            addr,
+                            flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
+                            flag_A, flag_D, flag_G, flag_PAT, flag_XD,
+                        }
+                    } else {
+                        let addr = (v & MASK_ADDR) as usize;
+                        GhostPageDirectoryEntry::Directory {
+                            addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
+                        }
+                    }
+                } else if self.layer == 2 {
+                    if v & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
+                        // huge page mapping
+                        let addr = (v & MASK_L2_PG_ADDR) as usize;
+                        let flag_PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
+                        GhostPageDirectoryEntry::Page {
+                            addr,
+                            flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
+                            flag_A, flag_D, flag_G, flag_PAT, flag_XD,
+                        }
+                    } else {
+                        let addr = (v & MASK_ADDR) as usize;
+                        GhostPageDirectoryEntry::Directory {
+                            addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
+                        }
+                    }
+                } else {
+                    // TODO: uncomment when we have inline proofs
+                    // assert(self.layer == 3);
+                    let addr = (v & MASK_L3_PG_ADDR) as usize;
+                    let flag_PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
                     GhostPageDirectoryEntry::Page {
                         addr,
                         flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
                         flag_A, flag_D, flag_G, flag_PAT, flag_XD,
-                    }
-                } else {
-                    let addr = (v & MASK_ADDR) as usize;
-                    GhostPageDirectoryEntry::Directory {
-                        addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
                     }
                 }
             } else {
@@ -191,60 +221,49 @@ impl PageDirectoryEntry {
         }
     }
 
-    // pub open spec fn view(self) -> GhostPageDirectoryEntry {
-    //     arbitrary()
-    //     // let v = self.entry;
-    //     // let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
-    //     // let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
-    //     // let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
-    //     // let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
-    //     // let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
-    //     // let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
-    //     // let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
-    //     // let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
-    //     // let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
-    //     // if self.layer == 0 && (v & MASK_FLAG_P == MASK_FLAG_P) {
-    //     //     let addr = (v & MASK_ADDR) as usize;
-    //     //     GhostPageDirectoryEntry::Directory {
-    //     //         addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
-    //     //     }
-    //     // } else if self.layer == 1 {
-    //     // }
-    //     // // FIXME: left off here
-
-    //     // if self.layer() <= 3 {
-    //     //     if v & MASK_FLAG_P == MASK_FLAG_P { // Is the Present bit set?
-    //     //         if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
-    //     //             // This is a page mapping, either because the PS flag is set (huge page) or
-    //     //             // because we're in the bottom-most layer.
-    //     //             let addr =
-    //     //                 if self.layer() == 3 {
-    //     //                     (v & MASK_L3_PG_ADDR) as usize
-    //     //                 } else if self.layer() == 2 {
-    //     //                     (v & MASK_L2_PG_ADDR) as usize
-    //     //                 } else {
-    //     //                     (v & MASK_L1_PG_ADDR) as usize
-    //     //                 };
-    //     //             let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
-    //     //             GhostPageDirectoryEntry::Page {
-    //     //                 addr,
-    //     //                 flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
-    //     //                 flag_A, flag_D, flag_G, flag_PAT, flag_XD,
-    //     //             }
-    //     //         } else {
-    //     //             // This mapping is a directory for the next layer.
-    //     //             let addr = (v & MASK_ADDR) as usize;
-    //     //             GhostPageDirectoryEntry::Directory {
-    //     //                 addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
-    //     //             }
-    //     //         }
-    //     //     } else {
-    //     //         GhostPageDirectoryEntry::Empty
-    //     //     }
-    //     // } else {
-    //     //     arbitrary()
-    //     // }
-    // }
+    /// Returns `true` iff all must-be-zero bits for a given entry are zero.
+    #[verifier::opaque]
+    pub open spec fn all_mb0_bits_are_zero(self) -> bool
+        recommends self.layer@ <= 3,
+    {
+        // FIXME: currently assuming that MAXPHYADDR is 52, which may be incorrect. Lower values for
+        // MAXPHYADDR would add additional mb0 bits.
+        if self.entry & MASK_FLAG_P == MASK_FLAG_P {
+            if self.layer == 0 { // PML4, always directory
+                // 51:M
+                // 7
+                self.entry & bit!(7u64) == 0
+            } else if self.layer == 1 { // PDPT
+                if self.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
+                    // 51:M
+                    // 29:13
+                    self.entry & bitmask_inc!(13u64,29u64) == 0
+                } else {
+                    // 51:M
+                    // 7
+                    self.entry & bit!(7u64) == 0
+                }
+            } else if self.layer == 2 { // PD
+                if self.entry & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
+                    // 62:M
+                    // 20:13
+                    self.entry & bitmask_inc!(13u64,20u64) == 0
+                } else {
+                    // 62:M
+                    // 7
+                    self.entry & bit!(7u64) == 0
+                }
+            } else if self.layer == 3 { // PT, always frame
+                // 62:M
+                true
+            } else {
+                arbitrary()
+            }
+        } else {
+            // No bits are reserved for unused entries
+            true
+        }
+    }
 
     pub open spec fn layer(self) -> nat {
         self.layer@
@@ -354,21 +373,21 @@ pub open spec fn valid_pt_walk_maps_super_page(pt_mem: mem::PageTableMemory, add
     } else { false }
 }
 
-// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics)
-//
-// The intended semantics for valid_pt_walk is this:
-// Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the
-// MMU's page table walk arrives at an entry mapping the frame `pte.frame`. The properties in
-// `pte.flags` reflect the properties along the translation path. I.e. `pte.flags.is_writable` is
-// true iff the RW flag is set in all directories along the translation path and in the frame
-// mapping. Similarly, `pte.flags.is_supervisor` is true iff the US flag is unset in all those
-// structures and `pte.flags.disable_execute` is true iff the XD flag is set in at least one of
-// those structures.
-//
-// In practice, we always set these flags to their more permissive state in directories and only
-// make more restrictive settings in the frame mappings. (Ensured in the invariant, see conjunct
-// `directories_have_flags` in refinement layers 1 and 2.) But in the hardware model we still
-// define the full, correct semantics to ensure the implementation sets the flags correctly.
+/// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics)
+///
+/// The intended semantics for valid_pt_walk is this:
+/// Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the
+/// MMU's page table walk arrives at an entry mapping the frame `pte.frame`. The properties in
+/// `pte.flags` reflect the properties along the translation path. I.e. `pte.flags.is_writable` is
+/// true iff the RW flag is set in all directories along the translation path and in the frame
+/// mapping. Similarly, `pte.flags.is_supervisor` is true iff the US flag is unset in all those
+/// structures and `pte.flags.disable_execute` is true iff the XD flag is set in at least one of
+/// those structures.
+///
+/// In practice, we always set these flags to their more permissive state in directories and only
+/// make more restrictive settings in the frame mappings. (Ensured in the invariant, see conjunct
+/// `directories_have_flags` in refinement layers 1 and 2.) But in the hardware model we still
+/// define the full, correct semantics to ensure the implementation sets the flags correctly.
 pub open spec fn valid_pt_walk(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
     ||| valid_pt_walk_maps_normal_page(pt_mem, addr, pte)
     ||| valid_pt_walk_maps_huge_page(pt_mem, addr, pte)
@@ -392,7 +411,7 @@ pub open spec fn nat_to_u64(n: nat) -> u64
     recommends n <= u64::MAX
 { n as u64 }
 
-// Page table walker interpretation of the page table memory
+/// Page table walker interpretation of the page table memory
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry> {
     Map::new(
         |addr: nat|
