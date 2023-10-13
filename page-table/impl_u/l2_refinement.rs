@@ -140,10 +140,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
         }
         assert(page_table.interp().accepted_mapping(vaddr as nat, pte@));
-        assert(x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0) == 512 * L0_ENTRY_SIZE);
         assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
-        assert(x86_arch_spec.upper_vaddr(0, 0) == x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0));
-        assert(x86_arch_spec.upper_vaddr(0, 0) <= MAX_BASE);
         let old_page_table: Ghost<l2_impl::PageTable> = Ghost(page_table);
         let res = page_table.map_frame(vaddr, pte);
         assert(page_table.inv());
@@ -235,7 +232,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
             assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
             assert(page_table.interp().interp().upper == x86_arch_spec.upper_vaddr(0, 0));
-            assert(MAX_BASE == x86_arch_spec.upper_vaddr(0, 0)) by(nonlinear_arith);
+            assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
             assert(page_table.interp().interp().accepted_resolve(vaddr as nat));
             lemma_page_table_walk_interp();
         }

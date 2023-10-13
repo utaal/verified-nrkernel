@@ -2160,24 +2160,6 @@ impl PageTable {
         }
     }
 
-    proof fn lemma_empty_at_implies_interp_at_aux_empty(self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, pt: PTDir)
-        requires
-            self.inv_at(layer, ptr, pt),
-            self.empty_at(layer, ptr, pt),
-            init.len() <= X86_NUM_ENTRIES,
-            forall|i: nat| i < init.len() ==> init[i as int] == l1::NodeEntry::Empty(),
-        ensures
-            forall|i: nat| i < self.interp_at_aux(layer, ptr, base, init, pt).len() ==> self.interp_at_aux(layer, ptr, base, init, pt)[i as int] == l1::NodeEntry::Empty(),
-        decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
-    {
-        if init.len() >= X86_NUM_ENTRIES as nat {
-        } else {
-            let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
-            let new_init = init.add(seq![entry]);
-            self.lemma_empty_at_implies_interp_at_aux_empty(layer, ptr, base, new_init, pt);
-        }
-   }
-
     proof fn lemma_empty_at_implies_interp_at_empty(self, layer: nat, ptr: usize, base: nat, pt: PTDir)
         requires
             self.inv_at(layer, ptr, pt),
@@ -2186,7 +2168,6 @@ impl PageTable {
             self.interp_at(layer, ptr, base, pt).empty()
     {
         self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt);
-        self.lemma_empty_at_implies_interp_at_aux_empty(layer, ptr, base, seq![], pt);
     }
 
     proof fn lemma_not_empty_at_implies_interp_at_not_empty(self, layer: nat, ptr: usize, base: nat, pt: PTDir)

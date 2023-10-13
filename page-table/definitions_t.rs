@@ -26,7 +26,7 @@ pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
 pub const WORD_SIZE: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
-pub spec const X86_MAX_ENTRY_SIZE: nat = 512 * 1024 * 1024 * 1024;
+pub spec const X86_MAX_ENTRY_SIZE: nat = 512 * 512 * 512 * 4096;
 pub spec const MAX_BASE:           nat = X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES as nat);
 
 pub spec const PT_BOUND_LOW:  nat = 0;
@@ -203,7 +203,7 @@ pub struct Flags {
     pub disable_execute: bool,
 }
 
-// We always set permissive flags on directories. Restrictions happen on the frame mapping.
+/// We always set permissive flags on directories. Restrictions happen on the frame mapping.
 pub spec const permissive_flags: Flags = Flags {
     is_writable:     true,
     is_supervisor:   false,

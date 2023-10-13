@@ -596,7 +596,7 @@ impl Directory {
         indexing::lemma_entry_base_from_index(self.base_vaddr, j, self.entry_size());
     }
 
-    proof fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat)
+    pub proof fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat)
         requires
              self.inv(),
              j < self.entries.len(),
