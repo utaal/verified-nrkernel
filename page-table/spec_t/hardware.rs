@@ -532,8 +532,6 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
         assert(valid_pt_walk_full(mem, addr as u64, pte));
         pt.lemma_interp_at_facts(0, mem.cr3_spec().base, 0, pt.ghost_pt@);
         pt.interp().lemma_inv_implies_interp_inv();
-        // lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping
-        // lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping
 
         let l0_idx_u64:  u64 = l0_bits!(addr);
         let l0_idx:      nat = l0_idx_u64 as nat;
@@ -550,7 +548,6 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
             assert(((addr & bitmask_inc!(30u64,38u64)) >> 30u64) & bitmask_inc!(0u64,8u64) == ((addr & bitmask_inc!(30u64,38u64)) >> 30u64)) by (bit_vector);
             assert(((addr & bitmask_inc!(39u64,47u64)) >> 39u64) & bitmask_inc!(0u64,8u64) == ((addr & bitmask_inc!(39u64,47u64)) >> 39u64)) by (bit_vector);
         };
-        // interp_l0_entry is the interp of an entry of interp_l0_dir
         let interp_l0_dir   = pt.interp();
         let interp_l0_entry = pt.interp_at_entry(0, mem.cr3_spec().base, 0, l0_idx, pt.ghost_pt@);
         match read_entry(mem, mem.cr3_spec()@.base, 0, l0_idx) {
@@ -559,12 +556,12 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
             } => {
                 assert(interp_l0_entry.is_Directory());
                 let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
-                let l1_dir_ghost_pt = pt.ghost_pt@.entries[l0_idx as int].get_Some_0();
+                let l0_dir_ghost_pt = pt.ghost_pt@.entries[l0_idx as int].get_Some_0();
                 assert(pt.directories_obey_invariant_at(0, mem.cr3_spec().base, pt.ghost_pt@));
-                assert(pt.inv_at(1, l0_dir_addr, l1_dir_ghost_pt));
-                pt.lemma_interp_at_facts(1, l0_dir_addr, l1_base_vaddr, l1_dir_ghost_pt);
-                let interp_l1_dir   = pt.interp_at(1, l0_dir_addr, l1_base_vaddr, l1_dir_ghost_pt);
-                let interp_l1_entry = pt.interp_at_entry(1, l0_dir_addr, l1_base_vaddr, l1_idx, l1_dir_ghost_pt);
+                assert(pt.inv_at(1, l0_dir_addr, l0_dir_ghost_pt));
+                pt.lemma_interp_at_facts(1, l0_dir_addr, l1_base_vaddr, l0_dir_ghost_pt);
+                let interp_l1_dir   = pt.interp_at(1, l0_dir_addr, l1_base_vaddr, l0_dir_ghost_pt);
+                let interp_l1_entry = pt.interp_at_entry(1, l0_dir_addr, l1_base_vaddr, l1_idx, l0_dir_ghost_pt);
                 match read_entry(mem, l0_dir_addr as nat, 1, l1_idx) {
                     GhostPageDirectoryEntry::Page {
                         addr: page_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
@@ -606,19 +603,18 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                     GhostPageDirectoryEntry::Directory {
                         addr: l1_dir_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
                     } => {
-                        // assert(interp_l1_entry.is_Directory());
-                        // let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
-                        // let l2_dir_ghost_pt = l1_dir_ghost_pt.entries[l1_idx as int].get_Some_0();
-                        // assert(pt.directories_obey_invariant_at(2, l1_dir_addr, l1_dir_ghost_pt));
-                        // assert(pt.inv_at(2, l1_dir_addr, l2_dir_ghost_pt));
-                        // pt.lemma_interp_at_facts(2, l1_dir_addr, l2_base_vaddr, l2_dir_ghost_pt);
-                        // let interp_l2_dir   = pt.interp_at(2, l1_dir_addr, l2_base_vaddr, l2_dir_ghost_pt);
-                        // let interp_l2_entry = pt.interp_at_entry(2, l1_dir_addr, l2_base_vaddr, l2_idx, l2_dir_ghost_pt);
+                        assert(interp_l1_entry.is_Directory());
+                        let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
+                        let l1_dir_ghost_pt = l0_dir_ghost_pt.entries[l1_idx as int].get_Some_0();
+                        assert(pt.directories_obey_invariant_at(1, l0_dir_addr, l0_dir_ghost_pt));
+                        assert(pt.inv_at(2, l1_dir_addr, l1_dir_ghost_pt));
+                        pt.lemma_interp_at_facts(2, l1_dir_addr, l2_base_vaddr, l1_dir_ghost_pt);
+                        let interp_l2_dir   = pt.interp_at(2, l1_dir_addr, l2_base_vaddr, l1_dir_ghost_pt);
+                        let interp_l2_entry = pt.interp_at_entry(2, l1_dir_addr, l2_base_vaddr, l2_idx, l1_dir_ghost_pt);
                         match read_entry(mem, l1_dir_addr as nat, 2, l2_idx) {
                             GhostPageDirectoryEntry::Page {
                                 addr: page_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
                             } => {
-                                assume(false);
                                 assert(aligned(addr as nat, L2_ENTRY_SIZE as nat));
                                 assert(pte == PageTableEntry {
                                     frame: MemRegion { base: page_addr as nat, size: L2_ENTRY_SIZE as nat },
@@ -628,16 +624,53 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                         disable_execute:  l0_XD ||  l1_XD ||  l2_XD
                                     }
                                 });
+                                assert(interp_l2_entry == l1::NodeEntry::Page(pte));
+                                interp_l2_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l2_idx);
+                                assert(interp_l2_dir.inv());
+
+                                assert(bitmask_inc!(39u64,47u64) == 0xFF80_0000_0000) by (compute);
+                                assert(bitmask_inc!(30u64,38u64) == 0x007F_C000_0000) by (compute);
+                                assert(bitmask_inc!(21u64,29u64) == 0x0000_3FE0_0000) by (compute);
+                                // assert(bitmask_inc!(12u64,20u64) == 0x0000_001F_F000) by (compute);
+                                assert(addr == ((l0_idx_u64 << 39u64) | (l1_idx_u64 << 30u64) | (l2_idx_u64 << 21u64))) by (bit_vector)
+                                    requires
+                                        l0_idx_u64 == (addr & 0xFF80_0000_0000) >> 39,
+                                        l1_idx_u64 == (addr & 0x007F_C000_0000) >> 30,
+                                        l2_idx_u64 == (addr & 0x0000_3FE0_0000) >> 21,
+                                        addr < mul(512u64, mul(512, mul(512, mul(512, 4096)))),
+                                        addr % mul(512, 4096) == 0;
+
+                                assert(add(add(
+                                        mul(l0_idx_u64, mul(512u64, mul(512, mul(512, 4096)))),
+                                        mul(l1_idx_u64, mul(512u64, mul(512, 4096)))),
+                                        mul(l2_idx_u64, mul(512, 4096)))
+                                       == l0_idx_u64 << 39u64 | l1_idx_u64 << 30u64 | l2_idx_u64 << 21u64) by (bit_vector)
+                                    requires l0_idx_u64 < 512 && l1_idx_u64 < 512 && l2_idx_u64 < 512;
+                                // Previous assert proves: l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64
+
+                                assert(interp_l2_dir.interp_of_entry(l2_idx).map.contains_pair(addr as nat, pte));
+                                assert(interp_l2_dir.interp().map.contains_pair(addr as nat, pte));
+                                interp_l1_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l1_idx);
+                                assert(interp_l1_dir.interp().map.contains_pair(addr as nat, pte));
+                                interp_l0_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l0_idx);
+                                assert(interp_l0_dir.interp().map.contains_pair(addr as nat, pte));
                                 assert(m2.contains_pair(addr as nat, pte));
                             },
                             GhostPageDirectoryEntry::Directory {
-                                addr: l2_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
+                                addr: l2_dir_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
                             } => {
-                                match read_entry(mem, l2_addr as nat, 3, l3_idx) {
+                                assert(interp_l2_entry.is_Directory());
+                                let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
+                                let l2_dir_ghost_pt = l1_dir_ghost_pt.entries[l2_idx as int].get_Some_0();
+                                assert(pt.directories_obey_invariant_at(2, l1_dir_addr, l1_dir_ghost_pt));
+                                assert(pt.inv_at(3, l2_dir_addr, l2_dir_ghost_pt));
+                                pt.lemma_interp_at_facts(3, l2_dir_addr, l3_base_vaddr, l2_dir_ghost_pt);
+                                let interp_l3_dir   = pt.interp_at(3, l2_dir_addr, l3_base_vaddr, l2_dir_ghost_pt);
+                                let interp_l3_entry = pt.interp_at_entry(3, l2_dir_addr, l3_base_vaddr, l3_idx, l2_dir_ghost_pt);
+                                match read_entry(mem, l2_dir_addr as nat, 3, l3_idx) {
                                     GhostPageDirectoryEntry::Page {
                                         addr: page_addr, flag_RW: l3_RW, flag_US: l3_US, flag_XD: l3_XD, ..
                                     } => {
-                                        assume(false);
                                         assert(aligned(addr as nat, L3_ENTRY_SIZE as nat));
                                         assert(pte == PageTableEntry {
                                             frame: MemRegion { base: page_addr as nat, size: L3_ENTRY_SIZE as nat },
@@ -647,6 +680,40 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                                 disable_execute:  l0_XD ||  l1_XD ||  l2_XD ||  l3_XD
                                             }
                                         });
+                                        assert(interp_l3_entry == l1::NodeEntry::Page(pte));
+                                        interp_l3_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l3_idx);
+                                        assert(interp_l3_dir.inv());
+
+                                        assert(bitmask_inc!(39u64,47u64) == 0xFF80_0000_0000) by (compute);
+                                        assert(bitmask_inc!(30u64,38u64) == 0x007F_C000_0000) by (compute);
+                                        assert(bitmask_inc!(21u64,29u64) == 0x0000_3FE0_0000) by (compute);
+                                        assert(bitmask_inc!(12u64,20u64) == 0x0000_001F_F000) by (compute);
+                                        assert(addr == ((l0_idx_u64 << 39u64) | (l1_idx_u64 << 30u64) | (l2_idx_u64 << 21u64) | (l3_idx_u64 << 12u64))) by (bit_vector)
+                                            requires
+                                                l0_idx_u64 == (addr & 0xFF80_0000_0000) >> 39,
+                                                l1_idx_u64 == (addr & 0x007F_C000_0000) >> 30,
+                                                l2_idx_u64 == (addr & 0x0000_3FE0_0000) >> 21,
+                                                l3_idx_u64 == (addr & 0x0000_001F_F000) >> 12,
+                                                addr < mul(512u64, mul(512, mul(512, mul(512, 4096)))),
+                                                addr % 4096 == 0;
+
+                                        assert(add(add(add(
+                                                mul(l0_idx_u64, mul(512u64, mul(512, mul(512, 4096)))),
+                                                mul(l1_idx_u64, mul(512u64, mul(512, 4096)))),
+                                                mul(l2_idx_u64, mul(512, 4096))),
+                                                mul(l3_idx_u64, 4096))
+                                               == l0_idx_u64 << 39u64 | l1_idx_u64 << 30u64 | l2_idx_u64 << 21u64 | l3_idx_u64 << 12u64) by (bit_vector)
+                                            requires l0_idx_u64 < 512 && l1_idx_u64 < 512 && l2_idx_u64 < 512 && l3_idx_u64 < 512;
+                                        // Previous assert proves: l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64
+
+                                        assert(interp_l3_dir.interp_of_entry(l3_idx).map.contains_pair(addr as nat, pte));
+                                        assert(interp_l3_dir.interp().map.contains_pair(addr as nat, pte));
+                                        interp_l2_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l2_idx);
+                                        assert(interp_l2_dir.interp().map.contains_pair(addr as nat, pte));
+                                        interp_l1_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l1_idx);
+                                        assert(interp_l1_dir.interp().map.contains_pair(addr as nat, pte));
+                                        interp_l0_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l0_idx);
+                                        assert(interp_l0_dir.interp().map.contains_pair(addr as nat, pte));
                                         assert(m1.contains_pair(addr as nat, pte));
                                     },
                                     GhostPageDirectoryEntry::Directory { .. } => assert(false),
