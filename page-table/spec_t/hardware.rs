@@ -293,18 +293,24 @@ pub open spec fn read_entry(pt_mem: mem::PageTableMemory, dir_addr: nat, layer: 
     PageDirectoryEntry { entry: pt_mem.spec_read(idx, region), layer: Ghost(layer) }@
 }
 
-// FIXME: probably delete this when I've decided on which version to use
-proof fn x(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry)
-    ensures
-        valid_pt_walk_full(pt_mem, addr, pte) <==> {
-            ||| valid_pt_walk_maps_normal_page(pt_mem, addr, pte)
-            ||| valid_pt_walk_maps_huge_page(pt_mem, addr, pte)
-            ||| valid_pt_walk_maps_super_page(pt_mem, addr, pte)
-        }
-{
-}
 
-pub open spec fn valid_pt_walk_full(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
+/// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics,
+/// it's mb0 otherwise)
+///
+/// The intended semantics for valid_pt_walk is this:
+/// Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the
+/// MMU's page table walk arrives at an entry mapping the frame `pte.frame`. The properties in
+/// `pte.flags` reflect the properties along the translation path. I.e. `pte.flags.is_writable` is
+/// true iff the RW flag is set in all directories along the translation path and in the frame
+/// mapping. Similarly, `pte.flags.is_supervisor` is true iff the US flag is unset in all those
+/// structures and `pte.flags.disable_execute` is true iff the XD flag is set in at least one of
+/// those structures.
+///
+/// In practice, we always set these flags to their more permissive state in directories and only
+/// make more restrictive settings in the frame mappings. (Ensured in the invariant, see conjunct
+/// `directories_have_flags` in refinement layers 1 and 2.) But in the hardware model we still
+/// define the full, correct semantics to ensure the implementation sets the flags correctly.
+pub open spec fn valid_pt_walk(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
     let l0_idx: nat = l0_bits!(addr) as nat;
     let l1_idx: nat = l1_bits!(addr) as nat;
     let l2_idx: nat = l2_bits!(addr) as nat;
@@ -375,110 +381,6 @@ pub open spec fn valid_pt_walk_full(pt_mem: mem::PageTableMemory, addr: u64, pte
     }
 }
 
-
-pub open spec fn valid_pt_walk_maps_normal_page(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
-    let l0_idx: nat = l0_bits!(addr) as nat;
-    let l1_idx: nat = l1_bits!(addr) as nat;
-    let l2_idx: nat = l2_bits!(addr) as nat;
-    let l3_idx: nat = l3_bits!(addr) as nat;
-    aligned(addr as nat, L3_ENTRY_SIZE as nat) &&
-    if let GhostPageDirectoryEntry::Directory {
-        addr: dir_addr, flag_RW: l0_RW, flag_US: l0_US, flag_XD: l0_XD, ..
-    } = read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
-        if let GhostPageDirectoryEntry::Directory {
-            addr: dir_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
-        } = read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
-            if let GhostPageDirectoryEntry::Directory {
-                addr: dir_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
-            } = read_entry(pt_mem, dir_addr as nat, 2, l2_idx) {
-                if let GhostPageDirectoryEntry::Page {
-                    addr, flag_RW: l3_RW, flag_US: l3_US, flag_XD: l3_XD, ..
-                } = read_entry(pt_mem, dir_addr as nat, 3, l3_idx) {
-                    pte == PageTableEntry {
-                        frame: MemRegion { base: addr as nat, size: L3_ENTRY_SIZE as nat },
-                        flags: Flags {
-                            is_writable:      l0_RW &&  l1_RW &&  l2_RW &&  l3_RW,
-                            is_supervisor:   !l0_US || !l1_US || !l2_US || !l3_US,
-                            disable_execute:  l0_XD ||  l1_XD ||  l2_XD ||  l3_XD
-                        }
-                    }
-                } else { false }
-            } else { false }
-        } else { false }
-    } else { false }
-}
-
-pub open spec fn valid_pt_walk_maps_huge_page(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
-    let l0_idx: nat = l0_bits!(addr) as nat;
-    let l1_idx: nat = l1_bits!(addr) as nat;
-    let l2_idx: nat = l2_bits!(addr) as nat;
-    aligned(addr as nat, L2_ENTRY_SIZE as nat) &&
-    if let GhostPageDirectoryEntry::Directory {
-        addr: dir_addr, flag_RW: l0_RW, flag_US: l0_US, flag_XD: l0_XD, ..
-    } = read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
-        if let GhostPageDirectoryEntry::Directory {
-            addr: dir_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
-        } = read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
-            if let GhostPageDirectoryEntry::Page {
-                addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
-            } = read_entry(pt_mem, dir_addr as nat, 2, l2_idx) {
-                pte == PageTableEntry {
-                    frame: MemRegion { base: addr as nat, size: L2_ENTRY_SIZE as nat },
-                    flags: Flags {
-                        is_writable:      l0_RW &&  l1_RW &&  l2_RW,
-                        is_supervisor:   !l0_US || !l1_US || !l2_US,
-                        disable_execute:  l0_XD ||  l1_XD ||  l2_XD
-                    }
-                }
-            } else { false }
-        } else { false }
-    } else { false }
-}
-
-pub open spec fn valid_pt_walk_maps_super_page(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
-    let l0_idx: nat = l0_bits!(addr) as nat;
-    let l1_idx: nat = l1_bits!(addr) as nat;
-    aligned(addr as nat, L1_ENTRY_SIZE as nat) &&
-    if let GhostPageDirectoryEntry::Directory {
-        addr: dir_addr, flag_RW: l0_RW, flag_US: l0_US, flag_XD: l0_XD, ..
-    } = read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
-        if let GhostPageDirectoryEntry::Page {
-            addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
-        } = read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
-            pte == PageTableEntry {
-                frame: MemRegion { base: addr as nat, size: L1_ENTRY_SIZE as nat },
-                flags: Flags {
-                    is_writable:      l0_RW &&  l1_RW,
-                    is_supervisor:   !l0_US || !l1_US,
-                    disable_execute:  l0_XD ||  l1_XD
-                }
-            }
-        } else { false }
-    } else { false }
-}
-
-/// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics,
-/// it's mb0 otherwise)
-///
-/// The intended semantics for valid_pt_walk is this:
-/// Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the
-/// MMU's page table walk arrives at an entry mapping the frame `pte.frame`. The properties in
-/// `pte.flags` reflect the properties along the translation path. I.e. `pte.flags.is_writable` is
-/// true iff the RW flag is set in all directories along the translation path and in the frame
-/// mapping. Similarly, `pte.flags.is_supervisor` is true iff the US flag is unset in all those
-/// structures and `pte.flags.disable_execute` is true iff the XD flag is set in at least one of
-/// those structures.
-///
-/// In practice, we always set these flags to their more permissive state in directories and only
-/// make more restrictive settings in the frame mappings. (Ensured in the invariant, see conjunct
-/// `directories_have_flags` in refinement layers 1 and 2.) But in the hardware model we still
-/// define the full, correct semantics to ensure the implementation sets the flags correctly.
-pub open spec fn valid_pt_walk(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry) -> bool {
-    ||| valid_pt_walk_maps_normal_page(pt_mem, addr, pte)
-    ||| valid_pt_walk_maps_huge_page(pt_mem, addr, pte)
-    ||| valid_pt_walk_maps_super_page(pt_mem, addr, pte)
-}
-
 // Can't use `n as u64` in triggers because it's an arithmetic expression
 pub open spec fn nat_to_u64(n: nat) -> u64
     recommends n <= u64::MAX
@@ -488,22 +390,12 @@ pub open spec fn nat_to_u64(n: nat) -> u64
 pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry> {
     Map::new(
         |addr: nat|
-            0 <= addr && addr < MAX_BASE
+            addr < MAX_BASE
             // Casting addr to u64 is okay since addr < MAX_BASE < u64::MAX
-            && exists|pte: PageTableEntry| valid_pt_walk_full(pt_mem, nat_to_u64(addr), pte),
+            && exists|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
         |addr: nat|
-            choose|pte: PageTableEntry| valid_pt_walk_full(pt_mem, nat_to_u64(addr), pte))
+            choose|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte))
 }
-
-pub proof fn pt_walk_cases_disjoint(pt_mem: mem::PageTableMemory, addr: u64, pte: PageTableEntry)
-    ensures
-        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_normal_page(pt_mem, addr, pte) ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_huge_page(pt_mem, addr, pte)   ==> !valid_pt_walk_maps_super_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_normal_page(pt_mem, addr, pte),
-        valid_pt_walk_maps_super_page(pt_mem, addr, pte)  ==> !valid_pt_walk_maps_huge_page(pt_mem, addr, pte),
-{ }
 
 pub proof fn lemma_page_table_walk_interp()
     ensures
@@ -526,10 +418,12 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
     by {
         assert(addr <= u64::MAX);
         let addr: u64 = addr as u64;
-        assert(0 <= addr && addr < MAX_BASE);
-        assert(exists|pte: PageTableEntry| valid_pt_walk_full(mem, addr, pte));
-        let pte = choose|pte: PageTableEntry| valid_pt_walk_full(mem, addr, pte);
-        assert(valid_pt_walk_full(mem, addr as u64, pte));
+        assert(addr < MAX_BASE);
+        assert(0 <= addr); // Removing this assertion breaks an assertion ~50
+                           // lines further down, for reasons I don't understand.
+        assert(exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte));
+        let pte = choose|pte: PageTableEntry| valid_pt_walk(mem, addr, pte);
+        assert(valid_pt_walk(mem, addr as u64, pte));
         pt.lemma_interp_at_facts(0, mem.cr3_spec().base, 0, pt.ghost_pt@);
         pt.interp().lemma_inv_implies_interp_inv();
 
@@ -730,7 +624,18 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
         };
     };
     assert forall|addr: nat| !m1.contains_key(addr) ==> !m2.contains_key(addr) by {
-        assume(false);
+        if addr < MAX_BASE && (exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte)) {
+            assert(addr <= u64::MAX);
+            let addr: u64 = addr as u64;
+            // assert(!(exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte)));
+        } else {
+            if addr >= MAX_BASE {
+            } else {
+                assert(addr < MAX_BASE);
+                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte));
+            }
+            assume(false);
+        }
     };
     assert(m1 =~= m2) by {
         assert forall|addr: nat| m1.dom().contains(addr) <==> m2.dom().contains(addr) by {
