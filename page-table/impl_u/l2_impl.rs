@@ -577,7 +577,7 @@ impl PageTable {
         proof { let x = self.entry_at_spec(layer as nat, ptr, i as nat, pt@); }
         PageDirectoryEntry {
             entry: self.memory.read(ptr, i, Ghost(pt@.region)),
-            layer: (Ghost(layer as nat)),
+            layer: Ghost(layer as nat),
         }
     }
 
@@ -900,20 +900,7 @@ impl PageTable {
             self.interp_at(layer, ptr, base_vaddr, pt).interp().lower == base_vaddr,
             self.interp_at(layer, ptr, base_vaddr, pt).interp().upper == x86_arch_spec.upper_vaddr(layer, base_vaddr),
             ({ let res = self.interp_at(layer, ptr, base_vaddr, pt);
-                /*
-                &&& (forall|j: nat|
-                    #![trigger res.entries[j as int]]
-                    j < res.entries.len() ==>
-                    match self.view_at(layer, ptr, j, pt) {
-                        GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
-                            &&& res.entries[j as int].is_Directory()
-                            &&& res.entries[j as int].get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, j), pt.entries[j as int].get_Some_0())
-                        },
-                        GhostPageDirectoryEntry::Page { addr, .. } => res.entries[j as int].is_Page() && res.entries[j as int].get_Page_0().frame.base == addr,
-                        GhostPageDirectoryEntry::Empty             => res.entries[j as int].is_Empty(),
-                    })
-                */
-                &&& (forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt))
+               forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt)
             }),
     {
         self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![], pt);
