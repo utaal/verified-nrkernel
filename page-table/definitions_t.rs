@@ -81,7 +81,7 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     if i == 0 {
         seq![]
     } else {
-        new_seq((i-1) as nat, e).add(seq![e])
+        new_seq((i-1) as nat, e).push(e)
     }
 }
 

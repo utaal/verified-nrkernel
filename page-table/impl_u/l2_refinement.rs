@@ -50,7 +50,7 @@ proof fn lemma_no_entries_implies_interp_at_aux_no_entries(pt: l2_impl::PageTabl
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
         assert(entry == l1::NodeEntry::Empty());
-        lemma_no_entries_implies_interp_at_aux_no_entries(pt, layer, ptr, base_vaddr, init.add(seq![entry]), ghost_pt);
+        lemma_no_entries_implies_interp_at_aux_no_entries(pt, layer, ptr, base_vaddr, init.push(entry), ghost_pt);
     }
 }
 

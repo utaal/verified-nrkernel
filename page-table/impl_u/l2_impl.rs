@@ -732,7 +732,7 @@ impl PageTable {
             init
         } else {
             let entry = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
-            self.interp_at_aux(layer, ptr, base_vaddr, init.add(seq![entry]), pt)
+            self.interp_at_aux(layer, ptr, base_vaddr, init.push(entry), pt)
         }
     }
 
@@ -744,8 +744,8 @@ impl PageTable {
         } else {
             // Can't assert this for the actual entry because we'd have to call `interp_at_entry`
             // whose termination depends on this function's termination.
-            assert(forall|e: l1::NodeEntry| #![auto] init.add(seq![e]).len() == init.len() + 1);
-            assert(forall|e: l1::NodeEntry| #![auto] X86_NUM_ENTRIES - init.add(seq![e]).len() < X86_NUM_ENTRIES - init.len());
+            assert(forall|e: l1::NodeEntry| #![auto] init.push(e).len() == init.len() + 1);
+            assert(forall|e: l1::NodeEntry| #![auto] X86_NUM_ENTRIES - init.push(e).len() < X86_NUM_ENTRIES - init.len());
             // FIXME: Verus incompleteness?
             assume(false);
         }
@@ -900,6 +900,7 @@ impl PageTable {
             self.interp_at(layer, ptr, base_vaddr, pt).interp().lower == base_vaddr,
             self.interp_at(layer, ptr, base_vaddr, pt).interp().upper == x86_arch_spec.upper_vaddr(layer, base_vaddr),
             ({ let res = self.interp_at(layer, ptr, base_vaddr, pt);
+                /*
                 &&& (forall|j: nat|
                     #![trigger res.entries[j as int]]
                     j < res.entries.len() ==>
@@ -911,8 +912,39 @@ impl PageTable {
                         GhostPageDirectoryEntry::Page { addr, .. } => res.entries[j as int].is_Page() && res.entries[j as int].get_Page_0().frame.base == addr,
                         GhostPageDirectoryEntry::Empty             => res.entries[j as int].is_Empty(),
                     })
+                */
                 &&& (forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt))
             }),
+    {
+        self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![], pt);
+        let res = self.interp_at(layer, ptr, base_vaddr, pt);
+        assert(res.pages_match_entry_size());
+        assert(res.directories_are_in_next_layer());
+        assert(res.directories_match_arch());
+        assert(res.directories_obey_invariant());
+        assert(res.directories_are_nonempty());
+        assert(res.frames_aligned());
+        res.lemma_inv_implies_interp_inv();
+    }
+
+    pub proof fn lemma_interp_at_facts_entries(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            self.interp_at(layer, ptr, base_vaddr, pt).inv(),
+        ensures
+            ({ let res = self.interp_at(layer, ptr, base_vaddr, pt);
+                &&& (forall|j: nat|
+                    #![trigger res.entries[j as int]]
+                    j < res.entries.len() ==>
+                    match self.view_at(layer, ptr, j, pt) {
+                        GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                            &&& res.entries[j as int].is_Directory()
+                            &&& res.entries[j as int].get_Directory_0() === self.interp_at((layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, j), pt.entries[j as int].get_Some_0())
+                        },
+                        GhostPageDirectoryEntry::Page { addr, .. } => res.entries[j as int].is_Page() && res.entries[j as int].get_Page_0().frame.base == addr,
+                        GhostPageDirectoryEntry::Empty             => res.entries[j as int].is_Empty(),
+                    })
+            })
     {
         self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![], pt);
         let res = self.interp_at(layer, ptr, base_vaddr, pt);
@@ -952,7 +984,7 @@ impl PageTable {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr, pt));
             let entry = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
-            let init_next = init.add(seq![entry]);
+            let init_next = init.push(entry);
 
             self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, init_next, pt);
         }
@@ -1101,7 +1133,13 @@ impl PageTable {
             self.memory.cr3_spec() == old(self).memory.cr3_spec(),
         // decreases X86_NUM_LAYERS - layer
     {
-        proof { self.lemma_interp_at_facts(layer as nat, ptr, base as nat, pt@); }
+        proof {
+            self.lemma_interp_at_facts(layer as nat, ptr, base as nat, pt@);
+
+            // this is the expensive bit of `lemma_interp_at_facts`, split out for further
+            // refactoring
+            self.lemma_interp_at_facts_entries(layer as nat, ptr, base as nat, pt@);
+        }
         let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
         proof {
             assert({
@@ -2117,7 +2155,7 @@ impl PageTable {
         } else {
             let entry = self.interp_at_entry(layer + 1, entry_ptr, entry_base, init.len(), entry_pt);
             assert(entry === l1::NodeEntry::Empty());
-            self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, init.add(seq![l1::NodeEntry::Empty()]), idx, pt);
+            self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, init.push(l1::NodeEntry::Empty()), idx, pt);
         }
     }
 
@@ -2155,7 +2193,7 @@ impl PageTable {
         if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
-            let new_init = init.add(seq![entry]);
+            let new_init = init.push(entry);
             self.lemma_not_empty_at_implies_interp_at_aux_not_empty(layer, ptr, base, new_init, nonempty_idx, pt);
         }
     }
@@ -2252,7 +2290,7 @@ impl PageTable {
                     GhostPageDirectoryEntry::Empty => { },
                 }
             };
-            self.lemma_interp_at_aux_doesnt_use_ghost_pt(other, layer, ptr, base, init.add(seq![entry]), pt);
+            self.lemma_interp_at_aux_doesnt_use_ghost_pt(other, layer, ptr, base, init.push(entry), pt);
         }
     }
 
