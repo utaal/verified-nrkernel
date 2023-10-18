@@ -16,17 +16,39 @@ verus! {
 
 pub const X86_NUM_LAYERS:  usize = 4;
 pub const X86_NUM_ENTRIES: usize = 512;
-pub const MAXPHYADDR_BITS: u64 = 52;
-// FIXME: is this correct?
-// spec const MAXPHYADDR: nat      = ((1u64 << 52u64) - 1u64) as nat;
-// TODO: Probably easier to use computed constant because verus can't deal with the shift except in
-// bitvector assertions.
-pub spec const MAXPHYADDR: nat = 0xFFFFFFFFFFFFF;
+
+// The maximum physical address width is between 32 and 52 bits.
+#[verifier(external_body)]
+pub const MAX_PHYADDR_WIDTH: u64 = unimplemented!();
+
+#[verifier(external_body)]
+pub proof fn axiom_max_phyaddr_width_facts()
+    ensures 32 <= MAX_PHYADDR_WIDTH <= 52;
+
+// We cannot use a dual exec/spec constant for MAX_PHYADDR, because for those Verus currently
+// doesn't support manually guiding the no-overflow proofs.
+pub spec const MAX_PHYADDR_SPEC: u64 = ((1u64 << MAX_PHYADDR_WIDTH) - 1u64) as u64;
+#[verifier::when_used_as_spec(MAX_PHYADDR_SPEC)]
+pub exec const MAX_PHYADDR: u64 ensures MAX_PHYADDR == MAX_PHYADDR_SPEC {
+    axiom_max_phyaddr_width_facts();
+    assert(1u64 << 32 == 0x100000000) by (compute);
+    assert(forall|m:u64,n:u64|  n < m < 64 ==> 1u64 << n < 1u64 << m) by (bit_vector);
+    (1u64 << MAX_PHYADDR_WIDTH) - 1u64
+}
+
+pub proof fn lemma_maxphyaddr_facts()
+    ensures 0xFFFFFFFF <= MAX_PHYADDR <= 0xFFFFFFFFFFFFF
+{
+    axiom_max_phyaddr_width_facts();
+    assert(1u64 << 32 == 0x100000000) by (compute);
+    assert(1u64 << 52 == 0x10000000000000) by (compute);
+    assert(forall|m:u64,n:u64|  n < m < 64 ==> 1u64 << n < 1u64 << m) by (bit_vector);
+}
 
 pub const WORD_SIZE: usize = 8;
 pub const PAGE_SIZE: usize = 4096;
 
-pub spec const X86_MAX_ENTRY_SIZE: nat = 512 * 1024 * 1024 * 1024;
+pub spec const X86_MAX_ENTRY_SIZE: nat = 512 * 512 * 512 * 4096;
 pub spec const MAX_BASE:           nat = X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES as nat);
 
 pub spec const PT_BOUND_LOW:  nat = 0;
@@ -81,7 +103,7 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     if i == 0 {
         seq![]
     } else {
-        new_seq((i-1) as nat, e).add(seq![e])
+        new_seq((i-1) as nat, e).push(e)
     }
 }
 
@@ -203,8 +225,20 @@ pub struct Flags {
     pub disable_execute: bool,
 }
 
+/// We always set permissive flags on directories. Restrictions happen on the frame mapping.
+pub spec const permissive_flags: Flags = Flags {
+    is_writable:     true,
+    is_supervisor:   false,
+    disable_execute: false,
+};
+
 pub struct PageTableEntry {
     pub frame: MemRegion,
+    /// The `flags` field on a `PageTableEntry` denotes the combined flags of the entire
+    /// translation path to the entry. (See page table walk definition in hardware model,
+    /// `spec_t::hardware`.) However, because we always set the flags on directories to be
+    /// permissive these flags also correspond to the flags that we set for the frame mapping
+    /// corresponding to this `PageTableEntry`.
     pub flags: Flags,
 }
 

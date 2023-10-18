@@ -12,7 +12,7 @@ use crate::definitions_t::{new_seq, lemma_new_seq};
 use crate::impl_u::lib;
 use crate::impl_u::indexing;
 
-use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
+use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags, permissive_flags };
 use crate::impl_u::l0::{ self, ambient_arith, ambient_lemmas1 };
 
 verus! {
@@ -61,6 +61,7 @@ pub struct Directory {
     pub layer: nat,       // index into layer_sizes
     pub base_vaddr: nat,
     pub arch: Arch,
+    pub flags: Flags,
 }
 
 // Layer 0: 425 Directory ->
@@ -75,12 +76,12 @@ pub struct Directory {
 // Layer 2: 1024 Pages
 
 impl Directory {
-
     pub open spec(checked) fn well_formed(&self) -> bool {
         &&& self.arch.inv()
         &&& self.layer < self.arch.layers.len()
         &&& aligned(self.base_vaddr, self.entry_size() * self.num_entries())
         &&& self.entries.len() == self.num_entries()
+        &&& self.flags == permissive_flags
     }
 
     pub open spec(checked) fn entry_size(&self) -> nat
@@ -230,7 +231,7 @@ impl Directory {
                 (forall|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
                 (forall|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
     {
-        assert forall |i: nat| #![auto] i < self.num_entries() implies 
+        assert forall |i: nat| #![auto] i < self.num_entries() implies
                      self.interp_of_entry(i).inv() &&
                      self.interp_of_entry(i).lower == self.entry_base(i) &&
                      self.interp_of_entry(i).upper == self.entry_base(i+1) by {
@@ -253,7 +254,7 @@ impl Directory {
         indexing::lemma_entry_base_from_index(self.base_vaddr, i, self.entry_size());
         indexing::lemma_entry_base_from_index_support(self.base_vaddr, i, self.entry_size());
         match self.entries.index(i as int) {
-            NodeEntry::Page(pte)      => {
+            NodeEntry::Page(pte) => {
                 assert(entry_i.mappings_dont_overlap());
 
                 assert_nonlinear_by({
@@ -283,13 +284,13 @@ impl Directory {
                              i < self.entries.len(),
                     ]);
                     ensures(entry_i.mappings_in_bounds());
+                    assert(self.well_formed());
                     assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
                     assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
-                    // New instability with z3 4.10.1
                 });
                 assert(entry_i.mappings_in_bounds());
             }
-            NodeEntry::Empty()      => {}
+            NodeEntry::Empty() => {}
         }
     }
 
@@ -440,7 +441,7 @@ impl Directory {
                             i < self.entries.len(),
                         ]);
                         ensures(entry_i.mappings_in_bounds());
-                        // New instability with z3 4.10.1
+                        assert(self.well_formed());
                         assert(entry_i.lower <= d.interp_aux(0).lower); // proof stability
                         assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
                     });
@@ -595,7 +596,7 @@ impl Directory {
         indexing::lemma_entry_base_from_index(self.base_vaddr, j, self.entry_size());
     }
 
-    proof fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat)
+    pub proof fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat)
         requires
              self.inv(),
              j < self.entries.len(),
@@ -913,6 +914,7 @@ impl Directory {
             layer:      self.layer + 1,
             base_vaddr: self.entry_base(entry),
             arch:       self.arch,
+            flags:      permissive_flags,
         }
     }
 
@@ -933,6 +935,7 @@ impl Directory {
         lemma_new_seq::<NodeEntry>(num_entries, NodeEntry::Empty());
 
         assert(new_dir.directories_obey_invariant());
+        assert(new_dir.well_formed());
         assert(new_dir.inv());
     }
 

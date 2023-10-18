@@ -11,14 +11,14 @@ use set_lib::*;
 use seq_lib::*;
 use crate::spec_t::mem;
 
-use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv, between };
+use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
 use crate::impl_u::l0;
 use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl;
 use crate::impl_u::spec_pt;
 use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec };
-use crate::spec_t::hardware::{interp_pt_mem,axiom_page_table_walk_interp};
+use crate::spec_t::hardware::{interp_pt_mem,lemma_page_table_walk_interp};
 
 verus! {
 
@@ -50,11 +50,11 @@ proof fn lemma_no_entries_implies_interp_at_aux_no_entries(pt: l2_impl::PageTabl
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
         assert(entry == l1::NodeEntry::Empty());
-        lemma_no_entries_implies_interp_at_aux_no_entries(pt, layer, ptr, base_vaddr, init.add(seq![entry]), ghost_pt);
+        lemma_no_entries_implies_interp_at_aux_no_entries(pt, layer, ptr, base_vaddr, init.push(entry), ghost_pt);
     }
 }
 
-spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
+pub open spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
     true
 }
 
@@ -139,10 +139,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
         }
         assert(page_table.interp().accepted_mapping(vaddr as nat, pte@));
-        assert(x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0) == 512 * L0_ENTRY_SIZE);
         assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
-        assert(x86_arch_spec.upper_vaddr(0, 0) == x86_arch_spec.num_entries(0) * x86_arch_spec.entry_size(0));
-        assert(x86_arch_spec.upper_vaddr(0, 0) <= MAX_BASE);
         let old_page_table: Ghost<l2_impl::PageTable> = Ghost(page_table);
         let res = page_table.map_frame(vaddr, pte);
         assert(page_table.inv());
@@ -153,7 +150,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(self.ispec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table_post_state.ghost_pt@));
             };
-            axiom_page_table_walk_interp();
+            lemma_page_table_walk_interp();
             old_page_table@.interp().lemma_inv_implies_interp_inv();
             page_table.interp().lemma_inv_implies_interp_inv();
             if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr as nat, pte@) {
@@ -197,7 +194,7 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             assert(self.ispec_inv(page_table.memory)) by {
                 assert(dummy_trigger(page_table.ghost_pt@));
             };
-            axiom_page_table_walk_interp();
+            lemma_page_table_walk_interp();
             page_table.interp().lemma_inv_implies_interp_inv();
             assert(spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr as nat, res));
         }
@@ -234,9 +231,9 @@ impl impl_spec::InterfaceSpec for PageTableImpl {
             page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
             assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
             assert(page_table.interp().interp().upper == x86_arch_spec.upper_vaddr(0, 0));
-            assert(MAX_BASE == x86_arch_spec.upper_vaddr(0, 0)) by(nonlinear_arith);
+            assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
             assert(page_table.interp().interp().accepted_resolve(vaddr as nat));
-            axiom_page_table_walk_interp();
+            lemma_page_table_walk_interp();
         }
         assert(page_table.interp().interp().map == interp_pt_mem(memory));
         match page_table.resolve(vaddr) {

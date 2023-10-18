@@ -7,8 +7,8 @@ use builtin_macros::*;
 use seq::*;
 use map::*;
 use crate::impl_u::l0;
-use crate::definitions_t::{ PageTableEntry, MapResult, UnmapResult, ResolveResult, Arch, overlap, MemRegion, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
-use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAXPHYADDR, MAX_BASE };
+use crate::definitions_t::{ PageTableEntry, MapResult, UnmapResult, ResolveResult, Arch, overlap, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_BASE };
 
 verus! {
 
@@ -26,7 +26,7 @@ pub enum PageTableStep {
 pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
-    &&& pte.frame.base <= MAXPHYADDR
+    &&& pte.frame.base <= MAX_PHYADDR
     &&& candidate_mapping_in_bounds(vaddr, pte)
     &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE

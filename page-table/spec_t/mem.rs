@@ -8,8 +8,8 @@ use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
 
-use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry };
-use crate::definitions_t::{ WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS };
+use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry, lemma_maxphyaddr_facts };
+use crate::definitions_t::{ WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::impl_u::indexing;
@@ -100,7 +100,7 @@ impl PageTableMemory {
         ensures
             self.alloc_available_pages() == old(self).alloc_available_pages() - 1,
             r@.size == PAGE_SIZE,
-            r@.base + PAGE_SIZE <= MAXPHYADDR,
+            r@.base + PAGE_SIZE <= MAX_PHYADDR,
             aligned(r@.base, PAGE_SIZE as nat),
             !old(self).regions().contains(r@),
             self.regions() === old(self).regions().insert(r@),
@@ -176,18 +176,19 @@ impl PageTableMemory {
     /// (This is an exec function so it generates the normal overflow VCs.)
     fn check_overflow(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>)
         requires
-            pbase <= MAXPHYADDR,
+            pbase <= MAX_PHYADDR,
             self.phys_mem_ref_as_usize_spec() <= 0x7FE0_0000_0000_0000,
             pbase == region@.base,
             aligned(pbase as nat, WORD_SIZE as nat),
             self.regions().contains(region@),
             idx < 512,
     {
+        proof { lemma_maxphyaddr_facts(); }
         // https://dev-doc.rust-lang.org/beta/std/primitive.pointer.html#method.offset
         // The raw pointer offset computation needs to fit in an isize.
         // isize::MAX is   0x7FFF_FFFF_FFFF_FFFF
         //
-        // `pbase` is a physical address, so we know it's <= MAXPHYADDR (2^52-1).
+        // `pbase` is a physical address, so we know it's <= MAX_PHYADDR (2^52-1).
         // The no-overflow assertions below require phys_mem_ref <= 0x7FEFFFFFFFFFF009.
         // In the invariant we require the (arbitrarily chosen) nicer number
         // 0x7FE0_0000_0000_0000 as an upper bound for phys_mem_ref.
@@ -196,21 +197,18 @@ impl PageTableMemory {
         assert(word_index_spec(pbase as nat) < 0x2_0000_0000_0000) by(nonlinear_arith)
             requires
                 aligned(pbase as nat, WORD_SIZE as nat),
-                pbase <= MAXPHYADDR,
-            {};
+                pbase <= MAX_PHYADDR,
+                MAX_PHYADDR <= 0xFFFFFFFFFFFFF;
         let word_offset: isize = (word_index(pbase) + idx) as isize;
         assert(word_offset < 0x2_0000_0000_01FF) by(nonlinear_arith)
             requires
                 idx < 512,
                 word_offset == word_index_spec(pbase as nat) + idx,
-                word_index_spec(pbase as nat) < 0x2_0000_0000_0000,
-            {};
+                word_index_spec(pbase as nat) < 0x2_0000_0000_0000;
         let phys_mem_ref: isize = self.phys_mem_ref_as_usize() as isize;
 
         assert(word_offset * WORD_SIZE < 0x10_0000_0000_0FF8) by(nonlinear_arith)
-            requires
-                word_offset < 0x2_0000_0000_01FF,
-            {};
+            requires word_offset < 0x2_0000_0000_01FF;
         let byte_offset: isize = word_offset * (WORD_SIZE as isize);
         let raw_ptr_offset = phys_mem_ref + word_offset * (WORD_SIZE as isize);
     }

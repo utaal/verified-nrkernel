@@ -10,14 +10,19 @@ use vstd::set_lib::*;
 use vstd::seq_lib::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec };
-use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
+use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, permissive_flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, lemma_maxphyaddr_facts, axiom_max_phyaddr_width_facts };
+use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::indexing;
 use crate::impl_u::lib;
+use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry};
+use crate::spec_t::hardware::{MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD,
+MASK_FLAG_A, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_D, MASK_PG_FLAG_G, MASK_PG_FLAG_PAT,
+MASK_L1_PG_FLAG_PS, MASK_L2_PG_FLAG_PS, MASK_L3_PG_FLAG_PAT, MASK_DIR_ADDR, MASK_L1_PG_ADDR,
+MASK_L2_PG_ADDR, MASK_L3_PG_ADDR};
 
 verus! {
 
@@ -39,77 +44,22 @@ macro_rules! bitmask_inc {
 // }
 
 
-// layer:
-// 0 -> PML4
-// 1 -> PDPT, Page Directory Pointer Table
-// 2 -> PD, Page Directory
-// 3 -> PT, Page Table
-
-
-// MASK_FLAG_* are flags valid for entries at all levels.
-pub const MASK_FLAG_P:    u64 = bit!(0u64);
-pub const MASK_FLAG_RW:   u64 = bit!(1u64);
-pub const MASK_FLAG_US:   u64 = bit!(2u64);
-pub const MASK_FLAG_PWT:  u64 = bit!(3u64);
-pub const MASK_FLAG_PCD:  u64 = bit!(4u64);
-pub const MASK_FLAG_A:    u64 = bit!(5u64);
-pub const MASK_FLAG_XD:   u64 = bit!(63u64);
-// We can use the same address mask for all layers as long as we preserve the invariant that the
-// lower bits that *should* be masked off are already zero.
-pub const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
-// const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
-
-// MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
-// layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
-pub const MASK_PG_FLAG_D:    u64 = bit!(6u64);
-pub const MASK_PG_FLAG_G:    u64 = bit!(8u64);
-pub const MASK_PG_FLAG_PAT:  u64 = bit!(12u64);
-
-pub const MASK_L1_PG_FLAG_PS:   u64 = bit!(7u64);
-pub const MASK_L2_PG_FLAG_PS:   u64 = bit!(7u64);
-
-pub const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
-
-// const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
-// const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
-// const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
-// const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
-pub const MASK_DIR_ADDR:           u64 = MASK_ADDR;
-
-// We should be able to always use the 12:52 mask and have the invariant state that in the
-// other cases, the lower bits are already zero anyway.
-pub const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
-pub const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
-pub const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
-
-proof fn lemma_addr_masks_facts(address: u64)
-    ensures
-        MASK_L2_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
-        MASK_L1_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
-{
-    assert((bitmask_inc!(21u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
-    assert((bitmask_inc!(30u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
-}
-
-proof fn lemma_addr_masks_facts2(address: u64)
-    ensures
-        (address & MASK_L3_PG_ADDR) & MASK_L2_PG_ADDR == address & MASK_L2_PG_ADDR,
-        (address & MASK_L3_PG_ADDR) & MASK_L1_PG_ADDR == address & MASK_L1_PG_ADDR,
-{
-    assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(21u64, 52u64)) == (address & bitmask_inc!(21u64, 52u64))) by (bit_vector);
-    assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(30u64, 52u64)) == (address & bitmask_inc!(30u64, 52u64))) by (bit_vector);
-}
-
 proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
-    ensures forall|addr: u64| addr <= MAXPHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
+    ensures forall|addr: u64| addr <= MAX_PHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
 {
     assert forall|addr: u64|
-        addr <= MAXPHYADDR &&
+        addr <= MAX_PHYADDR &&
         #[trigger] aligned(addr as nat, PAGE_SIZE as nat)
         implies
         addr & MASK_DIR_ADDR == addr
     by {
-        assert(addr <= 0xFFFFFFFFFFFFFu64 && addr % 4096u64 == 0 ==> addr & bitmask_inc!(12u64,52u64) == addr) by(bit_vector);
+        let max_width: u64 = MAX_PHYADDR_WIDTH;
+        let mask_dir_addr: u64 = MASK_DIR_ADDR;
+        assert(addr & mask_dir_addr == addr) by (bit_vector)
+            requires
+                addr <= sub(1u64 << max_width, 1u64),
+                addr % 4096u64 == 0,
+                mask_dir_addr == bitmask_inc!(12u64, max_width - 1);
     };
 }
 
@@ -118,36 +68,45 @@ proof fn lemma_aligned_addr_mask_facts(addr: u64)
         aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR),
         aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR),
         (addr & MASK_L3_PG_ADDR == addr & MASK_ADDR),
-        addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
-        addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
-        addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
 {
+    axiom_max_phyaddr_width_facts();
     assert(aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR)) by {
         if aligned(addr as nat, L1_ENTRY_SIZE as nat) {
-            assert(addr % 0x40000000u64 == 0 ==> addr & bitmask_inc!(30u64,52u64) == addr & bitmask_inc!(12u64,52u64)) by(bit_vector);
+            let max_width: u64 = MAX_PHYADDR_WIDTH;
+            assert(addr & bitmask_inc!(30u64, max_width - 1) == addr & bitmask_inc!(12u64, max_width - 1)) by (bit_vector)
+                requires
+                    addr % 0x40000000u64 == 0,
+                    32 <= max_width;
         }
     };
     assert(aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR)) by {
         if aligned(addr as nat, L2_ENTRY_SIZE as nat) {
-            assert(addr % 0x200000u64 == 0 ==> addr & bitmask_inc!(21u64,52u64) == addr & bitmask_inc!(12u64,52u64)) by(bit_vector);
+            let max_width: u64 = MAX_PHYADDR_WIDTH;
+            assert(addr & bitmask_inc!(21u64, max_width - 1) == addr & bitmask_inc!(12u64, max_width - 1)) by (bit_vector)
+                requires
+                    addr % 0x200000u64 == 0,
+                    32 <= max_width;
         }
     };
-    assert(addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
-        if addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) {
+    assert(addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) {
             assert(aligned(L1_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
             lib::aligned_transitive(addr as nat, L1_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
-    assert(addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
-        if addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) {
+    assert(addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) {
             assert(aligned(L2_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
             lib::aligned_transitive(addr as nat, L2_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
-    assert(addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
-        if addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) {
+    assert(addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) {
             assert(aligned(L3_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
             lib::aligned_transitive(addr as nat, L3_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
@@ -158,145 +117,144 @@ proof fn lemma_aligned_addr_mask_facts(addr: u64)
 pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bool {
     is_page ==> {
         if layer == 1 {
-            addr & MASK_L1_PG_ADDR == addr & MASK_ADDR
+            addr & MASK_L1_PG_ADDR == addr
         } else if layer == 2 {
-            addr & MASK_L2_PG_ADDR == addr & MASK_ADDR
+            addr & MASK_L2_PG_ADDR == addr
         } else if layer == 3 {
-            addr & MASK_L3_PG_ADDR == addr & MASK_ADDR
-        } else {
-            true
-        }
-    }
-}
-
-
-// FIXME: We can probably remove bits from here that we don't use, e.g. accessed, dirty, PAT. (And
-// set them to zero when we create a new entry.)
-#[is_variant]
-pub ghost enum GhostPageDirectoryEntry {
-    Directory {
-        addr: usize,
-        /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
-        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
-        /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
-        /// Page-level write-through
-        flag_PWT: bool,
-        /// Page-level cache disable
-        flag_PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
-        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-        /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
-    },
-    Page {
-        addr: usize,
-        /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
-        /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
-        /// User/supervisor; if 0, user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
-        /// Page-level write-through
-        flag_PWT: bool,
-        /// Page-level cache disable
-        flag_PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
-        /// Dirty; indicates whether software has written to the page referenced by this entry
-        flag_D: bool,
-        // /// Page size; must be 1 (otherwise, this entry references a directory)
-        // flag_PS: Option<bool>,
-        // PS is entirely determined by the Page variant and the layer
-        /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
-        flag_G: bool,
-        /// Indirectly determines the memory type used to access the page referenced by this entry
-        flag_PAT: bool,
-        /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
-        /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
-    },
-    Empty,
-}
-
-
-
-#[allow(repr_transparent_external_private_fields)]
-// An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
-#[repr(transparent)]
-pub struct PageDirectoryEntry {
-    pub entry: u64,
-    // pub view: Ghost<GhostPageDirectoryEntry>,
-    pub layer: Ghost<nat>,
-}
-
-impl PageDirectoryEntry {
-
-    pub open spec fn view(self) -> GhostPageDirectoryEntry {
-        if self.layer() <= 3 {
-            let v = self.entry;
-            if v & MASK_FLAG_P == MASK_FLAG_P {
-                let flag_P   = v & MASK_FLAG_P   == MASK_FLAG_P;
-                let flag_RW  = v & MASK_FLAG_RW  == MASK_FLAG_RW;
-                let flag_US  = v & MASK_FLAG_US  == MASK_FLAG_US;
-                let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
-                let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
-                let flag_A   = v & MASK_FLAG_A   == MASK_FLAG_A;
-                let flag_XD  = v & MASK_FLAG_XD  == MASK_FLAG_XD;
-                if (self.layer() == 3) || (v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) {
-                    let addr     =
-                        if self.layer() == 3 {
-                            (v & MASK_L3_PG_ADDR) as usize
-                        } else if self.layer() == 2 {
-                            (v & MASK_L2_PG_ADDR) as usize
-                        } else {
-                            (v & MASK_L1_PG_ADDR) as usize
-                        };
-                    let flag_D   = v & MASK_PG_FLAG_D   == MASK_PG_FLAG_D;
-                    let flag_G   = v & MASK_PG_FLAG_G   == MASK_PG_FLAG_G;
-                    let flag_PAT = if self.layer() == 3 { v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT } else { v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT };
-                    GhostPageDirectoryEntry::Page {
-                        addr,
-                        flag_P, flag_RW, flag_US, flag_PWT, flag_PCD,
-                        flag_A, flag_D, flag_G, flag_PAT, flag_XD,
-                    }
-                } else {
-                    let addr = (v & MASK_ADDR) as usize;
-                    GhostPageDirectoryEntry::Directory {
-                        addr, flag_P, flag_RW, flag_US, flag_PWT, flag_PCD, flag_A, flag_XD,
-                    }
-                }
-            } else {
-                GhostPageDirectoryEntry::Empty
-            }
+            addr & MASK_L3_PG_ADDR == addr
         } else {
             arbitrary()
         }
     }
+}
 
-    pub open spec fn addr_is_zero_padded(self) -> bool {
-        addr_is_zero_padded(self.layer@, self.entry, self@.is_Page())
+// PageDirectoryEntry is defined in crate::spec_t::hardware to define the page table walk
+// semantics. Here we reuse it for the implementation and add exec functions to it.
+impl PageDirectoryEntry {
+    pub open spec fn can_use_generic_addr_mask(self) -> bool {
+        self@.is_Page() ==>
+            if self.layer == 1 {
+                self.entry & MASK_L1_PG_ADDR == self.entry & MASK_ADDR
+            } else if self.layer == 2 {
+                self.entry & MASK_L2_PG_ADDR == self.entry & MASK_ADDR
+            } else { true }
     }
 
-    pub open spec fn layer(self) -> nat {
-        self.layer@
-    }
-
-    pub proof fn lemma_zero_is_empty(self)
+    pub proof fn lemma_zero_entry_facts(self)
         requires
             self.entry == 0,
             self.layer@ <= 3,
         ensures
-            self@.is_Empty()
+            self@.is_Empty(),
+            self.all_mb0_bits_are_zero(),
     {
-        assert(self@.is_Empty()) by {
-            let entry = self.entry;
-            assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
-        };
+        assert(forall|a: u64| 0 & a == 0) by (bit_vector);
+        reveal(PageDirectoryEntry::all_mb0_bits_are_zero);
+        assert(1u64 << 0 == 1) by (bit_vector);
+        assert(0u64 & 1 == 0) by (bit_vector);
     }
+
+    pub proof fn lemma_new_entry_mb0_bits_are_zero(
+        layer: usize,
+        address: u64,
+        is_page: bool,
+        is_writable: bool,
+        is_supervisor: bool,
+        is_writethrough: bool,
+        disable_cache: bool,
+        disable_execute: bool,
+        )
+        requires
+            layer <= 3,
+            if is_page { 0 < layer } else { layer < 3 },
+            addr_is_zero_padded(layer as nat, address, is_page),
+            address & MASK_ADDR == address,
+        ensures
+            ({ let e = address
+                | MASK_FLAG_P
+                | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS } else { 0 }
+                | if is_writable           { MASK_FLAG_RW }       else { 0 }
+                | if is_supervisor         { 0 }                  else { MASK_FLAG_US }
+                | if is_writethrough       { MASK_FLAG_PWT }      else { 0 }
+                | if disable_cache         { MASK_FLAG_PCD }      else { 0 }
+                | if disable_execute       { MASK_FLAG_XD }       else { 0 };
+               (PageDirectoryEntry { entry: e, layer: Ghost(layer as nat) }).all_mb0_bits_are_zero()
+            }),
+    {
+        let or1 = MASK_FLAG_P;
+        let a1 = address | or1;
+        let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS as u64 } else { 0 };
+        let a2 = a1 | or2;
+        let or3 = if is_writable           { MASK_FLAG_RW as u64 }       else { 0 };
+        let a3 = a2 | or3;
+        let or4 = if is_supervisor         { 0 }                         else { MASK_FLAG_US as u64 };
+        let a4 = a3 | or4;
+        let or5 = if is_writethrough       { MASK_FLAG_PWT as u64 }      else { 0 };
+        let a5 = a4 | or5;
+        let or6 = if disable_cache         { MASK_FLAG_PCD as u64 }      else { 0 };
+        let a6 = a5 | or6;
+        let or7 = if disable_execute       { MASK_FLAG_XD as u64 }       else { 0 };
+        let a7 = a6 | or7;
+        let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
+        let mw: u64 = MAX_PHYADDR_WIDTH;
+        assert(forall|a:u64| #![auto] a == a | 0) by (bit_vector);
+
+        axiom_max_phyaddr_width_facts();
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,sub(mw,1)) == a ==> a & bit!(i) == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i != 7 && (a & bit!(7u64) == 0) ==> (a | bit!(i)) & bit!(7u64) == 0) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 13 && (a & bitmask_inc!(13u64,29u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,29u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 29 && (a & bitmask_inc!(13u64,29u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,29u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 13 && (a & bitmask_inc!(13u64,20u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,20u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 20 && (a & bitmask_inc!(13u64,20u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,20u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < mw && (a & bitmask_inc!(mw,51u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,51u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 51 && (a & bitmask_inc!(mw,51u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,51u64) == 0)) by (bit_vector)
+            requires mw <= 52;
+        assert(address & bitmask_inc!(mw, 51) == 0) by (bit_vector)
+            requires
+                address & bitmask_inc!(12u64, mw - 1) == address,
+                32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i < mw && (a & bitmask_inc!(mw,62u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,62u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 62 && (a & bitmask_inc!(mw,62u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,62u64) == 0)) by (bit_vector)
+            requires mw <= 52;
+        assert(address & bitmask_inc!(mw, 62) == 0) by (bit_vector)
+            requires
+                address & bitmask_inc!(12u64, mw - 1) == address,
+                32 <= mw <= 52;
+        PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+        if layer == 0 {
+            assert(!is_page);
+            assert(e & bit!(7u64) == 0);
+            assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0);
+        } else if layer == 1 {
+            if is_page {
+                assert(address & bitmask_inc!(30u64,sub(mw,1)) == address ==> address & bitmask_inc!(13u64,29u64) == 0) by (bit_vector);
+                assert(e & bitmask_inc!(13u64,29u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0);
+            } else {
+                assert(e & bit!(7u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0);
+            }
+        } else if layer == 2 {
+            if is_page {
+                assert(address & bitmask_inc!(21u64,sub(mw,1)) == address ==> address & bitmask_inc!(13u64,20u64) == 0) by (bit_vector);
+                assert(e & bitmask_inc!(13u64,20u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
+            } else {
+                assert(e & bit!(7u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
+            }
+        } else if layer == 3 {
+            assert(is_page);
+            // assert(e & bit!(7u64) == 0);
+            assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
+        } else { assert(false); }
+
+        let pde = PageDirectoryEntry { entry: e, layer: Ghost(layer as nat) };
+        reveal(PageDirectoryEntry::all_mb0_bits_are_zero);
+        assert(pde.all_mb0_bits_are_zero());
+    }
+
 
     pub proof fn lemma_new_entry_addr_mask_is_address(
         layer: usize,
@@ -322,25 +280,25 @@ impl PageDirectoryEntry {
                 | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }        else { 0 };
-                &&& e & MASK_ADDR == address
-                &&& e & MASK_FLAG_P == MASK_FLAG_P
-                &&& (e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3)
-                &&& (e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable
-                &&& (e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor
-                &&& (e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough
-                &&& (e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache
-                &&& (e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute
-                &&& addr_is_zero_padded(layer as nat, e, is_page)
+               &&& e & MASK_ADDR == address
+               &&& e & MASK_FLAG_P == MASK_FLAG_P
+               &&& (e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3)
+               &&& (e & MASK_FLAG_RW == MASK_FLAG_RW) == is_writable
+               &&& (e & MASK_FLAG_US == MASK_FLAG_US) == !is_supervisor
+               &&& (e & MASK_FLAG_PWT == MASK_FLAG_PWT) == is_writethrough
+               &&& (e & MASK_FLAG_PCD == MASK_FLAG_PCD) == disable_cache
+               &&& (e & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute
+               &&& (is_page && layer == 1 ==> e & MASK_L1_PG_ADDR == e & MASK_ADDR)
+               &&& (is_page && layer == 2 ==> e & MASK_L2_PG_ADDR == e & MASK_ADDR)
             }),
     {
-        assert(address & MASK_ADDR == address);
         let or1 = MASK_FLAG_P;
         let a1 = address | or1;
         let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS as u64 }  else { 0 };
         let a2 = a1 | or2;
         let or3 = if is_writable           { MASK_FLAG_RW as u64 }        else { 0 };
         let a3 = a2 | or3;
-        let or4 = if is_supervisor         { 0 }                   else { MASK_FLAG_US as u64 };
+        let or4 = if is_supervisor         { 0 }                          else { MASK_FLAG_US as u64 };
         let a4 = a3 | or4;
         let or5 = if is_writethrough       { MASK_FLAG_PWT as u64 }       else { 0 };
         let a5 = a4 | or5;
@@ -349,18 +307,22 @@ impl PageDirectoryEntry {
         let or7 = if disable_execute       { MASK_FLAG_XD as u64 }        else { 0 };
         let a7 = a6 | or7;
         let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
-        assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> ((a & bit!(x) == bit!(x)) == false)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a & bitmask_inc!(12u64,52u64) == (a | 0)           & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == (a | bit!(i))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(12u64,52u64) == (a | bit!(i))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        let mw: u64 = MAX_PHYADDR_WIDTH;
+        axiom_max_phyaddr_width_facts();
+        assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> a & bit!(x) != bit!(x)) by (bit_vector);
+        assert(forall|a:u64| #![auto] a == a | 0) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64, sub(mw, 1)) == (a | bit!(i))  & bitmask_inc!(12u64, sub(mw, 1))) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i > sub(mw, 1) ==> a & bitmask_inc!(12u64, sub(mw, 1)) == (a | bit!(i))  & bitmask_inc!(12u64, sub(mw, 1))) by (bit_vector)
+            requires 32 <= mw <= 52;
         assert(e & MASK_ADDR == address);
 
-        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 64 ==> a & bit!(i) == 0 ==> (a | bit!(i)) & bit!(i) == bit!(i)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bit!(i) == (a | 0) & bit!(i)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bit!(i) == (a | 0) & bit!(i)) by(bit_vector);
-        assert(forall|a:u64,i:u64,j:u64| #![auto] i != j ==> a & bit!(i) == (a | bit!(j)) & bit!(i)) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64, sub(mw, 1)) == a ==> a & bit!(i) == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i > sub(mw, 1) ==> a & bitmask_inc!(12u64, sub(mw, 1)) == a ==> a & bit!(i) == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i < 64 ==> a & bit!(i) == 0 ==> (a | bit!(i)) & bit!(i) == bit!(i)) by (bit_vector);
+        assert(forall|a:u64,i:u64,j:u64| #![auto] i != j ==> a & bit!(i) == (a | bit!(j)) & bit!(i)) by (bit_vector);
 
         assert(e & MASK_FLAG_P == MASK_FLAG_P);
         assert((e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3));
@@ -370,13 +332,18 @@ impl PageDirectoryEntry {
         assert((e & MASK_FLAG_PCD      == MASK_FLAG_PCD)      == disable_cache);
         assert((e & MASK_FLAG_XD       == MASK_FLAG_XD)       == disable_execute);
 
-        assert(addr_is_zero_padded(layer as nat, e, is_page)) by {
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(30u64,52u64) == (a | 0)           & bitmask_inc!(30u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(30u64,52u64) == (a | bit!(i))  & bitmask_inc!(30u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(30u64,52u64) == (a | bit!(i))  & bitmask_inc!(30u64,52u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(21u64,52u64) == (a | 0)           & bitmask_inc!(21u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(21u64,52u64) == (a | bit!(i))  & bitmask_inc!(21u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(21u64,52u64) == (a | bit!(i))  & bitmask_inc!(21u64,52u64)) by(bit_vector);
+        assert({
+            &&& is_page && layer == 1 ==> e & MASK_L1_PG_ADDR == e & MASK_ADDR
+            &&& is_page && layer == 2 ==> e & MASK_L2_PG_ADDR == e & MASK_ADDR
+        }) by {
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(30u64,sub(mw,1)) == (a | 0)           & bitmask_inc!(30u64,sub(mw,1))) by (bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(30u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(30u64,sub(mw,1))) by (bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(30u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(30u64,sub(mw,1))) by (bit_vector)
+                requires 32 <= mw <= 52;
+            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(21u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(21u64,sub(mw,1))) by (bit_vector)
+                requires 32 <= mw <= 52;
+            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(21u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(21u64,sub(mw,1))) by (bit_vector)
+                requires 32 <= mw <= 52;
         };
     }
 
@@ -386,7 +353,8 @@ impl PageDirectoryEntry {
             addr_is_zero_padded(layer as nat, pte.frame.base as u64, true),
             pte.frame.base as u64 & MASK_ADDR == pte.frame.base as u64,
         ensures
-            r.addr_is_zero_padded(),
+            r.all_mb0_bits_are_zero(),
+            r.can_use_generic_addr_mask(),
             r@.is_Page(),
             r.layer@ == layer,
             r@.get_Page_addr() == pte.frame.base,
@@ -410,12 +378,24 @@ impl PageDirectoryEntry {
             layer < 3,
             address & MASK_DIR_ADDR == address
         ensures
-            r.addr_is_zero_padded(),
+            r.all_mb0_bits_are_zero(),
+            r.can_use_generic_addr_mask(),
             r@.is_Directory(),
             r.layer@ == layer,
             r@.get_Directory_addr() == address,
+            r@.get_Directory_flag_RW(),
+            r@.get_Directory_flag_US(),
+            !r@.get_Directory_flag_XD(),
     {
-        Self::new_entry(layer, address, false, true, false, false, false, false)
+        Self::new_entry(
+            layer,
+            address,
+            false, // is_page
+            true,  // is_writable
+            false, // is_supervisor
+            false, // is_writethrough
+            false, // disable_cache
+            false) // disable_execute
     }
 
     pub fn new_entry(
@@ -434,8 +414,9 @@ impl PageDirectoryEntry {
             addr_is_zero_padded(layer as nat, address, is_page),
             address & MASK_ADDR == address,
         ensures
+            r.all_mb0_bits_are_zero(),
             if is_page { r@.is_Page() && r@.get_Page_addr() == address } else { r@.is_Directory() && r@.get_Directory_addr() == address},
-            r.addr_is_zero_padded(),
+            r.can_use_generic_addr_mask(),
             r.layer@ == layer,
             r.entry & MASK_ADDR == address,
             r.entry & MASK_FLAG_P == MASK_FLAG_P,
@@ -463,11 +444,10 @@ impl PageDirectoryEntry {
 
         proof {
             PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+            PageDirectoryEntry::lemma_new_entry_mb0_bits_are_zero(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
             assert(e.layer() <= 3);
             assert(e@.is_Page() ==> 0 < e.layer());
-            assert(e.addr_is_zero_padded());
-            assert(if is_page { e@.is_Page() } else { e@.is_Directory() });
-
+            assert(e.can_use_generic_addr_mask());
         }
         e
     }
@@ -492,7 +472,7 @@ impl PageDirectoryEntry {
         requires
             self.layer() <= 3,
             self@.is_Page() ==> 0 < self.layer(),
-            self.addr_is_zero_padded(),
+            self.can_use_generic_addr_mask(),
             !self@.is_Empty(),
         ensures
             res as usize == match self@ {
@@ -503,7 +483,7 @@ impl PageDirectoryEntry {
     {
         proof {
             match self@ {
-                GhostPageDirectoryEntry::Page { addr, .. }      => 
+                GhostPageDirectoryEntry::Page { addr, .. }      => {
                     if self.layer() == 1 {
                         assert(addr == self.entry & MASK_ADDR);
                     } else if self.layer() == 2 {
@@ -512,7 +492,8 @@ impl PageDirectoryEntry {
                         assert(addr == self.entry & MASK_ADDR);
                     } else {
                         assert(false);
-                    },
+                    }
+                },
                 GhostPageDirectoryEntry::Directory { addr, .. } => assert(addr == self.entry & MASK_ADDR),
                 GhostPageDirectoryEntry::Empty                  => (),
             }
@@ -522,6 +503,7 @@ impl PageDirectoryEntry {
 
     pub fn is_mapping(&self) -> (r: bool)
         requires
+            self.all_mb0_bits_are_zero(),
             self.layer() <= 3
         ensures
             r == !self@.is_Empty(),
@@ -537,7 +519,13 @@ impl PageDirectoryEntry {
         ensures
             if r { self@.is_Page() } else { self@.is_Directory() },
     {
-        (layer == 3) || ((self.entry & MASK_L1_PG_FLAG_PS) == MASK_L1_PG_FLAG_PS)
+        if layer == 3 {
+            true
+        } else if layer == 0 {
+            false
+        } else {
+            (self.entry & MASK_L1_PG_FLAG_PS) == MASK_L1_PG_FLAG_PS
+        }
     }
 
     pub fn is_dir(&self, layer: usize) -> (r: bool)
@@ -552,6 +540,8 @@ impl PageDirectoryEntry {
     }
 }
 
+/// PTDir is used in the `ghost_pt` field of the PageTable. It's used to keep track of the memory
+/// regions in which the corresponding translation structures are stored.
 pub struct PTDir {
     /// Region of physical memory in which this PTDir is stored
     pub region: MemRegion,
@@ -602,7 +592,8 @@ impl PageTable {
         ensures
             res.layer@ == layer as nat,
             res@ === self.view_at(layer as nat, ptr, i as nat, pt@),
-            res.addr_is_zero_padded(),
+            res == self.entry_at_spec(layer as nat, ptr, i as nat, pt@),
+            res.can_use_generic_addr_mask(),
             (res@.is_Page() ==> 0 < res.layer()),
     {
         assert(aligned((ptr + i * WORD_SIZE) as nat, 8)) by {
@@ -614,7 +605,7 @@ impl PageTable {
         proof { let x = self.entry_at_spec(layer as nat, ptr, i as nat, pt@); }
         PageDirectoryEntry {
             entry: self.memory.read(ptr, i, Ghost(pt@.region)),
-            layer: (Ghost(layer as nat)),
+            layer: Ghost(layer as nat),
         }
     }
 
@@ -661,19 +652,37 @@ impl PageTable {
         &&& self.layer_in_range(layer)
         &&& pt.entries.len() == X86_NUM_ENTRIES
         &&& self.directories_obey_invariant_at(layer, ptr, pt)
+        &&& self.directories_have_flags(layer, ptr, pt)
         &&& self.ghost_pt_matches_structure(layer, ptr, pt)
         &&& self.ghost_pt_used_regions_rtrancl(layer, ptr, pt)
         &&& self.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt)
         &&& self.ghost_pt_region_notin_used_regions(layer, ptr, pt)
         &&& pt.used_regions.subset_of(self.memory.regions())
-        &&& self.entry_addrs_are_zero_padded(layer, ptr, pt)
+        &&& self.entry_addrs_can_use_generic_addr_mask(layer, ptr, pt)
+        &&& self.entry_mb0_bits_are_zero(layer, ptr, pt)
     }
 
-    pub open spec fn entry_addrs_are_zero_padded(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+    pub open spec fn directories_have_flags(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+        forall|i: nat| i < X86_NUM_ENTRIES ==> {
+            let entry = #[trigger] self.view_at(layer, ptr, i, pt);
+            entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+        }
+    }
+
+    pub open spec fn entry_mb0_bits_are_zero(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
+        forall|i: nat| i < X86_NUM_ENTRIES ==>
+            (#[trigger] self.entry_at_spec(layer, ptr, i, pt)).all_mb0_bits_are_zero()
+    }
+
+    /// Superpages and huge pages have their own address masks that cover fewer bits.
+    /// We ensure that the additional bits that are set in the "generic" address mask are always
+    /// zero for huge and super page mappings. Thus we can always use the generic mask for these
+    /// addresses.
+    pub open spec fn entry_addrs_can_use_generic_addr_mask(self, layer: nat, ptr: usize, pt: PTDir) -> bool {
         forall|i: nat| i < X86_NUM_ENTRIES ==> {
             let entry = #[trigger] self.entry_at_spec(layer, ptr, i, pt);
             &&& (entry@.is_Page() ==> 0 < entry.layer())
-            &&& entry.addr_is_zero_padded()
+            &&& entry.can_use_generic_addr_mask()
         }
     }
 
@@ -712,6 +721,9 @@ impl PageTable {
             layer: layer,
             base_vaddr,
             arch: x86_arch_spec,
+            // We don't have to check the flags because we know (from the invariant) that all
+            // directories have these flags set.
+            flags: permissive_flags,
         }
     }
 
@@ -748,7 +760,7 @@ impl PageTable {
             init
         } else {
             let entry = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
-            self.interp_at_aux(layer, ptr, base_vaddr, init.add(seq![entry]), pt)
+            self.interp_at_aux(layer, ptr, base_vaddr, init.push(entry), pt)
         }
     }
 
@@ -756,15 +768,12 @@ impl PageTable {
     proof fn termination_interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, pt: PTDir) {
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
         assert(self.inv_at(layer, ptr, pt));
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             // Can't assert this for the actual entry because we'd have to call `interp_at_entry`
             // whose termination depends on this function's termination.
-            assert(forall|e: l1::NodeEntry| #![auto] init.add(seq![e]).len() == init.len() + 1);
-            assert(forall|e: l1::NodeEntry| #![auto] X86_NUM_ENTRIES - init.add(seq![e]).len() < X86_NUM_ENTRIES - init.len());
+            assert(forall|e: l1::NodeEntry| #![auto] init.push(e).len() == init.len() + 1);
+            assert(forall|e: l1::NodeEntry| #![auto] X86_NUM_ENTRIES - init.push(e).len() < X86_NUM_ENTRIES - init.len());
             // FIXME: Verus incompleteness?
             assume(false);
         }
@@ -799,18 +808,47 @@ impl PageTable {
         assert(other.ghost_pt_region_notin_used_regions(layer, ptr, pt));
         assert(pt.used_regions.subset_of(other.memory.regions()));
 
+        assert(other.entry_mb0_bits_are_zero(layer, ptr, pt)) by {
+            assert forall|i: nat|
+            i < X86_NUM_ENTRIES implies {
+                let entry = #[trigger] other.entry_at_spec(layer, ptr, i, pt);
+                &&& entry.all_mb0_bits_are_zero()
+            } by
+            {
+                let entry = #[trigger] other.entry_at_spec(layer, ptr, i, pt);
+                let self_entry = #[trigger] self.entry_at_spec(layer, ptr, i, pt);
+                assert(entry === self_entry);
+            };
+        };
+
+        assert(other.entry_addrs_can_use_generic_addr_mask(layer, ptr, pt)) by {
+            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                let entry = #[trigger] other.entry_at_spec(layer, ptr, i, pt);
+                &&& (entry@.is_Page() ==> 0 < entry.layer())
+                &&& entry.can_use_generic_addr_mask()
+            } by {
+                assert(other.entry_at_spec(layer, ptr, i, pt) == self.entry_at_spec(layer, ptr, i, pt));
+            };
+        };
+
         assert forall|i: nat|
         i < X86_NUM_ENTRIES implies {
-            let entry = #[trigger] other.entry_at_spec(layer, ptr, i, pt);
-            &&& (entry@.is_Page() ==> 0 < entry.layer())
-            &&& entry.addr_is_zero_padded()
-        } by
-        {
-            let entry = #[trigger] other.entry_at_spec(layer, ptr, i, pt);
-            let self_entry = #[trigger] self.entry_at_spec(layer, ptr, i, pt);
-            assert(entry === self_entry);
+            let entry = #[trigger] other.view_at(layer, ptr, i, pt);
+            entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+        } by {
+            let entry = other.view_at(layer, ptr, i, pt);
+            let o_entry = other.entry_at_spec(layer, ptr, i, pt);
+            let s_entry = self.entry_at_spec(layer, ptr, i, pt);
+            assert(o_entry@ == entry);
+            assert(o_entry == s_entry);
+            if entry.is_Directory() {
+                assert(self.directories_have_flags(layer, ptr, pt));
+                assert(self.view_at(layer, ptr, i, pt).get_Directory_flag_RW());
+                assert(self.view_at(layer, ptr, i, pt).get_Directory_flag_US());
+                assert(!self.view_at(layer, ptr, i, pt).get_Directory_flag_XD());
+            }
         };
-        assert(other.entry_addrs_are_zero_padded(layer, ptr, pt));
+        assert(other.directories_have_flags(layer, ptr, pt));
 
         assert forall|i: nat|
         i < X86_NUM_ENTRIES implies {
@@ -890,6 +928,26 @@ impl PageTable {
             self.interp_at(layer, ptr, base_vaddr, pt).interp().lower == base_vaddr,
             self.interp_at(layer, ptr, base_vaddr, pt).interp().upper == x86_arch_spec.upper_vaddr(layer, base_vaddr),
             ({ let res = self.interp_at(layer, ptr, base_vaddr, pt);
+               forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt)
+            }),
+    {
+        self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![], pt);
+        let res = self.interp_at(layer, ptr, base_vaddr, pt);
+        assert(res.pages_match_entry_size());
+        assert(res.directories_are_in_next_layer());
+        assert(res.directories_match_arch());
+        assert(res.directories_obey_invariant());
+        assert(res.directories_are_nonempty());
+        assert(res.frames_aligned());
+        res.lemma_inv_implies_interp_inv();
+    }
+
+    pub proof fn lemma_interp_at_facts_entries(self, layer: nat, ptr: usize, base_vaddr: nat, pt: PTDir)
+        requires
+            self.inv_at(layer, ptr, pt),
+            self.interp_at(layer, ptr, base_vaddr, pt).inv(),
+        ensures
+            ({ let res = self.interp_at(layer, ptr, base_vaddr, pt);
                 &&& (forall|j: nat|
                     #![trigger res.entries[j as int]]
                     j < res.entries.len() ==>
@@ -901,8 +959,7 @@ impl PageTable {
                         GhostPageDirectoryEntry::Page { addr, .. } => res.entries[j as int].is_Page() && res.entries[j as int].get_Page_0().frame.base == addr,
                         GhostPageDirectoryEntry::Empty             => res.entries[j as int].is_Empty(),
                     })
-                &&& (forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] self.interp_at_entry(layer, ptr, base_vaddr, j, pt))
-            }),
+            })
     {
         self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, seq![], pt);
         let res = self.interp_at(layer, ptr, base_vaddr, pt);
@@ -938,14 +995,11 @@ impl PageTable {
             }),
         decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
     {
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             assert(self.directories_obey_invariant_at(layer, ptr, pt));
             let entry = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
-            let init_next = init.add(seq![entry]);
+            let init_next = init.push(entry);
 
             self.lemma_interp_at_aux_facts(layer, ptr, base_vaddr, init_next, pt);
         }
@@ -969,8 +1023,8 @@ impl PageTable {
         proof { indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat); }
         let entry      = self.entry_at(layer, ptr, idx, pt);
         let interp: Ghost<l1::Directory> = Ghost(self.interp_at(layer as nat, ptr, base as nat, pt@));
-        assert(entry.addr_is_zero_padded());
         proof {
+            assert(entry.can_use_generic_addr_mask());
             interp@.lemma_resolve_structure_assertions(vaddr as nat, idx as nat);
             interp@.lemma_resolve_refines(vaddr as nat);
         }
@@ -1044,9 +1098,9 @@ impl PageTable {
     }
 
     pub open spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
-        // Can't map pages in Rotbuchstrasse 8, 8006 ZürichPML4, i.e. layer 0
+        // Can't map pages in PML4, i.e. layer 0
         &&& x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size, 1)
-        &&& pte.frame.base <= MAXPHYADDR
+        &&& pte.frame.base <= MAX_PHYADDR
     }
 
     fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pte: PageTableEntryExec, pt: Ghost<PTDir>)
@@ -1094,7 +1148,13 @@ impl PageTable {
             self.memory.cr3_spec() == old(self).memory.cr3_spec(),
         // decreases X86_NUM_LAYERS - layer
     {
-        proof { self.lemma_interp_at_facts(layer as nat, ptr, base as nat, pt@); }
+        proof {
+            self.lemma_interp_at_facts(layer as nat, ptr, base as nat, pt@);
+
+            // this is the expensive bit of `lemma_interp_at_facts`, split out for further
+            // refactoring
+            self.lemma_interp_at_facts_entries(layer as nat, ptr, base as nat, pt@);
+        }
         let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
         proof {
             assert({
@@ -1261,20 +1321,41 @@ impl PageTable {
                                 };
                                 assert(self.directories_obey_invariant_at(layer as nat, ptr, pt_res@));
 
-                                assert(self.entry_addrs_are_zero_padded(layer as nat, ptr, pt_res@)) by {
-                                    assert forall|i: nat|
-                                        i < X86_NUM_ENTRIES
-                                        implies {
-                                            let entry = #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_res@);
-                                            &&& (entry@.is_Page() ==> 0 < entry.layer())
-                                            &&& entry.addr_is_zero_padded()
-                                        }
-                                    by {
-                                        let entry = self.entry_at_spec(layer as nat, ptr, i, pt_res@);
+                                assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                    let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt_res@);
+                                    entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                                } by {
+                                    assert(self.memory.region_view(pt_res@.region) === old(self).memory.region_view(pt_res@.region));
+                                    let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt_res@);
+                                    let old_entry = old(self).view_at(layer as nat, ptr, i, pt@);
+                                    assert(old_entry == entry);
+                                    assert(old(self).directories_have_flags(layer as nat, ptr, pt@));
+                                    if old_entry.is_Directory() {
+                                        assert(old_entry.get_Directory_flag_RW() && old_entry.get_Directory_flag_US() && !old_entry.get_Directory_flag_XD());
+                                    }
+                                };
+                                assert(self.directories_have_flags(layer as nat, ptr, pt_res@));
+
+                                assert(self.entry_addrs_can_use_generic_addr_mask(layer as nat, ptr, pt_res@)) by {
+                                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                        let entry = #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_res@);
+                                        &&& (entry@.is_Page() ==> 0 < entry.layer())
+                                        &&& entry.can_use_generic_addr_mask()
+                                    } by {
                                         if i == idx {
                                         } else {
                                             assert(self.entry_at_spec(layer as nat, ptr, i, pt_res@) === old(self).entry_at_spec(layer as nat, ptr, i, pt@));
-                                            assert(old(self).entry_addrs_are_zero_padded(layer as nat, ptr, pt@));
+                                        }
+                                    };
+                                };
+
+                                assert(self.entry_mb0_bits_are_zero(layer as nat, ptr, pt_res@)) by {
+                                    assert forall|i: nat| i < X86_NUM_ENTRIES implies
+                                        #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_res@).all_mb0_bits_are_zero()
+                                    by {
+                                        if i == idx {
+                                        } else {
+                                            assert(self.entry_at_spec(layer as nat, ptr, i, pt_res@) === old(self).entry_at_spec(layer as nat, ptr, i, pt@));
                                         }
                                     };
                                 };
@@ -1420,8 +1501,7 @@ impl PageTable {
                         entry.is_Directory() ==> {
                             &&& self.inv_at((layer + 1) as nat, entry.get_Directory_addr(), pt@.entries[i as int].get_Some_0())
                         }
-                    }
-                    by {
+                    } by {
                         let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
                         let byte_addr = (ptr + i * WORD_SIZE) as nat;
                         assert(i < self.memory.region_view(pt@.region).len());
@@ -1443,21 +1523,44 @@ impl PageTable {
                     };
                     assert(self.directories_obey_invariant_at(layer as nat, ptr, pt@));
 
+                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                        let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
+                        entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                    }
+                    by {
+                        let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt@);
+                        assert(i < self.memory.region_view(pt@.region).len());
+                        if i == idx {
+                        } else {
+                            assert(old(self).directories_have_flags(layer as nat, ptr, pt@));
+                            assert(entry === old(self).view_at(layer as nat, ptr, i, pt@));
+                            if entry.is_Directory() {
+                            }
+                        }
+                    };
+                    assert(self.directories_have_flags(layer as nat, ptr, pt@));
+
                     assert(self.ghost_pt_used_regions_rtrancl(layer as nat, ptr, pt@));
                     assert(self.ghost_pt_used_regions_pairwise_disjoint(layer as nat, ptr, pt@));
-                    assert(self.entry_addrs_are_zero_padded(layer as nat, ptr, pt@)) by {
-                        assert forall|i: nat|
-                            i < X86_NUM_ENTRIES
-                            implies {
-                                let entry = #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt@);
-                                &&& (entry@.is_Page() ==> 0 < entry.layer())
-                                &&& entry.addr_is_zero_padded()
-                            }
-                        by {
-                            let entry = self.entry_at_spec(layer as nat, ptr, i, pt@);
+
+                    assert(self.entry_addrs_can_use_generic_addr_mask(layer as nat, ptr, pt@)) by {
+                        assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                            let entry = #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt@);
+                            &&& (entry@.is_Page() ==> 0 < entry.layer())
+                            &&& entry.can_use_generic_addr_mask()
+                        } by {
                             if i == idx {
-                                assert(entry@.is_Page() ==> 0 < entry.layer());
-                                assert(entry.addr_is_zero_padded());
+                            } else {
+                                assert(self.entry_at_spec(layer as nat, ptr, i, pt@) === old(self).entry_at_spec(layer as nat, ptr, i, pt@));
+                            }
+                        };
+                    };
+
+                    assert(self.entry_mb0_bits_are_zero(layer as nat, ptr, pt@)) by {
+                        assert forall|i: nat| i < X86_NUM_ENTRIES implies
+                            #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt@).all_mb0_bits_are_zero()
+                        by {
+                            if i == idx {
                             } else {
                                 assert(self.entry_at_spec(layer as nat, ptr, i, pt@) === old(self).entry_at_spec(layer as nat, ptr, i, pt@));
                             }
@@ -1531,7 +1634,6 @@ impl PageTable {
                 };
                 let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
                 self.memory.write(ptr, idx, Ghost(pt@.region), new_dir_entry.entry);
-
 
                 // After writing the new empty directory entry we prove that the resulting state
                 // satisfies the invariant and that the interpretation remains unchanged.
@@ -1614,28 +1716,46 @@ impl PageTable {
                                 }
                             };
                         };
+                        assert(self_with_empty@.directories_have_flags(layer as nat, ptr, pt_with_empty@)) by {
+                            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                let entry = #[trigger] self_with_empty@.view_at(layer as nat, ptr, i, pt_with_empty@);
+                                entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                            } by {
+                                let entry = self_with_empty@.view_at(layer as nat, ptr, i, pt_with_empty@);
+                                if i == idx {
+                                } else {
+                                    if entry.is_Directory() {
+                                        assert(self_with_empty@.memory.spec_read(i, pt_with_empty@.region)
+                                               === old(self).memory.spec_read(i, pt@.region));
+                                        assert(entry === old(self).view_at(layer as nat, ptr, i, pt@));
+                                    }
+                                }
+                            };
+                        };
                         assert(self_with_empty@.ghost_pt_used_regions_rtrancl(layer as nat, ptr, pt_with_empty@));
                         assert(self_with_empty@.ghost_pt_used_regions_pairwise_disjoint(layer as nat, ptr, pt_with_empty@));
                         assert(self_with_empty@.ghost_pt_region_notin_used_regions(layer as nat, ptr, pt_with_empty@));
 
-                        assert(self_with_empty@.entry_addrs_are_zero_padded(layer as nat, ptr, pt_with_empty@)) by {
-                            assert forall|i: nat|
-                                i < X86_NUM_ENTRIES
-                                implies {
-                                    let entry = #[trigger] self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@);
-                                    &&& (entry@.is_Page() ==> 0 < entry.layer())
-                                    &&& entry.addr_is_zero_padded()
-                                }
-                            by {
-                                let entry = self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@);
+                        assert(self_with_empty@.entry_addrs_can_use_generic_addr_mask(layer as nat, ptr, pt_with_empty@)) by {
+                            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                let entry = #[trigger] self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@);
+                                &&& (entry@.is_Page() ==> 0 < entry.layer())
+                                &&& entry.can_use_generic_addr_mask()
+                            } by {
                                 if i == idx {
-                                    assert(entry@.is_Page() ==> 0 < entry.layer());
-                                    assert(entry.addr_is_zero_padded());
                                 } else {
                                     assert(self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@) === old(self).entry_at_spec(layer as nat, ptr, i, pt@));
-                                    assert(old(self).entry_addrs_are_zero_padded(layer as nat, ptr, pt@));
-                                    assert(entry@.is_Page() ==> 0 < entry.layer());
-                                    assert(entry.addr_is_zero_padded());
+                                }
+                            };
+                        };
+
+                        assert(self_with_empty@.entry_mb0_bits_are_zero(layer as nat, ptr, pt_with_empty@)) by {
+                            assert forall|i: nat| i < X86_NUM_ENTRIES implies
+                                #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_with_empty@).all_mb0_bits_are_zero()
+                            by {
+                                if i == idx {
+                                } else {
+                                    assert(self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@) === old(self).entry_at_spec(layer as nat, ptr, i, pt@));
                                 }
                             };
                         };
@@ -1757,6 +1877,24 @@ impl PageTable {
                                         }
                                     };
                                 };
+
+                                assert(self.directories_have_flags(layer as nat, ptr, pt_final@)) by {
+                                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                        let entry = #[trigger] self.view_at(layer as nat, ptr, i, pt_final@);
+                                        entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+                                    } by {
+                                        let entry = self.view_at(layer as nat, ptr, i, pt_final@);
+                                        if i == idx {
+                                        } else {
+                                            if entry.is_Directory() {
+                                                assert(self.memory.spec_read(i, pt_final@.region)
+                                                       === self_with_empty@.memory.spec_read(i, pt_with_empty@.region));
+                                                assert(entry === self_with_empty@.view_at(layer as nat, ptr, i, pt_with_empty@));
+                                            }
+                                        }
+                                    };
+                                };
+
                                 assert(pt_final@.entries.len() == pt_with_empty@.entries.len());
                                 assert(forall|i: nat| i != idx && i < pt_final@.entries.len() ==> pt_final@.entries[i as int] === pt_with_empty@.entries[i as int]);
                                 assert(self.ghost_pt_used_regions_rtrancl(layer as nat, ptr, pt_final@)) by {
@@ -1828,24 +1966,26 @@ impl PageTable {
                                 assert(self.ghost_pt_matches_structure(layer as nat, ptr, pt_final@));
                                 assert(self.ghost_pt_region_notin_used_regions(layer as nat, ptr, pt_final@));
 
-                                assert(self.entry_addrs_are_zero_padded(layer as nat, ptr, pt_final@)) by {
-                                    assert forall|i: nat|
-                                        i < X86_NUM_ENTRIES
-                                        implies {
-                                            let entry = #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_final@);
-                                            &&& (entry@.is_Page() ==> 0 < entry.layer())
-                                            &&& entry.addr_is_zero_padded()
-                                        }
-                                    by {
-                                        let entry = self.entry_at_spec(layer as nat, ptr, i, pt_final@);
+                                assert(self.entry_addrs_can_use_generic_addr_mask(layer as nat, ptr, pt_final@)) by {
+                                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                                        let entry = #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_final@);
+                                        &&& (entry@.is_Page() ==> 0 < entry.layer())
+                                        &&& entry.can_use_generic_addr_mask()
+                                    } by {
                                         if i == idx {
-                                            assert(entry@.is_Page() ==> 0 < entry.layer());
-                                            assert(entry.addr_is_zero_padded());
                                         } else {
                                             assert(self.entry_at_spec(layer as nat, ptr, i, pt_final@) === self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@));
-                                            assert(self_with_empty@.entry_addrs_are_zero_padded(layer as nat, ptr, pt_with_empty@));
-                                            assert(entry@.is_Page() ==> 0 < entry.layer());
-                                            assert(entry.addr_is_zero_padded());
+                                        }
+                                    };
+                                };
+
+                                assert(self.entry_mb0_bits_are_zero(layer as nat, ptr, pt_final@)) by {
+                                    assert forall|i: nat| i < X86_NUM_ENTRIES implies
+                                        #[trigger] self.entry_at_spec(layer as nat, ptr, i, pt_final@).all_mb0_bits_are_zero()
+                                    by {
+                                        if i == idx {
+                                        } else {
+                                            assert(self.entry_at_spec(layer as nat, ptr, i, pt_final@) === self_with_empty@.entry_at_spec(layer as nat, ptr, i, pt_with_empty@));
                                         }
                                     };
                                 };
@@ -1966,33 +2106,35 @@ impl PageTable {
             self.empty_at(layer, ptr, pt),
             self.inv_at(layer, ptr, pt),
     {
-        assert forall|i: nat|
-            i < X86_NUM_ENTRIES
-            implies
-            self.view_at(layer, ptr, i, pt).is_Empty()
-            by
-        {
-            self.entry_at_spec(layer, ptr, i, pt).lemma_zero_is_empty();
-        };
+        assert forall|i: nat| i < X86_NUM_ENTRIES implies self.view_at(layer, ptr, i, pt).is_Empty()
+        by { self.entry_at_spec(layer, ptr, i, pt).lemma_zero_entry_facts(); };
         // Can't combine with the first assert forall because manually choosing multiple triggers
         // in assert forall is broken.
-        assert forall|i: nat|
-            i < X86_NUM_ENTRIES
-            implies
+        assert forall|i: nat| i < X86_NUM_ENTRIES implies
             ((#[trigger] self.entry_at_spec(layer, ptr, i, pt))@.is_Page() ==> 0 < self.entry_at_spec(layer, ptr, i, pt).layer()) &&
-            self.entry_at_spec(layer, ptr, i, pt).addr_is_zero_padded()
-            by
-        {
-            self.entry_at_spec(layer, ptr, i, pt).lemma_zero_is_empty();
-
+            self.entry_at_spec(layer, ptr, i, pt).can_use_generic_addr_mask()
+        by {
+            self.entry_at_spec(layer, ptr, i, pt).lemma_zero_entry_facts();
             let pt_entry = self.entry_at_spec(layer, ptr, i, pt);
             assert(pt_entry@.is_Page() ==> 0 < pt_entry.layer());
-            assert(pt_entry.addr_is_zero_padded());
-
+            assert(pt_entry.can_use_generic_addr_mask());
         };
-        assert(self.entry_addrs_are_zero_padded(layer, ptr, pt));
+        assert(self.entry_addrs_can_use_generic_addr_mask(layer, ptr, pt));
+
+        assert(self.entry_mb0_bits_are_zero(layer, ptr, pt)) by {
+            assert forall|i: nat| i < X86_NUM_ENTRIES implies
+                (#[trigger] self.entry_at_spec(layer, ptr, i, pt)).all_mb0_bits_are_zero()
+            by {
+                assert(0u64 & bit!(0u64) != bit!(0u64)) by (bit_vector);
+                reveal(PageDirectoryEntry::all_mb0_bits_are_zero);
+                assert(self.entry_at_spec(layer, ptr, i, pt).entry == 0);
+                assert(self.entry_at_spec(layer, ptr, i, pt).entry & MASK_FLAG_P != MASK_FLAG_P);
+                assert(self.entry_at_spec(layer, ptr, i, pt).all_mb0_bits_are_zero());
+            };
+        };
 
         assert(self.directories_obey_invariant_at(layer, ptr, pt));
+        assert(self.inv_at(layer, ptr, pt));
     }
 
     proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, idx: nat, pt: PTDir)
@@ -2024,14 +2166,11 @@ impl PageTable {
         let res = self.interp_at_aux(layer + 1, entry_ptr, entry_base, init, entry_pt);
         assert(self.inv_at(layer + 1, entry_ptr, entry_pt));
 
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let entry = self.interp_at_entry(layer + 1, entry_ptr, entry_base, init.len(), entry_pt);
             assert(entry === l1::NodeEntry::Empty());
-            self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, init.add(seq![l1::NodeEntry::Empty()]), idx, pt);
+            self.lemma_empty_at_interp_at_aux_equal_l1_empty_dir(layer, ptr, base, init.push(l1::NodeEntry::Empty()), idx, pt);
         }
     }
 
@@ -2066,33 +2205,13 @@ impl PageTable {
             !self.interp_at_aux(layer, ptr, base, init, pt)[nonempty_idx as int].is_Empty()
         decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
     {
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
-            let new_init = init.add(seq![entry]);
+            let new_init = init.push(entry);
             self.lemma_not_empty_at_implies_interp_at_aux_not_empty(layer, ptr, base, new_init, nonempty_idx, pt);
         }
     }
-
-    proof fn lemma_empty_at_implies_interp_at_aux_empty(self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, pt: PTDir)
-        requires
-            self.inv_at(layer, ptr, pt),
-            self.empty_at(layer, ptr, pt),
-            init.len() <= X86_NUM_ENTRIES,
-            forall|i: nat| i < init.len() ==> init[i as int] == l1::NodeEntry::Empty(),
-        ensures
-            forall|i: nat| i < self.interp_at_aux(layer, ptr, base, init, pt).len() ==> self.interp_at_aux(layer, ptr, base, init, pt)[i as int] == l1::NodeEntry::Empty(),
-        decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
-    {
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
-        } else {
-            let entry = self.interp_at_entry(layer, ptr, base, init.len(), pt);
-            let new_init = init.add(seq![entry]);
-            self.lemma_empty_at_implies_interp_at_aux_empty(layer, ptr, base, new_init, pt);
-        }
-   }
 
     proof fn lemma_empty_at_implies_interp_at_empty(self, layer: nat, ptr: usize, base: nat, pt: PTDir)
         requires
@@ -2102,7 +2221,6 @@ impl PageTable {
             self.interp_at(layer, ptr, base, pt).empty()
     {
         self.lemma_interp_at_aux_facts(layer, ptr, base, seq![], pt);
-        self.lemma_empty_at_implies_interp_at_aux_empty(layer, ptr, base, seq![], pt);
     }
 
     proof fn lemma_not_empty_at_implies_interp_at_not_empty(self, layer: nat, ptr: usize, base: nat, pt: PTDir)
@@ -2157,7 +2275,7 @@ impl PageTable {
         assert(other.ghost_pt_used_regions_pairwise_disjoint(layer, ptr, pt));
         assert(other.ghost_pt_region_notin_used_regions(layer, ptr, pt));
         assert(pt.used_regions.subset_of(other.memory.regions()));
-        assert(other.entry_addrs_are_zero_padded(layer, ptr, pt));
+        assert(other.entry_addrs_can_use_generic_addr_mask(layer, ptr, pt));
     }
 
     proof fn lemma_interp_at_aux_doesnt_use_ghost_pt(self, other: Self, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, pt: PTDir)
@@ -2171,10 +2289,7 @@ impl PageTable {
     {
         self.lemma_inv_at_doesnt_use_ghost_pt(other, layer, ptr, pt);
         assert(other.inv_at(layer, ptr, pt));
-        // FIXME: Why does Verus report "mismatched types" if I use the RHS directly in the
-        // comparison?
-        let num_entries: nat = X86_NUM_ENTRIES as nat;
-        if init.len() >= num_entries {
+        if init.len() >= X86_NUM_ENTRIES as nat {
         } else {
             let idx = init.len();
             let entry = self.interp_at_entry(layer, ptr, base, idx, pt);
@@ -2190,7 +2305,7 @@ impl PageTable {
                     GhostPageDirectoryEntry::Empty => { },
                 }
             };
-            self.lemma_interp_at_aux_doesnt_use_ghost_pt(other, layer, ptr, base, init.add(seq![entry]), pt);
+            self.lemma_interp_at_aux_doesnt_use_ghost_pt(other, layer, ptr, base, init.push(entry), pt);
         }
     }
 
@@ -2388,7 +2503,7 @@ impl PageTable {
                                 assert(forall|i: nat| i < X86_NUM_ENTRIES && i != idx ==> self.entry_at_spec(layer as nat, ptr, i, pt_res@) == old(self).entry_at_spec(layer as nat, ptr, i, pt@));
                                 assert(forall|i: nat, r: MemRegion| i < X86_NUM_ENTRIES && i != idx && pt_res@.entries[i as int].is_Some() && pt_res@.entries[i as int].get_Some_0().used_regions.contains(r) ==> !pt@.entries[idx as int].get_Some_0().used_regions.contains(r));
 
-                                self.entry_at_spec(layer as nat, ptr, idx as nat, pt_res@).lemma_zero_is_empty();
+                                self.entry_at_spec(layer as nat, ptr, idx as nat, pt_res@).lemma_zero_entry_facts();
 
                                 assert(self.inv_at(layer as nat, ptr, pt_res@)) by {
                                     assert(self.directories_obey_invariant_at(layer as nat, ptr, pt_res@)) by {
@@ -2539,8 +2654,7 @@ impl PageTable {
                         assert(self.memory.region_view(pt@.region) === old(self).memory.region_view(pt@.region).update(idx as int, 0));
                         assert(self.memory.spec_read(idx as nat, pt@.region) == 0);
                         let new_entry = self.entry_at_spec(layer as nat, ptr, idx as nat, pt@);
-                        new_entry.lemma_zero_is_empty();
-                        assert(new_entry@.is_Empty());
+                        new_entry.lemma_zero_entry_facts();
                         assert(forall|i: nat| i < X86_NUM_ENTRIES && i != idx ==> self.entry_at_spec(layer as nat, ptr, i, pt@) == old(self).entry_at_spec(layer as nat, ptr, i, pt@));
                         assert(forall|i: nat| i < X86_NUM_ENTRIES && i != idx ==> self.view_at(layer as nat, ptr, i, pt@) == old(self).view_at(layer as nat, ptr, i, pt@));
 
