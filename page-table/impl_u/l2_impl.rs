@@ -10,8 +10,8 @@ use vstd::set_lib::*;
 use vstd::seq_lib::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, permissive_flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec };
-use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
+use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, permissive_flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, lemma_maxphyaddr_facts, axiom_max_phyaddr_width_facts };
+use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::mem;
@@ -44,34 +44,22 @@ macro_rules! bitmask_inc {
 // }
 
 
-proof fn lemma_addr_masks_facts(address: u64)
-    ensures
-        MASK_L2_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
-        MASK_L1_PG_ADDR & address == address ==> MASK_L3_PG_ADDR & address == address,
-{
-    assert((bitmask_inc!(21u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
-    assert((bitmask_inc!(30u64, 52u64) & address == address) ==> (bitmask_inc!(12u64, 52u64) & address == address)) by (bit_vector);
-}
-
-proof fn lemma_addr_masks_facts2(address: u64)
-    ensures
-        (address & MASK_L3_PG_ADDR) & MASK_L2_PG_ADDR == address & MASK_L2_PG_ADDR,
-        (address & MASK_L3_PG_ADDR) & MASK_L1_PG_ADDR == address & MASK_L1_PG_ADDR,
-{
-    assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(21u64, 52u64)) == (address & bitmask_inc!(21u64, 52u64))) by (bit_vector);
-    assert(((address & bitmask_inc!(12u64, 52u64)) & bitmask_inc!(30u64, 52u64)) == (address & bitmask_inc!(30u64, 52u64))) by (bit_vector);
-}
-
 proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
-    ensures forall|addr: u64| addr <= MAXPHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
+    ensures forall|addr: u64| addr <= MAX_PHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
 {
     assert forall|addr: u64|
-        addr <= MAXPHYADDR &&
+        addr <= MAX_PHYADDR &&
         #[trigger] aligned(addr as nat, PAGE_SIZE as nat)
         implies
         addr & MASK_DIR_ADDR == addr
     by {
-        assert(addr <= 0xFFFFFFFFFFFFFu64 && addr % 4096u64 == 0 ==> addr & bitmask_inc!(12u64,52u64) == addr) by(bit_vector);
+        let max_width: u64 = MAX_PHYADDR_WIDTH;
+        let mask_dir_addr: u64 = MASK_DIR_ADDR;
+        assert(addr & mask_dir_addr == addr) by (bit_vector)
+            requires
+                addr <= sub(1u64 << max_width, 1u64),
+                addr % 4096u64 == 0,
+                mask_dir_addr == bitmask_inc!(12u64, max_width - 1);
     };
 }
 
@@ -80,36 +68,45 @@ proof fn lemma_aligned_addr_mask_facts(addr: u64)
         aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR),
         aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR),
         (addr & MASK_L3_PG_ADDR == addr & MASK_ADDR),
-        addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
-        addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
-        addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
+        addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr),
 {
+    axiom_max_phyaddr_width_facts();
     assert(aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_L1_PG_ADDR == addr & MASK_ADDR)) by {
         if aligned(addr as nat, L1_ENTRY_SIZE as nat) {
-            assert(addr % 0x40000000u64 == 0 ==> addr & bitmask_inc!(30u64,52u64) == addr & bitmask_inc!(12u64,52u64)) by(bit_vector);
+            let max_width: u64 = MAX_PHYADDR_WIDTH;
+            assert(addr & bitmask_inc!(30u64, max_width - 1) == addr & bitmask_inc!(12u64, max_width - 1)) by (bit_vector)
+                requires
+                    addr % 0x40000000u64 == 0,
+                    32 <= max_width;
         }
     };
     assert(aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_L2_PG_ADDR == addr & MASK_ADDR)) by {
         if aligned(addr as nat, L2_ENTRY_SIZE as nat) {
-            assert(addr % 0x200000u64 == 0 ==> addr & bitmask_inc!(21u64,52u64) == addr & bitmask_inc!(12u64,52u64)) by(bit_vector);
+            let max_width: u64 = MAX_PHYADDR_WIDTH;
+            assert(addr & bitmask_inc!(21u64, max_width - 1) == addr & bitmask_inc!(12u64, max_width - 1)) by (bit_vector)
+                requires
+                    addr % 0x200000u64 == 0,
+                    32 <= max_width;
         }
     };
-    assert(addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
-        if addr <= MAXPHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) {
+    assert(addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) {
             assert(aligned(L1_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
             lib::aligned_transitive(addr as nat, L1_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
-    assert(addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
-        if addr <= MAXPHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) {
+    assert(addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) {
             assert(aligned(L2_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
             lib::aligned_transitive(addr as nat, L2_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
-    assert(addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
-        if addr <= MAXPHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) {
+    assert(addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
+        if addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) {
             assert(aligned(L3_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
             lib::aligned_transitive(addr as nat, L3_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
@@ -175,59 +172,82 @@ impl PageDirectoryEntry {
         ensures
             ({ let e = address
                 | MASK_FLAG_P
-                | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS }  else { 0 }
-                | if is_writable           { MASK_FLAG_RW }        else { 0 }
-                | if is_supervisor         { 0 }                   else { MASK_FLAG_US }
-                | if is_writethrough       { MASK_FLAG_PWT }       else { 0 }
-                | if disable_cache         { MASK_FLAG_PCD }       else { 0 }
-                | if disable_execute       { MASK_FLAG_XD }        else { 0 };
+                | if is_page && layer != 3 { MASK_L1_PG_FLAG_PS } else { 0 }
+                | if is_writable           { MASK_FLAG_RW }       else { 0 }
+                | if is_supervisor         { 0 }                  else { MASK_FLAG_US }
+                | if is_writethrough       { MASK_FLAG_PWT }      else { 0 }
+                | if disable_cache         { MASK_FLAG_PCD }      else { 0 }
+                | if disable_execute       { MASK_FLAG_XD }       else { 0 };
                (PageDirectoryEntry { entry: e, layer: Ghost(layer as nat) }).all_mb0_bits_are_zero()
             }),
     {
         let or1 = MASK_FLAG_P;
         let a1 = address | or1;
-        let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS as u64 }  else { 0 };
+        let or2 = if is_page && layer != 3 { MASK_L1_PG_FLAG_PS as u64 } else { 0 };
         let a2 = a1 | or2;
-        let or3 = if is_writable           { MASK_FLAG_RW as u64 }        else { 0 };
+        let or3 = if is_writable           { MASK_FLAG_RW as u64 }       else { 0 };
         let a3 = a2 | or3;
-        let or4 = if is_supervisor         { 0 }                          else { MASK_FLAG_US as u64 };
+        let or4 = if is_supervisor         { 0 }                         else { MASK_FLAG_US as u64 };
         let a4 = a3 | or4;
-        let or5 = if is_writethrough       { MASK_FLAG_PWT as u64 }       else { 0 };
+        let or5 = if is_writethrough       { MASK_FLAG_PWT as u64 }      else { 0 };
         let a5 = a4 | or5;
-        let or6 = if disable_cache         { MASK_FLAG_PCD as u64 }       else { 0 };
+        let or6 = if disable_cache         { MASK_FLAG_PCD as u64 }      else { 0 };
         let a6 = a5 | or6;
-        let or7 = if disable_execute       { MASK_FLAG_XD as u64 }        else { 0 };
+        let or7 = if disable_execute       { MASK_FLAG_XD as u64 }       else { 0 };
         let a7 = a6 | or7;
         let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
-        assert(forall|a:u64| #![auto] a == a | 0) by(bit_vector);
+        let mw: u64 = MAX_PHYADDR_WIDTH;
+        assert(forall|a:u64| #![auto] a == a | 0) by (bit_vector);
 
-        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i != 7 && i < 64 && (a & bit!(7u64) == 0) ==> (a | bit!(i)) & bit!(7u64) == 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 13 &&           (a & bitmask_inc!(13u64,29u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,29u64) == 0)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 29 && i < 64 && (a & bitmask_inc!(13u64,29u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,29u64) == 0)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 13 &&           (a & bitmask_inc!(13u64,20u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,20u64) == 0)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 20 && i < 64 && (a & bitmask_inc!(13u64,20u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,20u64) == 0)) by(bit_vector);
+        axiom_max_phyaddr_width_facts();
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,sub(mw,1)) == a ==> a & bit!(i) == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i != 7 && (a & bit!(7u64) == 0) ==> (a | bit!(i)) & bit!(7u64) == 0) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 13 && (a & bitmask_inc!(13u64,29u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,29u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 29 && (a & bitmask_inc!(13u64,29u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,29u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 13 && (a & bitmask_inc!(13u64,20u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,20u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 20 && (a & bitmask_inc!(13u64,20u64) == 0) ==> ((a | bit!(i)) & bitmask_inc!(13u64,20u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < mw && (a & bitmask_inc!(mw,51u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,51u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 51 && (a & bitmask_inc!(mw,51u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,51u64) == 0)) by (bit_vector)
+            requires mw <= 52;
+        assert(address & bitmask_inc!(mw, 51) == 0) by (bit_vector)
+            requires
+                address & bitmask_inc!(12u64, mw - 1) == address,
+                32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i < mw && (a & bitmask_inc!(mw,62u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,62u64) == 0)) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i > 62 && (a & bitmask_inc!(mw,62u64)    == 0) ==> ((a | bit!(i)) & bitmask_inc!(mw,62u64) == 0)) by (bit_vector)
+            requires mw <= 52;
+        assert(address & bitmask_inc!(mw, 62) == 0) by (bit_vector)
+            requires
+                address & bitmask_inc!(12u64, mw - 1) == address,
+                32 <= mw <= 52;
         PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
         if layer == 0 {
             assert(!is_page);
             assert(e & bit!(7u64) == 0);
+            assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0);
         } else if layer == 1 {
             if is_page {
-                assert(address & bitmask_inc!(30u64,52u64) == address ==> address & bitmask_inc!(13u64,29u64) == 0) by (bit_vector);
+                assert(address & bitmask_inc!(30u64,sub(mw,1)) == address ==> address & bitmask_inc!(13u64,29u64) == 0) by (bit_vector);
                 assert(e & bitmask_inc!(13u64,29u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0);
             } else {
                 assert(e & bit!(7u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0);
             }
         } else if layer == 2 {
             if is_page {
-                assert(address & bitmask_inc!(21u64,52u64) == address ==> address & bitmask_inc!(13u64,20u64) == 0) by (bit_vector);
+                assert(address & bitmask_inc!(21u64,sub(mw,1)) == address ==> address & bitmask_inc!(13u64,20u64) == 0) by (bit_vector);
                 assert(e & bitmask_inc!(13u64,20u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
             } else {
                 assert(e & bit!(7u64) == 0);
+                assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
             }
         } else if layer == 3 {
             assert(is_page);
-            assert(e & bit!(7u64) == 0);
+            // assert(e & bit!(7u64) == 0);
+            assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
         } else { assert(false); }
 
         let pde = PageDirectoryEntry { entry: e, layer: Ghost(layer as nat) };
@@ -287,16 +307,22 @@ impl PageDirectoryEntry {
         let or7 = if disable_execute       { MASK_FLAG_XD as u64 }        else { 0 };
         let a7 = a6 | or7;
         let e = address | or1 | or2 | or3 | or4 | or5 | or6 | or7;
-        assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> a & bit!(x) != bit!(x)) by(bit_vector);
-        assert(forall|a:u64| #![auto] a == a | 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == (a | bit!(i))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(12u64,52u64) == (a | bit!(i))  & bitmask_inc!(12u64,52u64)) by(bit_vector);
+        let mw: u64 = MAX_PHYADDR_WIDTH;
+        axiom_max_phyaddr_width_facts();
+        assert(forall|a:u64,x:u64| x < 64 && (a & bit!(x) == 0) ==> a & bit!(x) != bit!(x)) by (bit_vector);
+        assert(forall|a:u64| #![auto] a == a | 0) by (bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64, sub(mw, 1)) == (a | bit!(i))  & bitmask_inc!(12u64, sub(mw, 1))) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i > sub(mw, 1) ==> a & bitmask_inc!(12u64, sub(mw, 1)) == (a | bit!(i))  & bitmask_inc!(12u64, sub(mw, 1))) by (bit_vector)
+            requires 32 <= mw <= 52;
         assert(e & MASK_ADDR == address);
 
-        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(12u64,52u64) == a ==> a & bit!(i) == 0) by(bit_vector);
-        assert(forall|a:u64,i:u64| #![auto] i < 64 ==> a & bit!(i) == 0 ==> (a | bit!(i)) & bit!(i) == bit!(i)) by(bit_vector);
-        assert(forall|a:u64,i:u64,j:u64| #![auto] i != j ==> a & bit!(i) == (a | bit!(j)) & bit!(i)) by(bit_vector);
+        assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(12u64, sub(mw, 1)) == a ==> a & bit!(i) == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i > sub(mw, 1) ==> a & bitmask_inc!(12u64, sub(mw, 1)) == a ==> a & bit!(i) == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert(forall|a:u64,i:u64| #![auto] i < 64 ==> a & bit!(i) == 0 ==> (a | bit!(i)) & bit!(i) == bit!(i)) by (bit_vector);
+        assert(forall|a:u64,i:u64,j:u64| #![auto] i != j ==> a & bit!(i) == (a | bit!(j)) & bit!(i)) by (bit_vector);
 
         assert(e & MASK_FLAG_P == MASK_FLAG_P);
         assert((e & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (is_page && layer != 3));
@@ -310,12 +336,14 @@ impl PageDirectoryEntry {
             &&& is_page && layer == 1 ==> e & MASK_L1_PG_ADDR == e & MASK_ADDR
             &&& is_page && layer == 2 ==> e & MASK_L2_PG_ADDR == e & MASK_ADDR
         }) by {
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(30u64,52u64) == (a | 0)           & bitmask_inc!(30u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(30u64,52u64) == (a | bit!(i))  & bitmask_inc!(30u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(30u64,52u64) == (a | bit!(i))  & bitmask_inc!(30u64,52u64)) by(bit_vector);
-            assert(forall|a:u64| #![auto] a & bitmask_inc!(21u64,52u64) == (a | 0)           & bitmask_inc!(21u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(21u64,52u64) == (a | bit!(i))  & bitmask_inc!(21u64,52u64)) by(bit_vector);
-            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(21u64,52u64) == (a | bit!(i))  & bitmask_inc!(21u64,52u64)) by(bit_vector);
+            assert(forall|a:u64| #![auto] a & bitmask_inc!(30u64,sub(mw,1)) == (a | 0)           & bitmask_inc!(30u64,sub(mw,1))) by (bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(30u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(30u64,sub(mw,1))) by (bit_vector);
+            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(30u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(30u64,sub(mw,1))) by (bit_vector)
+                requires 32 <= mw <= 52;
+            assert(forall|a:u64,i:u64| #![auto] i < 12 ==> a & bitmask_inc!(21u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(21u64,sub(mw,1))) by (bit_vector)
+                requires 32 <= mw <= 52;
+            assert(forall|a:u64,i:u64| #![auto] i > 52 ==> a & bitmask_inc!(21u64,sub(mw,1)) == (a | bit!(i))  & bitmask_inc!(21u64,sub(mw,1))) by (bit_vector)
+                requires 32 <= mw <= 52;
         };
     }
 
@@ -1072,7 +1100,7 @@ impl PageTable {
     pub open spec fn accepted_mapping(self, vaddr: nat, pte: PageTableEntry) -> bool {
         // Can't map pages in PML4, i.e. layer 0
         &&& x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size, 1)
-        &&& pte.frame.base <= MAXPHYADDR
+        &&& pte.frame.base <= MAX_PHYADDR
     }
 
     fn map_frame_aux(&mut self, layer: usize, ptr: usize, base: usize, vaddr: usize, pte: PageTableEntryExec, pt: Ghost<PTDir>)

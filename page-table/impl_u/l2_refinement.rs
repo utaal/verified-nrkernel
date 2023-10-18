@@ -11,7 +11,7 @@ use set_lib::*;
 use seq_lib::*;
 use crate::spec_t::mem;
 
-use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv, between };
+use crate::definitions_t::{ MemRegionExec, Flags, x86_arch_spec, x86_arch_exec, x86_arch_exec_spec, axiom_x86_arch_exec_spec, MAX_BASE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, candidate_mapping_in_bounds, aligned, candidate_mapping_overlaps_existing_vmem, new_seq, lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
 use crate::impl_u::l0;
 use crate::spec_t::impl_spec;

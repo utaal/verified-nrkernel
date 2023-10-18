@@ -8,7 +8,7 @@ use vstd::seq::*;
 use vstd::set::*;
 use vstd::assert_by_contradiction;
 use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned, MemRegion, x86_arch_spec, Flags };
-use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAXPHYADDR, MAXPHYADDR_BITS, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
+use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, axiom_max_phyaddr_width_facts };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::l0;
@@ -33,6 +33,7 @@ pub enum HWStep {
 }
 
 // Duplicate macros because I still don't understand how to import Rust macros
+/// This macro computes a bitmask for the given range. Note that if `$high < $low` the result is 0.
 macro_rules! bitmask_inc {
     ($low:expr,$high:expr) => {
         (!(!0u64 << (($high+1u64)-$low))) << $low
@@ -113,10 +114,6 @@ pub const MASK_FLAG_PWT:  u64 = bit!(3u64);
 pub const MASK_FLAG_PCD:  u64 = bit!(4u64);
 pub const MASK_FLAG_A:    u64 = bit!(5u64);
 pub const MASK_FLAG_XD:   u64 = bit!(63u64);
-// We can use the same address mask for all layers as long as we preserve the invariant that the
-// lower bits that *should* be masked off are already zero.
-pub const MASK_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
-// const MASK_ADDR:      u64 = 0b0000000000001111111111111111111111111111111111111111000000000000;
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
@@ -133,13 +130,44 @@ pub const MASK_L3_PG_FLAG_PAT:  u64 = bit!(7u64);
 // const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
 // const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
 // const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
-pub const MASK_DIR_ADDR:           u64 = MASK_ADDR;
 
-// We should be able to always use the 12:52 mask and have the invariant state that in the
+// In the implementation we can always use the 12:52 mask as the invariant guarantees that in the
 // other cases, the lower bits are already zero anyway.
-pub const MASK_L1_PG_ADDR:      u64 = bitmask_inc!(30u64,MAXPHYADDR_BITS);
-pub const MASK_L2_PG_ADDR:      u64 = bitmask_inc!(21u64,MAXPHYADDR_BITS);
-pub const MASK_L3_PG_ADDR:      u64 = bitmask_inc!(12u64,MAXPHYADDR_BITS);
+// We cannot use dual exec/spec constants here because for those Verus currently doesn't support
+// manually guiding the no-overflow proofs.
+pub spec const MASK_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
+#[verifier::when_used_as_spec(MASK_ADDR_SPEC)]
+pub exec const MASK_ADDR: u64 ensures MASK_ADDR == MASK_ADDR_SPEC {
+    axiom_max_phyaddr_width_facts();
+    bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
+}
+
+pub spec const MASK_L1_PG_ADDR_SPEC: u64 = bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1);
+#[verifier::when_used_as_spec(MASK_L1_PG_ADDR_SPEC)]
+pub exec const MASK_L1_PG_ADDR: u64 ensures MASK_L1_PG_ADDR == MASK_L1_PG_ADDR_SPEC {
+    axiom_max_phyaddr_width_facts();
+    bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1)
+}
+
+pub spec const MASK_L2_PG_ADDR_SPEC: u64 = bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1);
+#[verifier::when_used_as_spec(MASK_L2_PG_ADDR_SPEC)]
+pub exec const MASK_L2_PG_ADDR: u64 ensures MASK_L2_PG_ADDR == MASK_L2_PG_ADDR_SPEC {
+    axiom_max_phyaddr_width_facts();
+    bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1)
+}
+
+pub spec const MASK_L3_PG_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
+#[verifier::when_used_as_spec(MASK_L3_PG_ADDR_SPEC)]
+pub exec const MASK_L3_PG_ADDR: u64 ensures MASK_L3_PG_ADDR == MASK_L3_PG_ADDR_SPEC{
+    axiom_max_phyaddr_width_facts();
+    bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
+}
+
+pub spec const MASK_DIR_ADDR_SPEC: u64 = MASK_ADDR;
+#[verifier::when_used_as_spec(MASK_DIR_ADDR_SPEC)]
+pub exec const MASK_DIR_ADDR: u64 ensures MASK_DIR_ADDR == MASK_DIR_ADDR_SPEC {
+    MASK_ADDR
+}
 
 
 #[allow(repr_transparent_external_private_fields)]
@@ -149,6 +177,7 @@ pub struct PageDirectoryEntry {
     pub entry: u64,
     pub layer: Ghost<nat>,
 }
+
 
 // This impl defines everything necessary for the page table walk semantics.
 // PageDirectoryEntry is reused in the implementation, which has an additional impl block for it in
@@ -228,36 +257,34 @@ impl PageDirectoryEntry {
     pub open spec fn all_mb0_bits_are_zero(self) -> bool
         recommends self.layer@ <= 3,
     {
-        // FIXME: currently assuming that MAXPHYADDR is 52, which may be incorrect. Lower values for
-        // MAXPHYADDR would add additional mb0 bits.
         if self.entry & MASK_FLAG_P == MASK_FLAG_P {
             if self.layer == 0 { // PML4, always directory
-                // 51:M
-                // 7
-                self.entry & bit!(7u64) == 0
+                // 51:M, 7
+                &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
+                &&& self.entry & bit!(7u64) == 0
             } else if self.layer == 1 { // PDPT
                 if self.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
-                    // 51:M
-                    // 29:13
-                    self.entry & bitmask_inc!(13u64,29u64) == 0
+                    // 51:M, 29:13
+                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
+                    &&& self.entry & bitmask_inc!(13u64,29u64) == 0
                 } else {
-                    // 51:M
-                    // 7
-                    self.entry & bit!(7u64) == 0
+                    // 51:M, 7
+                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
+                    &&& self.entry & bit!(7u64) == 0
                 }
             } else if self.layer == 2 { // PD
                 if self.entry & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
-                    // 62:M
-                    // 20:13
-                    self.entry & bitmask_inc!(13u64,20u64) == 0
+                    // 62:M, 20:13
+                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
+                    &&& self.entry & bitmask_inc!(13u64,20u64) == 0
                 } else {
-                    // 62:M
-                    // 7
-                    self.entry & bit!(7u64) == 0
+                    // 62:M, 7
+                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
+                    &&& self.entry & bit!(7u64) == 0
                 }
             } else if self.layer == 3 { // PT, always frame
                 // 62:M
-                true
+                self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
             } else {
                 arbitrary()
             }
