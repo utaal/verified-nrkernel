@@ -62,11 +62,11 @@ pub proof fn lemma_entry_base_from_index_support(base: nat, idx: nat, entry_size
         //         == entry_base_from_index(entry_base_from_index(base, idx, entry_size), nested_num, nested_es),
         // Support postconditions:
         // Ugly, ugly workaround for mixed triggers.
-        forall_arith(|a: nat, b: nat| nat_mul(a, b) == #[trigger] (a * b)),
+        forall|a: nat, b: nat| nat_mul(a, b) == #[trigger] (a * b),
         forall|a: nat, b: nat| nat_mul(a, b) == nat_mul(b, a),
         forall|a: nat| #[trigger] aligned(base, nat_mul(entry_size, a)) && a > 0 ==> aligned(base, entry_size),
 {
-    assert(forall_arith(|a: nat, b: nat| nat_mul(a, b) == #[trigger] (a * b))) by(nonlinear_arith);
+    assert(forall|a: nat, b: nat| nat_mul(a, b) == #[trigger] (a * b)) by(nonlinear_arith);
     assert(forall|a: nat, b: nat| nat_mul(a, b) == nat_mul(b, a)) by(nonlinear_arith);
     assert forall|a: nat|
         #[trigger] aligned(base, nat_mul(entry_size, a)) && a > 0
@@ -105,7 +105,7 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
         // forall|idx: nat, base: nat, layer: nat|
             // layer + 1 < self.layers.len() ==> #[trigger] next_entry_base_from_index(base, idx, entry_size) == self.upper_vaddr(layer + 1, entry_base_from_index(base, idx, entry_size)),
         // // Support postconditions:
-        // forall_arith(|base: nat, n: nat| // Used to infer lhs of next postcondition's implication
+        // forall(|base: nat, n: nat| // Used to infer lhs of next postcondition's implication
         //     aligned(base, #[trigger] (entry_size * n)) ==> aligned(base, entry_size)),
         // No valid triggers
         // Note for thesis report:

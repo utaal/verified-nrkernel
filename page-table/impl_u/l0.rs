@@ -16,10 +16,10 @@ verus! {
 #[verifier(nonlinear)]
 pub proof fn ambient_arith()
     ensures
-        forall_arith(|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0),
-        forall_arith(|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0),
-        forall_arith(|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0),
-        forall_arith(|a: int, b: int| #[trigger] (a * b) == (b * a)),
+        forall|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0,
+        forall|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0,
+        forall|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0,
+        forall|a: int, b: int| #[trigger] (a * b) == (b * a),
         forall|a:nat| a != 0 ==> aligned(0, a)
 {
     lib::aligned_zero();
@@ -28,7 +28,7 @@ pub proof fn ambient_arith()
 pub proof fn ambient_lemmas1()
     ensures
         forall|s1: Map<nat,PageTableEntry>, s2: Map<nat,PageTableEntry>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
-        forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a),
+        forall|a: int, b: int| #[trigger] (a * b) == b * a,
         forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat|
             (m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
@@ -53,7 +53,7 @@ pub proof fn ambient_lemmas1()
     // });
     lemma_map_union_prefer_right_remove_commute::<nat,PageTableEntry>();
     lemma_map_union_prefer_right_insert_commute::<nat,PageTableEntry>();
-    assert(forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a)) by (nonlinear_arith) { };
+    assert(forall|a: int, b: int| #[trigger] (a * b) == b * a) by (nonlinear_arith) { };
 }
 
 

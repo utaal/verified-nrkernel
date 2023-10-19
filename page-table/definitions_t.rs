@@ -481,7 +481,7 @@ impl Arch {
                 requires i == j, self.entry_size(i) > 0,
             { };
         } else {
-            assert(forall_arith(|a: int, b: int| #[trigger] (a * b) == b * a));
+            assert(forall|a: int, b: int| #[trigger] (a * b) == b * a);
             self.lemma_entry_sizes_aligned(i+1,j);
             lib::mod_of_mul_auto();
             lib::aligned_transitive_auto();
