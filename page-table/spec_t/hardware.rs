@@ -556,7 +556,9 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                         mul(l2_idx_u64, mul(512, 4096)))
                                        == l0_idx_u64 << 39u64 | l1_idx_u64 << 30u64 | l2_idx_u64 << 21u64) by (bit_vector)
                                     requires l0_idx_u64 < 512 && l1_idx_u64 < 512 && l2_idx_u64 < 512;
-                                // Previous assert proves: l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64
+                                // Previous assert proves:
+                                // l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE + l2_idx * L2_ENTRY_SIZE
+                                // == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64 | (l2_idx as u64) << 21u64
 
                                 assert(interp_l2_dir.interp_of_entry(l2_idx).map.contains_pair(addr as nat, pte));
                                 assert(interp_l2_dir.interp().map.contains_pair(addr as nat, pte));
@@ -606,7 +608,9 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                                 mul(l3_idx_u64, 4096))
                                                == l0_idx_u64 << 39u64 | l1_idx_u64 << 30u64 | l2_idx_u64 << 21u64 | l3_idx_u64 << 12u64) by (bit_vector)
                                             requires l0_idx_u64 < 512 && l1_idx_u64 < 512 && l2_idx_u64 < 512 && l3_idx_u64 < 512;
-                                        // Previous assert proves: l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64
+                                        // Previous assert proves:
+                                        // l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE + l2_idx * L2_ENTRY_SIZE + l3_idx * L3_ENTRY_SIZE
+                                        // == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64 | (l2_idx as u64) << 21u64 | (l3_idx as u64) << 12u64
 
                                         assert(interp_l3_dir.interp_of_entry(l3_idx).map.contains_pair(addr as nat, pte));
                                         assert(interp_l3_dir.interp().map.contains_pair(addr as nat, pte));
