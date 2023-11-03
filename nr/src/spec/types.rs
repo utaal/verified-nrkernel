@@ -28,6 +28,53 @@ pub type ThreadId = nat;
 // each replica wraps. The NR crate has this basically as a trait that the data structure must
 // implement.
 
+
+pub trait Dispatch {
+    /// A read-only operation. When executed against the data structure, an
+    /// operation of this type must not mutate the data structure in any way.
+    /// Otherwise, the assumptions made by NR no longer hold.
+    ///
+    /// # For feature `async`
+    /// - [`Send`] is currently needed for async operations
+    type ReadOperation; //: Sized;
+
+    /// A write operation. When executed against the data structure, an
+    /// operation of this type is allowed to mutate state. The library ensures
+    /// that this is done so in a thread-safe manner.
+    type WriteOperation; //: Sized + Send;
+
+    /// The type on the value returned by the data structure when a
+    /// `ReadOperation` or a `WriteOperation` successfully executes against it.
+    type Response; // Sized;
+
+    ///
+    type DataStructure;
+
+    spec fn interp(&self) -> Self::DataStructure;
+
+    // partial eq also add an exec operation
+    fn clone_write_op(op: &Self::WriteOperation) -> (res: Self::WriteOperation)
+        ensures op == res;
+
+    /// Method on the data structure that allows a read-only operation to be
+    /// executed against it.
+    fn dispatch(&self, op: Self::ReadOperation) -> (result: Self::Response)
+        ensures Self::dispatch_spec(self.interp(), op) == result
+        ;
+
+    /// Method on the data structure that allows a write operation to be
+    /// executed against it.
+    fn dispatch_mut(&mut self, op: Self::WriteOperation) -> (result: Self::Response)
+        ensures Self::dispatch_mut_spec(old(self).interp(), op) == (self.interp(), result);
+
+    spec fn dispatch_spec(ds: Self::DataStructure, op: Self::ReadOperation) -> Self::Response;
+
+    spec fn dispatch_mut_spec(ds: Self::DataStructure, op: Self::WriteOperation) -> (Self::DataStructure, Self::Response);
+}
+
+
+
+
 /// represents a replica state
 pub struct DataStructureSpec {
     pub val: u64,
