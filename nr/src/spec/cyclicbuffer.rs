@@ -28,14 +28,12 @@ use vstd::prelude::OptionAdditionalFns;
 
 // rust_verify/tests/example.rs ignore
 
-#[verifier::publish]
-pub const LOG_SIZE: usize = 1024;
-
 pub type LogicalLogIdx = int;
 
 type Key = int;
 
 verus! {
+    pub  open const LOG_SIZE: usize = 1024;
 
     // pub type StoredType = PointsTo<LogEntry>;
 
