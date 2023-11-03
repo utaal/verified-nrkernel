@@ -223,9 +223,9 @@ pub open spec fn wf(&self) -> bool {
 
     invariant on combiner with (flat_combiner_instance, responses, collected_operations, collected_operations_per_thread) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
         // v != 0 means lock is not taken, if it's not taken, the ghost state is Some
-        &&& (v == 0) <==> g.is_Some()
+        &&& (v == 0) <==> g.is_some()
         //
-        &&& (g.is_Some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), collected_operations.id(), collected_operations_per_thread.id()))
+        &&& (g.is_some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), collected_operations.id(), collected_operations_per_thread.id()))
     }
 }
 
@@ -410,7 +410,7 @@ impl Replica  {
     fn acquire_combiner_lock(&self) -> (result: (bool, Tracked<Option<CombinerLockStateGhost>>))
         requires self.wf()
         ensures
-          result.0 ==> result.1@.is_Some(),
+          result.0 ==> result.1@.is_some(),
           result.0 ==> result.1@.get_Some_0().inv(self.flat_combiner_instance@, self.responses.id(), self.collected_operations.id(), self.collected_operations_per_thread.id()),
     {
         // OPT: try to check whether the lock is already present
@@ -478,7 +478,7 @@ impl Replica  {
 
         // Step 2: if we are the combiner then perform flat combining, else return
         if acquired {
-            assert(combiner_lock@.is_Some());
+            assert(combiner_lock@.is_some());
             let combiner_lock = Tracked(combiner_lock.get().tracked_unwrap());
             let combiner_lock = self.combine(slog, combiner_lock);
             self.release_combiner_lock(combiner_lock);
@@ -606,13 +606,13 @@ impl Replica  {
                 flat_combiner@@.value.get_Collecting_0().len() == thread_idx,
                 flat_combiner@@.instance == self.flat_combiner_instance@,
                 forall |i: nat| i < flat_combiner@@.value.get_Collecting_0().len() ==>
-                    num_ops_per_thread[i as int] > 0 ==
-                    (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_Some(),
+                    (num_ops_per_thread[i as int] > 0) ==
+                    (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_some(),
                 forall |i: nat| i < flat_combiner@@.value.get_Collecting_0().len() &&
-                    (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_Some() ==> {
+                    (#[trigger] flat_combiner@@.value.get_Collecting_0()[i as int]).is_some() ==> {
                         &&& cell_permissions.contains_key(i)
                         &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
-                        &&& cell_permissions[i]@.value.is_Some()
+                        &&& cell_permissions[i]@.value.is_some()
                     },
                 forall |i| 0 <= i < request_ids.len() <==> updates.contains_key(i),
                 forall|i: nat| #![trigger updates[i]] i < request_ids.len() ==> {
@@ -736,13 +736,13 @@ impl Replica  {
                 flat_combiner@.value.get_Responding_1() == thread_idx,
                 flat_combiner@.value.get_Responding_0().len() == MAX_THREADS_PER_REPLICA,
                 forall |i: nat| i < flat_combiner@.value.get_Responding_0().len() ==>
-                    num_ops_per_thread[i as int] > 0 ==
-                    (#[trigger] flat_combiner@.value.get_Responding_0()[i as int]).is_Some(),
+                    (num_ops_per_thread[i as int] > 0) ==
+                    (#[trigger] flat_combiner@.value.get_Responding_0()[i as int]).is_some(),
                 forall |i: nat| thread_idx <= i < flat_combiner@.value.get_Responding_0().len() &&
-                    (#[trigger] flat_combiner@.value.get_Responding_0()[i as int]).is_Some() ==> {
+                    (#[trigger] flat_combiner@.value.get_Responding_0()[i as int]).is_some() ==> {
                         &&& cell_permissions.contains_key(i)
                         &&& cell_permissions[i]@.pcell === self.contexts@[i as int].batch.0.id()
-                        &&& cell_permissions[i]@.value.is_Some()
+                        &&& cell_permissions[i]@.value.is_some()
                     },
                 forall|i: nat| resp_idx <= i < request_ids@.len() ==> {
                         &&& updates.contains_key(i)
@@ -1101,15 +1101,15 @@ pub open spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses
         &&& self.flat_combiner@@.value.get_Collecting_0().len() == 0
         &&& self.flat_combiner@@.instance == combiner_instance
 
-        &&& self.collected_operations_perm@@.value.is_Some()
+        &&& self.collected_operations_perm@@.value.is_some()
         &&& self.collected_operations_perm@@.pcell == op_buffer_id
         &&& self.collected_operations_perm@@.value.get_Some_0().len() == 0 // we use vector push MAX_THREADS_PER_REPLICA
 
-        &&& self.responses_token@@.value.is_Some()
+        &&& self.responses_token@@.value.is_some()
         &&& self.responses_token@@.pcell == responses_id
         &&& self.responses_token@@.value.get_Some_0().len() == 0 // we use vector push MAX_THREADS_PER_REPLICA
 
-        &&& self.collected_operations_per_thread_perm@@.value.is_Some()
+        &&& self.collected_operations_per_thread_perm@@.value.is_some()
         &&& self.collected_operations_per_thread_perm@@.pcell == thread_ops
         &&& self.collected_operations_per_thread_perm@@.value.get_Some_0().len() == 0
     }
@@ -1137,11 +1137,11 @@ impl ThreadOpsData {
            #![trigger num_ops_per_thread[i as int]]
            #![trigger self.flat_combiner@@.value.get_Responding_0()[i as int]]
             i < self.flat_combiner@@.value.get_Responding_0().len() ==> {
-            &&& num_ops_per_thread[i as int] > 0 == self.flat_combiner@@.value.get_Responding_0()[i as int].is_Some()
-            &&& self.flat_combiner@@.value.get_Responding_0()[i as int].is_Some() ==> {
+            &&& (num_ops_per_thread[i as int] > 0) == self.flat_combiner@@.value.get_Responding_0()[i as int].is_some()
+            &&& self.flat_combiner@@.value.get_Responding_0()[i as int].is_some() ==> {
                 &&& self.cell_permissions@.contains_key(i)
                 &&& self.cell_permissions@[i]@.pcell === replica_contexts[i as int].batch.0.id()
-                &&& self.cell_permissions@[i]@.value.is_Some()
+                &&& self.cell_permissions@[i]@.value.is_some()
             }
         })
 
