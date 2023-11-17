@@ -522,31 +522,31 @@ pub open spec fn next(s1: HWVariables, s2: HWVariables) -> bool {
     exists|step: HWStep| next_step(s1, s2, step)
 }
 
-pub closed spec fn inv(s: HWVariables) -> bool {
-    true
-}
-
-proof fn init_implies_inv(s: HWVariables)
-    requires
-        init(s),
-    ensures
-        inv(s)
-{ }
-
-proof fn next_preserves_inv(s1: HWVariables, s2: HWVariables)
-    requires
-        next(s1, s2),
-        inv(s1),
-    ensures
-        inv(s2),
-{
-    let step = choose|step: HWStep| next_step(s1, s2, step);
-    match step {
-        HWStep::ReadWrite { vaddr, paddr, op , pte} => (),
-        HWStep::PTMemOp                             => (),
-        HWStep::TLBFill  { vaddr, pte }             => (),
-        HWStep::TLBEvict { vaddr }                  => (),
-    }
-}
+// pub closed spec fn inv(s: HWVariables) -> bool {
+//     true
+// }
+// 
+// proof fn init_implies_inv(s: HWVariables)
+//     requires
+//         init(s),
+//     ensures
+//         inv(s)
+// { }
+// 
+// proof fn next_preserves_inv(s1: HWVariables, s2: HWVariables)
+//     requires
+//         next(s1, s2),
+//         inv(s1),
+//     ensures
+//         inv(s2),
+// {
+//     let step = choose|step: HWStep| next_step(s1, s2, step);
+//     match step {
+//         HWStep::ReadWrite { vaddr, paddr, op , pte} => (),
+//         HWStep::PTMemOp                             => (),
+//         HWStep::TLBFill  { vaddr, pte }             => (),
+//         HWStep::TLBEvict { vaddr }                  => (),
+//     }
+// }
 
 }
