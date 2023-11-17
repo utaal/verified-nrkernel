@@ -40,7 +40,7 @@ verus! {
 ///
 ///  - Dafny: N/A
 ///  - Rust:  pub struct NodeReplicated<D: Dispatch + Sync>
-pub struct NodeReplicated<DT: Dispatch> {
+pub struct NodeReplicated<#[verifier::reject_recursive_types] DT: Dispatch> {
     /// the log of operations
     ///
     ///  - Rust: log: Log<D::WriteOperation>,

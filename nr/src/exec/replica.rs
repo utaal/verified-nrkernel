@@ -137,7 +137,7 @@ struct_with_invariants!{
 ///  - Dafny:   linear datatype Node
 ///  - Rust:    pub struct Replica<D>
 #[repr(align(128))]
-pub struct Replica<DT: Dispatch> {
+pub struct Replica<#[verifier::reject_recursive_types] DT: Dispatch> {
     /// An identifier that we got from the Log when the replica was registered
     /// against the shared-log ([`Log::register()`]). Required to pass to the
     /// log when consuming operations from the log.
