@@ -12,7 +12,7 @@ use vstd::assert_by_contradiction;
 
 use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, axiom_max_phyaddr_width_facts, Arch, ArchExec, };
 use crate::definitions_u::{ lemma_maxphyaddr_facts, lemma_new_seq, aligned_exec, permissive_flags};
-use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
+use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::mem;
@@ -25,25 +25,8 @@ MASK_FLAG_A, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_D, MASK_PG_FLAG_G, MASK_PG_FL
 MASK_L1_PG_FLAG_PS, MASK_L2_PG_FLAG_PS, MASK_L3_PG_FLAG_PAT, MASK_DIR_ADDR, MASK_L1_PG_ADDR,
 MASK_L2_PG_ADDR, MASK_L3_PG_ADDR};
 
+
 verus! {
-
-macro_rules! bit {
-    ($v:expr) => {
-        1u64 << $v
-    }
-}
-// Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
-macro_rules! bitmask_inc {
-    ($low:expr,$high:expr) => {
-        (!(!0u64 << (($high+1u64)-$low))) << $low
-    }
-}
-// macro_rules! bitmask {
-//     ($low:expr,$high:expr) => {
-//         (!(!0 << ($high-$low))) << $low
-//     }
-// }
-
 
 proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
     ensures forall|addr: u64| addr <= MAX_PHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,

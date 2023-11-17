@@ -493,9 +493,6 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
     };
 }
 
-
-pub struct PageTableImpl {}
-
 proof fn lemma_no_entries_implies_interp_at_aux_no_entries(pt: l2_impl::PageTable, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, ghost_pt: l2_impl::PTDir)
     requires
         pt.memory.regions() == set![pt.memory.cr3_spec()@],
@@ -530,7 +527,7 @@ pub open spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
     true
 }
 
-impl impl_spec::InterfaceSpec for PageTableImpl {
+impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
     closed spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
         exists|ghost_pt: l2_impl::PTDir| {
             let page_table = l2_impl::PageTable {

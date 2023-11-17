@@ -59,4 +59,16 @@ pub trait InterfaceSpec {
             );
 }
 
+pub struct PageTableImpl {}
+
+pub closed spec fn implements_interface_spec<T: InterfaceSpec>() -> bool {
+    true
+}
+
+// ensure that there's an implementation of the InterfaceSpec trait
+pub proof fn theorem()
+    ensures implements_interface_spec::<PageTableImpl>(),
+{
+}
+
 }
