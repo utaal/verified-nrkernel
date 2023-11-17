@@ -39,11 +39,11 @@ verus! {
 
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
 pub struct StoredType<DT: Dispatch> {
-    pub cell_perms: PointsTo<Option<ConcreteLogEntry<DT::WriteOperation>>>,
+    pub cell_perms: PointsTo<Option<ConcreteLogEntry<DT>>>,
     pub log_entry: Option<UnboundedLog::log<DT>>
 }
 
-pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cell_id: CellId, unbounded_log_instance: UnboundedLog::<DT>::Instance) -> bool {
+pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cell_id: CellId, unbounded_log_instance: UnboundedLog::Instance<DT>) -> bool {
     // also match the cell id
     &&& st.cell_perms@.value.is_Some()
     &&& st.cell_perms@.pcell == cell_id
@@ -103,7 +103,7 @@ pub enum CombinerState<DT: Dispatch> {
 }
 
 
-impl CombinerState {
+impl<DT: Dispatch> CombinerState<DT> {
     pub open spec fn no_overlap_with(self, other: Self) -> bool {
         match self {
             CombinerState::Appending{cur_idx, tail} => {
@@ -304,7 +304,7 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
           self.combiner_valid(node_id, self.combiner[node_id])
     }
 
-    pub closed spec fn combiner_valid(&self, node_id: NodeId, cs: CombinerState) -> bool {
+    pub closed spec fn combiner_valid(&self, node_id: NodeId, cs: CombinerState<DT>) -> bool {
         match cs {
             CombinerState::Idle => true,
             CombinerState::Reading(_) => true, // see reader_state_valid instead

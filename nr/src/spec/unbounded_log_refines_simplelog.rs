@@ -13,6 +13,8 @@ use vstd::seq_lib::*;
 
 use state_machines_macros::*;
 
+use crate::Dispatch;
+
 use super::simple_log::{
     compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
     UpdateResp as SUpdateResp,
@@ -40,11 +42,11 @@ verus! {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-spec fn interp_log(global_tail: nat, log: Map<nat, LogEntry>) -> Seq<UpdateOp> {
+spec fn interp_log<DT: Dispatch>(global_tail: nat, log: Map<nat, LogEntry<DT>>) -> Seq<DT::WriteOperation> {
     Seq::new(global_tail, |i| log.index(i as nat).op)
 }
 
-spec fn interp_readonly_reqs(local_reads: Map<nat, ReadonlyState>) -> Map<ReqId, SReadReq> {
+spec fn interp_readonly_reqs<DT: Dispatch>(local_reads: Map<nat, ReadonlyState<DT>>) -> Map<ReqId, SReadReq<DT::ReadOperation>> {
     Map::new(
         |rid| local_reads.contains_key(rid),
         |rid| match local_reads.index(rid) {
@@ -56,7 +58,7 @@ spec fn interp_readonly_reqs(local_reads: Map<nat, ReadonlyState>) -> Map<ReqId,
     )
 }
 
-spec fn interp_update_reqs(local_updates: Map<LogIdx, UpdateState>) -> Map<LogIdx, UpdateOp> {
+spec fn interp_update_reqs<DT: Dispatch>(local_updates: Map<LogIdx, UpdateState<DT>>) -> Map<LogIdx, DT::WriteOperation> {
     Map::new(
         |rid| local_updates.contains_key(rid) && local_updates.index(rid).is_Init(),
         |rid| match local_updates.index(rid) {
@@ -66,7 +68,7 @@ spec fn interp_update_reqs(local_updates: Map<LogIdx, UpdateState>) -> Map<LogId
     )
 }
 
-spec fn interp_update_resps(local_updates: Map<nat, UpdateState>) -> Map<ReqId, SUpdateResp> {
+spec fn interp_update_resps<DT: Dispatch>(local_updates: Map<nat, UpdateState<DT>>) -> Map<ReqId, SUpdateResp> {
     Map::new(
         |rid| local_updates.contains_key(rid) && !local_updates.index(rid).is_Init(),
         |rid| match local_updates.index(rid) {
@@ -78,7 +80,7 @@ spec fn interp_update_resps(local_updates: Map<nat, UpdateState>) -> Map<ReqId, 
     )
 }
 
-spec fn interp(s: UnboundedLog::State) -> SimpleLog::State {
+spec fn interp<DT: Dispatch>(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT> {
     SimpleLog::State {
         log: interp_log(s.tail, s.log),
         version: s.version_upper_bound,
@@ -93,20 +95,20 @@ spec fn interp(s: UnboundedLog::State) -> SimpleLog::State {
 // Refinement Proof
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-proof fn refinement_inv(vars: UnboundedLog::State)
+proof fn refinement_inv<DT: Dispatch>(vars: UnboundedLog::State<DT>)
     requires vars.invariant()
     ensures interp(vars).invariant()
 {
 }
 
-proof fn refinement_init(post: UnboundedLog::State)
+proof fn refinement_init<DT: Dispatch>(post: UnboundedLog::State<DT>)
     requires
         post.invariant(),
         UnboundedLog::State::init(post)
     ensures
         SimpleLog::State::init(interp(post)),
 {
-    case_on_init!{ post, UnboundedLog => {
+    case_on_init!{ post, UnboundedLog::<DT> => {
         initialize(number_of_nodes) => {
             assert_maps_equal!(interp(post).readonly_reqs, Map::empty());
             assert_maps_equal!(interp(post).update_reqs, Map::empty());
@@ -118,7 +120,7 @@ proof fn refinement_init(post: UnboundedLog::State)
 }
 
 
-proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
+proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>)
     requires
         pre.invariant(),
         post.invariant(),
@@ -127,7 +129,7 @@ proof fn refinement_next(pre: UnboundedLog::State, post: UnboundedLog::State)
         SimpleLog::State::next(interp(pre), interp(post)),
 {
     case_on_next_strong! {
-      pre, post, UnboundedLog => {
+      pre, post, UnboundedLog::<DT> => {
         readonly_start(op) => {
 
             let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
@@ -320,12 +322,12 @@ pub open spec fn dummy2(lower:nat, mid: nat, upper: nat) -> bool
 }
 
 
-pub open spec fn version_in_log(log: Map<LogIdx, LogEntry>, version: LogIdx) -> bool
+pub open spec fn version_in_log<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, version: LogIdx) -> bool
 {
     forall |i| 0 <= i < version ==> log.contains_key(i)
 }
 
-pub open spec fn result_match(log: Map<LogIdx, LogEntry>,  output: ReturnType, version: LogIdx, op: ReadonlyOp) -> bool
+pub open spec fn result_match<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>,  output: ReturnType, version: LogIdx, op: ReadonlyOp) -> bool
     recommends version_in_log(log, version)
 {
 
@@ -333,7 +335,7 @@ pub open spec fn result_match(log: Map<LogIdx, LogEntry>,  output: ReturnType, v
 }
 
 
-proof fn state_at_version_refines(s_log: Seq<UpdateOp>, i_log: Map<LogIdx, LogEntry>, gtail: nat, idx:nat)
+proof fn state_at_version_refines<DT: Dispatch>(s_log: Seq<UpdateOp>, i_log: Map<LogIdx, LogEntry<DT>>, gtail: nat, idx:nat)
     requires
       forall |i| 0 <= i < gtail ==> i_log.contains_key(i),
       0 <= idx <= s_log.len(),

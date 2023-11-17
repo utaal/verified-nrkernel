@@ -531,7 +531,7 @@ UnboundedLog<DT: Dispatch> {
         match read {
             ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                 exists |v: nat| (#[trigger] rangeincl(version_upper_bound, v, self.version_upper_bound))
-                    && ret == compute_nrstate_at_version(self.log, v).spec_read(op)
+                    && ret == DT::dispatch_spec(compute_nrstate_at_version(self.log, v), op)
             },
             _ => true,
         }
@@ -549,10 +549,10 @@ UnboundedLog<DT: Dispatch> {
     pub open spec fn update_results_match(&self, update: UpdateState<DT>) -> bool {
         match update {
             UpdateState::Applied { ret, idx } => {
-                ret == compute_nrstate_at_version(self.log, idx).spec_update(self.log[idx].op).1
+                ret == DT::dispatch_mut_spec(compute_nrstate_at_version(self.log, idx), self.log[idx].op).1
             },
             UpdateState::Done { ret, idx } => {
-                ret == compute_nrstate_at_version(self.log, idx).spec_update(self.log[idx].op).1
+                ret == DT::dispatch_mut_spec(compute_nrstate_at_version(self.log, idx), self.log[idx].op).1
             },
             _ => true,
         }
@@ -591,7 +591,7 @@ UnboundedLog<DT: Dispatch> {
             init num_replicas = number_of_nodes;
             init log = Map::empty();
             init tail = 0;
-            init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| DataStructureSpec::init());
+            init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| DT::init_spec());
             init local_versions = Map::new(|n: NodeId| n < number_of_nodes, |n| 0);
             init version_upper_bound = 0;
             init local_reads = Map::empty();
@@ -647,7 +647,7 @@ UnboundedLog<DT: Dispatch> {
             have   combiner    >= [ node_id => CombinerState::Ready ];
             have   replicas    >= [ node_id => let state ];
 
-            let ret = state.spec_read(op);
+            let ret = DT::dispatch_spec(state, op);
 
             add local_reads += [ rid => ReadonlyState::Done{ op, node_id, version_upper_bound, ret } ];
         }
@@ -839,7 +839,7 @@ UnboundedLog<DT: Dispatch> {
             // apply all updates between lhead and global tail that were enqueued from local node
             require(lversion < tail);
             require(log_entry.node_id == node_id);
-            let (new_nr_state, ret) = old_nr_state.spec_update(log_entry.op);
+            let (new_nr_state, ret) = DT::dispatch_mut_spec(old_nr_state, log_entry.op);
 
             add local_updates += [ rid => UpdateState::Applied { ret, idx: lversion }];
             add replicas      += [ node_id => new_nr_state];
@@ -858,7 +858,7 @@ UnboundedLog<DT: Dispatch> {
             // apply all updates between lhead and global tail that were enqueued from remote nodes
             require(lversion < tail);
             require(log_entry.node_id != node_id);
-            let (new_nr_state, ret) = old_nr_state.spec_update(log_entry.op);
+            let (new_nr_state, ret) = DT::dispatch_mut_spec(old_nr_state, log_entry.op);
 
             add replicas    += [ node_id => new_nr_state ];
             add combiner    += [ node_id => CombinerState::Loop { queued_ops, lversion: lversion + 1, tail, idx}];
@@ -1148,7 +1148,7 @@ UnboundedLog<DT: Dispatch> {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                     let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
-                        && ret == compute_nrstate_at_version(pre.log, ver).spec_read(op));
+                        && ret == DT::dispatch_spec(compute_nrstate_at_version(pre.log, ver), op));
                     compute_nrstate_at_version_preserves(pre.log, post.log, ver);
                 },
                 _ => {},
@@ -1210,7 +1210,7 @@ UnboundedLog<DT: Dispatch> {
             match post.local_reads[rid] {
                 ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                     let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
-                        && ret == compute_nrstate_at_version(post.log, ver).spec_read(op));
+                        && ret == DT::dispatch_spec(compute_nrstate_at_version(post.log, ver), op));
                     assert(rangeincl(version_upper_bound, ver, post.version_upper_bound));
                 },
                 _ => {}
@@ -1570,7 +1570,7 @@ proof fn LogRangeMatchesQueue_append<DT: Dispatch>(
       log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
       updates: Map<ReqId, UpdateState<DT>>, new_updates: Map<ReqId, UpdateState<DT>>,
-      new_rid: ReqId, log_entry: LogEntry)
+      new_rid: ReqId, log_entry: LogEntry<DT>)
     requires
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper,
@@ -1642,7 +1642,7 @@ proof fn LogRangeMatchesQueue_append_other<DT: Dispatch>(
       log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, logLen: nat, node_id: NodeId,
       updates: Map<ReqId, UpdateState<DT>>, new_updates: Map<ReqId, UpdateState<DT>>,
-      new_rid: ReqId, log_entry: LogEntry)
+      new_rid: ReqId, log_entry: LogEntry<DT>)
     requires
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper <= logLen,
@@ -1688,7 +1688,7 @@ proof fn LogRangeMatchesQueue_append_other_augment<DT: Dispatch>(
       log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
       updates: Map<ReqId, UpdateState<DT>>, new_updates: Map<ReqId, UpdateState<DT>>,
-      new_rid: ReqId, log_entry: LogEntry)
+      new_rid: ReqId, log_entry: LogEntry<DT>)
     requires
         0 <= queueIndex <= queue.len(),
         logIndexLower <= logIndexUpper,
@@ -1739,7 +1739,7 @@ proof fn LogRangeMatchesQueue_append_other_augment<DT: Dispatch>(
 proof fn LogRangeNoNodeId_append_other<DT: Dispatch>(
       log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
-      log_entry: LogEntry)
+      log_entry: LogEntry<DT>)
     requires
         logIndexLower <= logIndexUpper,
         log_entry.node_id != node_id,
@@ -1825,16 +1825,16 @@ decreases b - a
 ///
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given  version.
-pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, version: LogIdx) -> DataStructureSpec
+pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, version: LogIdx) -> DT::View
     recommends forall |i| 0 <= i < version ==> log.contains_key(i)
     decreases version
 {
     // decreases_when(version >= 0);
     if version == 0 {
-        DataStructureSpec::init()
+        DT::init_spec()
     } else {
         let ver =  (version - 1) as nat;
-        compute_nrstate_at_version(log, ver).spec_update(log[ver].op).0
+        DT::dispatch_mut_spec(compute_nrstate_at_version(log, ver), log[ver].op).0
     }
 }
 

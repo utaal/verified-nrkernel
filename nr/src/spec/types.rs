@@ -68,6 +68,8 @@ pub trait Dispatch {
     fn dispatch_mut(&mut self, op: Self::WriteOperation) -> (result: Self::Response)
         ensures Self::dispatch_mut_spec(old(self)@, op) == (self@, result);
 
+    spec fn init_spec() -> Self::View;
+
     spec fn dispatch_spec(ds: Self::View, op: Self::ReadOperation) -> Self::Response;
 
     spec fn dispatch_mut_spec(ds: Self::View, op: Self::WriteOperation) -> (Self::View, Self::Response);
@@ -188,6 +190,10 @@ impl Dispatch for DataStructureType {
             UpdateOp::Inc => self.val = if self.val < 0xffff_ffff_ffff_ffff { self.val + 1 } else { 0 }
         }
         ReturnType::Ok
+    }
+
+    open spec fn init_spec() -> Self::View {
+        DataStructureSpec { val: 0 }
     }
 
     open spec fn dispatch_spec(ds: Self::View, op: Self::ReadOperation) -> Self::Response {

@@ -9,6 +9,8 @@ use vstd::{
     atomic_with_ghost,
 };
 
+use crate::Dispatch;
+
 // constants
 use crate::constants::{MAX_THREADS_PER_REPLICA};
 
@@ -136,7 +138,7 @@ struct_with_invariants!{
 ///
 /// Note, in contrast to the Rust version, we just have a single outstanding operation
 #[repr(align(128))]
-pub struct Context {
+pub struct Context<DT: Dispatch> {
     /// Array that will hold all pending operations to be appended to the shared
     /// log as well as the results obtained on executing them against a replica.
     ///
@@ -150,28 +152,28 @@ pub struct Context {
     ///
     ///  - Dafny: linear atomic: CachePadded<Atomic<uint64, ContextGhost>>,
     ///  - Rust:  N/A
-    pub/*REVIEW: (crate)*/ atomic: CachePadded<AtomicU64<_, ContextGhost, _>>,
+    pub/*REVIEW: (crate)*/ atomic: CachePadded<AtomicU64<_, ContextGhost<DT>, _>>,
 
     /// ghost: identifier of the thread
     pub thread_id_g: Ghost<nat>,
 
     pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
-    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
 }
 
 pub open spec fn wf(&self, thread_idx: nat) -> bool {
     predicate {
         self.thread_id_g@ == thread_idx
     }
-    invariant on atomic with (flat_combiner_instance, unbounded_log_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost) {
+    invariant on atomic with (flat_combiner_instance, unbounded_log_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost<DT>) {
         &&& g.inv(v, thread_id_g@, batch.0, flat_combiner_instance@, unbounded_log_instance@)
     }
 }} // struct_with_invariants!
 
-impl Context {
+impl<DT: Dispatch> Context<DT> {
 
-    pub fn new(thread_id: usize, slot: Tracked<FlatCombiner::slots>, flat_combiner_instance: Tracked<FlatCombiner::Instance>, unbounded_log_instance: Tracked<UnboundedLog::Instance>)
-        -> (res: (Context, Tracked<PointsTo<PendingOperation>>))
+    pub fn new(thread_id: usize, slot: Tracked<FlatCombiner::slots>, flat_combiner_instance: Tracked<FlatCombiner::Instance>, unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>)
+        -> (res: (Context<DT>, Tracked<PointsTo<PendingOperation>>))
         requires
             slot@@.value.is_Empty(),
             slot@@.instance == flat_combiner_instance,
@@ -214,8 +216,8 @@ impl Context {
     /// This is invoked by the thread that want's to execute an operation
     ///
     /// Note, enqueue is a bit a misnomer. We just have one operation per thread
-    pub fn enqueue_op(&self, op: UpdateOp, context_ghost: Tracked<FCClientRequestResponseGhost>)
-        -> (res: (bool, Tracked<FCClientRequestResponseGhost>))
+    pub fn enqueue_op(&self, op: UpdateOp, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
+        -> (res: (bool, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
             context_ghost@.enqueue_op_pre(self.thread_id_g@, op, self.batch.0.id(), self.flat_combiner_instance@, self.unbounded_log_instance@),
             self.wf(self.thread_id_g@),
@@ -259,8 +261,8 @@ impl Context {
     /// Returns a single response if available. Otherwise, returns None.
     ///
     /// this is invoked by the thread that has enqueued the operation before
-    pub fn dequeue_response(&self, context_ghost: Tracked<FCClientRequestResponseGhost>)
-        -> (res: (Option<ReturnType>, Tracked<FCClientRequestResponseGhost>))
+    pub fn dequeue_response(&self, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
+        -> (res: (Option<ReturnType>, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
             context_ghost@.dequeue_resp_pre(self.thread_id_g@, self.flat_combiner_instance@),
             self.wf(self.thread_id_g@),
@@ -370,7 +372,7 @@ struct_with_invariants!{
 /// The ghost context for a thread carying permissions and tracking the state of the update operation
 ///
 ///  - Dafny:   glinear datatype ContextGhost = ContextGhost(
-pub tracked struct ContextGhost {
+pub tracked struct ContextGhost<DT: Dispatch> {
     /// Token to access the batch cell in Context
     ///
     ///  - Dafny: glinear contents: glOption<CellContents<OpResponse>>,
@@ -384,11 +386,11 @@ pub tracked struct ContextGhost {
     /// tracks the update operation
     ///
     ///  - Dafny: glinear update: glOption<Update>
-    pub update: Option<UnboundedLog::local_updates>
+    pub update: Option<UnboundedLog::local_updates<DT>>
 }
 
 //  - Dafny: predicate inv(v: uint64, i: nat, cell: Cell<OpResponse>, fc_loc_s: nat)
-pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc: FlatCombiner::Instance, inst: UnboundedLog::Instance) -> bool {
+pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc: FlatCombiner::Instance, inst: UnboundedLog::Instance<DT>) -> bool {
     predicate {
         &&& self.slots@.key == tid
         &&& self.slots@.instance == fc
@@ -437,14 +439,14 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation>, fc:
 
 
 /// Request Enqueue/Dequeue ghost state
-pub tracked struct FCClientRequestResponseGhost {
+pub tracked struct FCClientRequestResponseGhost<DT: Dispatch> {
     pub tracked batch_perms: Option<PointsTo<PendingOperation>>,
-    pub tracked local_updates: Option<UnboundedLog::local_updates>,
+    pub tracked local_updates: Option<UnboundedLog::local_updates<DT>>,
     pub tracked fc_clients: FlatCombiner::clients
 }
 
-impl FCClientRequestResponseGhost {
-    pub open spec fn enqueue_op_pre(&self, tid: nat, op: UpdateOp, batch_cell: CellId, fc_inst: FlatCombiner::Instance, inst: UnboundedLog::Instance) -> bool {
+impl<DT: Dispatch> FCClientRequestResponseGhost<DT> {
+    pub open spec fn enqueue_op_pre(&self, tid: nat, op: UpdateOp, batch_cell: CellId, fc_inst: FlatCombiner::Instance, inst: UnboundedLog::Instance<DT>) -> bool {
         &&& self.local_updates.is_Some()
         &&& self.local_updates.get_Some_0()@.instance == inst
         &&& self.local_updates.get_Some_0()@.value.is_Init()
@@ -459,7 +461,7 @@ impl FCClientRequestResponseGhost {
         &&& self.fc_clients@.value.is_Idle()
     }
 
-    pub open spec fn enqueue_op_post(&self, pre: FCClientRequestResponseGhost) -> bool
+    pub open spec fn enqueue_op_post(&self, pre: FCClientRequestResponseGhost<DT>) -> bool
         recommends pre.local_updates.is_Some()
     {
         &&& self.fc_clients@.value.is_Waiting()
@@ -480,7 +482,7 @@ impl FCClientRequestResponseGhost {
         &&& self.local_updates.is_None()
     }
 
-    pub open spec fn dequeue_resp_post(&self, pre: FCClientRequestResponseGhost, ret: Option<ReturnType>, inst: UnboundedLog::Instance) -> bool {
+    pub open spec fn dequeue_resp_post(&self, pre: FCClientRequestResponseGhost<DT>, ret: Option<ReturnType>, inst: UnboundedLog::Instance<DT>) -> bool {
         &&& ret.is_Some() ==> {
             &&& self.batch_perms.is_Some()
             &&& self.batch_perms.get_Some_0()@.value.is_None()

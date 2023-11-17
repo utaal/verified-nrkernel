@@ -212,10 +212,9 @@ pub open spec fn wf(&self) -> bool {
 
 
 
-impl NrLog
-{
+impl<DT: Dispatch> NrLog<DT> {
     /// initializes the NrLOg
-    pub fn new(num_replicas: usize, log_size: usize) -> (res: (Self, Vec<ReplicaToken>, Tracked<NrLogTokens>))
+    pub fn new(num_replicas: usize, log_size: usize) -> (res: (Self, Vec<ReplicaToken>, Tracked<NrLogTokens<DT>>))
         requires
             log_size == LOG_SIZE,
             num_replicas == NUM_REPLICAS
@@ -528,8 +527,8 @@ impl NrLog
     ///
     ///  - Rust: get_ctail()
     ///  - Dafny: n/a part of do-read
-    pub(crate) fn get_version_upper_bound(&self, local_reads: Tracked<UnboundedLog::local_reads>)
-        -> (ret: (u64, Tracked<UnboundedLog::local_reads>))
+    pub(crate) fn get_version_upper_bound(&self, local_reads: Tracked<UnboundedLog::local_reads<DT>>)
+        -> (ret: (u64, Tracked<UnboundedLog::local_reads<DT>>))
         requires
             self.wf(),
             local_reads@@.instance == self.unbounded_log_instance@,
@@ -564,8 +563,8 @@ impl NrLog
     ///
     // https://github.com/vmware/node-replication/blob/57075c3ddaaab1098d3ec0c2b7d01cb3b57e1ac7/node-replication/src/log.rs#L525
     pub fn is_replica_synced_for_reads(&self, node_id: ReplicaId, version_upper_bound: u64,
-                                        local_reads: Tracked<UnboundedLog::local_reads>)
-            -> (result: (bool, Tracked<UnboundedLog::local_reads>))
+                                        local_reads: Tracked<UnboundedLog::local_reads<DT>>)
+            -> (result: (bool, Tracked<UnboundedLog::local_reads<DT>>))
         requires
             self.wf(),
             node_id < self.local_versions.len(),
@@ -605,7 +604,7 @@ impl NrLog
     }
 
 
-    proof fn unbounded_log_append_entries(tracked &self, nid: nat, ridx: nat, tracked state: AppendEntriesGhostState) -> (tracked ret: AppendEntriesGhostState)
+    proof fn unbounded_log_append_entries(tracked &self, nid: nat, ridx: nat, tracked state: AppendEntriesGhostState<DT>) -> (tracked ret: AppendEntriesGhostState<DT>)
         requires
             self.wf(),
             state.idx == 0,
@@ -667,8 +666,8 @@ impl NrLog
         responses: &mut Vec<ReturnType>,
         actual_replica: &mut DataStructureType,
         // here we also need to pass the mut replica
-        ghost_data: Tracked<NrLogAppendExecDataGhost>
-    ) -> (result: Tracked<NrLogAppendExecDataGhost>)
+        ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>
+    ) -> (result: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
             replica_token@ < self.local_versions.len(),
@@ -978,8 +977,8 @@ impl NrLog
                     responses: &mut Vec<ReturnType>,
                     actual_replica: &mut DataStructureType,
                     // ghost state for execute etc.
-                    ghost_data: Tracked<NrLogAppendExecDataGhost>)
-            -> (res: Tracked<NrLogAppendExecDataGhost>)
+                    ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>)
+            -> (res: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
             replica_token.wf(),
@@ -1060,8 +1059,8 @@ impl NrLog
 
     /// proof function that transitions local updates into the done state.
     proof fn execute_update_done_multiple(tracked &self, request_ids: Seq<ReqId>,
-        tracked local_updates: Map<nat, UnboundedLog::local_updates>, tracked version_upper_bound: &UnboundedLog::version_upper_bound)
-         -> (tracked res: Map<nat, UnboundedLog::local_updates>)
+        tracked local_updates: Map<nat, UnboundedLog::local_updates<DT>>, tracked version_upper_bound: &UnboundedLog::version_upper_bound<DT>)
+         -> (tracked res: Map<nat, UnboundedLog::local_updates<DT>>)
         requires
             self.wf(),
             version_upper_bound@.instance == self.unbounded_log_instance@,
@@ -1106,8 +1105,8 @@ impl NrLog
     pub(crate) fn execute(&self, replica_token: &ReplicaToken,
         responses: &mut Vec<ReturnType>,
         actual_replica: &mut DataStructureType,
-        ghost_data: Tracked<NrLogAppendExecDataGhost>
-    ) -> (result: Tracked<NrLogAppendExecDataGhost>)
+        ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>
+    ) -> (result: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
             replica_token@ < self.local_versions.len(),
@@ -1411,8 +1410,8 @@ impl NrLog
     /// corresponding/lowest tail `idx` in the `Log`.
     ///
     ///  - Dafny: part of advance_head
-    pub(crate) fn find_min_local_version(&self, cb_combiner: Tracked<CyclicBuffer::combiner>)
-                        -> (result: (u64, Tracked<CyclicBuffer::combiner>))
+    pub(crate) fn find_min_local_version(&self, cb_combiner: Tracked<CyclicBuffer::combiner<DT>>)
+                        -> (result: (u64, Tracked<CyclicBuffer::combiner<DT>>))
         requires
             self.wf(),
             cb_combiner@@.instance == self.cyclic_buffer_instance@,
@@ -1491,10 +1490,10 @@ pub tracked struct NrLogAppendExecDataGhost<DT: Dispatch> {
     pub /* REVIEW (crate) */ request_ids    : Ghost<Seq<ReqId>>,
 }
 
-impl NrLogAppendExecDataGhost {
+impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
 
     /// some common predicate that ties the state to the node and instances
-    pub open spec fn common_pred(&self, nid: NodeId, data: DataStructureSpec,  inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool
+    pub open spec fn common_pred(&self, nid: NodeId, data: DT::View,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool
     {
         &&& (forall |i| 0 <= i < self.request_ids@.len() ==> {
             &&& (#[trigger] self.local_updates@.contains_key(i))
@@ -1510,7 +1509,7 @@ impl NrLogAppendExecDataGhost {
         &&& self.request_ids@.len() <= MAX_REQUESTS
     }
 
-    pub open spec fn append_pre(&self,  nid: NodeId, data: DataStructureSpec, ops: Seq<UpdateOp>, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn append_pre(&self,  nid: NodeId, data: DT::View, ops: Seq<UpdateOp>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& (forall |i| #![trigger self.local_updates@[i]]0 <= i < self.request_ids@.len() ==> {
@@ -1524,7 +1523,7 @@ impl NrLogAppendExecDataGhost {
         &&& self.request_ids@.len() == ops.len()
     }
 
-    pub open spec fn append_post(&self, pre: Self, nid: NodeId,  data: DataStructureSpec, operations: Seq<UpdateOp>, responses: Seq<ReturnType>,  inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn append_post(&self, pre: Self, nid: NodeId,  data: DT::View, operations: Seq<UpdateOp>, responses: Seq<ReturnType>,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.combiner@@.value.is_Ready() || self.combiner@@.value.is_Placed()
@@ -1534,7 +1533,7 @@ impl NrLogAppendExecDataGhost {
         &&& self.request_ids == pre.request_ids
     }
 
-    pub open spec fn execute_pre(&self, nid: NodeId, data: DataStructureSpec, responses: Seq<ReturnType>, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn execute_pre(&self, nid: NodeId, data: DT::View, responses: Seq<ReturnType>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.cb_combiner@@.value.is_Idle()
@@ -1545,7 +1544,7 @@ impl NrLogAppendExecDataGhost {
         }
     }
 
-    pub open spec fn execute_post(&self, pre: Self, nid: NodeId, data: DataStructureSpec, responses_old: Seq<ReturnType>, responses: Seq<ReturnType>, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn execute_post(&self, pre: Self, nid: NodeId, data: DT::View, responses_old: Seq<ReturnType>, responses: Seq<ReturnType>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.cb_combiner@@.value  == pre.cb_combiner@@.value
@@ -1560,7 +1559,7 @@ impl NrLogAppendExecDataGhost {
         }
     }
 
-    pub open spec fn advance_head_pre(&self, nid: NodeId, data: DataStructureSpec, responses: Seq<ReturnType>, inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn advance_head_pre(&self, nid: NodeId, data: DT::View, responses: Seq<ReturnType>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.pre_exec(responses)
@@ -1568,7 +1567,7 @@ impl NrLogAppendExecDataGhost {
         &&& self.combiner@@.value.is_Placed()
     }
 
-    pub open spec fn advance_head_post(&self, pre: Self, nid: NodeId, data: DataStructureSpec, responses: Seq<ReturnType>,  inst: UnboundedLog::Instance, cb_inst: CyclicBuffer::Instance) -> bool {
+    pub open spec fn advance_head_post(&self, pre: Self, nid: NodeId, data: DT::View, responses: Seq<ReturnType>,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.request_ids == pre.request_ids
@@ -1673,7 +1672,7 @@ pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance<DT>
 
 struct_with_invariants!{
 /// represents the tokens that are created when a new log is being initialized
-pub tracked struct NrLogTokens<DT> {
+pub tracked struct NrLogTokens<DT: Dispatch> {
     pub ghost num_replicas: nat,
     pub tracked replicas                : Map<NodeId,UnboundedLog::replicas<DT>>,
     pub tracked combiners               : Map<NodeId,UnboundedLog::combiner<DT>>,

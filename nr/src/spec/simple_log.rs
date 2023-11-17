@@ -110,10 +110,10 @@ state_machine! {
         ///
         /// This function recursively applies the update operations to the initial state of the
         /// data structure and returns the state of the data structure at the given  version.
-        pub open spec fn nrstate_at_version(&self, version: LogIdx) -> DataStructureSpec
+        pub open spec fn nrstate_at_version(&self, version: LogIdx) -> DT::View
             recommends 0 <= version <= self.log.len()
         {
-            compute_nrstate_at_version(self.log, version)
+            compute_nrstate_at_version::<DT>(self.log, version)
         }
 
         ////////////////////////////////////////////////////////////////////////////////////////////
@@ -163,7 +163,7 @@ state_machine! {
 
                 require(current <= version <= pre.log.len());
                 require(version <= pre.version);
-                require(ret == pre.nrstate_at_version(version).spec_read(op));
+                require(ret == DT::dispatch_spec(pre.nrstate_at_version(version), op));
 
                 update readonly_reqs = pre.readonly_reqs.remove(rid);
             }
@@ -319,15 +319,15 @@ verus! {
 ///
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given  version.
-pub open spec fn compute_nrstate_at_version(log: Seq<UpdateOp>, version: LogIdx) -> DataStructureSpec
+pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Seq<DT::WriteOperation>, version: LogIdx) -> DT::View
     recommends 0 <= version <= log.len()
     decreases version
 {
     // decreases_when(version >= 0);
     if version == 0 {
-        DataStructureSpec::init()
+        DT::init_spec()
     } else {
-        compute_nrstate_at_version(log, (version - 1) as nat).spec_update(log[version - 1]).0
+        DT::dispatch_mut_spec(compute_nrstate_at_version::<DT>(log, (version - 1) as nat), log[version - 1]).0
     }
 }
 

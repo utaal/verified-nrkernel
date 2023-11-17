@@ -152,7 +152,7 @@ pub struct Replica<DT: Dispatch> {
     ///
     ///  - Dafny: linear combiner_lock: CachePadded<Atomic<uint64, glOption<CombinerLockState>>>,
     ///  - Rust:  combiner: CachePadded<AtomicUsize>,
-    pub combiner: CachePadded<AtomicU64<_, Option<CombinerLockStateGhost>, _>>,
+    pub combiner: CachePadded<AtomicU64<_, Option<CombinerLockStateGhost<DT>>, _>>,
 
     /// List of per-thread contexts. Threads buffer write operations here when
     /// they cannot perform flat combining (because another thread might already
@@ -160,7 +160,7 @@ pub struct Replica<DT: Dispatch> {
     ///
     ///  - Dafny: linear contexts: lseq<Context>,
     ///  - Rust:  contexts: Vec<Context<<D as Dispatch>::WriteOperation, <D as Dispatch>::Response>>,
-    pub contexts: Vec<Context>,
+    pub contexts: Vec<Context<DT>>,
 
     /// A buffer of operations for flat combining.
     ///
@@ -168,7 +168,7 @@ pub struct Replica<DT: Dispatch> {
     ///
     ///  - Dafny: linear ops: LC.LinearCell<seq<nrifc.UpdateOp>>,
     ///  - Rust:  buffer: RefCell<Vec<<D as Dispatch>::WriteOperation>>,
-    pub collected_operations: PCell<Vec<UpdateOp>>,
+    pub collected_operations: PCell<Vec<<DT as Dispatch>::WriteOperation>>,
 
     /// Number of operations collected by the combiner from each thread at any
     /// we just have one inflight operation per thread
@@ -183,7 +183,7 @@ pub struct Replica<DT: Dispatch> {
     ///
     ///  - Dafny: linear responses: LC.LinearCell<seq<nrifc.ReturnType>>,
     ///  - Rust:  result: RefCell<Vec<<D as Dispatch>::Response>>,
-    pub responses: PCell<Vec<ReturnType>>,
+    pub responses: PCell<Vec<<DT as Dispatch>::Response>>,
 
     /// The underlying data structure. This is shared among all threads that are
     /// registered with this replica. Each replica maintains its own copy of
@@ -223,7 +223,7 @@ pub open spec fn wf(&self) -> bool {
         })
     }
 
-    invariant on combiner with (flat_combiner_instance, responses, collected_operations, collected_operations_per_thread) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost>) {
+    invariant on combiner with (flat_combiner_instance, responses, collected_operations, collected_operations_per_thread) specifically (self.combiner.0) is (v: u64, g: Option<CombinerLockStateGhost<DT>>) {
         // v != 0 means lock is not taken, if it's not taken, the ghost state is Some
         &&& (v == 0) <==> g.is_some()
         //
@@ -236,8 +236,8 @@ pub open spec fn wf(&self) -> bool {
 
 
 
-impl Replica  {
-    pub fn new(replica_token: ReplicaToken, num_threads: usize, config: Tracked<ReplicaConfig>) -> (res: Self)
+impl<DT: Dispatch> Replica<DT> {
+    pub fn new(replica_token: ReplicaToken, num_threads: usize, config: Tracked<ReplicaConfig<DT>>) -> (res: Self)
         requires
             num_threads == MAX_THREADS_PER_REPLICA,
             replica_token.id_spec() < NUM_REPLICAS,
@@ -409,7 +409,7 @@ impl Replica  {
     ///
     ///  - Dafny: part of method try_combine
     #[inline(always)]
-    fn acquire_combiner_lock(&self) -> (result: (bool, Tracked<Option<CombinerLockStateGhost>>))
+    fn acquire_combiner_lock(&self) -> (result: (bool, Tracked<Option<CombinerLockStateGhost<DT>>>))
         requires self.wf()
         ensures
           result.0 ==> result.1@.is_some(),
@@ -452,7 +452,7 @@ impl Replica  {
         }
     }
 
-    fn release_combiner_lock(&self, lock_state: Tracked<CombinerLockStateGhost>)
+    fn release_combiner_lock(&self, lock_state: Tracked<CombinerLockStateGhost<DT>>)
         requires
             self.wf(),
             lock_state@.inv(self.flat_combiner_instance@, self.responses.id(), self.collected_operations.id(), self.collected_operations_per_thread.id()),
@@ -468,7 +468,7 @@ impl Replica  {
 
     /// Appends an operation to the log and attempts to perform flat combining.
     /// Accepts a thread `tid` as an argument. Required to acquire the combiner lock.
-    fn try_combine(&self, slog: &NrLog)
+    fn try_combine(&self, slog: &NrLog<DT>)
         requires
           self.wf(),
           slog.wf(),
@@ -490,8 +490,8 @@ impl Replica  {
     }
 
     /// Performs one round of flat combining. Collects, appends and executes operations.
-    fn combine(&self, slog: &NrLog, combiner_lock: Tracked<CombinerLockStateGhost>)
-            -> (result: Tracked<CombinerLockStateGhost>)
+    fn combine(&self, slog: &NrLog<DT>, combiner_lock: Tracked<CombinerLockStateGhost<DT>>)
+            -> (result: Tracked<CombinerLockStateGhost<DT>>)
         requires
             self.wf(),
             slog.wf(),
@@ -571,7 +571,7 @@ impl Replica  {
     #[inline(always)]
     fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
                           flat_combiner:  Tracked<FlatCombiner::combiner>)
-                             -> (response: Tracked<ThreadOpsData>)
+                             -> (response: Tracked<ThreadOpsData<DT>>)
         requires
             self.wf(),
             old(num_ops_per_thread).len() == 0,
@@ -694,8 +694,8 @@ impl Replica  {
 
 
     /// - Dafny: combine_respond
-    fn distribute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>, thread_ops_data: Tracked<ThreadOpsData>)
-        -> (res: Tracked<ThreadOpsData>)
+    fn distribute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>, thread_ops_data: Tracked<ThreadOpsData<DT>>)
+        -> (res: Tracked<ThreadOpsData<DT>>)
         requires
             self.wf(),
             thread_ops_data@.distribute_thread_resps_pre(self.flat_combiner_instance, self.unbounded_log_instance@, old(num_ops_per_thread)@, old(responses)@, self.contexts@),
@@ -847,7 +847,7 @@ impl Replica  {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute(&self, slog: &NrLog, op: ReadonlyOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
+    pub fn execute(&self, slog: &NrLog<DT>, op: ReadonlyOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
         requires
             self.wf(),
             slog.wf(),
@@ -923,7 +923,7 @@ impl Replica  {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute_mut(&self, slog: &NrLog, op: UpdateOp, tkn: ThreadToken) -> (result: Result<(ReturnType, ThreadToken), ThreadToken>)
+    pub fn execute_mut(&self, slog: &NrLog<DT>, op: UpdateOp, tkn: ThreadToken) -> (result: Result<(ReturnType, ThreadToken), ThreadToken>)
         requires
             slog.wf(),
             self.wf(),
@@ -979,8 +979,8 @@ impl Replica  {
 
     /// Enqueues an operation inside a thread local context. Returns a boolean
     /// indicating whether the operation was enqueued (true) or not (false).
-    fn make_pending(&self, op: UpdateOp, tid: ThreadId, context_ghost: Tracked<FCClientRequestResponseGhost>)
-     -> (res: (bool, Tracked<FCClientRequestResponseGhost>))
+    fn make_pending(&self, op: UpdateOp, tid: ThreadId, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
+     -> (res: (bool, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
             self.wf(),
             0 <= tid < self.contexts.len(),
@@ -993,8 +993,8 @@ impl Replica  {
     }
 
     /// Busy waits until a response is available within the thread's context.
-    fn get_response(&self, slog: &NrLog, tid: ThreadId, req_id: Ghost<ReqId>, context_ghost: Tracked<FCClientRequestResponseGhost>)
-        -> (res: (ReturnType, Tracked<FCClientRequestResponseGhost>))
+    fn get_response(&self, slog: &NrLog<DT>, tid: ThreadId, req_id: Ghost<ReqId>, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
+        -> (res: (ReturnType, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
             self.wf(),
             slog.wf(),
@@ -1046,15 +1046,15 @@ impl Replica  {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// struct containing arguments for creating a new replica
-pub tracked struct ReplicaConfig {
-    pub tracked replica: UnboundedLog::replicas,
-    pub tracked combiner: UnboundedLog::combiner,
-    pub tracked cb_combiner: CyclicBuffer::combiner,
-    pub tracked unbounded_log_instance: UnboundedLog::Instance,
-    pub tracked cyclic_buffer_instance: CyclicBuffer::Instance,
+pub tracked struct ReplicaConfig<DT: Dispatch> {
+    pub tracked replica: UnboundedLog::replicas<DT>,
+    pub tracked combiner: UnboundedLog::combiner<DT>,
+    pub tracked cb_combiner: CyclicBuffer::combiner<DT>,
+    pub tracked unbounded_log_instance: UnboundedLog::Instance<DT>,
+    pub tracked cyclic_buffer_instance: CyclicBuffer::Instance<DT>,
 }
 
-impl ReplicaConfig {
+impl<DT: Dispatch> ReplicaConfig<DT> {
     pub open spec fn wf(&self, nid: nat) -> bool {
         &&& self.combiner@.instance == self.unbounded_log_instance
         &&& self.cb_combiner@.instance == self.cyclic_buffer_instance
@@ -1076,20 +1076,20 @@ struct_with_invariants!{
 ///
 ///  - Dafny: glinear datatype CombinerLockState
 ///  - Rust:  N/A
-pub tracked struct CombinerLockStateGhost {
+pub tracked struct CombinerLockStateGhost<DT: Dispatch> {
     // glinear flatCombiner: FCCombiner,
     pub flat_combiner: Tracked<FlatCombiner::combiner>,
 
     /// Stores the token to access the collected_operations in the replica
     ///  - Dafny: glinear gops: LC.LCellContents<seq<nrifc.UpdateOp>>,
-    pub collected_operations_perm: Tracked<PointsTo<Vec<UpdateOp>>>,
+    pub collected_operations_perm: Tracked<PointsTo<Vec<<DT as Dispatch>::WriteOperation>>>,
 
     /// Stores the token to access the number of collected operations in the replica
     pub collected_operations_per_thread_perm: Tracked<PointsTo<Vec<usize>>>,
 
     /// Stores the token to access the responses in teh Replica
     ///  - Dafny: glinear gresponses: LC.LCellContents<seq<nrifc.ReturnType>>,
-    pub responses_token: Tracked<PointsTo<Vec<ReturnType>>>,
+    pub responses_token: Tracked<PointsTo<Vec<<DT as Dispatch>::Response>>>,
 }
 
 //  - Dafny: predicate CombinerLockInv(v: uint64, g: glOption<CombinerLockState>, fc_loc: nat,
@@ -1119,16 +1119,16 @@ pub open spec fn inv(&self, combiner_instance: FlatCombiner::Instance, responses
 
 
 
-tracked struct ThreadOpsData {
+tracked struct ThreadOpsData<DT: Dispatch> {
     flat_combiner: Tracked<FlatCombiner::combiner>,
     request_ids: Ghost<Seq<ReqId>>,
-    local_updates: Tracked<Map<nat, UnboundedLog::local_updates>>,
+    local_updates: Tracked<Map<nat, UnboundedLog::local_updates<DT>>>,
     cell_permissions: Tracked<Map<nat, PointsTo<PendingOperation>>>,
 }
 
-impl ThreadOpsData {
+impl<DT: Dispatch> ThreadOpsData<DT> {
     spec fn shared_inv(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>, num_ops_per_thread: Seq<usize>,
-                       replica_contexts: Seq<Context>) -> bool {
+                       replica_contexts: Seq<Context<DT>>) -> bool {
         &&& self.flat_combiner@@.instance == flat_combiner_instance@
         &&& self.flat_combiner@@.value.is_Responding()
         &&& self.flat_combiner@@.value.get_Responding_0().len() as nat == MAX_THREADS_PER_REPLICA as nat
@@ -1150,9 +1150,9 @@ impl ThreadOpsData {
     }
 
     spec fn distribute_thread_resps_pre(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>,
-                                        unbounded_log_instance: UnboundedLog::Instance,
+                                        unbounded_log_instance: UnboundedLog::Instance<DT>,
                                         num_ops_per_thread: Seq<usize>, responses: Seq<ReturnType>,
-                                        replica_contexts: Seq<Context>) -> bool {
+                                        replica_contexts: Seq<Context<DT>>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
 
         &&& self.request_ids@.len() == responses.len()
@@ -1177,8 +1177,8 @@ impl ThreadOpsData {
     }
 
     spec fn collect_thread_ops_post(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>,
-                unbounded_log_instance: UnboundedLog::Instance, num_ops_per_thread: Seq<usize>,
-                operations: Seq<UpdateOp>, replica_contexts: Seq<Context>) -> bool {
+                unbounded_log_instance: UnboundedLog::Instance<DT>, num_ops_per_thread: Seq<usize>,
+                operations: Seq<UpdateOp>, replica_contexts: Seq<Context<DT>>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
         &&& self.request_ids@.len() == operations.len()
         &&& (forall |i| 0 <= i < self.request_ids@.len() <==> self.local_updates@.contains_key(i))

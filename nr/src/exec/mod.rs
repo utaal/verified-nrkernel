@@ -40,30 +40,30 @@ verus! {
 ///
 ///  - Dafny: N/A
 ///  - Rust:  pub struct NodeReplicated<D: Dispatch + Sync>
-pub struct NodeReplicated {
+pub struct NodeReplicated<DT: Dispatch> {
     /// the log of operations
     ///
     ///  - Rust: log: Log<D::WriteOperation>,
-    pub /* REVIEW: (crate) */ log: NrLog,
+    pub /* REVIEW: (crate) */ log: NrLog<DT>,
     // log: NrLog,
 
     /// the nodes or replicas in the system
     ///
     ///  - Rust: replicas: Vec<Box<Replica<D>>>,
     // replicas: Vec<Box<Replica<DataStructureType, UpdateOp, ReturnType>>>,
-    pub /* REVIEW (crate) */ replicas: Vec<Box<Replica>>,
+    pub /* REVIEW (crate) */ replicas: Vec<Box<Replica<DT>>>,
 
 
     pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken>>,
 
     /// XXX: should that be here, or go into the NrLog / replicas?
-    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
-    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
 }
 
 
 /// Proof blocks for the NodeReplicate data structure
-impl NodeReplicated {
+impl<DT: Dispatch> NodeReplicated<DT> {
     /// Wellformedness of the NodeReplicated data structure
     pub open spec fn wf(&self) -> bool {
         // the log shall be well-formed and the instances match
@@ -86,7 +86,7 @@ impl NodeReplicated {
 }
 
 
-impl NodeReplicated {
+impl<DT: Dispatch> NodeReplicated<DT> {
     /// Creates a new, replicated data-structure from a single-threaded
     /// data-structure that implements [`Dispatch`]. It uses the [`Default`]
     /// constructor to create a initial data-structure for `D` on all replicas.
