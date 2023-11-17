@@ -71,6 +71,30 @@ pub const L2_ENTRY_SIZE: usize = 512 * L3_ENTRY_SIZE;
 pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
 pub const L0_ENTRY_SIZE: usize = 512 * L1_ENTRY_SIZE;
 
+pub open spec fn index_from_offset(offset: nat, entry_size: nat) -> (res: nat)
+    recommends
+        entry_size > 0,
+{
+    offset / entry_size
+}
+
+pub open spec fn index_from_base_and_addr(base: nat, addr: nat, entry_size: nat) -> nat
+    recommends
+        addr >= base,
+        entry_size > 0,
+{
+    index_from_offset(sub(addr, base), entry_size)
+}
+
+pub open spec fn entry_base_from_index(base: nat, idx: nat, entry_size: nat) -> nat {
+    base + idx * entry_size
+}
+
+pub open spec fn next_entry_base_from_index(base: nat, idx: nat, entry_size: nat) -> nat {
+    base + (idx + 1) * entry_size
+}
+
+
 pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
     base + pte.frame.size < x86_arch_spec.upper_vaddr(0, 0)
 }
@@ -303,41 +327,6 @@ impl Arch {
         self.contains_entry_size_at_index_atleast(entry_size, 0)
     }
 
-    pub proof fn lemma_entry_sizes_aligned(self, i: nat, j: nat)
-        requires
-            self.inv(),
-            i <= j,
-            j < self.layers.len(),
-        ensures
-            aligned(self.entry_size(i), self.entry_size(j))
-        decreases self.layers.len() - i
-    {
-        if i == j {
-            assert(aligned(self.entry_size(i), self.entry_size(j))) by (nonlinear_arith)
-                requires i == j, self.entry_size(i) > 0,
-            { };
-        } else {
-            assert(forall|a: int, b: int| #[trigger] (a * b) == b * a);
-            self.lemma_entry_sizes_aligned(i+1,j);
-            lib::mod_of_mul_auto();
-            lib::aligned_transitive_auto();
-            assert(aligned(self.entry_size(i), self.entry_size(j)));
-        }
-    }
-
-    pub proof fn lemma_entry_sizes_aligned_auto(self)
-        ensures
-            forall|i: nat, j: nat|
-                self.inv() && i <= j && j < self.layers.len() ==>
-                aligned(self.entry_size(i), self.entry_size(j))
-    {
-        assert_forall_by(|i: nat, j: nat| {
-            requires(self.inv() && i <= j && j < self.layers.len());
-            ensures(aligned(self.entry_size(i), self.entry_size(j)));
-            self.lemma_entry_sizes_aligned(i, j);
-        });
-    }
-
     #[verifier(inline)]
     pub open spec(checked) fn index_for_vaddr(self, layer: nat, base: nat, vaddr: nat) -> nat
         recommends
@@ -345,7 +334,7 @@ impl Arch {
             layer < self.layers.len(),
             base <= vaddr,
     {
-        indexing::index_from_base_and_addr(base, vaddr, self.entry_size(layer))
+        index_from_base_and_addr(base, vaddr, self.entry_size(layer))
     }
 
     #[verifier(inline)]
@@ -355,7 +344,7 @@ impl Arch {
             layer < self.layers.len()
     {
         // base + idx * self.entry_size(layer)
-        indexing::entry_base_from_index(base, idx, self.entry_size(layer))
+        entry_base_from_index(base, idx, self.entry_size(layer))
     }
 
     #[verifier(inline)]
@@ -365,30 +354,7 @@ impl Arch {
             layer < self.layers.len()
     {
         // base + (idx + 1) * self.entry_size(layer)
-        indexing::next_entry_base_from_index(base, idx, self.entry_size(layer))
-    }
-
-    pub proof fn lemma_entry_sizes_increase(self, i: nat, j: nat)
-        requires
-            self.inv(),
-            i < j,
-            j < self.layers.len(),
-        ensures
-            self.entry_size(i) >= self.entry_size(j),
-        decreases j - i
-    {
-        assert(self.entry_size(i) >= self.entry_size(i + 1))
-            by (nonlinear_arith)
-            requires
-                i + 1 < self.layers.len(),
-                self.entry_size_is_next_layer_size(i),
-                self.num_entries(i + 1) > 0,
-        { };
-        if j == i + 1 {
-        } else {
-            self.lemma_entry_sizes_increase(i + 1, j);
-
-        }
+        next_entry_base_from_index(base, idx, self.entry_size(layer))
     }
 }
 
@@ -466,25 +432,5 @@ pub spec const x86_arch_spec: Arch = Arch {
         ArchLayer { entry_size: L3_ENTRY_SIZE as nat, num_entries: 512 },
     ],
 };
-
-#[verifier(nonlinear)]
-pub proof fn x86_arch_inv()
-    ensures
-        x86_arch_spec.inv()
-{
-    assert(x86_arch_spec.entry_size(3) == 4096);
-    assert(x86_arch_spec.contains_entry_size(4096));
-    assert(x86_arch_spec.layers.len() <= X86_NUM_LAYERS);
-    assert forall|i:nat| i < x86_arch_spec.layers.len() implies {
-            &&& 0 < #[trigger] x86_arch_spec.entry_size(i)  <= X86_MAX_ENTRY_SIZE
-            &&& 0 < #[trigger] x86_arch_spec.num_entries(i) <= X86_NUM_ENTRIES
-            &&& x86_arch_spec.entry_size_is_next_layer_size(i)
-        } by {
-        assert(0 < #[trigger] x86_arch_spec.entry_size(i)  <= X86_MAX_ENTRY_SIZE);
-        assert(0 < #[trigger] x86_arch_spec.num_entries(i) <= X86_NUM_ENTRIES);
-        assert(x86_arch_spec.entry_size_is_next_layer_size(i));
-    }
-    assert(x86_arch_spec.inv());
-}
 
 }

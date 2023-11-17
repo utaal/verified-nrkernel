@@ -30,8 +30,8 @@ pub fn word_index(addr: usize) -> (res: usize)
     ensures
         res as nat === word_index_spec(addr as nat),
         // Prove this equivalence to use the indexing lemmas
-        res as nat === indexing::index_from_offset(addr as nat, WORD_SIZE as nat),
-        word_index_spec(addr as nat) === indexing::index_from_offset(addr as nat, WORD_SIZE as nat),
+        res as nat === crate::definitions_t::index_from_offset(addr as nat, WORD_SIZE as nat),
+        word_index_spec(addr as nat) === crate::definitions_t::index_from_offset(addr as nat, WORD_SIZE as nat),
 {
     addr / WORD_SIZE
 }

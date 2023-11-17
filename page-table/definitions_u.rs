@@ -83,7 +83,7 @@ pub proof fn overflow_bounds()
 // [     #  512 , 512 , 512 , 512 ]
 // [     #  9   , 9   , 9   , 9   , 12  ]
 
-use crate::definitions_t::{Arch, ArchLayer, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES};
+use crate::definitions_t::{Arch, ArchLayer, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES, x86_arch_spec, X86_NUM_LAYERS};
 
 impl Clone for ArchLayerExec {
     fn clone(&self) -> Self {
@@ -131,7 +131,7 @@ impl ArchExec {
             vaddr >= base,
         ensures
             res == self@.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-            res == crate::impl_u::indexing::index_from_base_and_addr(base as nat, vaddr as nat, self@.entry_size(layer as nat)),
+            res == crate::definitions_t::index_from_base_and_addr(base as nat, vaddr as nat, self@.entry_size(layer as nat)),
     {
         let es = self.entry_size(layer);
         let offset = vaddr - base;
@@ -189,6 +189,87 @@ impl ArchExec {
         base + offset
     }
 }
+
+impl Arch {
+    pub proof fn lemma_entry_sizes_aligned(self, i: nat, j: nat)
+        requires
+            self.inv(),
+            i <= j,
+            j < self.layers.len(),
+        ensures
+            aligned(self.entry_size(i), self.entry_size(j))
+        decreases self.layers.len() - i
+    {
+        if i == j {
+            assert(aligned(self.entry_size(i), self.entry_size(j))) by (nonlinear_arith)
+                requires i == j, self.entry_size(i) > 0,
+            { };
+        } else {
+            assert(forall|a: int, b: int| #[trigger] (a * b) == b * a);
+            self.lemma_entry_sizes_aligned(i+1,j);
+            crate::extra::mod_of_mul_auto();
+            crate::extra::aligned_transitive_auto();
+            assert(aligned(self.entry_size(i), self.entry_size(j)));
+        }
+    }
+
+    pub proof fn lemma_entry_sizes_aligned_auto(self)
+        ensures
+            forall|i: nat, j: nat|
+                self.inv() && i <= j && j < self.layers.len() ==>
+                aligned(self.entry_size(i), self.entry_size(j))
+    {
+        assert_forall_by(|i: nat, j: nat| {
+            requires(self.inv() && i <= j && j < self.layers.len());
+            ensures(aligned(self.entry_size(i), self.entry_size(j)));
+            self.lemma_entry_sizes_aligned(i, j);
+        });
+    }
+
+    pub proof fn lemma_entry_sizes_increase(self, i: nat, j: nat)
+        requires
+            self.inv(),
+            i < j,
+            j < self.layers.len(),
+        ensures
+            self.entry_size(i) >= self.entry_size(j),
+        decreases j - i
+    {
+        assert(self.entry_size(i) >= self.entry_size(i + 1))
+            by (nonlinear_arith)
+            requires
+                i + 1 < self.layers.len(),
+                self.entry_size_is_next_layer_size(i),
+                self.num_entries(i + 1) > 0,
+        { };
+        if j == i + 1 {
+        } else {
+            self.lemma_entry_sizes_increase(i + 1, j);
+
+        }
+    }
+}
+
+#[verifier(nonlinear)]
+pub proof fn x86_arch_inv()
+    ensures
+        x86_arch_spec.inv()
+{
+    assert(x86_arch_spec.entry_size(3) == 4096);
+    assert(x86_arch_spec.contains_entry_size(4096));
+    assert(x86_arch_spec.layers.len() <= X86_NUM_LAYERS);
+    assert forall|i:nat| i < x86_arch_spec.layers.len() implies {
+            &&& 0 < #[trigger] x86_arch_spec.entry_size(i)  <= X86_MAX_ENTRY_SIZE
+            &&& 0 < #[trigger] x86_arch_spec.num_entries(i) <= X86_NUM_ENTRIES
+            &&& x86_arch_spec.entry_size_is_next_layer_size(i)
+        } by {
+        assert(0 < #[trigger] x86_arch_spec.entry_size(i)  <= X86_MAX_ENTRY_SIZE);
+        assert(0 < #[trigger] x86_arch_spec.num_entries(i) <= X86_NUM_ENTRIES);
+        assert(x86_arch_spec.entry_size_is_next_layer_size(i));
+    }
+    assert(x86_arch_spec.inv());
+}
+
 
 }
 

@@ -11,7 +11,7 @@ use vstd::set_lib::*;
 use vstd::vec::*;
 use vstd::result::{*, Result::*};
 use crate::extra as lib;
-use crate::definitions_t::{ aligned, between };
+use crate::definitions_t::{ aligned, between, index_from_offset, index_from_base_and_addr, entry_base_from_index, next_entry_base_from_index };
 
 verus! {
 
@@ -22,29 +22,6 @@ verus! {
 ///! different bounds depending on the exact context. It also has the benefit that trusted exec
 ///! functions (e.g. in mem) are fully defined in their own modules
 
-
-pub open spec fn index_from_offset(offset: nat, entry_size: nat) -> (res: nat)
-    recommends
-        entry_size > 0,
-{
-    offset / entry_size
-}
-
-pub open spec fn index_from_base_and_addr(base: nat, addr: nat, entry_size: nat) -> nat
-    recommends
-        addr >= base,
-        entry_size > 0,
-{
-    index_from_offset(sub(addr, base), entry_size)
-}
-
-pub open spec fn entry_base_from_index(base: nat, idx: nat, entry_size: nat) -> nat {
-    base + idx * entry_size
-}
-
-pub open spec fn next_entry_base_from_index(base: nat, idx: nat, entry_size: nat) -> nat {
-    base + (idx + 1) * entry_size
-}
 
 pub open spec fn nat_mul(a: nat, b: nat) -> nat {
     a * b
