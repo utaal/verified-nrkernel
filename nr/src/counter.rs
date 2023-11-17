@@ -6,6 +6,8 @@ use crate::spec::types::{DataStructureSpec, ReturnTypeSpec};
 
 verus! {
 
+/*
+TODO(andrea,reto): restore?
 pub struct DataStructureType {
     val: u64,
 }
@@ -66,5 +68,6 @@ impl ReturnType {
         ReturnType { u: self.u }
     }
 }
+*/
 
 }
