@@ -20,7 +20,7 @@ use crate::exec::NodeReplicated;
 
 use  std::sync::Arc;
 
-struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken);
+struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructureType>);
 
 const NUM_OPS_PER_THREAD: usize = 1_000_000;
 const NUM_THREADS_PER_REPLICA: usize = 4;

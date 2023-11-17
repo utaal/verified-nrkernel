@@ -20,7 +20,7 @@ use crate::spec::unbounded_log::UnboundedLog;
 use crate::spec::flat_combiner::FlatCombiner;
 use crate::spec::cyclicbuffer::CyclicBuffer;
 use crate::spec::types::{
-    DataStructureSpec, DataStructureType, ReturnType, ReqId, NodeId, UpdateOp, ReadonlyOp,
+    ReqId, NodeId,
 };
 
 // exec imports
@@ -99,7 +99,7 @@ struct_with_invariants!{
 pub struct ReplicatedDataStructure<DT: Dispatch> {
     /// the actual data structure
     ///  - Dafny: linear actual_replica: nrifc.DataStructureType,
-    pub data: DataStructureType,
+    pub data: DT,
     ///  - Dafny: glinear ghost_replica: Replica,
     pub replica: Tracked<UnboundedLog::replicas<DT>>,
     ///  - Dafny: glinear combiner: CombinerToken,
@@ -114,7 +114,7 @@ pub open spec fn wf(&self, nid: NodeId, inst: UnboundedLog::Instance<DT>, cb: Cy
         &&& self.combiner@@.instance == inst
         &&& self.replica@@.instance == inst
 
-        &&& self.replica@@.value == self.data.interp()
+        &&& self.replica@@.value == self.data.view()
         &&& self.replica@@.key == nid
         &&& self.combiner@@.value.is_Ready()
         &&& self.combiner@@.key == nid
@@ -198,7 +198,7 @@ pub struct Replica<DT: Dispatch> {
     // next: CachePadded<AtomicU64<_, FlatCombiner::num_threads, _>>,
 
     /// thread token that is handed out to the threads that register
-    pub /* REVIEW: (crate) */ thread_tokens: Vec<ThreadToken>,
+    pub /* REVIEW: (crate) */ thread_tokens: Vec<ThreadToken<DT>>,
 
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
@@ -215,7 +215,7 @@ pub open spec fn wf(&self) -> bool {
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
         &&& 0 <= self.spec_id() < NUM_REPLICAS
         &&& self.data.0.wf()
-        &&& (forall |v: ReplicatedDataStructure| #[trigger] self.data.0.inv(v) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
+        &&& (forall |v: ReplicatedDataStructure<DT>| #[trigger] self.data.0.inv(v) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
 
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
         &&& (forall |i| #![trigger self.thread_tokens[i]] 0 <= i < self.thread_tokens.len() ==> {
@@ -291,14 +291,14 @@ impl<DT: Dispatch> Replica<DT> {
         //
 
         let replicated_data_structure = ReplicatedDataStructure {
-            data: DataStructureType::init(),
+            data: DT::init(),
             replica: Tracked(replica),
             combiner: Tracked(combiner),
             cb_combiner: Tracked(cb_combiner),
         };
         assert(replicated_data_structure.wf(replica_token.id_spec(), unbounded_log_instance, cyclic_buffer_instance));
         // TODO: get the right spec function in there!
-        let ghost data_structure_inv = |s: ReplicatedDataStructure| {
+        let ghost data_structure_inv = |s: ReplicatedDataStructure<DT>| {
             s.wf(replica_token.id_spec(), unbounded_log_instance, cyclic_buffer_instance)
         };
         let data = CachePadded(RwLock::new(replicated_data_structure, Ghost(data_structure_inv)));
@@ -306,8 +306,8 @@ impl<DT: Dispatch> Replica<DT> {
         //
         // Create the thread contexts
         //
-        let mut contexts : Vec<Context> = Vec::with_capacity(num_threads);
-        let mut thread_tokens : Vec<ThreadToken> = Vec::with_capacity(num_threads);
+        let mut contexts : Vec<Context<DT>> = Vec::with_capacity(num_threads);
+        let mut thread_tokens : Vec<ThreadToken<DT>> = Vec::with_capacity(num_threads);
 
         let mut idx = 0;
         while idx < num_threads
@@ -431,7 +431,7 @@ impl<DT: Dispatch> Replica<DT> {
         //     Some(CombinerLock { replica: self })
         // }
 
-        let tracked lock_g: Option<CombinerLockStateGhost>;
+        let tracked lock_g: Option<CombinerLockStateGhost<DT>>;
         let res = atomic_with_ghost!(
             &self.combiner.0 => compare_exchange(0, tid + 1);
             update prev->next;
@@ -569,7 +569,7 @@ impl<DT: Dispatch> Replica<DT> {
     ///
     /// - Dafny: combine_collect()
     #[inline(always)]
-    fn collect_thread_ops(&self, operations: &mut Vec<UpdateOp>, num_ops_per_thread: &mut Vec<usize>,
+    fn collect_thread_ops(&self, operations: &mut Vec<DT::WriteOperation>, num_ops_per_thread: &mut Vec<usize>,
                           flat_combiner:  Tracked<FlatCombiner::combiner>)
                              -> (response: Tracked<ThreadOpsData<DT>>)
         requires
@@ -585,8 +585,8 @@ impl<DT: Dispatch> Replica<DT> {
     {
         let mut flat_combiner = flat_combiner;
 
-        let tracked mut updates: Map<nat, UnboundedLog::local_updates> = Map::tracked_empty();
-        let tracked mut cell_permissions: Map<nat, PointsTo<PendingOperation>> = Map::tracked_empty();
+        let tracked mut updates: Map<nat, UnboundedLog::local_updates<DT>> = Map::tracked_empty();
+        let tracked mut cell_permissions: Map<nat, PointsTo<PendingOperation<DT>>> = Map::tracked_empty();
         let ghost mut request_ids = Seq::empty();
 
         // let num_registered_threads = self.next.load(Ordering::Relaxed);
@@ -629,8 +629,8 @@ impl<DT: Dispatch> Replica<DT> {
 
         {
 
-            let tracked update_req : std::option::Option<UnboundedLog::local_updates>;
-            let tracked batch_perms : std::option::Option<PointsTo<PendingOperation>>;
+            let tracked update_req : std::option::Option<UnboundedLog::local_updates<DT>>;
+            let tracked batch_perms : std::option::Option<PointsTo<PendingOperation<DT>>>;
             let num_ops = atomic_with_ghost!(
                 &self.contexts[thread_idx].atomic.0 => load();
                 returning num_ops;
@@ -660,7 +660,7 @@ impl<DT: Dispatch> Replica<DT> {
 
             if num_ops == 1 {
                 let tracked batch_token_value = batch_perms.tracked_unwrap();
-                let op = self.contexts[thread_idx].batch.0.borrow(Tracked(&batch_token_value)).op.clone();
+                let op = DT::clone_write_op(&self.contexts[thread_idx].batch.0.borrow(Tracked(&batch_token_value)).op);
 
                 let tracked update_req = update_req.tracked_unwrap();
                 proof {
@@ -694,7 +694,7 @@ impl<DT: Dispatch> Replica<DT> {
 
 
     /// - Dafny: combine_respond
-    fn distribute_thread_resps(&self, responses: &mut Vec<ReturnType>, num_ops_per_thread: &mut Vec<usize>, thread_ops_data: Tracked<ThreadOpsData<DT>>)
+    fn distribute_thread_resps(&self, responses: &mut Vec<DT::Response>, num_ops_per_thread: &mut Vec<usize>, thread_ops_data: Tracked<ThreadOpsData<DT>>)
         -> (res: Tracked<ThreadOpsData<DT>>)
         requires
             self.wf(),
@@ -794,7 +794,7 @@ impl<DT: Dispatch> Replica<DT> {
                 let mut op_resp = self.contexts[thread_idx].batch.0.take(Tracked(&mut permission));
 
                 // update with the response
-                let resp: ReturnType = responses[resp_idx].clone();
+                let resp: DT::Response = DT::clone_response(&responses[resp_idx]);
                 op_resp.resp = Some(resp);
 
                 // place the element back into the batch
@@ -833,7 +833,7 @@ impl<DT: Dispatch> Replica<DT> {
 
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
     /// registration was successfull. None if the registration failed.
-    pub fn register(&mut self) -> Option<ThreadToken> {
+    pub fn register(&mut self) -> Option<ThreadToken<DT>> {
         self.thread_tokens.pop()
     }
 
@@ -847,7 +847,7 @@ impl<DT: Dispatch> Replica<DT> {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute(&self, slog: &NrLog<DT>, op: ReadonlyOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
+    pub fn execute(&self, slog: &NrLog<DT>, op: DT::ReadOperation, tkn: ThreadToken<DT>) -> Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>
         requires
             self.wf(),
             slog.wf(),
@@ -856,7 +856,7 @@ impl<DT: Dispatch> Replica<DT> {
             self.unbounded_log_instance@ == slog.unbounded_log_instance@,
             self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@
     {
-        let tracked local_reads : UnboundedLog::local_reads;
+        let tracked local_reads : UnboundedLog::local_reads<DT>;
         proof {
             let tracked ticket = self.unbounded_log_instance.borrow().readonly_start(op);
             local_reads = ticket.1.get();
@@ -904,7 +904,7 @@ impl<DT: Dispatch> Replica<DT> {
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
         let read_handle = self.data.0.acquire_read();
         let replica = self.data.0.borrow(&read_handle);
-        let result = replica.data.read(op);
+        let result = replica.data.dispatch(op);
 
         let tracked local_reads = self.unbounded_log_instance.borrow().readonly_apply(rid, replica.replica.borrow(), local_reads, replica.combiner.borrow());
         self.data.0.release_read(read_handle);
@@ -923,7 +923,7 @@ impl<DT: Dispatch> Replica<DT> {
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute_mut(&self, slog: &NrLog<DT>, op: UpdateOp, tkn: ThreadToken) -> (result: Result<(ReturnType, ThreadToken), ThreadToken>)
+    pub fn execute_mut(&self, slog: &NrLog<DT>, op: DT::WriteOperation, tkn: ThreadToken<DT>) -> (result: Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>)
         requires
             slog.wf(),
             self.wf(),
@@ -938,7 +938,7 @@ impl<DT: Dispatch> Replica<DT> {
             result.is_Err() ==> result.get_Err_0().wf()
     {
         // start the update transaction
-        let tracked local_updates : UnboundedLog::local_updates;
+        let tracked local_updates : UnboundedLog::local_updates<DT>;
         proof {
             let tracked ticket = self.unbounded_log_instance.borrow().update_start(op);
             local_updates = ticket.1.get();
@@ -979,7 +979,7 @@ impl<DT: Dispatch> Replica<DT> {
 
     /// Enqueues an operation inside a thread local context. Returns a boolean
     /// indicating whether the operation was enqueued (true) or not (false).
-    fn make_pending(&self, op: UpdateOp, tid: ThreadId, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
+    fn make_pending(&self, op: DT::WriteOperation, tid: ThreadId, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
      -> (res: (bool, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
             self.wf(),
@@ -994,7 +994,7 @@ impl<DT: Dispatch> Replica<DT> {
 
     /// Busy waits until a response is available within the thread's context.
     fn get_response(&self, slog: &NrLog<DT>, tid: ThreadId, req_id: Ghost<ReqId>, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
-        -> (res: (ReturnType, Tracked<FCClientRequestResponseGhost<DT>>))
+        -> (res: (DT::Response, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
             self.wf(),
             slog.wf(),
@@ -1059,7 +1059,7 @@ impl<DT: Dispatch> ReplicaConfig<DT> {
         &&& self.combiner@.instance == self.unbounded_log_instance
         &&& self.cb_combiner@.instance == self.cyclic_buffer_instance
 
-        &&& self.replica@.value == DataStructureSpec::init()
+        &&& self.replica@.value == DT::init_spec()
         &&& self.replica@.key == nid
         &&& self.replica@.instance == self.unbounded_log_instance
         &&& self.combiner@.value.is_Ready()
@@ -1123,7 +1123,7 @@ tracked struct ThreadOpsData<DT: Dispatch> {
     flat_combiner: Tracked<FlatCombiner::combiner>,
     request_ids: Ghost<Seq<ReqId>>,
     local_updates: Tracked<Map<nat, UnboundedLog::local_updates<DT>>>,
-    cell_permissions: Tracked<Map<nat, PointsTo<PendingOperation>>>,
+    cell_permissions: Tracked<Map<nat, PointsTo<PendingOperation<DT>>>>,
 }
 
 impl<DT: Dispatch> ThreadOpsData<DT> {
@@ -1151,7 +1151,7 @@ impl<DT: Dispatch> ThreadOpsData<DT> {
 
     spec fn distribute_thread_resps_pre(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>,
                                         unbounded_log_instance: UnboundedLog::Instance<DT>,
-                                        num_ops_per_thread: Seq<usize>, responses: Seq<ReturnType>,
+                                        num_ops_per_thread: Seq<usize>, responses: Seq<DT::Response>,
                                         replica_contexts: Seq<Context<DT>>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
 
@@ -1178,7 +1178,7 @@ impl<DT: Dispatch> ThreadOpsData<DT> {
 
     spec fn collect_thread_ops_post(&self, flat_combiner_instance: Tracked<FlatCombiner::Instance>,
                 unbounded_log_instance: UnboundedLog::Instance<DT>, num_ops_per_thread: Seq<usize>,
-                operations: Seq<UpdateOp>, replica_contexts: Seq<Context<DT>>) -> bool {
+                operations: Seq<DT::WriteOperation>, replica_contexts: Seq<Context<DT>>) -> bool {
         &&& self.shared_inv(flat_combiner_instance, num_ops_per_thread, replica_contexts)
         &&& self.request_ids@.len() == operations.len()
         &&& (forall |i| 0 <= i < self.request_ids@.len() <==> self.local_updates@.contains_key(i))

@@ -13,9 +13,6 @@ use vstd::{
 use crate::Dispatch;
 use crate::spec::types::{
     NodeId, ReqId, LogIdx, ConcreteLogEntry,
-
-    DataStructureSpec, DataStructureType,
-    UpdateOp,ReturnType
 };
 use crate::spec::unbounded_log::UnboundedLog;
 use crate::spec::cyclicbuffer::{CyclicBuffer, StoredType, stored_type_inv, LogicalLogIdx, log_entry_idx, log_entry_alive_value};
@@ -229,13 +226,13 @@ impl<DT: Dispatch> NrLog<DT> {
         //
         // initialize the unbounded log state machine to obtain the tokens
         //
-        let tracked unbounded_log_instance     : UnboundedLog::Instance;
-        let tracked ul_log                     : Map<LogIdx, UnboundedLog::log>;
-        let tracked ul_tail                    : UnboundedLog::tail;
-        let tracked ul_replicas                : Map<NodeId,UnboundedLog::replicas>;
-        let tracked mut ul_local_versions      : Map<NodeId,UnboundedLog::local_versions>;
-        let tracked ul_version_upper_bound     : UnboundedLog::version_upper_bound;
-        let tracked ul_combiner                : Map<NodeId,UnboundedLog::combiner>;
+        let tracked unbounded_log_instance     : UnboundedLog::Instance<DT>;
+        let tracked ul_log                     : Map<LogIdx, UnboundedLog::log<DT>>;
+        let tracked ul_tail                    : UnboundedLog::tail<DT>;
+        let tracked ul_replicas                : Map<NodeId,UnboundedLog::replicas<DT>>;
+        let tracked mut ul_local_versions      : Map<NodeId,UnboundedLog::local_versions<DT>>;
+        let tracked ul_version_upper_bound     : UnboundedLog::version_upper_bound<DT>;
+        let tracked ul_combiner                : Map<NodeId,UnboundedLog::combiner<DT>>;
 
         proof {
             let tracked (
@@ -267,9 +264,9 @@ impl<DT: Dispatch> NrLog<DT> {
             logical_log_idx = -log_size as int;
         }
 
-        let mut slog_entries : Vec<Option<PCell<Option<ConcreteLogEntry>>>> = Vec::with_capacity(log_size);
+        let mut slog_entries : Vec<Option<PCell<Option<ConcreteLogEntry<DT>>>>> = Vec::with_capacity(log_size);
         let ghost mut cell_ids : Seq<CellId> = Seq::empty();
-        let tracked mut contents: Map<LogicalLogIdx, StoredType> = Map::tracked_empty();
+        let tracked mut contents: Map<LogicalLogIdx, StoredType<DT>> = Map::tracked_empty();
 
         let mut log_idx = 0;
         while log_idx < log_size
@@ -315,12 +312,12 @@ impl<DT: Dispatch> NrLog<DT> {
         // Create the cyclic buffer state machine
         //
 
-        let tracked cyclic_buffer_instance  : CyclicBuffer::Instance;
-        let tracked cb_head                 : CyclicBuffer::head;
-        let tracked cb_tail                 : CyclicBuffer::tail;
-        let tracked mut cb_local_versions   : Map<NodeId, CyclicBuffer::local_versions>;
-        let tracked mut cb_alive_bits       : Map<LogIdx, CyclicBuffer::alive_bits>;
-        let tracked cb_combiners            : Map<NodeId, CyclicBuffer::combiner>;
+        let tracked cyclic_buffer_instance  : CyclicBuffer::Instance<DT>;
+        let tracked cb_head                 : CyclicBuffer::head<DT>;
+        let tracked cb_tail                 : CyclicBuffer::tail<DT>;
+        let tracked mut cb_local_versions   : Map<NodeId, CyclicBuffer::local_versions<DT>>;
+        let tracked mut cb_alive_bits       : Map<LogIdx, CyclicBuffer::alive_bits<DT>>;
+        let tracked cb_combiners            : Map<NodeId, CyclicBuffer::combiner<DT>>;
 
         proof {
             let tracked (
@@ -343,7 +340,7 @@ impl<DT: Dispatch> NrLog<DT> {
         // build up the actual log
         //
 
-        let mut slog : Vec<BufferEntry> = Vec::with_capacity(log_size);
+        let mut slog : Vec<BufferEntry<DT>> = Vec::with_capacity(log_size);
         let mut log_idx = 0;
         while log_idx < log_size
             invariant
@@ -399,7 +396,7 @@ impl<DT: Dispatch> NrLog<DT> {
         let tracked cb_inst = Tracked(cyclic_buffer_instance.clone());
         let tracked ul_inst = Tracked(unbounded_log_instance.clone());
         let tail = CachePadded(AtomicU64::new(Ghost((cb_inst, ul_inst)), 0, Tracked((ul_tail, cb_tail))));
-        let mut local_versions : Vec<CachePadded<AtomicU64<(Tracked<UnboundedLog::Instance>, Tracked<CyclicBuffer::Instance>, int), (UnboundedLog::local_versions, CyclicBuffer::local_versions), _>>>= Vec::with_capacity(num_replicas);
+        let mut local_versions : Vec<CachePadded<AtomicU64<(Tracked<UnboundedLog::Instance<DT>>, Tracked<CyclicBuffer::Instance<DT>>, int), (UnboundedLog::local_versions<DT>, CyclicBuffer::local_versions<DT>), _>>>= Vec::with_capacity(num_replicas);
 
 
         let mut nid = 0;
@@ -543,7 +540,7 @@ impl<DT: Dispatch> NrLog<DT> {
         let tracked local_reads = local_reads.get();
         let ghost rid = local_reads@.key;
 
-        let tracked new_local_reads_g : UnboundedLog::local_reads;
+        let tracked new_local_reads_g : UnboundedLog::local_reads<DT>;
 
         let res = atomic_with_ghost!(
             &self.version_upper_bound.0 => load();
@@ -581,7 +578,7 @@ impl<DT: Dispatch> NrLog<DT> {
     {
         // obtain the request id from the local_reads token
         let rid_g : Ghost<ReqId> = Ghost(local_reads@@.key);
-        let tracked new_local_reads_g: UnboundedLog::local_reads;
+        let tracked new_local_reads_g: UnboundedLog::local_reads<DT>;
 
         // obtain the local version
         let local_version = &self.local_versions[node_id as usize].0;
@@ -661,10 +658,10 @@ impl<DT: Dispatch> NrLog<DT> {
 
 
     /// Inserts a slice of operations into the log.
-    pub fn append(&self, replica_token: &ReplicaToken, operations: &Vec<UpdateOp>,
+    pub fn append(&self, replica_token: &ReplicaToken, operations: &Vec<DT::WriteOperation>,
         // responses and actual replica are part of the closure
-        responses: &mut Vec<ReturnType>,
-        actual_replica: &mut DataStructureType,
+        responses: &mut Vec<DT::Response>,
+        actual_replica: &mut DT,
         // here we also need to pass the mut replica
         ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>
     ) -> (result: Tracked<NrLogAppendExecDataGhost<DT>>)
@@ -672,10 +669,10 @@ impl<DT: Dispatch> NrLog<DT> {
             self.wf(),
             replica_token@ < self.local_versions.len(),
             old(responses).len() == 0,
-            ghost_data@.append_pre(replica_token@, old(actual_replica).interp(), operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+            ghost_data@.append_pre(replica_token@, old(actual_replica).view(), operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
             operations.len() <= MAX_REQUESTS
         ensures
-            result@.append_post(ghost_data@, replica_token@, actual_replica.interp(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
+            result@.append_post(ghost_data@, replica_token@, actual_replica.view(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
     {
         let tracked Tracked(mut ghost_data_new) = ghost_data;
 
@@ -698,7 +695,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 nops <= MAX_REQUESTS,
                 ghost_data_new.cb_combiner@@.value == ghost_data@.cb_combiner@@.value,
                 ghost_data_new.request_ids@ == ghost_data@.request_ids@,
-                ghost_data_new.append_pre(replica_token@, actual_replica.interp(), operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+                ghost_data_new.append_pre(replica_token@, actual_replica.view(), operations@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         {
             // unpack stuff
             let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids} = ghost_data_new;
@@ -793,8 +790,8 @@ impl<DT: Dispatch> NrLog<DT> {
             //     continue;
             // }
 
-            let tracked mut cb_log_entries : Map<int, StoredType> = Map::tracked_empty();
-            let tracked mut log_entries : Map<nat,UnboundedLog::log> = Map::tracked_empty();
+            let tracked mut cb_log_entries : Map<int, StoredType<DT>> = Map::tracked_empty();
+            let tracked mut log_entries : Map<nat,UnboundedLog::log<DT>> = Map::tracked_empty();
 
             let result = atomic_with_ghost!(
                 //&self.tail.0 => compare_exchange(tail, new_tail);
@@ -906,7 +903,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 // unsafe { (*e).operation = Some(op.clone()) };
                 // unsafe { (*e).replica = idx.0 };
                 let new_log_entry = ConcreteLogEntry {
-                    op: operations[idx as usize].clone(),
+                    op: DT::clone_write_op(&operations[idx as usize]),
                     node_id: nid as u64,
                 };
 
@@ -974,17 +971,17 @@ impl<DT: Dispatch> NrLog<DT> {
     /// passed into execute() to ensure that this replica does not deadlock GC.
     fn advance_head(&self, replica_token: &ReplicaToken,
                     // the following were part of the closure
-                    responses: &mut Vec<ReturnType>,
-                    actual_replica: &mut DataStructureType,
+                    responses: &mut Vec<DT::Response>,
+                    actual_replica: &mut DT,
                     // ghost state for execute etc.
                     ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>)
             -> (res: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
             replica_token.wf(),
-            ghost_data@.advance_head_pre(replica_token.id_spec(), old(actual_replica).interp(), old(responses)@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+            ghost_data@.advance_head_pre(replica_token.id_spec(), old(actual_replica).view(), old(responses)@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         ensures
-            res@.advance_head_post(ghost_data@, replica_token.id_spec(), actual_replica.interp(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+            res@.advance_head_post(ghost_data@, replica_token.id_spec(), actual_replica.view(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
     {
         let mut ghost_data_new = ghost_data;
 
@@ -995,7 +992,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 replica_token.wf(),
                 ghost_data_new@.cb_combiner@@.value.is_Idle(),
                 ghost_data_new@.combiner@@.value.is_Placed() ==> ghost_data_new@.pre_exec(responses@),
-                ghost_data_new@.advance_head_post(ghost_data@, replica_token.id_spec(), actual_replica.interp(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
+                ghost_data_new@.advance_head_post(ghost_data@, replica_token.id_spec(), actual_replica.view(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
                 0 <= iteration <= WARN_THRESHOLD
         {
             let Tracked(ghost_data0) = ghost_data_new;
@@ -1103,16 +1100,16 @@ impl<DT: Dispatch> NrLog<DT> {
     /// replica's local tail on the shared log. The replica is identified
     /// through an `idx` passed in as an argument.
     pub(crate) fn execute(&self, replica_token: &ReplicaToken,
-        responses: &mut Vec<ReturnType>,
-        actual_replica: &mut DataStructureType,
+        responses: &mut Vec<DT::Response>,
+        actual_replica: &mut DT,
         ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>
     ) -> (result: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
             replica_token@ < self.local_versions.len(),
-            ghost_data@.execute_pre(replica_token@, old(actual_replica).interp(), old(responses)@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
+            ghost_data@.execute_pre(replica_token@, old(actual_replica).view(), old(responses)@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
         ensures
-            result@.execute_post(ghost_data@, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
+            result@.execute_post(ghost_data@, replica_token@, actual_replica.view(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
     {
         let nid = replica_token.id() as usize;
 
@@ -1176,7 +1173,7 @@ impl<DT: Dispatch> NrLog<DT> {
 
             // not sure why this one needs to be here?
 
-            assert(ghost_data_ret.common_pred(replica_token@, actual_replica.interp(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+            assert(ghost_data_ret.common_pred(replica_token@, actual_replica.view(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
             // assert(ghost_data_ret.cb_combiner@@.value  == ghost_data.cb_combiner@@.value);
             // assert(ghost_data_ret.request_ids == ghost_data.request_ids);
@@ -1189,7 +1186,7 @@ impl<DT: Dispatch> NrLog<DT> {
             //     &&& responses@ == old(responses)@
             // });
 
-            // assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+            // assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.view(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
             return Tracked(ghost_data_ret);
         }
@@ -1217,7 +1214,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 request_ids_new.len() <= MAX_REQUESTS,
                 ghost_replica@.instance == self.unbounded_log_instance@,
                 ghost_replica@.key == nid as nat,
-                ghost_replica@.value == actual_replica.interp(),
+                ghost_replica@.value == actual_replica.view(),
 
                 cb_combiner@.key == nid as nat,
                 cb_combiner@.instance == self.cyclic_buffer_instance@,
@@ -1298,7 +1295,7 @@ impl<DT: Dispatch> NrLog<DT> {
 
             // dispatch the operation to apply the update to the replica
             // unsafe { d((*e).operation.as_ref().unwrap().clone(),(*e).replica == idx.0,) };
-            let tracked stored_entry : &StoredType;
+            let tracked stored_entry : &StoredType<DT>;
             proof {
                 stored_entry = self.cyclic_buffer_instance.borrow().guard_guards(nid as nat, &cb_combiner);
             }
@@ -1307,7 +1304,7 @@ impl<DT: Dispatch> NrLog<DT> {
             let log_entry = self.slog[phys_log_idx].log_entry.borrow(Tracked(&stored_entry.cell_perms));
 
             // perform the update
-            let res = actual_replica.update(log_entry.as_ref().unwrap().op.clone());
+            let res = actual_replica.dispatch_mut(DT::clone_write_op(&log_entry.as_ref().unwrap().op));
 
             if log_entry.as_ref().unwrap().node_id == nid as u64 {
                 // case: local dispatch, store the result in the response vector
@@ -1397,7 +1394,7 @@ impl<DT: Dispatch> NrLog<DT> {
         };
 
         // not sure why this one needs to be here?
-        assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.interp(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+        assert(ghost_data_ret.execute_post(ghost_data, replica_token@, actual_replica.view(), old(responses)@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@));
 
         Tracked(ghost_data_ret)
     }
@@ -1427,7 +1424,7 @@ impl<DT: Dispatch> NrLog<DT> {
         // let r = self.next.load(Ordering::Relaxed);
         let num_replicas = self.local_versions.len();
 
-        let tracked mut g_cb_comb_new : CyclicBuffer::combiner = cb_combiner.get();
+        let tracked mut g_cb_comb_new : CyclicBuffer::combiner<DT> = cb_combiner.get();
         let ghost g_node_id = cb_combiner@@.key;
 
         // let (mut min_replica_idx, mut min_local_tail) = (0, self.ltails[0].load(Ordering::Relaxed));
@@ -1509,7 +1506,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
         &&& self.request_ids@.len() <= MAX_REQUESTS
     }
 
-    pub open spec fn append_pre(&self,  nid: NodeId, data: DT::View, ops: Seq<UpdateOp>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
+    pub open spec fn append_pre(&self,  nid: NodeId, data: DT::View, ops: Seq<DT::WriteOperation>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& (forall |i| #![trigger self.local_updates@[i]]0 <= i < self.request_ids@.len() ==> {
@@ -1523,7 +1520,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
         &&& self.request_ids@.len() == ops.len()
     }
 
-    pub open spec fn append_post(&self, pre: Self, nid: NodeId,  data: DT::View, operations: Seq<UpdateOp>, responses: Seq<ReturnType>,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
+    pub open spec fn append_post(&self, pre: Self, nid: NodeId,  data: DT::View, operations: Seq<DT::WriteOperation>, responses: Seq<DT::Response>,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.combiner@@.value.is_Ready() || self.combiner@@.value.is_Placed()
@@ -1533,7 +1530,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
         &&& self.request_ids == pre.request_ids
     }
 
-    pub open spec fn execute_pre(&self, nid: NodeId, data: DT::View, responses: Seq<ReturnType>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
+    pub open spec fn execute_pre(&self, nid: NodeId, data: DT::View, responses: Seq<DT::Response>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.cb_combiner@@.value.is_Idle()
@@ -1544,7 +1541,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
         }
     }
 
-    pub open spec fn execute_post(&self, pre: Self, nid: NodeId, data: DT::View, responses_old: Seq<ReturnType>, responses: Seq<ReturnType>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
+    pub open spec fn execute_post(&self, pre: Self, nid: NodeId, data: DT::View, responses_old: Seq<DT::Response>, responses: Seq<DT::Response>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.cb_combiner@@.value  == pre.cb_combiner@@.value
@@ -1559,7 +1556,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
         }
     }
 
-    pub open spec fn advance_head_pre(&self, nid: NodeId, data: DT::View, responses: Seq<ReturnType>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
+    pub open spec fn advance_head_pre(&self, nid: NodeId, data: DT::View, responses: Seq<DT::Response>, inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.pre_exec(responses)
@@ -1567,7 +1564,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
         &&& self.combiner@@.value.is_Placed()
     }
 
-    pub open spec fn advance_head_post(&self, pre: Self, nid: NodeId, data: DT::View, responses: Seq<ReturnType>,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
+    pub open spec fn advance_head_post(&self, pre: Self, nid: NodeId, data: DT::View, responses: Seq<DT::Response>,  inst: UnboundedLog::Instance<DT>, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
         &&& self.common_pred(nid, data, inst, cb_inst)
 
         &&& self.request_ids == pre.request_ids
@@ -1585,7 +1582,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
     }
 
     // corresponds to Dafny's pre_exec() function
-    pub open spec fn pre_exec(&self, responses: Seq<ReturnType>) -> bool {
+    pub open spec fn pre_exec(&self, responses: Seq<DT::Response>) -> bool {
         &&& responses.len() == 0
         &&& self.combiner@@.value.is_Placed()
         &&& self.combiner@@.value.get_Placed_queued_ops() == self.request_ids
@@ -1597,7 +1594,7 @@ impl<DT: Dispatch> NrLogAppendExecDataGhost<DT> {
     }
 
     // corresponds to Dafny's post_exec() function
-    pub open spec fn post_exec(&self, request_ids: Seq<ReqId>, responses: Seq<ReturnType>) -> bool {
+    pub open spec fn post_exec(&self, request_ids: Seq<ReqId>, responses: Seq<DT::Response>) -> bool {
         &&& request_ids.len() == responses.len()
         &&& self.combiner@@.value.is_Ready()
         &&& (forall |i| #![trigger self.local_updates@[i]] 0 <= i < request_ids.len() ==> {
@@ -1621,7 +1618,7 @@ tracked struct AppendEntriesGhostState<DT: Dispatch> {
     pub tracked combiner        : UnboundedLog::combiner<DT>,
     pub tracked tail            : UnboundedLog::tail<DT>,
     pub ghost request_ids       : Seq<ReqId>,
-    pub ghost operations        : Seq<UpdateOp>
+    pub ghost operations        : Seq<<DT as Dispatch>::WriteOperation>
 }
 
 pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance<DT>) -> bool {
@@ -1688,7 +1685,7 @@ pub open spec fn wf(&self, num_replicas: nat) -> bool {
             &&& #[trigger] self.replicas.contains_key(i)
             &&& self.replicas[i]@.instance == self.unbounded_log_instance
             &&& self.replicas[i]@.key == i
-            &&& self.replicas[i]@.value == DataStructureSpec::init()
+            &&& self.replicas[i]@.value == DT::init_spec()
         })
 
         &&& (forall |i| #![trigger self.combiners[i]]0 <= i < self.num_replicas ==> {

@@ -54,7 +54,7 @@ pub struct NodeReplicated<DT: Dispatch> {
     pub /* REVIEW (crate) */ replicas: Vec<Box<Replica<DT>>>,
 
 
-    pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken>>,
+    pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken<DT>>>,
 
     /// XXX: should that be here, or go into the NrLog / replicas?
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
@@ -109,8 +109,8 @@ impl<DT: Dispatch> NodeReplicated<DT> {
             cyclic_buffer_instance: cyclic_buffer_instance,
         } = nr_log_tokens.get();
 
-        let mut actual_replicas : Vec<Box<Replica>> = Vec::new();
-        let mut thread_tokens : Vec<Vec<ThreadToken>> = Vec::new();
+        let mut actual_replicas : Vec<Box<Replica<DT>>> = Vec::new();
+        let mut thread_tokens : Vec<Vec<ThreadToken<DT>>> = Vec::new();
         let mut idx = 0;
         while idx < num_replicas
             invariant
@@ -129,7 +129,7 @@ impl<DT: Dispatch> NodeReplicated<DT> {
                     &&& #[trigger]  replicas.contains_key(i)
                     &&& replicas[i]@.instance == unbounded_log_instance
                     &&& replicas[i]@.key == i
-                    &&& replicas[i]@.value == DataStructureSpec::init()
+                    &&& replicas[i]@.value == DT::init_spec()
                 }),
                 (forall |i| #![trigger combiners[i]] idx <= i < num_replicas ==> {
                     &&& #[trigger] combiners.contains_key(i)
@@ -180,13 +180,13 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///
     ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    pub fn register(&mut self, replica_id: ReplicaId) -> Option<ThreadToken>
+    pub fn register(&mut self, replica_id: ReplicaId) -> Option<ThreadToken<DT>>
         requires old(self).wf()
         // ensures self.wf()
     {
         if (replica_id as usize) < self.replicas.len() {
-            let mut replica : Box<Replica> = self.replicas.remove(replica_id);
-            let res : Option<ThreadToken> = (*replica).register();
+            let mut replica : Box<Replica<DT>> = self.replicas.remove(replica_id);
+            let res : Option<ThreadToken<DT>> = (*replica).register();
             self.replicas.insert(replica_id, replica);
             res
         } else {
@@ -201,7 +201,7 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute_mut(&self, op: UpdateOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
+    pub fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>) -> Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>
         requires
             self.wf() && tkn.wf(),
             tkn.fc_client@@.instance == self.replicas.spec_index(tkn.replica_id_spec() as int).flat_combiner_instance,
@@ -224,7 +224,7 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute(&self, op: ReadonlyOp, tkn: ThreadToken) -> Result<(ReturnType, ThreadToken), ThreadToken>
+    pub fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>) -> Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>
         requires
             self.wf() && tkn.wf(),
             tkn.fc_client@@.instance == self.replicas.spec_index(tkn.replica_id_spec() as int).flat_combiner_instance,

@@ -31,7 +31,7 @@ pub type ThreadId = nat;
 // implement.
 
 
-pub trait Dispatch {
+pub trait Dispatch: Sized {
     /// A read-only operation. When executed against the data structure, an
     /// operation of this type must not mutate the data structure in any way.
     /// Otherwise, the assumptions made by NR no longer hold.
@@ -53,8 +53,14 @@ pub trait Dispatch {
 
     spec fn view(&self) -> Self::View;
 
+    fn init() -> (res: Self)
+        ensures res@ == Self::init_spec();
+
     // partial eq also add an exec operation
     fn clone_write_op(op: &Self::WriteOperation) -> (res: Self::WriteOperation)
+        ensures op == res;
+
+    fn clone_response(op: &Self::Response) -> (res: Self::Response)
         ensures op == res;
 
     /// Method on the data structure that allows a read-only operation to be
@@ -167,8 +173,17 @@ impl Dispatch for DataStructureType {
         DataStructureSpec { val: self.val }
     }
 
+    fn init() -> (res: Self)
+    {
+        DataStructureType { val: 0 }
+    }
+
     // partial eq also add an exec operation
     fn clone_write_op(op: &Self::WriteOperation) -> (res: Self::WriteOperation) {
+        op.clone()
+    }
+
+    fn clone_response(op: &Self::Response) -> (res: Self::Response) {
         op.clone()
     }
 

@@ -156,7 +156,7 @@ state_machine! {
         ///
         /// This computes the state at version the request started
         transition!{
-            readonly_finish(rid: ReqId, version: LogIdx, ret: ReturnType) {
+            readonly_finish(rid: ReqId, version: LogIdx, ret: DT::Response) {
                 require(pre.readonly_reqs.contains_key(rid));
 
                 require let ReadReq::<DT::ReadOperation>::Req { op, version: current } = pre.readonly_reqs.index(rid);
@@ -291,7 +291,7 @@ state_machine! {
         fn readonly_read_version_inductive(pre: Self, post: Self, rid: ReqId) { }
 
         #[inductive(readonly_finish)]
-        fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, version: LogIdx, ret: ReturnType) { }
+        fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, version: LogIdx, ret: DT::Response) { }
 
         #[inductive(update_start)]
         fn update_start_inductive(pre: Self, post: Self, rid: ReqId, op: DT::WriteOperation) { }

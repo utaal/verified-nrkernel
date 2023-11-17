@@ -209,7 +209,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             assert(0 <= version <=  interp(pre).log.len());
             assert(interp(pre).readonly_reqs.index(rid).get_Req_version() <= version <= interp(pre).log.len());
 
-            assert(ret == interp(pre).nrstate_at_version(version).spec_read(op)) by {
+            assert(ret == DT::dispatch_spec(interp(pre).nrstate_at_version(version), op)) by {
                 state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
             }
 
@@ -327,22 +327,22 @@ pub open spec fn version_in_log<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, ve
     forall |i| 0 <= i < version ==> log.contains_key(i)
 }
 
-pub open spec fn result_match<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>,  output: ReturnType, version: LogIdx, op: ReadonlyOp) -> bool
+pub open spec fn result_match<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>,  output: DT::Response, version: LogIdx, op: DT::ReadOperation) -> bool
     recommends version_in_log(log, version)
 {
 
-    output == i_nrstate_at_version(log, version).spec_read(op)
+    output == DT::dispatch_spec(i_nrstate_at_version(log, version), op)
 }
 
 
-proof fn state_at_version_refines<DT: Dispatch>(s_log: Seq<UpdateOp>, i_log: Map<LogIdx, LogEntry<DT>>, gtail: nat, idx:nat)
+proof fn state_at_version_refines<DT: Dispatch>(s_log: Seq<DT::WriteOperation>, i_log: Map<LogIdx, LogEntry<DT>>, gtail: nat, idx:nat)
     requires
       forall |i| 0 <= i < gtail ==> i_log.contains_key(i),
       0 <= idx <= s_log.len(),
       idx <= gtail,
       s_log == interp_log(gtail, i_log),
     ensures
-      s_nrstate_at_version(s_log, idx) == i_nrstate_at_version(i_log, idx)
+      s_nrstate_at_version::<DT>(s_log, idx) == i_nrstate_at_version::<DT>(i_log, idx)
     decreases idx
 {
     if idx > 0 {
