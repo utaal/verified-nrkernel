@@ -717,7 +717,7 @@ impl PageTable {
     {
         decreases_when(self.inv_at(layer, ptr, pt));
         l1::Directory {
-            entries: self.interp_at_aux(layer, ptr, base_vaddr, seq![], pt),
+            entries: /* ---> */ self.interp_at_aux(layer, ptr, base_vaddr, seq![], pt),
             layer: layer,
             base_vaddr,
             arch: x86_arch_spec,
@@ -734,7 +734,7 @@ impl PageTable {
         match self.view_at(layer, ptr, idx, pt) {
             GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
                 let entry_base = x86_arch_spec.entry_base(layer, base_vaddr, idx);
-                l1::NodeEntry::Directory(self.interp_at(layer + 1, dir_addr, entry_base, pt.entries[idx as int].get_Some_0()))
+                l1::NodeEntry::Directory(/* ---> */ self.interp_at(layer + 1, dir_addr, entry_base, pt.entries[idx as int].get_Some_0()))
             },
             GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
                 l1::NodeEntry::Page(
@@ -753,14 +753,14 @@ impl PageTable {
 
     pub open spec fn interp_at_aux(self, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, pt: PTDir) -> Seq<l1::NodeEntry>
         decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 1nat
+        when self.inv_at(layer, ptr, pt) via Self::termination_interp_at_aux
     {
-        decreases_when(self.inv_at(layer, ptr, pt));
-        decreases_by(Self::termination_interp_at_aux);
         if init.len() >= X86_NUM_ENTRIES {
             init
         } else {
-            let entry = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
-            self.interp_at_aux(layer, ptr, base_vaddr, init.push(entry), pt)
+            /* let entry = */ /* ---> */ let _ = self.interp_at_entry(layer, ptr, base_vaddr, init.len(), pt);
+            let entry = arbitrary();
+            /* ---> */ self.interp_at_aux(layer, ptr, base_vaddr, init.push(entry), pt)
         }
     }
 
@@ -773,9 +773,9 @@ impl PageTable {
             // Can't assert this for the actual entry because we'd have to call `interp_at_entry`
             // whose termination depends on this function's termination.
             assert(forall|e: l1::NodeEntry| #![auto] init.push(e).len() == init.len() + 1);
-            assert(forall|e: l1::NodeEntry| #![auto] X86_NUM_ENTRIES - init.push(e).len() < X86_NUM_ENTRIES - init.len());
+            assert(forall|e: l1::NodeEntry| #![all_triggers] X86_NUM_ENTRIES - init.push(e).len() < X86_NUM_ENTRIES - init.len());
             // FIXME: Verus incompleteness?
-            assume(false);
+            // assume(false);
         }
     }
 
