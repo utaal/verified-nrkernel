@@ -2,24 +2,11 @@
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
-use crate::definitions_t::aligned;
+use crate::definitions_t::{aligned, bit, bitmask_inc};
 use vstd::map::*;
 
+
 verus! {
-
-// TODO: Figure out macro importing in rust. These macros are duplicated in l2_impl.
-macro_rules! bit {
-    ($v:expr) => {
-        1u64 << $v
-    }
-}
-
-// Generate bitmask where bits $low:$high are set to 1. (inclusive on both ends)
-macro_rules! bitmask_inc {
-    ($low:expr,$high:expr) => {
-        (!(!0u64 << (($high+1u64)-$low))) << $low
-    }
-}
 
 #[verifier(external_body)]
 pub proof fn lemma_bv_bitmask_facts(a: u64, lo: u64, hi: u64)

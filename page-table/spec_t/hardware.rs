@@ -1,5 +1,10 @@
 #![allow(unused_imports)] 
 
+#![verus::trusted]
+// trusted:
+// this defines the page table structure as interpreted by the hardware
+// and the hardware state machine
+
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
@@ -10,6 +15,7 @@ use vstd::set::*;
 use vstd::assert_by_contradiction;
 use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned, MemRegion, x86_arch_spec, Flags };
 use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, axiom_max_phyaddr_width_facts };
+use crate::definitions_t::{ bit, bitmask_inc };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::l0;
@@ -33,21 +39,6 @@ pub enum HWStep {
     TLBFill  { vaddr: nat, pte: PageTableEntry },
     TLBEvict { vaddr: nat},
 }
-
-// Duplicate macros because I still don't understand how to import Rust macros
-/// This macro computes a bitmask for the given range. Note that if `$high < $low` the result is 0.
-macro_rules! bitmask_inc {
-    ($low:expr,$high:expr) => {
-        (!(!0u64 << (($high+1u64)-$low))) << $low
-    }
-}
-pub(crate) use bitmask_inc;
-macro_rules! bit {
-    ($v:expr) => {
-        1u64 << $v
-    }
-}
-pub(crate) use bit;
 
 #[is_variant]
 pub ghost enum GhostPageDirectoryEntry {

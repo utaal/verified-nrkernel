@@ -8,11 +8,13 @@ use vstd::seq_lib::*;
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use crate::definitions_t::{new_seq, lemma_new_seq};
-use crate::impl_u::lib;
+use crate::definitions_t::{new_seq};
+use crate::definitions_u::{lemma_new_seq};
+use crate::extra as lib;
 use crate::impl_u::indexing;
 
-use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags, permissive_flags };
+use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
+use crate::definitions_u::{ permissive_flags };
 use crate::impl_u::l0::{ self, ambient_arith, ambient_lemmas1 };
 
 verus! {

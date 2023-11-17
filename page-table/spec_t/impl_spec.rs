@@ -1,4 +1,9 @@
 #![allow(unused_imports)]
+
+#![verus::trusted]
+// trusted:
+// these are the interface specifications, they are part of the theorem
+
 use builtin_macros::*;
 use builtin::*;
 use vstd::prelude::*;

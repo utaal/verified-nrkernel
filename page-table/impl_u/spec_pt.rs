@@ -4,6 +4,16 @@ use vstd::prelude::*;
 use builtin::*;
 use builtin_macros::*;
 
+// trusted: not trusted
+// the interface spec is written in such a way that it guarantees that the impl behaves according
+// to the state machine, and then in the OS state machine we use these definitions, but the actual
+// content of these definitions does not matter because:
+//
+// if we were to mis-specify things in this file, we wouldn't be able to prove the state machine
+// refinement
+//
+// if we split impl <-> system state machines, this becomes trusted for the impl
+
 use seq::*;
 use map::*;
 use crate::impl_u::l0;

@@ -10,7 +10,7 @@ use vstd::set::*;
 use vstd::set_lib::*;
 use vstd::vec::*;
 use vstd::result::{*, Result::*};
-use crate::impl_u::lib;
+use crate::extra as lib;
 use crate::definitions_t::{ aligned, between };
 
 verus! {

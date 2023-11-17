@@ -1,4 +1,9 @@
 #![allow(unused_imports)]
+
+#[verus::trusted]
+// trusted:
+// this is the process-level specification of the kernel's behaviour
+
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;

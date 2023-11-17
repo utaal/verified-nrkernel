@@ -10,14 +10,15 @@ use vstd::set_lib::*;
 use vstd::seq_lib::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ Arch, ArchExec, MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, permissive_flags, overlap, between, aligned, aligned_exec, new_seq, lemma_new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, lemma_maxphyaddr_facts, axiom_max_phyaddr_width_facts };
+use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, axiom_max_phyaddr_width_facts, Arch, ArchExec, };
+use crate::definitions_u::{ lemma_maxphyaddr_facts, lemma_new_seq, aligned_exec, permissive_flags};
 use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES };
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::indexing;
-use crate::impl_u::lib;
+use crate::extra as lib;
 use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry};
 use crate::spec_t::hardware::{MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD,
 MASK_FLAG_A, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_D, MASK_PG_FLAG_G, MASK_PG_FLAG_PAT,

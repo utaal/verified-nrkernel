@@ -8,7 +8,7 @@ use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use crate::impl_u::lib;
+use crate::extra as lib;
 use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
 
 verus! {

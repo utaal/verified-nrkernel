@@ -12,7 +12,8 @@ use crate::impl_u::spec_pt;
 use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, MapResult, UnmapResult, ResolveResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::spec_t::mem::{ word_index_spec };
-use crate::impl_u::{lib, indexing};
+use crate::impl_u::indexing;
+use crate::extra as lib;
 use crate::spec_t::os::*;
 
 verus! {
