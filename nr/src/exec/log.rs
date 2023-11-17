@@ -10,6 +10,7 @@ use vstd::{
     atomic_with_ghost,
 };
 
+use crate::Dispatch;
 use crate::spec::types::{
     NodeId, ReqId, LogIdx, ConcreteLogEntry,
 
@@ -54,7 +55,7 @@ struct_with_invariants!{
 /// `T` is the type on the operation - typically an enum class containing opcodes as well
 /// as arguments. It is required that this type be sized and cloneable.
 #[repr(align(128))]
-pub struct BufferEntry {
+pub struct BufferEntry<DT: Dispatch> {
     /// The operation that this entry represents.
     ///
     ///  - Dafny: linear cell: Cell<CB.ConcreteLogEntry>, where
@@ -67,25 +68,25 @@ pub struct BufferEntry {
     ///  - Dafny: as part of ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
     ///  - Rust:  pub(crate) replica: usize,
     // pub(crate) replica: usize,
-    pub log_entry: PCell<Option<ConcreteLogEntry>>,
+    pub log_entry: PCell<Option<ConcreteLogEntry<DT>>>,
 
     /// Indicates whether this entry represents a valid operation when on the log.
     ///
     ///  - Dafny: linear alive: Atomic<bool, CBAliveBit>)
     ///  - Rust:  pub(crate) alivef: AtomicBool,
-    pub alive: AtomicBool<_, CyclicBuffer::alive_bits, _>,
+    pub alive: AtomicBool<_, CyclicBuffer::alive_bits<DT>, _>,
 
     /// the index into the cyclic buffer of this entry into the cyclig buffer.
     pub cyclic_buffer_idx: Ghost<nat>,
-    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>
 }
 
-pub open spec fn wf(&self, idx: nat, cb_inst: CyclicBuffer::Instance) -> bool {
+pub open spec fn wf(&self, idx: nat, cb_inst: CyclicBuffer::Instance<DT>) -> bool {
     predicate {
         &&& self.cyclic_buffer_instance@ == cb_inst
         &&& self.cyclic_buffer_idx == idx
     }
-    invariant on alive with (cyclic_buffer_idx, cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits) {
+    invariant on alive with (cyclic_buffer_idx, cyclic_buffer_instance) is (v: bool, g: CyclicBuffer::alive_bits<DT>) {
         &&& g@.instance == cyclic_buffer_instance@
         &&& g@.key == cyclic_buffer_idx@
         &&& g@.value === v
@@ -106,32 +107,32 @@ struct_with_invariants!{
 ///  - `pub struct Log<T, LM, M>` in the upstream code
 ///  - `linear datatype NR` in the dafny code
 #[repr(align(128))]
-pub struct NrLog
+pub struct NrLog<DT: Dispatch>
 {
     /// The actual log, a slice of entries.
     ///  - Dafny: linear buffer: lseq<BufferEntry>,
     ///           glinear bufferContents: GhostAtomic<CBContents>,
     ///  - Rust:  pub(crate) slog: Box<[Cell<Entry<T, M>>]>,
-    pub slog: Vec<BufferEntry>,
+    pub slog: Vec<BufferEntry<DT>>,
 
     /// Completed tail maintains an index <= tail that points to a log entry after which there
     /// are no completed operations across all replicas registered against this log.
     ///
     ///  - Dafny: linear ctail: CachePadded<Atomic<uint64, Ctail>>,
     ///  - Rust:  pub(crate) ctail: CachePadded<AtomicUsize>,
-    pub version_upper_bound: CachePadded<AtomicU64<_, UnboundedLog::version_upper_bound, _>>,
+    pub version_upper_bound: CachePadded<AtomicU64<_, UnboundedLog::version_upper_bound<DT>, _>>,
 
     /// Logical index into the above slice at which the log starts.
     ///
     ///  - Dafny: linear head: CachePadded<Atomic<uint64, CBHead>>,
     ///  - Rust:  pub(crate) head: CachePadded<AtomicUsize>,
-    pub head: CachePadded<AtomicU64<_, CyclicBuffer::head, _>>,
+    pub head: CachePadded<AtomicU64<_, CyclicBuffer::head<DT>, _>>,
 
     /// Logical index into the above slice at which the log ends. New appends go here.
     ///
     ///  - Dafny: linear globalTail: CachePadded<Atomic<uint64, GlobalTailTokens>>,
     ///  - Rust:  pub(crate) tail: CachePadded<AtomicUsize>,
-    pub tail: CachePadded<AtomicU64<_, (UnboundedLog::tail, CyclicBuffer::tail), _>>,
+    pub tail: CachePadded<AtomicU64<_, (UnboundedLog::tail<DT>, CyclicBuffer::tail<DT>), _>>,
 
     /// Array consisting of the local tail of each replica registered with the log.
     /// Required for garbage collection; since replicas make progress over the log
@@ -141,15 +142,15 @@ pub struct NrLog
     ///  - Dafny: linear node_info: lseq<NodeInfo>, // NodeInfo is padded
     ///  - Rust:  pub(crate) ltails: [CachePadded<AtomicUsize>; MAX_REPLICAS_PER_LOG],
     ///
-    pub/*REVIEW: (crate)*/ local_versions: Vec<CachePadded<AtomicU64<_, (UnboundedLog::local_versions, CyclicBuffer::local_versions), _>>>,  // NodeInfo is padded
+    pub/*REVIEW: (crate)*/ local_versions: Vec<CachePadded<AtomicU64<_, (UnboundedLog::local_versions<DT>, CyclicBuffer::local_versions<DT>), _>>>,  // NodeInfo is padded
 
     // The upstream Rust version also contains:
     //  - pub(crate) next: CachePadded<AtomicUsize>, the identifier for the next replica
     //  - pub(crate) lmasks: [CachePadded<Cell<bool>>; MAX_REPLICAS_PER_LOG], tracking of alivebits
 
     pub num_replicas: Ghost<nat>,
-    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
-    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
 }
 
 pub open spec fn wf(&self) -> bool {
@@ -172,19 +173,19 @@ pub open spec fn wf(&self) -> bool {
         &&& self.cyclic_buffer_instance@.unbounded_log_instance() == self.unbounded_log_instance
     }
 
-    invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound) {
+    invariant on version_upper_bound with (unbounded_log_instance) specifically (self.version_upper_bound.0) is (v: u64, g: UnboundedLog::version_upper_bound<DT>) {
         &&& g@.instance == unbounded_log_instance@
         &&& g@.value == v
         &&& 0 <= v <= MAX_IDX
     }
 
-    invariant on head with (cyclic_buffer_instance) specifically (self.head.0) is (v: u64, g: CyclicBuffer::head) {
+    invariant on head with (cyclic_buffer_instance) specifically (self.head.0) is (v: u64, g: CyclicBuffer::head<DT>) {
         &&& g@.instance == cyclic_buffer_instance@
         &&& g@.value == v
         &&& 0 <= v <= MAX_IDX
     }
 
-    invariant on tail with (cyclic_buffer_instance, unbounded_log_instance) specifically (self.tail.0) is (v: u64, g: (UnboundedLog::tail, CyclicBuffer::tail)) {
+    invariant on tail with (cyclic_buffer_instance, unbounded_log_instance) specifically (self.tail.0) is (v: u64, g: (UnboundedLog::tail<DT>, CyclicBuffer::tail<DT>)) {
         &&& g.0@.instance == unbounded_log_instance@
         &&& g.0@.value == v
         &&& g.1@.instance == cyclic_buffer_instance@
@@ -196,7 +197,7 @@ pub open spec fn wf(&self) -> bool {
         forall |i: int|
         where (0 <= i < self.local_versions@.len())
         specifically (self.local_versions@[i].0)
-        is (v: u64, g: (UnboundedLog::local_versions, CyclicBuffer::local_versions)) {
+        is (v: u64, g: (UnboundedLog::local_versions<DT>, CyclicBuffer::local_versions<DT>)) {
 
         &&& g.0@.instance == unbounded_log_instance@
         &&& g.0@.key == i
@@ -1482,11 +1483,11 @@ impl NrLog
 
 
 /// Data structure that is passed between the append and exec functins of the log.
-pub tracked struct NrLogAppendExecDataGhost {
-    pub /* REVIEW (crate) */ local_updates  : Tracked::<Map<ReqId, UnboundedLog::local_updates>>,
-    pub /* REVIEW (crate) */ ghost_replica  : Tracked<UnboundedLog::replicas>,
-    pub /* REVIEW (crate) */ combiner       : Tracked<UnboundedLog::combiner>,
-    pub /* REVIEW (crate) */ cb_combiner    : Tracked<CyclicBuffer::combiner>,
+pub tracked struct NrLogAppendExecDataGhost<DT: Dispatch> {
+    pub /* REVIEW (crate) */ local_updates  : Tracked::<Map<ReqId, UnboundedLog::local_updates<DT>>>,
+    pub /* REVIEW (crate) */ ghost_replica  : Tracked<UnboundedLog::replicas<DT>>,
+    pub /* REVIEW (crate) */ combiner       : Tracked<UnboundedLog::combiner<DT>>,
+    pub /* REVIEW (crate) */ cb_combiner    : Tracked<CyclicBuffer::combiner<DT>>,
     pub /* REVIEW (crate) */ request_ids    : Ghost<Seq<ReqId>>,
 }
 
@@ -1613,18 +1614,18 @@ impl NrLogAppendExecDataGhost {
 
 struct_with_invariants!{
 /// keeps track of the recursive state when applying updates to the unbounded log
-tracked struct AppendEntriesGhostState {
+tracked struct AppendEntriesGhostState<DT: Dispatch> {
     pub ghost idx               : nat,
     pub ghost old_tail          : nat,
-    pub tracked log_entries     : Map<nat, UnboundedLog::log>,
-    pub tracked local_updates   : Map<nat, UnboundedLog::local_updates>,
-    pub tracked combiner        : UnboundedLog::combiner,
-    pub tracked tail            : UnboundedLog::tail,
+    pub tracked log_entries     : Map<nat, UnboundedLog::log<DT>>,
+    pub tracked local_updates   : Map<nat, UnboundedLog::local_updates<DT>>,
+    pub tracked combiner        : UnboundedLog::combiner<DT>,
+    pub tracked tail            : UnboundedLog::tail<DT>,
     pub ghost request_ids       : Seq<ReqId>,
     pub ghost operations        : Seq<UpdateOp>
 }
 
-pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance) -> bool {
+pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance<DT>) -> bool {
     predicate {
         &&& 0 <= self.idx <= self.request_ids.len()
         &&& ridx < self.request_ids.len()
@@ -1672,13 +1673,13 @@ pub open spec fn wf(&self, nid: nat, ridx: nat, inst: UnboundedLog::Instance) ->
 
 struct_with_invariants!{
 /// represents the tokens that are created when a new log is being initialized
-pub tracked struct NrLogTokens {
+pub tracked struct NrLogTokens<DT> {
     pub ghost num_replicas: nat,
-    pub tracked replicas                : Map<NodeId,UnboundedLog::replicas>,
-    pub tracked combiners               : Map<NodeId,UnboundedLog::combiner>,
-    pub tracked cb_combiners            : Map<NodeId, CyclicBuffer::combiner>,
-    pub tracked unbounded_log_instance  : UnboundedLog::Instance,
-    pub tracked cyclic_buffer_instance  : CyclicBuffer::Instance,
+    pub tracked replicas                : Map<NodeId,UnboundedLog::replicas<DT>>,
+    pub tracked combiners               : Map<NodeId,UnboundedLog::combiner<DT>>,
+    pub tracked cb_combiners            : Map<NodeId, CyclicBuffer::combiner<DT>>,
+    pub tracked unbounded_log_instance  : UnboundedLog::Instance<DT>,
+    pub tracked cyclic_buffer_instance  : CyclicBuffer::Instance<DT>,
 }
 
 pub open spec fn wf(&self, num_replicas: nat) -> bool {

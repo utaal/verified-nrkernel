@@ -28,27 +28,27 @@ use super::utils::*;
 
 /// Represents the state of a read-request
 #[is_variant]
-pub enum ReadReq {
+pub enum ReadReq<R> {
     /// a new read request that has entered the system
-    Init { op: ReadonlyOp },
+    Init { op: R },
     /// a request that has been dispatched at a specific version
-    Req { version: LogIdx, op: ReadonlyOp },
+    Req { version: LogIdx, op: R },
 }
 
 /// Represents the state of an update requeset, returning the index of the update in the log
 pub struct UpdateResp(pub LogIdx);
 
 state_machine! {
-    SimpleLog {
+    SimpleLog<DT: Dispatch> {
         fields {
             /// a sequence of update operations,
-            pub log: Seq<UpdateOp>,
+            pub log: Seq<DT::WriteOperation>,
             /// the completion tail current index into the log
             pub version: LogIdx,
             /// in flight read requests
-            pub readonly_reqs: Map<ReqId, ReadReq>,
+            pub readonly_reqs: Map<ReqId, ReadReq<DT::ReadOperation>>,
             /// inflight update requests
-            pub update_reqs: Map<ReqId, UpdateOp>,
+            pub update_reqs: Map<ReqId, DT::WriteOperation>,
             /// responses to update requests that haven't been returned
             pub update_resps: Map<ReqId, UpdateResp>,
         }
@@ -78,7 +78,7 @@ state_machine! {
         pub fn inv_readonly_req_version(&self) -> bool {
             forall |rid: ReqId| {
                 self.readonly_reqs.contains_key(rid)
-                ==> if let ReadReq::Req { version, .. } = self.readonly_reqs[rid] {
+                ==> if let ReadReq::<DT::ReadOperation>::Req { version, .. } = self.readonly_reqs[rid] {
                         version <= self.version}
                     else { true }
             }
@@ -131,14 +131,14 @@ state_machine! {
 
         /// Read Request: Enter the read request operation into the system
         transition!{
-            readonly_start(rid: ReqId, op: ReadonlyOp) {
+            readonly_start(rid: ReqId, op: DT::ReadOperation) {
                 require(!pre.readonly_reqs.contains_key(rid));
 
                 // XXX: do we actually care whether an update request has the same id as an readonly request?
                 // require(!pre.update_reqs.contains_key(rid));
                 // require(!pre.update_resps.contains_key(rid));
 
-                update readonly_reqs[rid] = ReadReq::Init{ op };
+                update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Init{ op };
             }
         }
 
@@ -146,9 +146,9 @@ state_machine! {
         transition!{
             readonly_read_version(rid: ReqId) {
                 require(pre.readonly_reqs.contains_key(rid));
-                require let ReadReq::Init { op } = pre.readonly_reqs.index(rid);
+                require let ReadReq::<DT::ReadOperation>::Init { op } = pre.readonly_reqs.index(rid);
 
-                update readonly_reqs[rid] = ReadReq::Req { op, version: pre.version };
+                update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Req { op, version: pre.version };
             }
         }
 
@@ -159,7 +159,7 @@ state_machine! {
             readonly_finish(rid: ReqId, version: LogIdx, ret: ReturnType) {
                 require(pre.readonly_reqs.contains_key(rid));
 
-                require let ReadReq::Req { op, version: current } = pre.readonly_reqs.index(rid);
+                require let ReadReq::<DT::ReadOperation>::Req { op, version: current } = pre.readonly_reqs.index(rid);
 
                 require(current <= version <= pre.log.len());
                 require(version <= pre.version);
@@ -186,7 +186,7 @@ state_machine! {
 
         /// Update Request: place an update request in the system
         transition!{
-            update_start(rid: ReqId, op: UpdateOp) {
+            update_start(rid: ReqId, op: DT::WriteOperation) {
                 // XXX: do we actually care whether an readonly request has the same id as an update request?
                 // require(!pre.readonly_reqs.contains_key(rid));
                 require(!pre.update_reqs.contains_key(rid));
@@ -285,7 +285,7 @@ state_machine! {
         fn initialize_inductive(post: Self) { }
 
         #[inductive(readonly_start)]
-        fn readonly_start_inductive(pre: Self, post: Self, rid: ReqId, op: ReadonlyOp) { }
+        fn readonly_start_inductive(pre: Self, post: Self, rid: ReqId, op: DT::ReadOperation) { }
 
         #[inductive(readonly_read_version)]
         fn readonly_read_version_inductive(pre: Self, post: Self, rid: ReqId) { }
@@ -294,7 +294,7 @@ state_machine! {
         fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, version: LogIdx, ret: ReturnType) { }
 
         #[inductive(update_start)]
-        fn update_start_inductive(pre: Self, post: Self, rid: ReqId, op: UpdateOp) { }
+        fn update_start_inductive(pre: Self, post: Self, rid: ReqId, op: DT::WriteOperation) { }
 
         #[inductive(update_add_ops_to_log)]
         fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }

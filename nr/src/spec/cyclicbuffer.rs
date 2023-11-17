@@ -38,12 +38,12 @@ verus! {
     // pub type StoredType = PointsTo<LogEntry>;
 
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
-pub struct StoredType {
-    pub cell_perms: PointsTo<Option<ConcreteLogEntry>>,
-    pub log_entry: Option<UnboundedLog::log>
+pub struct StoredType<DT: Dispatch> {
+    pub cell_perms: PointsTo<Option<ConcreteLogEntry<DT::WriteOperation>>>,
+    pub log_entry: Option<UnboundedLog::log<DT>>
 }
 
-pub open spec fn stored_type_inv(st: StoredType, idx: int, cell_id: CellId, unbounded_log_instance: UnboundedLog::Instance) -> bool {
+pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cell_id: CellId, unbounded_log_instance: UnboundedLog::<DT>::Instance) -> bool {
     // also match the cell id
     &&& st.cell_perms@.value.is_Some()
     &&& st.cell_perms@.pcell == cell_id
@@ -67,7 +67,7 @@ pub open spec fn stored_type_inv(st: StoredType, idx: int, cell_id: CellId, unbo
 
 ///
 #[is_variant]
-pub enum ReaderState {
+pub enum ReaderState<DT: Dispatch> {
     ///
     Starting {
         ///
@@ -84,7 +84,7 @@ pub enum ReaderState {
         start: LogIdx,
         end: LogIdx,
         cur: LogIdx,
-        val: StoredType,
+        val: StoredType<DT>,
     },
 }
 
@@ -94,9 +94,9 @@ pub enum ReaderState {
 
 /// represents the combiner
 #[is_variant]
-pub enum CombinerState {
+pub enum CombinerState<DT: Dispatch> {
     Idle,
-    Reading(ReaderState),
+    Reading(ReaderState<DT>),
     AdvancingHead { idx: LogIdx, min_local_version: LogIdx },
     AdvancingTail { observed_head: LogIdx },
     Appending { cur_idx: LogIdx, tail: LogIdx },
@@ -124,10 +124,10 @@ impl CombinerState {
     }
 }
 
-tokenized_state_machine! { CyclicBuffer {
+tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
     fields {
         #[sharding(constant)]
-        pub unbounded_log_instance: UnboundedLog::Instance,
+        pub unbounded_log_instance: UnboundedLog::Instance::<DT>,
 
         #[sharding(constant)]
         pub cell_ids: Seq<CellId>,
@@ -165,7 +165,7 @@ tokenized_state_machine! { CyclicBuffer {
 
         /// the contents of the buffer/log.
         #[sharding(storage_map)]
-        pub contents: Map<LogicalLogIdx, StoredType>,
+        pub contents: Map<LogicalLogIdx, StoredType<DT>>,
 
         // The 'alive' bit flips back and forth. So sometimes 'true' means 'alive',
         // and sometimes 'false' means 'alive'.
@@ -175,7 +175,7 @@ tokenized_state_machine! { CyclicBuffer {
         pub alive_bits: Map</* entry: */ LogIdx, /* bit: */ bool>,
 
         #[sharding(map)]
-        pub combiner: Map<NodeId, CombinerState>
+        pub combiner: Map<NodeId, CombinerState<DT>>
     }
 
 
@@ -257,7 +257,7 @@ tokenized_state_machine! { CyclicBuffer {
           self.reader_state_valid(node_id, self.combiner[node_id].get_Reading_0())
     }
 
-    pub closed spec fn reader_state_valid(&self, node_id: NodeId, rs: ReaderState) -> bool {
+    pub closed spec fn reader_state_valid(&self, node_id: NodeId, rs: ReaderState<DT>) -> bool {
         match rs {
             ReaderState::Starting{start} => {
                 // the starting value should match the local tail
@@ -338,7 +338,7 @@ tokenized_state_machine! { CyclicBuffer {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     init!{
-        initialize(buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>, cell_ids: Seq<CellId>, unbounded_log_instance: UnboundedLog::Instance, ) {
+        initialize(buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType<DT>>, cell_ids: Seq<CellId>, unbounded_log_instance: UnboundedLog::Instance<DT>, ) {
             require(num_replicas > 0);
             require(buffer_size == LOG_SIZE);
             require(cell_ids.len() == buffer_size);
@@ -598,7 +598,7 @@ tokenized_state_machine! { CyclicBuffer {
 
 
     transition!{
-        append_flip_bit(node_id: NodeId, deposited: StoredType) {
+        append_flip_bit(node_id: NodeId, deposited: StoredType<DT>) {
             remove combiner -= [ node_id => let CombinerState::Appending { cur_idx, tail } ];
             add    combiner += [ node_id => CombinerState::Appending { cur_idx: cur_idx + 1, tail } ];
 
@@ -629,7 +629,7 @@ tokenized_state_machine! { CyclicBuffer {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     #[inductive(initialize)]
-    fn initialize_inductive(post: Self, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType>, cell_ids: Seq<CellId>,  unbounded_log_instance: UnboundedLog::Instance, ) {
+    fn initialize_inductive(post: Self, buffer_size: nat, num_replicas: nat, contents: Map<int, StoredType<DT>>, cell_ids: Seq<CellId>,  unbounded_log_instance: UnboundedLog::Instance<DT>, ) {
         assert forall |i| post.tail <= i < post.buffer_size implies !log_entry_is_alive(post.alive_bits, i, post.buffer_size) by {
             int_mod_less_than_same(i, post.buffer_size as int);
         }
@@ -673,7 +673,7 @@ tokenized_state_machine! { CyclicBuffer {
     }
 
     #[inductive(append_flip_bit)]
-    fn append_flip_bit_inductive(pre: Self, post: Self, node_id: NodeId, deposited: StoredType) {
+    fn append_flip_bit_inductive(pre: Self, post: Self, node_id: NodeId, deposited: StoredType<DT>) {
         assert(post.local_versions.contains_key(node_id));
 
         let myidx = pre.combiner[node_id].get_Appending_cur_idx();

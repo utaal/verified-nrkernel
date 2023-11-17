@@ -13,6 +13,8 @@ use vstd::{
 
 use crate::constants::{NUM_REPLICAS, MAX_REQUESTS, MAX_THREADS_PER_REPLICA, RESPONSE_CHECK_INTERVAL};
 
+use crate::Dispatch;
+
 // spec import
 use crate::spec::unbounded_log::UnboundedLog;
 use crate::spec::flat_combiner::FlatCombiner;
@@ -94,20 +96,20 @@ struct_with_invariants!{
 /// Represents the data structure that is being replicated, protected by a RWLock
 ///
 ///  - Dafny: linear datatype NodeReplica = NodeReplica(
-pub struct ReplicatedDataStructure {
+pub struct ReplicatedDataStructure<DT: Dispatch> {
     /// the actual data structure
     ///  - Dafny: linear actual_replica: nrifc.DataStructureType,
     pub data: DataStructureType,
     ///  - Dafny: glinear ghost_replica: Replica,
-    pub replica: Tracked<UnboundedLog::replicas>,
+    pub replica: Tracked<UnboundedLog::replicas<DT>>,
     ///  - Dafny: glinear combiner: CombinerToken,
-    pub combiner: Tracked<UnboundedLog::combiner>,
+    pub combiner: Tracked<UnboundedLog::combiner<DT>>,
     ///  - Dafny: glinear cb: CBCombinerToken
-    pub cb_combiner: Tracked<CyclicBuffer::combiner>
+    pub cb_combiner: Tracked<CyclicBuffer::combiner<DT>>
 }
 
 //  - Dafny: predicate WF(nodeId: nat, cb_loc_s: nat) {
-pub open spec fn wf(&self, nid: NodeId, inst: UnboundedLog::Instance, cb: CyclicBuffer::Instance) -> bool {
+pub open spec fn wf(&self, nid: NodeId, inst: UnboundedLog::Instance<DT>, cb: CyclicBuffer::Instance<DT>) -> bool {
     predicate {
         &&& self.combiner@@.instance == inst
         &&& self.replica@@.instance == inst
@@ -135,7 +137,7 @@ struct_with_invariants!{
 ///  - Dafny:   linear datatype Node
 ///  - Rust:    pub struct Replica<D>
 #[repr(align(128))]
-pub struct Replica {
+pub struct Replica<DT: Dispatch> {
     /// An identifier that we got from the Log when the replica was registered
     /// against the shared-log ([`Log::register()`]). Required to pass to the
     /// log when consuming operations from the log.
@@ -189,7 +191,7 @@ pub struct Replica {
     ///
     ///   - Dafny: linear replica: RwLock,
     ///   - Rust:  data: CachePadded<RwLock<D>>,
-    pub data: CachePadded<RwLock<ReplicatedDataStructure>>,
+    pub data: CachePadded<RwLock<ReplicatedDataStructure<DT>>>,
 
     // Thread index that will be handed out to the next thread that registers
     // with the replica when calling [`Replica::register()`].
@@ -198,8 +200,8 @@ pub struct Replica {
     /// thread token that is handed out to the threads that register
     pub /* REVIEW: (crate) */ thread_tokens: Vec<ThreadToken>,
 
-    pub unbounded_log_instance: Tracked<UnboundedLog::Instance>,
-    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance>,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
     pub flat_combiner_instance: Tracked<FlatCombiner::Instance>,
 }
 

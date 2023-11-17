@@ -48,24 +48,24 @@ use super::utils::*;
 /// we only track the nodeId to make sure that steps 2 and 3 use the same node.
 ///
 #[is_variant]
-pub enum ReadonlyState {
+pub enum ReadonlyState<DT: Dispatch> {
     /// a new read request that has come in
-    Init { op: ReadonlyOp },
+    Init { op: DT::ReadOperation },
     /// has read the version upper bound value
     VersionUpperBound {
-        op: ReadonlyOp,
+        op: DT::ReadOperation,
         version_upper_bound: LogIdx,
     },
     /// ready to read
     ReadyToRead {
-        op: ReadonlyOp,
+        op: DT::ReadOperation,
         node_id: NodeId,
         version_upper_bound: LogIdx,
     },
     /// read request is done
     Done {
-        op: ReadonlyOp,
-        ret: ReturnType,
+        op: DT::ReadOperation,
+        ret: DT::Response,
         node_id: NodeId,
         version_upper_bound: LogIdx,
     },
@@ -212,15 +212,15 @@ pub enum ReadonlyState {
 // has a pointer into the log via `idx`. (It's possible that this could be simplified.)
 
 #[is_variant]
-pub enum UpdateState {
+pub enum UpdateState<DT: Dispatch> {
     /// upated request has entered the system
-    Init { op: UpdateOp },
+    Init { op: DT::WriteOperation },
     /// update has been placed into the log
-    Placed { op: UpdateOp, idx: LogIdx },
+    Placed { op: DT::WriteOperation, idx: LogIdx },
     /// the update has been applied to the data structure
-    Applied { ret: ReturnType, idx: LogIdx },
+    Applied { ret: DT::Response, idx: LogIdx },
     /// the update is ready to be returned
-    Done { ret: ReturnType, idx: LogIdx },
+    Done { ret: DT::Response, idx: LogIdx },
 }
 
 #[is_variant]
@@ -271,20 +271,20 @@ impl CombinerState {
 } // end verus!
 
 tokenized_state_machine! {
-UnboundedLog {
+UnboundedLog<DT: Dispatch> {
     fields {
         /// the number of replicas
         #[sharding(constant)]
         pub num_replicas: nat,
 
         #[sharding(map)]
-        pub log: Map<LogIdx, LogEntry>,
+        pub log: Map<LogIdx, LogEntry<DT>>,
 
         #[sharding(variable)]
         pub tail: nat,
 
         #[sharding(map)]
-        pub replicas: Map<NodeId, DataStructureSpec>,
+        pub replicas: Map<NodeId, DT::View>,
 
         #[sharding(map)]
         pub local_versions: Map<NodeId, LogIdx>, // previously called "local tails"
@@ -293,10 +293,10 @@ UnboundedLog {
         pub version_upper_bound: LogIdx, // previously called "ctail"
 
         #[sharding(map)]
-        pub local_reads: Map<ReqId, ReadonlyState>,
+        pub local_reads: Map<ReqId, ReadonlyState<DT>>,
 
         #[sharding(map)]
-        pub local_updates: Map<ReqId, UpdateState>,
+        pub local_updates: Map<ReqId, UpdateState<DT>>,
 
         #[sharding(map)]
         pub combiner: Map<NodeId, CombinerState>
@@ -390,7 +390,7 @@ UnboundedLog {
              ==> self.wf_readstate(self.local_reads[rid])
     }
 
-    pub open spec fn wf_readstate(&self, rs: ReadonlyState) -> bool {
+    pub open spec fn wf_readstate(&self, rs: ReadonlyState<DT>) -> bool {
         match rs {
             ReadonlyState::Init{op} => {
                 true
@@ -500,7 +500,7 @@ UnboundedLog {
             ==>  self.inv_local_updates_wf(self.local_updates[rid])
     }
 
-    pub open spec fn inv_local_updates_wf(&self, update: UpdateState) -> bool {
+    pub open spec fn inv_local_updates_wf(&self, update: UpdateState<DT>) -> bool {
         match update {
             UpdateState::Init { op } => { true },
             UpdateState::Placed { op: _, idx } => {
@@ -527,7 +527,7 @@ UnboundedLog {
             ==>  self.read_results_match(self.local_reads[rid])
     }
 
-    pub open spec fn read_results_match(&self, read: ReadonlyState) -> bool {
+    pub open spec fn read_results_match(&self, read: ReadonlyState<DT>) -> bool {
         match read {
             ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
                 exists |v: nat| (#[trigger] rangeincl(version_upper_bound, v, self.version_upper_bound))
@@ -546,7 +546,7 @@ UnboundedLog {
             ==>  self.update_results_match(self.local_updates[rid])
     }
 
-    pub open spec fn update_results_match(&self, update: UpdateState) -> bool {
+    pub open spec fn update_results_match(&self, update: UpdateState<DT>) -> bool {
         match update {
             UpdateState::Applied { ret, idx } => {
                 ret == compute_nrstate_at_version(self.log, idx).spec_update(self.log[idx].op).1
@@ -606,7 +606,7 @@ UnboundedLog {
 
     /// Read Request: Enter the read request operation into the system
     transition!{
-        readonly_start(op: ReadonlyOp) {
+        readonly_start(op: DT::ReadOperation) {
             //birds_eye let rid_fn = |rid| !pre.local_reads.contains_key(rid);
             birds_eye let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
             add local_reads += [ rid => ReadonlyState::Init {op} ] by {
@@ -655,7 +655,7 @@ UnboundedLog {
 
     /// Read Request: remove the read request from the request from the state machine
     transition!{
-        readonly_finish(rid: ReqId, rop: ReadonlyOp, result: ReturnType) {
+        readonly_finish(rid: ReqId, rop: DT::ReadOperation, result: DT::Response) {
             remove local_reads -= [ rid => let ReadonlyState::Done { op, ret, version_upper_bound, node_id } ];
 
             require(op == rop);
@@ -669,7 +669,7 @@ UnboundedLog {
 
     /// Update: A new update request enters the system
     transition!{
-        update_start(op: UpdateOp) {
+        update_start(op: DT::WriteOperation) {
 
             birds_eye let combiner = pre.combiner;
             birds_eye let rid_fn = |rid| !pre.local_updates.contains_key(rid)
@@ -958,7 +958,7 @@ UnboundedLog {
     }
 
     #[inductive(readonly_start)]
-    fn readonly_start_inductive(pre: Self, post: Self, op: ReadonlyOp) { }
+    fn readonly_start_inductive(pre: Self, post: Self, op: DT::ReadOperation) { }
 
     #[inductive(readonly_version_upper_bound)]
     fn readonly_version_upper_bound_inductive(pre: Self, post: Self, rid: ReqId) { }
@@ -988,10 +988,10 @@ UnboundedLog {
     }
 
     #[inductive(readonly_finish)]
-    fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: ReadonlyOp, result: ReturnType) { }
+    fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: DT::ReadOperation, result: DT::Response) { }
 
     #[inductive(update_start)]
-    fn update_start_inductive(pre: Self, post: Self, op: UpdateOp) {
+    fn update_start_inductive(pre: Self, post: Self, op: DT::WriteOperation) {
         // get the rid that has been added
         let rid = choose|rid: nat| ! #[trigger] pre.local_updates.contains_key(rid)
                 && post.local_updates == pre.local_updates.insert(rid, UpdateState::Init { op })
@@ -1432,17 +1432,17 @@ pub proof fn get_fresh_nat_not_in(reqs: Set<ReqId>, combiner: Map<NodeId, Combin
 
 
 /// the log contains all entries up to, but not including the provided end
-pub open spec fn LogContainsEntriesUpToHere(log: Map<LogIdx, LogEntry>, end: LogIdx) -> bool {
+pub open spec fn LogContainsEntriesUpToHere<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, end: LogIdx) -> bool {
     forall |i: nat| 0 <= i < end ==> log.contains_key(i)
 }
 
 /// the log doesn't contain any entries at or above the provided start index
-pub open spec fn LogNoEntriesFromHere(log: Map<LogIdx, LogEntry>, start: LogIdx) -> bool {
+pub open spec fn LogNoEntriesFromHere<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, start: LogIdx) -> bool {
     forall |i: nat| start <= i ==> !log.contains_key(i)
 }
 
 /// the log contains no entries with the given node id between the supplied indices
-pub open spec fn LogRangeNoNodeId(log: Map<LogIdx, LogEntry>, start: LogIdx, end: LogIdx, node_id: NodeId) -> bool
+pub open spec fn LogRangeNoNodeId<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, start: LogIdx, end: LogIdx, node_id: NodeId) -> bool
 {
   decreases_when(start <= end);
   decreases(end - start);
@@ -1455,9 +1455,9 @@ pub open spec fn LogRangeNoNodeId(log: Map<LogIdx, LogEntry>, start: LogIdx, end
 }
 
 /// predicate that the a range in the log matches the queue of updates
-pub open spec fn LogRangeMatchesQueue(queue: Seq<ReqId>, log: Map<LogIdx, LogEntry>, queueIndex: nat,
+pub open spec fn LogRangeMatchesQueue<DT: Dispatch>(queue: Seq<ReqId>, log: Map<LogIdx, LogEntry<DT>>, queueIndex: nat,
                                       logIndexLower: LogIdx, logIndexUpper: LogIdx, nodeId: NodeId,
-                                      updates: Map<ReqId, UpdateState>) -> bool
+                                      updates: Map<ReqId, UpdateState<DT>>) -> bool
 {
   recommends([ 0 <= queueIndex <= queue.len(), LogContainsEntriesUpToHere(log, logIndexUpper) ]);
   decreases_when(logIndexLower <= logIndexUpper);
@@ -1485,9 +1485,9 @@ pub open spec fn LogRangeMatchesQueue(queue: Seq<ReqId>, log: Map<LogIdx, LogEnt
 }
 
 
-pub open spec fn LogRangeMatchesQueue2(queue: Seq<ReqId>, log: Map<LogIdx, LogEntry>, queueIndex: nat,
+pub open spec fn LogRangeMatchesQueue2<DT: Dispatch>(queue: Seq<ReqId>, log: Map<LogIdx, LogEntry<DT>>, queueIndex: nat,
     logIndexLower: LogIdx, logIndexUpper: LogIdx, nodeId: NodeId,
-    updates: Map<ReqId, UpdateState>) -> bool
+    updates: Map<ReqId, UpdateState<DT>>) -> bool
 {
     recommends([ 0 <= queueIndex <= queue.len(), LogContainsEntriesUpToHere(log, logIndexUpper) ]);
     decreases_when(logIndexLower <= logIndexUpper);
@@ -1514,10 +1514,10 @@ pub open spec fn LogRangeMatchesQueue2(queue: Seq<ReqId>, log: Map<LogIdx, LogEn
     })
 }
 
-proof fn LogRangeMatchesQueue_update_change(queue: Seq<nat>, log: Map<nat, LogEntry>,
+proof fn LogRangeMatchesQueue_update_change<DT: Dispatch>(queue: Seq<nat>, log: Map<nat, LogEntry<DT>>,
     queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, nodeId: nat,
-    updates1: Map<nat, UpdateState>,
-    updates2: Map<nat, UpdateState>)
+    updates1: Map<ReqId, UpdateState<DT>>,
+    updates2: Map<ReqId, UpdateState<DT>>)
 requires
     0 <= queueIndex <= queue.len(),
     logIndexLower <= logIndexUpper,
@@ -1540,10 +1540,10 @@ decreases logIndexUpper - logIndexLower
   }
 }
 
-proof fn LogRangeMatchesQueue_update_change_2(queue: Seq<nat>, log: Map<nat, LogEntry>,
+proof fn LogRangeMatchesQueue_update_change_2<DT: Dispatch>(queue: Seq<nat>, log: Map<nat, LogEntry<DT>>,
     queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, nodeId: nat,
-    updates1: Map<nat, UpdateState>,
-    updates2: Map<nat, UpdateState>)
+    updates1: Map<ReqId, UpdateState<DT>>,
+    updates2: Map<ReqId, UpdateState<DT>>)
 requires
     0 <= queueIndex <= queue.len(),
     logIndexLower <= logIndexUpper,
@@ -1565,11 +1565,11 @@ decreases logIndexUpper - logIndexLower,
   }
 }
 
-proof fn LogRangeMatchesQueue_append(
+proof fn LogRangeMatchesQueue_append<DT: Dispatch>(
       queue: Seq<nat>,
-      log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
+      log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
-      updates: Map<nat, UpdateState>, new_updates: Map<nat, UpdateState>,
+      updates: Map<ReqId, UpdateState<DT>>, new_updates: Map<ReqId, UpdateState<DT>>,
       new_rid: ReqId, log_entry: LogEntry)
     requires
         0 <= queueIndex <= queue.len(),
@@ -1637,11 +1637,11 @@ proof fn LogRangeMatchesQueue_append(
   }
 }
 
-proof fn LogRangeMatchesQueue_append_other(
+proof fn LogRangeMatchesQueue_append_other<DT: Dispatch>(
       queue: Seq<nat>,
-      log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
+      log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, logLen: nat, node_id: NodeId,
-      updates: Map<nat, UpdateState>, new_updates: Map<nat, UpdateState>,
+      updates: Map<ReqId, UpdateState<DT>>, new_updates: Map<ReqId, UpdateState<DT>>,
       new_rid: ReqId, log_entry: LogEntry)
     requires
         0 <= queueIndex <= queue.len(),
@@ -1683,11 +1683,11 @@ proof fn LogRangeMatchesQueue_append_other(
   }
 }
 
-proof fn LogRangeMatchesQueue_append_other_augment(
+proof fn LogRangeMatchesQueue_append_other_augment<DT: Dispatch>(
       queue: Seq<nat>,
-      log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
+      log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
-      updates: Map<nat, UpdateState>, new_updates: Map<nat, UpdateState>,
+      updates: Map<ReqId, UpdateState<DT>>, new_updates: Map<ReqId, UpdateState<DT>>,
       new_rid: ReqId, log_entry: LogEntry)
     requires
         0 <= queueIndex <= queue.len(),
@@ -1736,8 +1736,8 @@ proof fn LogRangeMatchesQueue_append_other_augment(
 }
 
 
-proof fn LogRangeNoNodeId_append_other(
-      log: Map<nat, LogEntry>, new_log: Map<nat, LogEntry>,
+proof fn LogRangeNoNodeId_append_other<DT: Dispatch>(
+      log: Map<nat, LogEntry<DT>>, new_log: Map<nat, LogEntry<DT>>,
       logIndexLower: nat, logIndexUpper: nat, node_id: NodeId,
       log_entry: LogEntry)
     requires
@@ -1773,7 +1773,7 @@ proof fn LogRangeNoNodeId_append_other(
 
 
 /// the updates below the current pointer are either in the applied or done state.
-pub open spec fn QueueRidsUpdateDone(queued_ops: Seq<ReqId>, localUpdates: Map<ReqId, UpdateState>, bound: nat) -> bool
+pub open spec fn QueueRidsUpdateDone<DT: Dispatch>(queued_ops: Seq<ReqId>, localUpdates: Map<ReqId, UpdateState<DT>>, bound: nat) -> bool
     recommends 0 <= bound <= queued_ops.len(),
 {
     // Note that use localUpdates.contains_key(queued_ops[j]) as a *hypothesis*
@@ -1788,7 +1788,7 @@ pub open spec fn QueueRidsUpdateDone(queued_ops: Seq<ReqId>, localUpdates: Map<R
 }
 
 /// the updates in the queue above or equal the current pointer are in placed state
-pub open spec fn QueueRidsUpdatePlaced(queued_ops: Seq<ReqId>, localUpdates: Map<ReqId, UpdateState>, bound: nat) -> bool
+pub open spec fn QueueRidsUpdatePlaced<DT: Dispatch>(queued_ops: Seq<ReqId>, localUpdates: Map<ReqId, UpdateState<DT>>, bound: nat) -> bool
     recommends 0 <= bound <= queued_ops.len(),
 {
     forall |j| bound <= j < queued_ops.len() ==> {
@@ -1800,9 +1800,9 @@ pub open spec fn QueueRidsUpdatePlaced(queued_ops: Seq<ReqId>, localUpdates: Map
 
 
 
-proof fn concat_LogRangeNoNodeId_LogRangeMatchesQueue(
-    queue: Seq<ReqId>, log: Map<LogIdx, LogEntry>,
-    queueIndex: nat, a: nat, b: nat, c: nat, nodeId: nat, updates: Map<nat, UpdateState>)
+proof fn concat_LogRangeNoNodeId_LogRangeMatchesQueue<DT: Dispatch>(
+    queue: Seq<ReqId>, log: Map<LogIdx, LogEntry<DT>>,
+    queueIndex: nat, a: nat, b: nat, c: nat, nodeId: nat, updates: Map<ReqId, UpdateState<DT>>)
 requires
     a <= b <= c,
     0 <= queueIndex <= queue.len(),
@@ -1825,7 +1825,7 @@ decreases b - a
 ///
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given  version.
-pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version: LogIdx) -> DataStructureSpec
+pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, version: LogIdx) -> DataStructureSpec
     recommends forall |i| 0 <= i < version ==> log.contains_key(i)
     decreases version
 {
@@ -1839,7 +1839,7 @@ pub open spec fn compute_nrstate_at_version(log: Map<LogIdx, LogEntry>, version:
 }
 
 
-pub proof fn compute_nrstate_at_version_preserves(a: Map<LogIdx, LogEntry>, b: Map<LogIdx, LogEntry>, version: LogIdx)
+pub proof fn compute_nrstate_at_version_preserves<DT: Dispatch>(a: Map<LogIdx, LogEntry<DT>>, b: Map<LogIdx, LogEntry<DT>>, version: LogIdx)
     requires
         forall |i| 0 <= i < version ==> a.contains_key(i),
         forall |i| 0 <= i < version ==> a.contains_key(i),

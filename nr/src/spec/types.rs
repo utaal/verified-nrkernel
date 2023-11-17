@@ -268,8 +268,8 @@ impl ReturnType {
     }
 }
 
-pub struct LogEntry {
-    pub op: UpdateOp,
+pub struct LogEntry<DT: Dispatch> {
+    pub op: DT::WriteOperation,
     pub node_id: NodeId,
 }
 
@@ -277,8 +277,8 @@ pub struct LogEntry {
 /// Represents an entry in the log
 ///
 /// datatype ConcreteLogEntry = ConcreteLogEntry(op: nrifc.UpdateOp, node_id: uint64)
-pub struct ConcreteLogEntry {
-    pub op: UpdateOp,
+pub struct ConcreteLogEntry<DT: Dispatch> {
+    pub op: DT::WriteOperation,
     pub node_id: u64,
 }
 
