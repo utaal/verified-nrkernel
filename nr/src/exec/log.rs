@@ -701,7 +701,7 @@ impl<DT: Dispatch> NrLog<DT> {
             let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids} = ghost_data_new;
             let tracked mut cb_combiner = cb_combiner.get();
             let tracked mut combiner = combiner.get();
-            let tracked local_updates = local_updates.get();
+            let tracked mut local_updates = local_updates.get();
 
             if iteration == WARN_THRESHOLD {
                 print_starvation_warning(line!());

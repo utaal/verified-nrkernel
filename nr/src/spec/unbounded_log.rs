@@ -342,7 +342,7 @@ UnboundedLog<DT: Dispatch> {
 
     #[invariant]
     pub fn combiner_replicas_domains(&self) -> bool {
-        forall |k| self.replicas.contains_key(k) <==> self.combiner.contains_key(k)
+        forall |k| #![auto] self.replicas.contains_key(k) <==> self.combiner.contains_key(k)
     }
 
     pub open spec fn wf_node_id(&self, node_id: NodeId) -> bool {
@@ -591,7 +591,7 @@ UnboundedLog<DT: Dispatch> {
             init num_replicas = number_of_nodes;
             init log = Map::empty();
             init tail = 0;
-            init replicas = arbitrary(); // TODO(andrea) verus bug Map::new(|n: NodeId| n < number_of_nodes, |n| DT::init_spec());
+            init replicas = Map::new(|n: NodeId| n < number_of_nodes, |n| DT::init_spec());
             init local_versions = Map::new(|n: NodeId| n < number_of_nodes, |n| 0);
             init version_upper_bound = 0;
             init local_reads = Map::empty();

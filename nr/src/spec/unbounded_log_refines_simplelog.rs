@@ -43,8 +43,7 @@ verus! {
 
 
 spec fn interp_log<DT: Dispatch>(global_tail: nat, log: Map<nat, LogEntry<DT>>) -> Seq<DT::WriteOperation> {
-    arbitrary()
-    // TODO(andrea): verus bug Seq::new(global_tail, |i| log.index(i as nat).op)
+    Seq::new(global_tail, |i| log.index(i as nat).op)
 }
 
 spec fn interp_readonly_reqs<DT: Dispatch>(local_reads: Map<nat, ReadonlyState<DT>>) -> Map<ReqId, SReadReq<DT::ReadOperation>> {
@@ -60,16 +59,13 @@ spec fn interp_readonly_reqs<DT: Dispatch>(local_reads: Map<nat, ReadonlyState<D
 }
 
 spec fn interp_update_reqs<DT: Dispatch>(local_updates: Map<LogIdx, UpdateState<DT>>) -> Map<LogIdx, DT::WriteOperation> {
-    arbitrary()
-
-    // TODO(andrea): verus bug
-    // Map::new(
-    //     |rid| local_updates.contains_key(rid) && local_updates.index(rid).is_Init(),
-    //     |rid| match local_updates.index(rid) {
-    //         UpdateState::Init{op} => op,
-    //         _ => arbitrary(),
-    //     }
-    // )
+    Map::new(
+        |rid| local_updates.contains_key(rid) && local_updates.index(rid).is_Init(),
+        |rid| match local_updates.index(rid) {
+            UpdateState::Init{op} => op,
+            _ => arbitrary(),
+        }
+    )
 }
 
 spec fn interp_update_resps<DT: Dispatch>(local_updates: Map<nat, UpdateState<DT>>) -> Map<ReqId, SUpdateResp> {

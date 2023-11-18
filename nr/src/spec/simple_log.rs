@@ -208,7 +208,7 @@ state_machine! {
                 require(seq_unique(rids));
 
                 // add the update operations to the log
-                update log = pre.log + arbitrary(); // TODO(andrea) verus bug Seq::new(rids.len(), |i: int| pre.update_reqs[i as nat]);
+                update log = pre.log + Seq::new(rids.len(), |i: int| pre.update_reqs[i as nat]);
 
                 // remove all update requests
                 update update_reqs = pre.update_reqs.remove_keys(Set::new(|i| rids.contains(i)));
