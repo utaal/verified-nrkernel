@@ -538,9 +538,9 @@ impl<DT: Dispatch> Replica<DT> {
         let append_exec_ghost_data = slog.execute(&self.replica_token, &mut responses, &mut data, append_exec_ghost_data);
         let Tracked(append_exec_ghost_data) = append_exec_ghost_data;
         let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids } = append_exec_ghost_data;
-        let tracked Tracked(ghost_replica) = ghost_replica;
-        let tracked Tracked(combiner) = combiner;
-        let tracked Tracked(cb_combiner) = cb_combiner;
+        let tracked ghost_replica = ghost_replica.get();
+        let tracked combiner = combiner.get();
+        let tracked cb_combiner = cb_combiner.get();
 
         // Step 4: release the R/W lock on the data structure
         let replicated_data_structure = ReplicatedDataStructure  { data, replica: Tracked(ghost_replica), combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner) };

@@ -374,7 +374,7 @@ impl<DT: Dispatch> NrLog<DT> {
             assert(log_entry.is_Some());
             let log_entry = log_entry.unwrap();
 
-            let tracked cb_inst = Tracked(cyclic_buffer_instance.clone());
+            let cb_inst = Tracked(cyclic_buffer_instance.clone());
 
             let entry = BufferEntry {
                 log_entry: log_entry,
@@ -387,14 +387,14 @@ impl<DT: Dispatch> NrLog<DT> {
             log_idx = log_idx + 1;
         }
 
-        let tracked ul_inst = Tracked(unbounded_log_instance.clone());
+        let ul_inst = Tracked(unbounded_log_instance.clone());
         let version_upper_bound = CachePadded(AtomicU64::new(Ghost(ul_inst), 0, Tracked(ul_version_upper_bound)));
 
-        let tracked cb_inst = Tracked(cyclic_buffer_instance.clone());
+        let cb_inst = Tracked(cyclic_buffer_instance.clone());
         let head = CachePadded(AtomicU64::new(Ghost(cb_inst), 0, Tracked(cb_head)));
 
-        let tracked cb_inst = Tracked(cyclic_buffer_instance.clone());
-        let tracked ul_inst = Tracked(unbounded_log_instance.clone());
+        let cb_inst = Tracked(cyclic_buffer_instance.clone());
+        let ul_inst = Tracked(unbounded_log_instance.clone());
         let tail = CachePadded(AtomicU64::new(Ghost((cb_inst, ul_inst)), 0, Tracked((ul_tail, cb_tail))));
         let mut local_versions : Vec<CachePadded<AtomicU64<(Tracked<UnboundedLog::Instance<DT>>, Tracked<CyclicBuffer::Instance<DT>>, int), (UnboundedLog::local_versions<DT>, CyclicBuffer::local_versions<DT>), _>>>= Vec::with_capacity(num_replicas);
 
@@ -432,8 +432,8 @@ impl<DT: Dispatch> NrLog<DT> {
                 cb_version = cb_local_versions.tracked_remove(nid as nat);
             }
 
-            let tracked cb_inst = Tracked(cyclic_buffer_instance.clone());
-            let tracked ul_inst = Tracked(unbounded_log_instance.clone());
+            let cb_inst = Tracked(cyclic_buffer_instance.clone());
+            let ul_inst = Tracked(unbounded_log_instance.clone());
 
             local_versions.push(CachePadded(AtomicU64::new(Ghost((ul_inst, cb_inst, nid_ghost)), 0, Tracked((ul_version, cb_version)))));
 
@@ -674,7 +674,7 @@ impl<DT: Dispatch> NrLog<DT> {
         ensures
             result@.append_post(ghost_data@, replica_token@, actual_replica.view(), operations@, responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@)
     {
-        let tracked Tracked(mut ghost_data_new) = ghost_data;
+        let tracked mut ghost_data_new = ghost_data.get();
 
         let nid = replica_token.id() as usize;
 
@@ -699,9 +699,9 @@ impl<DT: Dispatch> NrLog<DT> {
         {
             // unpack stuff
             let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids} = ghost_data_new;
-            let tracked Tracked(mut cb_combiner) = cb_combiner;
-            let tracked Tracked(mut combiner) = combiner;
-            let tracked Tracked(local_updates) = local_updates;
+            let tracked mut cb_combiner = cb_combiner.get();
+            let tracked mut combiner = combiner.get();
+            let tracked local_updates = local_updates.get();
 
             if iteration == WARN_THRESHOLD {
                 print_starvation_warning(line!());
@@ -750,7 +750,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates: Tracked(local_updates), ghost_replica, combiner: Tracked(combiner), cb_combiner: Tracked(cb_combiner), request_ids: Ghost(Seq::empty())};
                 let ghost_data0 = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
 
-                let tracked Tracked(ghost_data0) = ghost_data0;
+                let tracked ghost_data0 = ghost_data0.get();
 
                 proof {
                     ghost_data_new = NrLogAppendExecDataGhost {
@@ -884,7 +884,14 @@ impl<DT: Dispatch> NrLog<DT> {
                         &&& log_entries[i]@.key == tail + i
                         &&& log_entries[i]@.instance == self.unbounded_log_instance@
                         &&& log_entries[i]@.value.node_id == nid as nat
-                        &&& log_entries[i]@.value.op == &operations[i as int]
+                        //
+                        // The following will result in a resource limit exceeded
+                        //
+                        &&& log_entries[i]@.value.op == operations[i as int]
+                        //
+                        // Adding the `&` below will fix this.
+                        //
+                        // &&& log_entries[i]@.value.op == &operations[i as int]
                     },
                     forall |i| (tail + idx) - LOG_SIZE <= i < new_tail - LOG_SIZE <==> cb_log_entries.contains_key(i),
                     forall |i| cb_log_entries.contains_key(i) ==> stored_type_inv(#[trigger] cb_log_entries.index(i), i, cell_ids[log_entry_idx(i, buffer_size) as int], self.unbounded_log_instance@),
@@ -997,7 +1004,7 @@ impl<DT: Dispatch> NrLog<DT> {
         {
             let Tracked(ghost_data0) = ghost_data_new;
             let tracked NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids } = ghost_data0;
-            let tracked Tracked(mut cb_combiner) = cb_combiner;
+            let tracked mut cb_combiner = cb_combiner.get();
 
             // let global_head = self.head.load(Ordering::Relaxed);
             let global_head = atomic_with_ghost!(
@@ -1014,7 +1021,7 @@ impl<DT: Dispatch> NrLog<DT> {
             );
 
             let (min_local_version, cb_combiner0) = self.find_min_local_version(Tracked(cb_combiner));
-            let tracked Tracked(mut cb_combiner) = cb_combiner0;
+            let tracked mut cb_combiner = cb_combiner0.get();
 
             // If we cannot advance the head further, then start
             // from the beginning of this loop again. Before doing so, try consuming
@@ -1042,13 +1049,13 @@ impl<DT: Dispatch> NrLog<DT> {
                 });
 
                 if global_tail < min_local_version + self.slog.len() as u64 - GC_FROM_HEAD as u64 {
-                    let tracked cb_combiner = Tracked(cb_combiner);
+                    let cb_combiner = Tracked(cb_combiner);
                     let tracked ghost_data_new = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
                     return Tracked(ghost_data_new);
                 }
             }
 
-            let tracked cb_combiner = Tracked(cb_combiner);
+            let cb_combiner = Tracked(cb_combiner);
             let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
             ghost_data_new = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
         }

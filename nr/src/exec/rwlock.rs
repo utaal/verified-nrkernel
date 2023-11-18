@@ -187,7 +187,7 @@ impl<T> RwLock<T> {
 
             if result == 0 {
                 let tracked mut perm = perm_opt.tracked_unwrap();
-                let tracked handle = Tracked(handle_opt.tracked_unwrap());
+                let handle = Tracked(handle_opt.tracked_unwrap());
 
                 let t = self.cell.take(Tracked(&mut perm));
 
@@ -238,7 +238,7 @@ impl<T> RwLock<T> {
                         });
 
                         if result == false {
-                            let tracked handle = Tracked(handle_opt.tracked_unwrap());
+                            let  handle = Tracked(handle_opt.tracked_unwrap());
                             return Tracked(RwLockReadGuard { handle });
                         } else {
                             let _ = atomic_with_ghost!(
