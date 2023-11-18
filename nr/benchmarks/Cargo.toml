@@ -1,0 +1,34 @@
+[package]
+name = "nrspec"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+# nothing yet
+
+[dev-dependencies]
+node-replication = { path = "../lib/node-replication/node-replication" }
+bench_utils = { path = "../lib/node-replication/bench_utils" }
+env_logger = "0.9.0"
+rand = { version = "0.8", features = ["small_rng"] }
+logging = { version = "0.4", package = "log" }
+zipf = "7.0"
+
+[features]
+
+# Make benchmark finish quickly to check if things work:
+smokebench = ["bench_utils/smokebench"]
+# Very exhaustive parameter sweep (takes a day to run on 4 sockets/192 threads):
+exhaustive = ["bench_utils/exhaustive"]
+
+
+[[bench]]
+name = "nr_hashmap"
+harness = false
+
+[[bench]]
+name = "nr_counter"
+harness = false

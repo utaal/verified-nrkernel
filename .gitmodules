@@ -1,0 +1,3 @@
+[submodule "nr/lib/node-replication"]
+	path = nr/lib/node-replication
+	url = https://github.com/vmware/node-replication.git
