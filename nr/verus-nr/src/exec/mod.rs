@@ -25,6 +25,7 @@ pub mod context;
 pub mod utils;
 
 /// a simpe cache padding for the struct fields
+#[verus::trusted]
 #[repr(align(128))]
 pub struct CachePadded<T>(pub T);
 

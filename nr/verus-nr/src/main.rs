@@ -1,5 +1,7 @@
 // the verus dependencies
 
+// trustedness: ignore this file
+
 #[allow(unused_imports)]
 use builtin::*;
 use vstd::*;

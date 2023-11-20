@@ -1,4 +1,8 @@
 #[allow(unused_imports)]
+
+// trusted: top level
+#![verus::trusted]
+
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
