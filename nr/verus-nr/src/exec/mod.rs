@@ -56,7 +56,7 @@ pub struct NodeReplicated<#[verifier::reject_recursive_types] DT: Dispatch> {
     pub /* REVIEW (crate) */ replicas: Vec<Box<Replica<DT>>>,
 
 
-    pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken<DT>>>,
+    // pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken<DT>>>,
 
     /// XXX: should that be here, or go into the NrLog / replicas?
     pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
@@ -170,7 +170,7 @@ impl<DT: Dispatch> NodeReplicated<DT> {
 
         let unbounded_log_instance = Tracked(unbounded_log_instance);
         let cyclic_buffer_instance = Tracked(cyclic_buffer_instance);
-        NodeReplicated { log, replicas: actual_replicas, thread_tokens, unbounded_log_instance, cyclic_buffer_instance }
+        NodeReplicated { log, replicas: actual_replicas, unbounded_log_instance, cyclic_buffer_instance }
     }
 
     /// Registers a thread with a given replica in the [`NodeReplicated`]
@@ -186,7 +186,7 @@ impl<DT: Dispatch> NodeReplicated<DT> {
         requires old(self).wf()
         ensures
             self.wf(),
-            result.is_Some() ==> result.get_Some_0().rid@ == replica_id@
+            result.is_Some() ==> result.get_Some_0().WF(&self.replicas[replica_id as int])
     {
         if (replica_id as usize) < self.replicas.len() {
             let mut replica : Box<Replica<DT>> = self.replicas.remove(replica_id);

@@ -842,7 +842,7 @@ impl<DT: Dispatch> Replica<DT> {
         old(self).replica_token@ == self.replica_token@,
         old(self).unbounded_log_instance@ == self.unbounded_log_instance@,
         old(self).cyclic_buffer_instance@ == self.cyclic_buffer_instance@,
-        res.is_Some() ==> res.get_Some_0().rid@ == self.spec_id()
+        res.is_Some() ==> res.get_Some_0().WF(self)
     {
         self.thread_tokens.pop()
     }
