@@ -160,6 +160,7 @@ trait NodeReplicated<DT: Dispatch + Sync>: Sized {
     spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT>;
 
     // TODO this does not properly ensures initialization I think
+    // I think it needs to return the correct initialization token
     fn new(num_replicas: usize) -> (res: Self)
         requires num_replicas == crate::constants::NUM_REPLICAS,
         ensures res.wf();
@@ -196,8 +197,39 @@ pub use crate::exec::NodeReplicated as NR;
 
 spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NodeReplicated<DT>>() -> bool { true }
 
-proof fn theorem<DT: Dispatch + Sync>()
-    ensures implements_NodeReplicated::<DT, NR<DT>>() {
+proof fn theorem_1<DT: Dispatch + Sync>()
+    ensures implements_NodeReplicated::<DT, NR<DT>>(),
+{ }
+
+use crate::spec::simple_log::SimpleLog;
+
+trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
+    spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>;
+
+    proof fn refinement_inv(vars: UnboundedLog::State<DT>)
+        requires vars.invariant(),
+        ensures Self::interp(vars).invariant();
+
+    proof fn refinement_init(post: UnboundedLog::State<DT>)
+        requires
+            post.invariant(),
+            UnboundedLog::State::init(post)
+        ensures
+            SimpleLog::State::init(Self::interp(post));
+
+    proof fn refinement_next(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>)
+        requires
+            pre.invariant(),
+            post.invariant(),
+            UnboundedLog::State::next_strong(pre, post),
+        ensures
+            SimpleLog::State::next(Self::interp(pre), Self::interp(post));
 }
+
+spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRefinesSimpleLog<DT>>() -> bool { true }
+
+proof fn theorem_2<DT: Dispatch + Sync>()
+    ensures implements_UnboundedLogRefinesSimpleLog::<DT, crate::spec::unbounded_log_refines_simplelog::RefinementProof<DT>>(),
+{ }
 
 } // verus!

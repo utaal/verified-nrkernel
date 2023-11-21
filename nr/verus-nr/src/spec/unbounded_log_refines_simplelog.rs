@@ -37,6 +37,20 @@ use super::utils::*;
 
 verus! {
 
+#[verifier::external_body]
+pub struct RefinementProof<#[verifier::reject_recursive_types] DT: Dispatch> {
+    _p: std::marker::PhantomData<DT>,
+}
+
+impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<DT> {
+    closed spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT> { interp(s) }
+    proof fn refinement_inv(vars: UnboundedLog::State<DT>) { refinement_inv(vars); }
+    proof fn refinement_init(post: UnboundedLog::State<DT>) { refinement_init(post); }
+    proof fn refinement_next(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>) {
+        refinement_next(pre, post);
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interpretation Function
 ////////////////////////////////////////////////////////////////////////////////////////////////////
