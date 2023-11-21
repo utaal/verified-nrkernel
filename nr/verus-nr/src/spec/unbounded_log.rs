@@ -1124,6 +1124,8 @@ UnboundedLog<DT: Dispatch> {
             }
         }
 
+        assert (forall |nid| (#[trigger] pre.replicas.contains_key(nid)) ==> pre.local_versions.contains_key(nid));
+
         assert forall |nid| (#[trigger] post.replicas.contains_key(nid)) implies
             post.replicas[nid] == compute_nrstate_at_version(post.log, post.current_local_version(nid)) by
         {
@@ -1231,13 +1233,15 @@ UnboundedLog<DT: Dispatch> {
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
     /// obtains the current local version for the given node depending on the combiner state
-    pub open spec fn current_local_version(&self, node_id: NodeId) -> nat {
+    pub open spec fn current_local_version(&self, node_id: NodeId) -> nat
+        recommends self.combiner.contains_key(node_id) && self.local_versions.contains_key(node_id)
+    {
         match self.combiner[node_id] {
             CombinerState::Ready                              => self.local_versions[node_id],
             CombinerState::Placed{ .. }                       => self.local_versions[node_id],
             CombinerState::LoadedLocalVersion{ lversion, .. } => lversion,
             CombinerState::Loop { lversion, .. }              => lversion,
-            CombinerState::UpdatedVersion { tail, .. } => tail
+            CombinerState::UpdatedVersion { tail, .. }        => tail,
         }
     }
 
