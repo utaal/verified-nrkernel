@@ -4,10 +4,11 @@ use builtin_macros::*;
 
 use vstd::prelude::*;
 
+use crate::Dispatch;
+
 // spec imports
 use crate::spec::{
     cyclicbuffer::CyclicBuffer,
-    types::*,
     unbounded_log::UnboundedLog,
     IsReadonlyStub, IsReadonlyTicket, IsUpdateStub, IsUpdateTicket
 };

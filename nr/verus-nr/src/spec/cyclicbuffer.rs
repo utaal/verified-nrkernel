@@ -8,6 +8,8 @@ use vstd::cell::{CellId, PointsTo};
 
 use state_machines_macros::*;
 
+use crate::Dispatch;
+
 use super::types::*;
 use super::unbounded_log::UnboundedLog;
 use super::utils::*;

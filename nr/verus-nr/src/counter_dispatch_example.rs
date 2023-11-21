@@ -2,19 +2,10 @@
 
 // trustedness: ignore this file
 
-#[allow(unused_imports)]
-use builtin::*;
-use vstd::*;
 use vstd::prelude::*;
 
-mod spec;
-mod exec;
-mod constants;
-
-use constants::NUM_REPLICAS;
-
-// spec imports
-use crate::spec::types::*;
+use crate::Dispatch;
+use crate::constants::NUM_REPLICAS;
 
 // exec imports
 use crate::exec::context::ThreadToken;
@@ -239,7 +230,7 @@ const NUM_THREADS: usize = NUM_THREADS_PER_REPLICA*NUM_REPLICAS;
 
 // #[verifier(external_body)] /* vattr */
 #[verifier::external_body] /* vattr */
-pub fn main() {
+pub fn example_main() {
 
     println!("Creating Replicated Data Structure...");
 

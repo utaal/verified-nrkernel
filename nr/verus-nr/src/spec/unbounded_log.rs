@@ -11,6 +11,8 @@ use vstd::set::Set;
 
 use state_machines_macros::*;
 
+use crate::Dispatch;
+
 use super::types::*;
 use super::utils::*;
 
