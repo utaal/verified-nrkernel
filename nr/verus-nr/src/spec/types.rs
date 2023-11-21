@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-#![verus::trusted]
+//#![verus::trusted]
 
 use builtin::*;
 use builtin_macros::*;

@@ -20,3 +20,6 @@ pub mod flat_combiner;
 
 // the RW lock
 pub mod rwlock;
+
+// rexport of the functions here
+pub use unbounded_log::{IsReadonlyTicket, IsReadonlyStub, IsUpdateStub, IsUpdateTicket};

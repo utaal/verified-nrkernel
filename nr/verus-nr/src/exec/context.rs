@@ -20,6 +20,7 @@ use crate::spec::flat_combiner::FlatCombiner;
 
 // exec imports
 use crate::exec::CachePadded;
+use crate::exec::Replica;
 use crate::exec::replica::{ReplicaToken, ReplicaId};
 
 verus! {
@@ -50,7 +51,7 @@ pub struct ThreadToken<DT: Dispatch> {
 }
 
 impl<DT: Dispatch> ThreadToken<DT> {
-    pub open spec fn wf(&self) -> bool
+    pub open spec fn wf2(&self) -> bool
     {
         &&& self.rid.wf()
         &&& self.fc_client@@.value.is_Idle()
@@ -58,6 +59,13 @@ impl<DT: Dispatch> ThreadToken<DT> {
         // &&& self.fc_client@@.instance == fc_inst
         &&& self.batch_perm@@.value.is_None()
         &&& self.fc_client@@.key == self.tid as nat
+    }
+
+    pub open spec fn WF(&self,  replica: &Replica<DT>) -> bool {
+        &&& self.wf2()
+        &&& self.rid@ == replica.spec_id()
+        &&& self.fc_client@@.instance == replica.flat_combiner_instance
+        &&& self.batch_perm@@.pcell == replica.contexts[self.thread_id_spec() as int].batch.0.id()
     }
 
     pub fn thread_id(&self) -> (result: ThreadId)
@@ -179,6 +187,7 @@ impl<DT: Dispatch> Context<DT> {
             slot@@.key == thread_id as nat
         ensures
             res.0.wf(thread_id as nat),
+            res.0.batch.0.id() == res.1@@.pcell,
             res.0.flat_combiner_instance == flat_combiner_instance,
             res.0.unbounded_log_instance == unbounded_log_instance,
             res.1@@.value.is_None()
@@ -222,9 +231,10 @@ impl<DT: Dispatch> Context<DT> {
             self.wf(self.thread_id_g@),
         ensures
             res.1@.enqueue_op_post(context_ghost@),
+            res.1@.cell_id == self.batch.0.id(),
             self.wf(self.thread_id_g@),
     {
-        let tracked FCClientRequestResponseGhost { batch_perms: batch_perms, local_updates: local_updates, fc_clients: mut fc_clients } = context_ghost.get();
+        let tracked FCClientRequestResponseGhost { batch_perms: batch_perms, cell_id, local_updates: local_updates, fc_clients: mut fc_clients } = context_ghost.get();
 
         let tracked mut batch_perms = batch_perms.tracked_unwrap();
         let tracked local_updates = local_updates.tracked_unwrap();
@@ -252,7 +262,7 @@ impl<DT: Dispatch> Context<DT> {
             }
         );
 
-        let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: None, local_updates: None, fc_clients };
+        let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: None, cell_id, local_updates: None, fc_clients };
         (true, Tracked(new_context_ghost))
     }
 
@@ -263,13 +273,13 @@ impl<DT: Dispatch> Context<DT> {
     pub fn dequeue_response(&self, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
         -> (res: (Option<DT::Response>, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
-            context_ghost@.dequeue_resp_pre(self.thread_id_g@, self.flat_combiner_instance@),
+            context_ghost@.dequeue_resp_pre(self.batch.0.id(), self.thread_id_g@, self.flat_combiner_instance@),
             self.wf(self.thread_id_g@),
         ensures
             res.1@.dequeue_resp_post(context_ghost@, res.0, self.unbounded_log_instance@),
             self.wf(self.thread_id_g@),
     {
-        let tracked FCClientRequestResponseGhost { batch_perms: mut batch_perms, local_updates: mut local_updates, fc_clients: mut fc_clients } = context_ghost.get();
+        let tracked FCClientRequestResponseGhost { batch_perms: mut batch_perms, cell_id, local_updates: mut local_updates, fc_clients: mut fc_clients } = context_ghost.get();
 
         let tracked recv_response_result;
         let res = atomic_with_ghost!(
@@ -297,10 +307,10 @@ impl<DT: Dispatch> Context<DT> {
             let tracked mut batch_perms = batch_perms.tracked_unwrap();
             let op = self.batch.0.take(Tracked(&mut batch_perms));
             let resp = op.resp.unwrap();
-            let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perms), local_updates, fc_clients };
+            let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perms), cell_id, local_updates, fc_clients };
             (Some(resp), Tracked(new_context_ghost))
         } else {
-            let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms, local_updates, fc_clients };
+            let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms, cell_id, local_updates, fc_clients };
             (None, Tracked(new_context_ghost))
         }
     }
@@ -440,6 +450,7 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation<DT>>,
 /// Request Enqueue/Dequeue ghost state
 pub tracked struct FCClientRequestResponseGhost<DT: Dispatch> {
     pub tracked batch_perms: Option<PointsTo<PendingOperation<DT>>>,
+    pub tracked cell_id: Ghost<CellId>,
     pub tracked local_updates: Option<UnboundedLog::local_updates<DT>>,
     pub tracked fc_clients: FlatCombiner::clients
 }
@@ -451,8 +462,10 @@ impl<DT: Dispatch> FCClientRequestResponseGhost<DT> {
         &&& self.local_updates.get_Some_0()@.value.is_Init()
         &&& self.local_updates.get_Some_0()@.value.get_Init_op() == op
 
+
         &&& self.batch_perms.is_Some()
-        &&& self.batch_perms.get_Some_0()@.pcell == batch_cell
+        &&& self.batch_perms.get_Some_0()@.pcell == self.cell_id
+        &&& self.cell_id == batch_cell
         &&& self.batch_perms.get_Some_0()@.value.is_None()
 
         &&& self.fc_clients@.instance == fc_inst
@@ -468,23 +481,28 @@ impl<DT: Dispatch> FCClientRequestResponseGhost<DT> {
         &&& self.fc_clients@.instance == pre.fc_clients@.instance
         &&& self.fc_clients@.key == pre.fc_clients@.key
 
+        &&& self.cell_id == pre.cell_id
         &&& self.batch_perms.is_None()
         &&& self.local_updates.is_None()
     }
 
-    pub open spec fn dequeue_resp_pre(&self, tid: nat, fc_inst: FlatCombiner::Instance) -> bool {
+    pub open spec fn dequeue_resp_pre(&self, batch_cell: CellId, tid: nat, fc_inst: FlatCombiner::Instance) -> bool {
         &&& self.fc_clients@.key == tid
         &&& self.fc_clients@.instance == fc_inst
         &&& self.fc_clients@.value.is_Waiting()
 
         &&& self.batch_perms.is_None()
         &&& self.local_updates.is_None()
+        &&& self.cell_id == batch_cell
     }
 
     pub open spec fn dequeue_resp_post(&self, pre: FCClientRequestResponseGhost<DT>, ret: Option<DT::Response>, inst: UnboundedLog::Instance<DT>) -> bool {
         &&& ret.is_Some() ==> {
+
+            &&& self.cell_id == pre.cell_id
             &&& self.batch_perms.is_Some()
             &&& self.batch_perms.get_Some_0()@.value.is_None()
+            &&& self.batch_perms.get_Some_0()@.pcell == self.cell_id
 
             &&& self.local_updates.is_Some()
             &&& self.local_updates.get_Some_0()@.instance == inst

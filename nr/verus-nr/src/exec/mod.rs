@@ -9,6 +9,7 @@ use crate::spec::{
     cyclicbuffer::CyclicBuffer,
     types::*,
     unbounded_log::UnboundedLog,
+    IsReadonlyStub, IsReadonlyTicket, IsUpdateStub, IsUpdateTicket
 };
 
 // exec imports
@@ -181,9 +182,11 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///
     ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    pub fn register(&mut self, replica_id: ReplicaId) -> Option<ThreadToken<DT>>
+    pub fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<DT>>)
         requires old(self).wf()
-        // ensures self.wf()
+        ensures
+            self.wf(),
+            result.is_Some() ==> result.get_Some_0().rid@ == replica_id@
     {
         if (replica_id as usize) < self.replicas.len() {
             let mut replica : Box<Replica<DT>> = self.replicas.remove(replica_id);
@@ -202,18 +205,23 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>) -> Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>
+    pub fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_updates<DT>>)
+        -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>),
+                           (ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>) > )
         requires
-            self.wf() && tkn.wf(),
-            tkn.fc_client@@.instance == self.replicas.spec_index(tkn.replica_id_spec() as int).flat_combiner_instance,
-            tkn.batch_perm@@.pcell == self.replicas.spec_index(tkn.replica_id_spec() as int).contexts.spec_index(tkn.thread_id_spec() as int).batch.0.id(),
+            self.wf(), // wf global node
+            tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+            IsUpdateTicket(ticket@, op, self.log.unbounded_log_instance@)
+        ensures
+            result.is_Ok() ==> IsUpdateStub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.log.unbounded_log_instance@) && result.get_Ok_0().1.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn
     {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            (&self.replicas[replica_id]).execute_mut(&self.log, op, tkn)
+            Ok(((&self.replicas[replica_id]).execute_mut(&self.log, op, tkn, ticket)))
         } else {
-            Err(tkn)
+            Err((tkn, ticket))
         }
     }
 
@@ -225,18 +233,22 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>) -> Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>
+    pub fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
+            -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>), (ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>)>)
         requires
-            self.wf() && tkn.wf(),
-            tkn.fc_client@@.instance == self.replicas.spec_index(tkn.replica_id_spec() as int).flat_combiner_instance,
-            tkn.batch_perm@@.pcell == self.replicas.spec_index(tkn.replica_id_spec() as int).contexts.spec_index(tkn.thread_id_spec() as int).batch.0.id(),
+            self.wf(), // wf global node
+            tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+            IsReadonlyTicket(ticket@, op, self.log.unbounded_log_instance@)
+        ensures
+            result.is_Ok() ==> IsReadonlyStub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.log.unbounded_log_instance@) && result.get_Ok_0().1.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn
     {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            (&self.replicas[replica_id]).execute(&self.log, op, tkn)
+            Ok((&self.replicas[replica_id]).execute(&self.log, op, tkn, ticket))
         } else {
-            Err(tkn)
+            Err((tkn, ticket))
         }
     }
 }

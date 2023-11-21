@@ -22,6 +22,7 @@ use crate::spec::cyclicbuffer::CyclicBuffer;
 use crate::spec::types::{
     ReqId, NodeId,
 };
+use crate::spec::{IsReadonlyStub, IsReadonlyTicket, IsUpdateStub, IsUpdateTicket};
 
 // exec imports
 use crate::exec::rwlock::RwLock;
@@ -219,7 +220,7 @@ pub open spec fn wf(&self) -> bool {
 
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
         &&& (forall |i| #![trigger self.thread_tokens[i]] 0 <= i < self.thread_tokens.len() ==> {
-            self.thread_tokens[i].wf()
+            self.thread_tokens[i].WF(self)
         })
     }
 
@@ -336,7 +337,11 @@ impl<DT: Dispatch> Replica<DT> {
                     &&& contexts[i].unbounded_log_instance == unbounded_log_instance
                 },
                 forall |i| #![trigger thread_tokens[i]] 0 <= i < thread_tokens.len() ==> {
-                    thread_tokens[i].wf()
+                    &&& thread_tokens[i].wf2()
+                    &&& thread_tokens[i].thread_id_spec() == i
+                    &&& thread_tokens[i].rid@ == replica_token.id_spec()
+                    &&& thread_tokens[i].fc_client@@.instance == fc_instance
+                    &&& thread_tokens[i].batch_perm@@.pcell == contexts[i].batch.0.id()
                 }
         {
             let tracked slot;
@@ -349,7 +354,6 @@ impl<DT: Dispatch> Replica<DT> {
             let ul_inst = Tracked(unbounded_log_instance.clone());
 
             let (context, batch_perm) = Context::new(idx, Tracked(slot), fc_inst, ul_inst);
-            contexts.push(context);
 
             let token = ThreadToken {
                 rid: replica_token.clone(),
@@ -358,9 +362,8 @@ impl<DT: Dispatch> Replica<DT> {
                 batch_perm
             };
 
-            thread_tokens.push(
-                token
-            );
+            contexts.push(context);
+            thread_tokens.push(token);
 
             idx = idx + 1;
         }
@@ -833,7 +836,14 @@ impl<DT: Dispatch> Replica<DT> {
 
     /// Registers a thread with this replica. Returns a [`ReplicaToken`] if the
     /// registration was successfull. None if the registration failed.
-    pub fn register(&mut self) -> Option<ThreadToken<DT>> {
+    pub fn register(&mut self) -> (res: Option<ThreadToken<DT>>)
+        requires old(self).wf()
+        ensures self.wf(),
+        old(self).replica_token@ == self.replica_token@,
+        old(self).unbounded_log_instance@ == self.unbounded_log_instance@,
+        old(self).cyclic_buffer_instance@ == self.cyclic_buffer_instance@,
+        res.is_Some() ==> res.get_Some_0().rid@ == self.spec_id()
+    {
         self.thread_tokens.pop()
     }
 
@@ -842,31 +852,40 @@ impl<DT: Dispatch> Replica<DT> {
         println!("Replica:: progress {line}");
     }
 
-
     /// Executes an immutable operation against this replica and returns a
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute(&self, slog: &NrLog<DT>, op: DT::ReadOperation, tkn: ThreadToken<DT>) -> Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>
+    pub fn execute(&self, slog: &NrLog<DT>, op: DT::ReadOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_reads<DT>>)
+        -> (result: (DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>))
         requires
             self.wf(),
             slog.wf(),
-            tkn.wf(),
+            tkn.WF(self),
+            tkn.batch_perm@@.pcell == self.contexts[tkn.thread_id_spec() as int].batch.0.id(),
             self.replica_token@ == tkn.replica_token()@,
             self.unbounded_log_instance@ == slog.unbounded_log_instance@,
-            self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@
+            self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@,
+            IsReadonlyTicket(ticket@, op, slog.unbounded_log_instance@)
+        ensures
+            result.1.WF(&self),
+            result.1.batch_perm@@.pcell == self.contexts[result.1.thread_id_spec() as int].batch.0.id(),
+            IsReadonlyStub(result.2@, ticket@@.key, result.0, slog.unbounded_log_instance@)
     {
-        let tracked local_reads : UnboundedLog::local_reads<DT>;
+        // let tracked local_reads : UnboundedLog::local_reads<DT>;
+        // proof {
+        //     let tracked ticket = self.unbounded_log_instance.borrow().readonly_start(op);
+        //     local_reads = ticket.1.get();
+        // }
+        let ghost rid : nat = ticket@@.key;
         proof {
-            let tracked ticket = self.unbounded_log_instance.borrow().readonly_start(op);
-            local_reads = ticket.1.get();
+            rid = ticket@@.key;
         }
-        let ghost rid = local_reads@.key;
         let ghost nid = tkn.replica_id_spec();
 
         // Step 1: Read the local tail value
         // let ctail = slog.get_ctail();
-        let (version_upper_bound, local_reads) = slog.get_version_upper_bound(Tracked(local_reads));
+        let (version_upper_bound, ticket) = slog.get_version_upper_bound(ticket);
 
         // Step 2: wait until the replica is synced for reads, try to combine in mean time
         // while !slog.is_replica_synced_for_reads(&self.log_tkn, ctail) {
@@ -875,30 +894,30 @@ impl<DT: Dispatch> Replica<DT> {
         //     }
         //     spin_loop();
         // }
-        let (mut is_synced, mut local_reads) = slog.is_replica_synced_for_reads(self.id(), version_upper_bound, local_reads);
+        let (mut is_synced, mut ticket) = slog.is_replica_synced_for_reads(self.id(), version_upper_bound, ticket);
         while !is_synced
             invariant
                 self.wf(),
                 slog.wf(),
-                !is_synced ==> local_reads@@.value.is_VersionUpperBound(),
-                !is_synced ==> local_reads@@.value.get_VersionUpperBound_version_upper_bound() == version_upper_bound,
-                !is_synced ==> local_reads@@.value.get_VersionUpperBound_op() == op,
-                is_synced ==> local_reads@@.value.is_ReadyToRead(),
-                is_synced ==> local_reads@@.value.get_ReadyToRead_node_id() == self.spec_id(),
-                is_synced ==> local_reads@@.value.get_ReadyToRead_op() == op,
-                local_reads@@.instance == self.unbounded_log_instance@,
-                local_reads@@.key == rid,
+                !is_synced ==> ticket@@.value.is_VersionUpperBound(),
+                !is_synced ==> ticket@@.value.get_VersionUpperBound_version_upper_bound() == version_upper_bound,
+                !is_synced ==> ticket@@.value.get_VersionUpperBound_op() == op,
+                is_synced ==> ticket@@.value.is_ReadyToRead(),
+                is_synced ==> ticket@@.value.get_ReadyToRead_node_id() == self.spec_id(),
+                is_synced ==> ticket@@.value.get_ReadyToRead_op() == op,
+                ticket@@.instance == self.unbounded_log_instance@,
+                ticket@@.key == rid,
                 slog.unbounded_log_instance@ == self.unbounded_log_instance@,
                 slog.cyclic_buffer_instance@ == self.cyclic_buffer_instance@,
         {
             self.try_combine(slog);
             spin_loop_hint();
-            let res = slog.is_replica_synced_for_reads(self.id(), version_upper_bound, local_reads);
+            let res = slog.is_replica_synced_for_reads(self.id(), version_upper_bound, ticket);
             is_synced = res.0;
-            local_reads = res.1;
+            ticket = res.1;
         }
 
-        let tracked local_reads = local_reads.get();
+        let tracked ticket = ticket.get();
 
         // Step 3: Take the read-only lock, and read the value
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
@@ -906,51 +925,50 @@ impl<DT: Dispatch> Replica<DT> {
         let replica = self.data.0.borrow(&read_handle);
         let result = replica.data.dispatch(op);
 
-        let tracked local_reads = self.unbounded_log_instance.borrow().readonly_apply(rid, replica.replica.borrow(), local_reads, replica.combiner.borrow());
+        let tracked ticket = self.unbounded_log_instance.borrow().readonly_apply(rid, replica.replica.borrow(), ticket, replica.combiner.borrow());
         self.data.0.release_read(read_handle);
 
-        // Step 4: Finish the read-only transaction, return result
-        let tracked local_reads = local_reads;
-        proof {
-            self.unbounded_log_instance.borrow().readonly_finish(rid, op, result, local_reads);
-        }
+        // // Step 4: Finish the read-only transaction, return result
+        // let tracked local_reads = local_reads;
+        // proof {
+        //     self.unbounded_log_instance.borrow().readonly_finish(rid, op, result, local_reads);
+        // }
 
         // assert(false);
-        Ok((result, tkn))
+        (result, tkn, Tracked(ticket))
     }
 
     /// Executes a mutable operation against this replica and returns a
     /// response.
     ///
     /// In Dafny this refers to do_operation
-    pub fn execute_mut(&self, slog: &NrLog<DT>, op: DT::WriteOperation, tkn: ThreadToken<DT>) -> (result: Result<(DT::Response, ThreadToken<DT>), ThreadToken<DT>>)
+    pub fn execute_mut(&self, slog: &NrLog<DT>, op: DT::WriteOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_updates<DT>>)
+            -> (result: (DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>))
         requires
             slog.wf(),
             self.wf(),
-            tkn.wf(),
+            tkn.WF(self),
+            tkn.batch_perm@@.pcell == self.contexts[tkn.thread_id_spec() as int].batch.0.id(),
             self.replica_token == tkn.replica_token(),
-            tkn.fc_client@@.instance == self.flat_combiner_instance@,
-            tkn.batch_perm@@.pcell == self.contexts.spec_index(tkn.thread_id_spec() as int).batch.0.id(),
             self.unbounded_log_instance@ == slog.unbounded_log_instance@,
-            self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@
+            self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@,
+            IsUpdateTicket(ticket@, op, slog.unbounded_log_instance@)
         ensures
-            result.is_Ok() ==> result.get_Ok_0().1.wf(),
-            result.is_Err() ==> result.get_Err_0().wf()
+            result.1.WF(self),
+            result.1.batch_perm@@.pcell == self.contexts[result.1.thread_id_spec() as int].batch.0.id(),
+            IsUpdateStub(result.2@, ticket@@.key, result.0, slog.unbounded_log_instance@)
     {
-        // start the update transaction
-        let tracked local_updates : UnboundedLog::local_updates<DT>;
-        proof {
-            let tracked ticket = self.unbounded_log_instance.borrow().update_start(op);
-            local_updates = ticket.1.get();
-        }
-        let ghost req_id = local_updates@.key;
+
+        let tracked ticket = ticket.get();
+
+        let ghost req_id : nat = ticket@.key;
 
         let ThreadToken { rid, tid, fc_client, batch_perm } = tkn;
 
         // Step 1: Enqueue the operation onto the thread local batch
         // while !self.make_pending(op.clone(), idx.tid()) {}
         // Note: if we have the thread token, this will always succeed.
-        let tracked context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perm.get()), local_updates: Some(local_updates), fc_clients: fc_client.get() };
+        let tracked context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perm.get()), cell_id: Ghost(self.contexts[tkn.thread_id_spec() as int].batch.0.id()), local_updates: Some(ticket), fc_clients: fc_client.get() };
 
         let mk_pending_res = self.make_pending(op, tid, Tracked(context_ghost));
         let context_ghost = mk_pending_res.1;
@@ -962,19 +980,17 @@ impl<DT: Dispatch> Replica<DT> {
         let response = self.get_response(slog, tid, Ghost(req_id), context_ghost);
         let context_ghost = response.1;
 
-        let tracked FCClientRequestResponseGhost { batch_perms: batch_perms, local_updates: local_updates, fc_clients: fc_clients } = context_ghost.get();
-        let tracked local_updates = local_updates.tracked_unwrap();
-        let tracked batch_perms = batch_perms.tracked_unwrap();
+        let tracked FCClientRequestResponseGhost { batch_perms: batch_perms, cell_id, local_updates: ticket, fc_clients: fc_clients } = context_ghost.get();
+        let tracked ticket = ticket.tracked_unwrap();
 
-        // finish the update transaction, return the result
-        proof {
-            self.unbounded_log_instance.borrow().update_finish(req_id, local_updates);
-        }
 
-        Ok((
+        let tracked batch_perm = batch_perms.tracked_unwrap();
+
+        (
             response.0,
-            ThreadToken { rid, tid, fc_client: Tracked(fc_clients), batch_perm: Tracked(batch_perms) }
-        ))
+            ThreadToken { rid, tid, fc_client: Tracked(fc_clients), batch_perm: Tracked(batch_perm) },
+            Tracked(ticket)
+        )
     }
 
     /// Enqueues an operation inside a thread local context. Returns a boolean
@@ -984,7 +1000,7 @@ impl<DT: Dispatch> Replica<DT> {
         requires
             self.wf(),
             0 <= tid < self.contexts.len(),
-            context_ghost@.enqueue_op_pre(tid as nat, op, self.contexts.spec_index(tid as int).batch.0.id(), self.flat_combiner_instance@, self.unbounded_log_instance@)
+            context_ghost@.enqueue_op_pre(tid as nat, op, self.contexts[tid as int].batch.0.id(), self.flat_combiner_instance@, self.unbounded_log_instance@)
         ensures
             res.1@.enqueue_op_post(context_ghost@)
     {
@@ -1001,7 +1017,7 @@ impl<DT: Dispatch> Replica<DT> {
             slog.unbounded_log_instance@ == self.unbounded_log_instance@,
             slog.cyclic_buffer_instance@ == self.cyclic_buffer_instance@,
             0 <= tid < self.contexts.len(),
-            context_ghost@.dequeue_resp_pre(tid as nat, self.flat_combiner_instance@),
+            context_ghost@.dequeue_resp_pre(self.contexts[tid as int].batch.0.id(), tid as nat, self.flat_combiner_instance@),
         ensures
             res.1@.dequeue_resp_post(context_ghost@, Some(res.0), self.unbounded_log_instance@),
     {
@@ -1020,7 +1036,7 @@ impl<DT: Dispatch> Replica<DT> {
                 context.flat_combiner_instance@ == self.flat_combiner_instance@,
                 context.unbounded_log_instance@ == self.unbounded_log_instance@,
                 0 <= iter <= RESPONSE_CHECK_INTERVAL,
-                r.is_None() ==> context_ghost_new@.dequeue_resp_pre(tid as nat, self.flat_combiner_instance@),
+                r.is_None() ==> context_ghost_new@.dequeue_resp_pre(context.batch.0.id(), tid as nat, self.flat_combiner_instance@),
                 context_ghost_new@.dequeue_resp_post(context_ghost@, r, self.unbounded_log_instance@)
         {
             if iter == RESPONSE_CHECK_INTERVAL {

@@ -271,22 +271,22 @@ pub fn main() {
                 0 => {
                     // println!(" - Thread #{tid:?}  executing Update operation {i}");
                     num_updates += 1;
-                    match counter.execute_mut(UpdateOp::Inc, tkn) {
-                        Result::Ok((ret, t)) => {
+                    match counter.execute_mut(UpdateOp::Inc, tkn, Tracked::assume_new()) {
+                        Result::Ok((ret, t, _)) => {
                             tkn = t;
                         },
-                        Result::Err(t) => {
+                        Result::Err((t, _)) => {
                             tkn = t;
                         }
                     }
                 }
                 _ => {
                     // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
-                    match  counter.execute(ReadonlyOp::Get, tkn) {
-                        Result::Ok((ret, t)) => {
+                    match  counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+                        Result::Ok((ret, t, _)) => {
                             tkn = t;
                         },
-                        Result::Err(t) => {
+                        Result::Err((t, _)) => {
                             tkn = t;
                         }
                     }
@@ -294,11 +294,11 @@ pub fn main() {
             };
 
             // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
-            match  counter.execute(ReadonlyOp::Get, tkn) {
-                Result::Ok((ret, t)) => {
+            match  counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+                Result::Ok((ret, t, _)) => {
                     tkn = t;
                 },
-                Result::Err(t) => {
+                Result::Err((t, _)) => {
                     tkn = t;
                 }
             }
@@ -307,11 +307,11 @@ pub fn main() {
         // make sure to make progress on all replicas
         for _ in 0..NUM_OPS_PER_THREAD*2  {
             std::thread::yield_now();
-            match counter.execute(ReadonlyOp::Get, tkn) {
-                Result::Ok((ret, t)) => {
+            match counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+                Result::Ok((ret, t, _)) => {
                     tkn = t;
                 },
-                Result::Err(t) => {
+                Result::Err((t, _)) => {
                     tkn = t;
                 }
             }
@@ -342,8 +342,8 @@ pub fn main() {
 
     for idx in 0..NUM_REPLICAS {
         let tkn = thread_tokens.pop().unwrap();
-        match nr_counter.execute(ReadonlyOp::Get, tkn) {
-            Result::Ok((ret, t)) => {
+        match nr_counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+            Result::Ok((ret, t, _)) => {
                 match ret {
                     ReturnType::Value(v) => {
                         println!("Replica {idx} - Final Result: {v} expected {}", NUM_THREADS * (NUM_OPS_PER_THREAD)/ 2);
