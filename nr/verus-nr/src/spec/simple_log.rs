@@ -30,6 +30,8 @@ use super::utils::*;
 // Simple Log State Machine
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+vstd::prelude::verus! {
+
 /// Represents the state of a read-request
 #[is_variant]
 pub enum ReadReq<R> {
@@ -315,6 +317,8 @@ state_machine! {
         #[inductive(no_op)]
         fn no_op_inductive(pre: Self, post: Self) { }
     }
+}
+
 }
 
 verus! {

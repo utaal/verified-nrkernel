@@ -14,6 +14,8 @@ use state_machines_macros::*;
 use super::types::*;
 use super::utils::*;
 
+vstd::prelude::verus! {
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Unbounded Log
@@ -248,8 +250,6 @@ pub enum CombinerState {
         tail: LogIdx,
     },
 }
-
-verus! {
 
 impl CombinerState {
     pub open spec fn queued_ops(self) -> Seq<ReqId> {
