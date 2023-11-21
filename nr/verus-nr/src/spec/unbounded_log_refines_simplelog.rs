@@ -6,21 +6,21 @@ use builtin_macros::*;
 
 use vstd::prelude::*;
 
-use vstd::pervasive::arbitrary;
+#[cfg(verus_keep_ghost)] use vstd::pervasive::arbitrary;
 use vstd::map::*;
 use vstd::seq::Seq;
 use vstd::seq_lib::*;
 
-use state_machines_macros::*;
+#[cfg(verus_keep_ghost)] use state_machines_macros::*;
 
 use crate::Dispatch;
 
-use super::simple_log::{
+#[cfg(verus_keep_ghost)] use super::simple_log::{
     compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
     UpdateResp as SUpdateResp,
 };
 use super::types::*;
-use super::unbounded_log::{
+#[cfg(verus_keep_ghost)] use super::unbounded_log::{
     compute_nrstate_at_version as i_nrstate_at_version, get_fresh_nat,
     ReadonlyState, UnboundedLog, UpdateState,
 };

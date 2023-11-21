@@ -1,5 +1,9 @@
 // trustedness: ignore this file
 
+// TODO fix?
+// #![feature(register_tool)]
+// #![register_tool(verifier)]
+
 #[allow(unused_imports)]
 use builtin::*;
 use vstd::*;
@@ -201,7 +205,7 @@ proof fn theorem_1<DT: Dispatch + Sync>()
     ensures implements_NodeReplicated::<DT, NR<DT>>(),
 { }
 
-use crate::spec::simple_log::SimpleLog;
+#[cfg(verus_keep_ghost)] use crate::spec::simple_log::SimpleLog;
 
 trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
     spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>;

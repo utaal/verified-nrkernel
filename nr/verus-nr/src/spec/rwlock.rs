@@ -4,7 +4,7 @@ use vstd::{ prelude::*, multiset::*};
 use state_machines_macros::tokenized_state_machine;
 
 
-tokenized_state_machine!(RwLockSpec<#[verifier::maybe_negative] T> {
+tokenized_state_machine!(RwLockSpec<#[cfg_attr(verus_keep_ghost, verifier::maybe_negative)] T> {
     fields {
         #[sharding(constant)]
         pub user_inv: Set<T>,

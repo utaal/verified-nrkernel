@@ -15,7 +15,8 @@ use crate::spec::types::{
     NodeId, ReqId, LogIdx, ConcreteLogEntry,
 };
 use crate::spec::unbounded_log::UnboundedLog;
-use crate::spec::cyclicbuffer::{CyclicBuffer, StoredType, stored_type_inv, LogicalLogIdx, log_entry_idx, log_entry_alive_value};
+use crate::spec::cyclicbuffer::{CyclicBuffer, StoredType, LogicalLogIdx};
+#[cfg(verus_keep_ghost)] use crate::spec::cyclicbuffer::{stored_type_inv, log_entry_idx, log_entry_alive_value};
 
 use crate::constants::{MAX_REQUESTS, NUM_REPLICAS, MAX_IDX, GC_FROM_HEAD, WARN_THRESHOLD, LOG_SIZE};
 use crate::exec::replica::{ReplicaToken, ReplicaId};

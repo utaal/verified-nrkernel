@@ -1,3 +1,6 @@
 [submodule "nr/lib/node-replication"]
 	path = nr/lib/node-replication
 	url = https://github.com/vmware/node-replication.git
+[submodule "verus"]
+	path = verus
+	url = git@github.com:verus-lang/verus.git

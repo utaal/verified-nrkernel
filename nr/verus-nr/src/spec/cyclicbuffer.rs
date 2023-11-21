@@ -14,7 +14,7 @@ use super::types::*;
 use super::unbounded_log::UnboundedLog;
 use super::utils::*;
 
-use vstd::prelude::OptionAdditionalFns;
+#[cfg(verus_keep_ghost)] use vstd::prelude::OptionAdditionalFns;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //

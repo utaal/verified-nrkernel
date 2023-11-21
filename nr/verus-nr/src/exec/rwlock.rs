@@ -20,7 +20,7 @@ verus! {
 /// structure used to release the exclusive write access of a lock when dropped.
 //
 /// This structure is created by the write and try_write methods on RwLockSpec.
-pub tracked struct RwLockWriteGuard<#[verifier::maybe_negative] T> {
+pub tracked struct RwLockWriteGuard<#[cfg_attr(verus_keep_ghost, verifier::maybe_negative)] T> {
     handle: Tracked<RwLockSpec::writer<PointsTo<T>>>,
     perm: Tracked<PointsTo<T>>,
 }
@@ -32,7 +32,7 @@ pub tracked struct RwLockWriteGuard<#[verifier::maybe_negative] T> {
 /// RAII structure used to release the shared read access of a lock when dropped.
 ///
 /// This structure is created by the read and try_read methods on RwLockSpec.
-pub tracked struct RwLockReadGuard<#[verifier::maybe_negative] T> {
+pub tracked struct RwLockReadGuard<#[cfg_attr(verus_keep_ghost, verifier::maybe_negative)] T> {
     handle: Tracked<RwLockSpec::reader<PointsTo<T>>>,
 }
 

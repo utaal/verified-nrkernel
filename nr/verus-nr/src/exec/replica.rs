@@ -22,7 +22,7 @@ use crate::spec::cyclicbuffer::CyclicBuffer;
 use crate::spec::types::{
     ReqId, NodeId,
 };
-use crate::{
+#[cfg(verus_keep_ghost)] use crate::{
     is_readonly_stub, is_readonly_ticket, is_update_stub, is_update_ticket
 };
 
@@ -31,7 +31,7 @@ use crate::exec::rwlock::RwLock;
 use crate::exec::CachePadded;
 use crate::exec::log::{NrLog, NrLogAppendExecDataGhost};
 use crate::exec::context::{Context, PendingOperation, ThreadId, ThreadToken, FCClientRequestResponseGhost};
-use crate::exec::utils::{rids_match, rids_match_pop, rids_match_add_rid, rids_match_add_none};
+#[cfg(verus_keep_ghost)] use crate::exec::utils::{rids_match, rids_match_pop, rids_match_add_rid, rids_match_add_none};
 
 
 verus! {
