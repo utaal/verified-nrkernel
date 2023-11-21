@@ -606,7 +606,7 @@ UnboundedLog<DT: Dispatch> {
     // Readonly Transitions
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    /// Read Request: Enter the read request operation into the system
+    /*/// Read Request: Enter the read request operation into the system
     transition!{
         readonly_start(op: DT::ReadOperation) {
             //birds_eye let rid_fn = |rid| !pre.local_reads.contains_key(rid);
@@ -615,7 +615,7 @@ UnboundedLog<DT: Dispatch> {
                 get_fresh_nat_not_in(pre.local_reads.dom(), pre.combiner);
             };
         }
-    }
+    }*/
 
     /// Read Request: Read the version of the log
     ///
@@ -655,7 +655,7 @@ UnboundedLog<DT: Dispatch> {
         }
     }
 
-    /// Read Request: remove the read request from the request from the state machine
+    /*/// Read Request: remove the read request from the request from the state machine
     transition!{
         readonly_finish(rid: ReqId, rop: DT::ReadOperation, result: DT::Response) {
             remove local_reads -= [ rid => let ReadonlyState::Done { op, ret, version_upper_bound, node_id } ];
@@ -663,13 +663,13 @@ UnboundedLog<DT: Dispatch> {
             require(op == rop);
             require(ret == result);
         }
-    }
+    }*/
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Update Transitions
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    /// Update: A new update request enters the system
+    /*/// Update: A new update request enters the system
     transition!{
         update_start(op: DT::WriteOperation) {
 
@@ -685,13 +685,13 @@ UnboundedLog<DT: Dispatch> {
                 get_fresh_nat_not_in(pre.local_updates.dom(), combiner);
             };
         }
-    }
+    }*/
 
-    pub open spec fn request_id_fresh(&self, rid: ReqId) -> bool {
+    /*pub open spec fn request_id_fresh(&self, rid: ReqId) -> bool {
         &&& !self.local_reads.contains_key(rid)
         &&& !self.local_updates.contains_key(rid)
         &&& combiner_request_id_fresh(self.combiner, rid)
-    }
+    }*/
 
     /*
     /// Combiner: Collect the operations and place them into the log
@@ -767,12 +767,12 @@ UnboundedLog<DT: Dispatch> {
         }
     }
 
-    /// Update: Remove a finished update from the system
+    /*/// Update: Remove a finished update from the system
     transition!{
         update_finish(rid:ReqId) {
             remove local_updates -= [ rid => let UpdateState::Done { ret, idx } ];
         }
-    }
+    }*/
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -959,8 +959,21 @@ UnboundedLog<DT: Dispatch> {
         // assert_maps_equal!(post.combiner, cmap);
     }
 
-    #[inductive(readonly_start)]
-    fn readonly_start_inductive(pre: Self, post: Self, op: DT::ReadOperation) { }
+    /*#[inductive(readonly_start)]
+    fn readonly_start_inductive(pre: Self, post: Self, op: DT::ReadOperation) { }*/
+
+    pub proof fn add_ticket_inductive(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        input: crate::InputOperation<DT>,
+        rid: crate::RequestId,
+    )
+        requires pre.invariant(),
+            crate::add_ticket(pre, post, input, rid),
+        ensures pre.invariant(),
+    {
+    }
+
 
     #[inductive(readonly_version_upper_bound)]
     fn readonly_version_upper_bound_inductive(pre: Self, post: Self, rid: ReqId) { }
@@ -989,10 +1002,10 @@ UnboundedLog<DT: Dispatch> {
         assert(rangeincl(vup, v, post.version_upper_bound));
     }
 
-    #[inductive(readonly_finish)]
-    fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: DT::ReadOperation, result: DT::Response) { }
+    //#[inductive(readonly_finish)]
+    //fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: DT::ReadOperation, result: DT::Response) { }
 
-    #[inductive(update_start)]
+    /*#[inductive(update_start)]
     fn update_start_inductive(pre: Self, post: Self, op: DT::WriteOperation) {
         // get the rid that has been added
         let rid = choose|rid: nat| ! #[trigger] pre.local_updates.contains_key(rid)
@@ -1015,8 +1028,7 @@ UnboundedLog<DT: Dispatch> {
 
                 }
             }
-    }
-    }
+    }*/
 
     #[inductive(update_done)]
     fn update_done_inductive(pre: Self, post: Self, rid: ReqId) {
@@ -1037,7 +1049,7 @@ UnboundedLog<DT: Dispatch> {
 
     }
 
-    #[inductive(update_finish)]
+    /*#[inductive(update_finish)]
     fn update_finish_inductive(pre: Self, post: Self, rid: ReqId) {
         assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
             match post.combiner[node_id] {
@@ -1053,7 +1065,7 @@ UnboundedLog<DT: Dispatch> {
                 _ => {}
             }
         }
-    }
+    }*/
 
     #[inductive(exec_trivial_start)]
     fn exec_trivial_start_inductive(pre: Self, post: Self, node_id: NodeId) {

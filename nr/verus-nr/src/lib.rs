@@ -8,6 +8,7 @@
 use builtin::*;
 use vstd::*;
 use vstd::prelude::*;
+use state_machines_macros::state_machine;
 
 mod spec;
 mod exec;
@@ -207,8 +208,66 @@ proof fn theorem_1<DT: Dispatch + Sync>()
 
 #[cfg(verus_keep_ghost)] use crate::spec::simple_log::SimpleLog;
 
+pub open spec fn add_ticket<DT: Dispatch>(
+    pre: UnboundedLog::State<DT>,
+    post: UnboundedLog::State<DT>,
+    input: InputOperation<DT>,
+    rid: RequestId) -> bool
+{
+    match input {
+        InputOperation::Read(read_op) => {
+            !pre.local_reads.dom().contains(rid)
+            && post == UnboundedLog::State::<DT> {
+                local_reads: pre.local_reads.insert(rid, crate::spec::unbounded_log::ReadonlyState::Init { op: read_op }),
+                .. pre
+            }
+        }
+        InputOperation::Write(write_op) => {
+            !pre.local_updates.dom().contains(rid)
+            && post == UnboundedLog::State::<DT> {
+                local_updates: pre.local_updates.insert(rid, crate::spec::unbounded_log::UpdateState::Init { op: write_op }),
+                .. pre
+            }
+        }
+    }
+}
+
+pub open spec fn consume_stub<DT: Dispatch>(
+    pre: UnboundedLog::State<DT>,
+    post: UnboundedLog::State<DT>,
+    output: OutputOperation<DT>,
+    rid: RequestId) -> bool
+{
+    match output {
+        OutputOperation::Read(response) => {
+            pre.local_reads.dom().contains(rid)
+            && pre.local_reads[rid].is_Done()
+            && pre.local_reads[rid].get_Done_ret() == response
+            && post == UnboundedLog::State::<DT> {
+              local_reads: pre.local_reads.remove(rid),
+              .. pre
+            }
+        }
+        OutputOperation::Write(response) => {
+            !pre.local_updates.dom().contains(rid)
+            && pre.local_reads[rid].is_Done()
+            && pre.local_reads[rid].get_Done_ret() == response
+            && post == UnboundedLog::State::<DT> {
+              local_updates: pre.local_updates.remove(rid),
+              .. pre
+            }
+        }
+    }
+}
+
 trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
     spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>;
+
+    // Prove that it is always possible to add a new ticket
+    proof fn finite_domains(post: UnboundedLog::State<DT>)
+        requires post.invariant(),
+        ensures post.local_reads.dom().finite(),
+            post.local_updates.dom().finite();
 
     proof fn refinement_inv(vars: UnboundedLog::State<DT>)
         requires vars.invariant(),
@@ -235,5 +294,76 @@ spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRe
 proof fn theorem_2<DT: Dispatch + Sync>()
     ensures implements_UnboundedLogRefinesSimpleLog::<DT, crate::spec::unbounded_log_refines_simplelog::RefinementProof<DT>>(),
 { }
+
+pub enum InputOperation<DT: Dispatch> {
+    Read(DT::ReadOperation),
+    Write(DT::WriteOperation),
+}
+
+pub enum OutputOperation<DT: Dispatch> {
+    Read(DT::Response),
+    Write(DT::Response),
+}
+
+pub enum AsyncLabel<DT: Dispatch> {
+    Internal,
+    Start(RequestId, InputOperation<DT>),
+    End(RequestId, InputOperation<DT>),
+}
+
+type RequestId = nat;
+
+state_machine!{ AsynchronousSingleton<DT: Dispatch> {
+    fields {
+        pub state: DT::View,
+        pub reqs: Map<RequestId, InputOperation<DT>>,
+        pub resps: Map<RequestId, OutputOperation<DT>>,
+    }
+
+    //pub type Label<DT> = AsyncLabel<DT>;
+
+    init!{
+        initialize() {
+            init state = DT::init_spec();
+            init reqs = Map::empty();
+            init resps = Map::empty();
+        }
+    }
+
+    transition!{
+        internal_next(rid: RequestId, input: InputOperation<DT>, output: OutputOperation<DT>) {
+            require pre.reqs.dom().contains(rid);
+            require pre.reqs[rid] == input;
+            update reqs = pre.reqs.remove(rid);
+            update resps = pre.resps.insert(rid, output);
+
+            match input {
+                InputOperation::Read(read_op) => {
+                    require output === OutputOperation::Read(DT::dispatch_spec(pre.state, read_op));
+                }
+                InputOperation::Write(write_op) => {
+                    let (next_state, out) = DT::dispatch_mut_spec(pre.state, write_op);
+                    require output === OutputOperation::Write(out);
+                    update state = next_state;
+                }
+            }
+        }
+    }
+
+    transition!{
+        start(rid: RequestId, input: InputOperation<DT>) {
+            require !pre.reqs.dom().contains(rid);
+            update reqs = pre.reqs.insert(rid, input);
+        }
+    }
+
+    transition!{
+        end(rid: RequestId, output: OutputOperation<DT>) {
+            require pre.resps.dom().contains(rid);
+            require pre.resps[rid] == output;
+            update resps = pre.resps.remove(rid);
+        }
+    }
+}}
 
 } // verus!

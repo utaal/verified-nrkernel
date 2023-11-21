@@ -49,6 +49,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
     proof fn refinement_next(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>) {
         refinement_next(pre, post);
     }
+    proof fn finite_domains(post: UnboundedLog::State<DT>) { }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -144,7 +145,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
 {
     case_on_next_strong! {
       pre, post, UnboundedLog::<DT> => {
-        readonly_start(op) => {
+        /*readonly_start(op) => {
 
             let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
             assert_maps_equal!(
@@ -157,7 +158,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             );
 
             SimpleLog::show::readonly_start(interp(pre), interp(post), rid, op);
-        }
+        }*/
 
         readonly_version_upper_bound(rid) => {
             let op = pre.local_reads.index(rid).get_Init_op();
@@ -180,7 +181,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
-        readonly_finish(rid, op, ret) => {
+        /*readonly_finish(rid, op, ret) => {
             // corresponds toConsumeStub_Refines_End
             // let version = 0;
 
@@ -208,7 +209,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             assert(forall |version|#[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) ==> version_in_log(pre.log, version));
 
             // assert(exists |version : nat | version_upper_bound <= version <= pre.version_upper_bound
-            // ==> VersionInLog(pre.log, version) && result_match(s.log, output, version,  s.localReads[rid].op)) by {
+            // ==> VersionInLog(pre.log, version) && result_match(s.log, output, version,  s.localReads[rid].op)) by 
 
             assert(exists |version: nat| #[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, ret, version, op)) ;
 
@@ -232,9 +233,9 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
 
             SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version, ret);
-        }
+        }*/
 
-        update_start(op) => {
+        /*update_start(op) => {
             let rid = get_fresh_nat(pre.local_updates.dom(), pre.combiner);
 
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
@@ -244,7 +245,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             );
 
             SimpleLog::show::update_start(interp(pre), interp(post), rid, op);
-        }
+        }*/
 
         update_place_ops_in_log_one(node_id, rid) => {
             let op = pre.local_updates.index(rid).get_Init_op();
@@ -266,7 +267,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             SimpleLog::show::no_op(interp(pre), interp(post));
         }
 
-        update_finish(rid) => {
+        /*update_finish(rid) => {
             let ret = pre.local_updates.index(rid).get_Done_ret();
             let idx = pre.local_updates.index(rid).get_Done_idx();
 
@@ -274,7 +275,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             assert_maps_equal!(interp(pre).update_resps.remove(rid), interp(post).update_resps);
 
             SimpleLog::show::update_finish(interp(pre), interp(post), rid);
-        }
+        }*/
 
         exec_trivial_start(node_id) => {
             SimpleLog::show::no_op(interp(pre), interp(post));
