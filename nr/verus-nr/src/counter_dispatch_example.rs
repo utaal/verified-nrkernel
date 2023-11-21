@@ -4,7 +4,7 @@
 
 use vstd::prelude::*;
 
-use crate::Dispatch;
+use crate::{Dispatch, NodeReplicated as _};
 use crate::constants::NUM_REPLICAS;
 
 // exec imports

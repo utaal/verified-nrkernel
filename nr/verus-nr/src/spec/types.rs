@@ -11,17 +11,7 @@ verus! {
 // Some Types
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// type of the node / replica id
-pub type NodeId = nat;
-
-/// the log index
-pub type LogIdx = nat;
-
-/// the request id
-pub type ReqId = nat;
-
-/// the id of a thread on a replica node
-pub type ThreadId = nat;
+pub use crate::{NodeId, LogIdx, ReqId, ThreadId};
 
 pub struct LogEntry<DT: Dispatch> {
     pub op: DT::WriteOperation,

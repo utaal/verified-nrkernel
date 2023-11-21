@@ -61,7 +61,7 @@ impl<DT: Dispatch> ThreadToken<DT> {
         &&& self.fc_client@@.key == self.tid as nat
     }
 
-    pub open spec fn WF(&self,  replica: &Replica<DT>) -> bool {
+    pub open spec fn wf(&self,  replica: &Replica<DT>) -> bool {
         &&& self.wf2()
         &&& self.rid@ == replica.spec_id()
         &&& self.fc_client@@.instance == replica.flat_combiner_instance

@@ -10,7 +10,6 @@ use crate::Dispatch;
 use crate::spec::{
     cyclicbuffer::CyclicBuffer,
     unbounded_log::UnboundedLog,
-    IsReadonlyStub, IsReadonlyTicket, IsUpdateStub, IsUpdateTicket
 };
 
 // exec imports
@@ -65,11 +64,23 @@ pub struct NodeReplicated<#[verifier::reject_recursive_types] DT: Dispatch> {
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
 }
 
+impl<DT: Dispatch> crate::ThreadToken<DT, Replica<DT>> for ThreadToken<DT> {
+    open spec fn wf(&self, replica: &Replica<DT>) -> bool {
+        ThreadToken::<DT>::wf(self, replica)
+    }
 
-/// Proof blocks for the NodeReplicate data structure
-impl<DT: Dispatch> NodeReplicated<DT> {
+    open spec fn replica_id_spec(&self) -> nat {
+        ThreadToken::<DT>::replica_id_spec(self)
+    }
+}
+
+impl<DT: Dispatch + Sync> crate::NodeReplicated<DT> for NodeReplicated<DT> {
+    type Replica = Replica<DT>;
+    type ReplicaId = ReplicaId;
+    type TT = ThreadToken<DT>;
+
     /// Wellformedness of the NodeReplicated data structure
-    pub open spec fn wf(&self) -> bool {
+    open spec fn wf(&self) -> bool {
         // the log shall be well-formed and the instances match
         &&& self.log.wf()
         &&& self.unbounded_log_instance@ == self.log.unbounded_log_instance@
@@ -87,20 +98,25 @@ impl<DT: Dispatch> NodeReplicated<DT> {
             &&& self.replicas[i].cyclic_buffer_instance@ == self.cyclic_buffer_instance@
         })
     }
-}
 
+    open spec fn replicas(&self) -> Vec<Box<Self::Replica>> {
+        self.replicas
+    }
 
-impl<DT: Dispatch> NodeReplicated<DT> {
+    open spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT> {
+        self.log.unbounded_log_instance@
+    }
+
     /// Creates a new, replicated data-structure from a single-threaded
     /// data-structure that implements [`Dispatch`]. It uses the [`Default`]
     /// constructor to create a initial data-structure for `D` on all replicas.
     ///
     ///  - Dafny: n/a ?
     ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
-    pub fn new(num_replicas: usize) -> (res: Self)
-        requires
-            num_replicas == NUM_REPLICAS
-        ensures res.wf()
+    fn new(num_replicas: usize) -> (res: Self)
+        // requires
+        //     num_replicas == NUM_REPLICAS
+        // ensures res.wf()
     {
         let (log, replica_tokens, nr_log_tokens) = NrLog::new(num_replicas, LOG_SIZE);
 
@@ -184,11 +200,11 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///
     ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    pub fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<DT>>)
-        requires old(self).wf()
-        ensures
-            self.wf(),
-            result.is_Some() ==> result.get_Some_0().WF(&self.replicas[replica_id as int])
+    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<DT>>)
+        // requires old(self).wf()
+        // ensures
+        //     self.wf(),
+        //     result.is_Some() ==> result.get_Some_0().WF(&self.replicas[replica_id as int])
     {
         if (replica_id as usize) < self.replicas.len() {
             let mut replica : Box<Replica<DT>> = self.replicas.remove(replica_id);
@@ -207,16 +223,16 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_updates<DT>>)
+    fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_updates<DT>>)
         -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>),
                            (ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>) > )
-        requires
-            self.wf(), // wf global node
-            tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
-            IsUpdateTicket(ticket@, op, self.log.unbounded_log_instance@)
-        ensures
-            result.is_Ok() ==> IsUpdateStub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.log.unbounded_log_instance@) && result.get_Ok_0().1.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
-            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn
+        // requires
+        //     self.wf(), // wf global node
+        //     tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+        //     is_update_ticket(ticket@, op, self.log.unbounded_log_instance@)
+        // ensures
+        //     result.is_Ok() ==> is_update_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.log.unbounded_log_instance@) && result.get_Ok_0().1.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+        //     result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn
     {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
@@ -235,15 +251,15 @@ impl<DT: Dispatch> NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    pub fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
+    fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
             -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>), (ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>)>)
-        requires
-            self.wf(), // wf global node
-            tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
-            IsReadonlyTicket(ticket@, op, self.log.unbounded_log_instance@)
-        ensures
-            result.is_Ok() ==> IsReadonlyStub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.log.unbounded_log_instance@) && result.get_Ok_0().1.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
-            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn
+        // requires
+        //     self.wf(), // wf global node
+        //     tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+        //     is_readonly_ticket(ticket@, op, self.log.unbounded_log_instance@)
+        // ensures
+        //     result.is_Ok() ==> is_readonly_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.log.unbounded_log_instance@) && result.get_Ok_0().1.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
+        //     result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn
     {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {

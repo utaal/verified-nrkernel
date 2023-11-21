@@ -22,7 +22,9 @@ use crate::spec::cyclicbuffer::CyclicBuffer;
 use crate::spec::types::{
     ReqId, NodeId,
 };
-use crate::spec::{IsReadonlyStub, IsReadonlyTicket, IsUpdateStub, IsUpdateTicket};
+use crate::{
+    is_readonly_stub, is_readonly_ticket, is_update_stub, is_update_ticket
+};
 
 // exec imports
 use crate::exec::rwlock::RwLock;
@@ -220,7 +222,7 @@ pub open spec fn wf(&self) -> bool {
 
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
         &&& (forall |i| #![trigger self.thread_tokens[i]] 0 <= i < self.thread_tokens.len() ==> {
-            self.thread_tokens[i].WF(self)
+            self.thread_tokens[i].wf(self)
         })
     }
 
@@ -842,7 +844,7 @@ impl<DT: Dispatch> Replica<DT> {
         old(self).replica_token@ == self.replica_token@,
         old(self).unbounded_log_instance@ == self.unbounded_log_instance@,
         old(self).cyclic_buffer_instance@ == self.cyclic_buffer_instance@,
-        res.is_Some() ==> res.get_Some_0().WF(self)
+        res.is_Some() ==> res.get_Some_0().wf(self)
     {
         self.thread_tokens.pop()
     }
@@ -861,16 +863,16 @@ impl<DT: Dispatch> Replica<DT> {
         requires
             self.wf(),
             slog.wf(),
-            tkn.WF(self),
+            tkn.wf(self),
             tkn.batch_perm@@.pcell == self.contexts[tkn.thread_id_spec() as int].batch.0.id(),
             self.replica_token@ == tkn.replica_token()@,
             self.unbounded_log_instance@ == slog.unbounded_log_instance@,
             self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@,
-            IsReadonlyTicket(ticket@, op, slog.unbounded_log_instance@)
+            is_readonly_ticket(ticket@, op, slog.unbounded_log_instance@)
         ensures
-            result.1.WF(&self),
+            result.1.wf(&self),
             result.1.batch_perm@@.pcell == self.contexts[result.1.thread_id_spec() as int].batch.0.id(),
-            IsReadonlyStub(result.2@, ticket@@.key, result.0, slog.unbounded_log_instance@)
+            is_readonly_stub(result.2@, ticket@@.key, result.0, slog.unbounded_log_instance@)
     {
         // let tracked local_reads : UnboundedLog::local_reads<DT>;
         // proof {
@@ -947,16 +949,16 @@ impl<DT: Dispatch> Replica<DT> {
         requires
             slog.wf(),
             self.wf(),
-            tkn.WF(self),
+            tkn.wf(self),
             tkn.batch_perm@@.pcell == self.contexts[tkn.thread_id_spec() as int].batch.0.id(),
             self.replica_token == tkn.replica_token(),
             self.unbounded_log_instance@ == slog.unbounded_log_instance@,
             self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@,
-            IsUpdateTicket(ticket@, op, slog.unbounded_log_instance@)
+            is_update_ticket(ticket@, op, slog.unbounded_log_instance@)
         ensures
-            result.1.WF(self),
+            result.1.wf(self),
             result.1.batch_perm@@.pcell == self.contexts[result.1.thread_id_spec() as int].batch.0.id(),
-            IsUpdateStub(result.2@, ticket@@.key, result.0, slog.unbounded_log_instance@)
+            is_update_stub(result.2@, ticket@@.key, result.0, slog.unbounded_log_instance@)
     {
 
         let tracked ticket = ticket.get();
