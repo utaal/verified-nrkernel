@@ -1,0 +1,7 @@
+[package]
+name = "nr_counter"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+verus-nr = { path = "../../verus-nr" }

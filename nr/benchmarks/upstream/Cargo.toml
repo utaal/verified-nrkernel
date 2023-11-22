@@ -10,8 +10,8 @@ edition = "2021"
 # nothing yet
 
 [dev-dependencies]
-node-replication = { path = "../lib/node-replication/node-replication" }
-bench_utils = { path = "../lib/node-replication/bench_utils" }
+node-replication = { path = "../../lib/node-replication/node-replication" }
+bench_utils = { path = "../../lib/node-replication/bench_utils" }
 env_logger = "0.9.0"
 rand = { version = "0.8", features = ["small_rng"] }
 logging = { version = "0.4", package = "log" }
