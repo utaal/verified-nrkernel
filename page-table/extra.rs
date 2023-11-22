@@ -15,71 +15,77 @@ use vstd::prelude::*;
 use crate::definitions_t::{aligned, bit, bitmask_inc};
 use vstd::map::*;
 
-#[verifier(external_body)]
-pub proof fn mod_of_mul_auto() {
-    ensures(forall|a: nat, b: nat| b > 0 ==> aligned(#[trigger] (a * b), b));
+pub proof fn mod_of_mul_auto() 
+    ensures forall|a: nat, b: nat| b > 0 ==> aligned(#[trigger] (a * b), b),
+{
+    assert forall|a: nat, b: nat| b > 0 implies aligned(#[trigger] (a * b), b) by {
+        mod_of_mul(a, b);
+    }
 }
 
 #[verifier(external_body)]
-pub proof fn mod_of_mul(a: nat, b: nat) // by (nonlinear_arith)
+pub proof fn mod_of_mul(a: nat, b: nat)
     requires b > 0,
     ensures aligned(a * b, b),
 {
-    // assert((a * b) % b < b);
-    // assert((a * b) % b == 0);
+    assert((a * b) % b < b) by (nonlinear_arith)
+        requires b != 0
+    {
+    }
 }
 
-#[verifier(external_body)]
-pub proof fn mod_add_zero(a: nat, b: nat, c: nat) {
-    requires([
-        aligned(a, c),
-        aligned(b, c),
-        c > 0,
-    ]);
-    ensures(aligned(a + b, c));
+pub proof fn mod_add_zero(a: nat, b: nat, c: nat)
+    requires aligned(a, c), aligned(b, c), c > 0,
+    ensures aligned(a + b, c),
+{
+    assert((a + b) % c == 0) by (nonlinear_arith)
+        requires a % c == 0 && b % c == 0 && c != 0
+    {
+        assume(false); // times out
+    }
 }
 
-#[verifier(external_body)]
-pub proof fn subtract_mod_aligned(a: nat, b: nat) {
-    requires(0 < b);
-    ensures(aligned((a - (a % b)) as nat, b));
+pub proof fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat)
+    requires aligned(a, b * c), c > 0,
+    ensures aligned(a, b),
+{
+    assert(a % b == 0) by (nonlinear_arith)
+        requires a % (b * c) == 0 && c != 0,
+    {
+        // assert((a % b) * (a % c) == 0); // times out
+        assume(false);
+    }
 }
 
-#[verifier(external_body)]
-pub proof fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat) {
-    requires([
-        aligned(a, b * c),
-        c > 0,
-    ]);
-    ensures(aligned(a, b));
+pub proof fn subtract_mod_eq_zero(a: nat, b: nat, c: nat)
+    requires c > 0, aligned(a, c), aligned(b, c), a <= b,
+    ensures aligned((b - a) as nat, c)
+{
+    assert(((b - a) as nat) % c == 0) by (nonlinear_arith)
+        requires c > 0 && a % c == 0 && b % c == 0 && a <= b,
+    {
+        assume(false); // times out
+    }
 }
 
-#[verifier(external_body)]
-pub proof fn subtract_mod_eq_zero(a: nat, b: nat, c: nat) {
-    requires([
-             c > 0,
-             aligned(a, c),
-             aligned(b, c),
-             a <= b,
-    ]);
-    ensures(aligned((b - a) as nat, c));
+pub proof fn leq_add_aligned_less(a: nat, b: nat, c: nat)
+    requires 0 < b, a < c, aligned(a, b), aligned(c, b),
+    ensures a + b <= c,
+{
+    assert(a + b <= c) by (nonlinear_arith)
+        requires 0 < b, a < c && a % b == 0 && c % b == 0,
+    {
+        assume(false); // times out
+    }
+
 }
 
-// TODO: what a horrible lemma name
-#[verifier(external_body)]
-pub proof fn leq_add_aligned_less(a: nat, b: nat, c: nat) {
-    requires([
-             0 < b,
-             a < c,
-             aligned(a, b),
-             aligned(c, b),
-    ]);
-    ensures(a + b <= c);
-}
-
-#[verifier(external_body)]
-pub proof fn aligned_transitive_auto() {
-    ensures(forall|a: nat, b: nat, c: nat| 0 < b && 0 < c && aligned(a, b) && aligned(b, c) ==> aligned(a, c));
+pub proof fn aligned_transitive_auto()
+    ensures forall|a: nat, b: nat, c: nat| 0 < b && 0 < c && aligned(a, b) && aligned(b, c) ==> aligned(a, c),
+{
+    assert forall|a: nat, b: nat, c: nat| 0 < b && 0 < c && aligned(a, b) && aligned(b, c) implies aligned(a, c) by {
+        aligned_transitive(a, b, c);
+    }
 }
 
 #[verifier(external_body)]
