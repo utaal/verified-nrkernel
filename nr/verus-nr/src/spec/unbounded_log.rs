@@ -458,7 +458,7 @@ UnboundedLog<DT: Dispatch> {
                 // the local tail should always be smaller or equal to the global tail
                 &&& lversion <= tail
                 // the log now contains all entries up to localtail
-                // &&& LogContainsEntriesUpToHere(self.log, lversion)
+                &&& LogContainsEntriesUpToHere(self.log, lversion)
                 &&& 0 <= idx <= queued_ops.len()
                 &&& LogRangeMatchesQueue(queued_ops, self.log, idx, lversion, tail, node_id, self.local_updates)
                 &&& LogRangeNoNodeId(self.log, tail, self.tail, node_id)
@@ -474,7 +474,7 @@ UnboundedLog<DT: Dispatch> {
                 // the local tail should be smaller than this one here
                 &&& self.local_versions[node_id] <= tail
                 // the log now contains all entries up to tail
-                // &&& LogContainsEntriesUpToHere(self.log, tail)
+                &&& LogContainsEntriesUpToHere(self.log, tail)
                 &&& LogRangeNoNodeId(self.log, tail, self.tail, node_id)
                 &&& QueueRidsUpdateDone(queued_ops, self.local_updates, queued_ops.len())
                 &&& seq_unique(queued_ops)

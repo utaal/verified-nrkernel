@@ -21,7 +21,7 @@ use crate::{Dispatch, InputOperation, OutputOperation, RequestId};
 };
 use super::types::*;
 #[cfg(verus_keep_ghost)] use super::unbounded_log::{
-    compute_nrstate_at_version as i_nrstate_at_version, get_fresh_nat,
+    compute_nrstate_at_version as i_nrstate_at_version,
     ReadonlyState, UnboundedLog, UpdateState,
 };
 use super::utils::*;
@@ -61,13 +61,63 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
 
     proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>) {
         let rid = Self::get_fresh_rid(pre);
+        crate::spec::unbounded_log::get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         UnboundedLog::State::add_ticket_inductive(pre, post, input, rid);
-        // TODO commented code from refinement_next proof should go here
+        match input {
+            InputOperation::Read(read_op) => {
+                assert_maps_equal!(
+                    pre.local_reads.insert(rid, ReadonlyState::Init {op: read_op}),
+                    post.local_reads
+                );
+                assert_maps_equal!(
+                    interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op: read_op}),
+                    interp(post).readonly_reqs
+                );
+                SimpleLog::show::readonly_start(interp(pre), interp(post), rid, read_op);
+            }
+            InputOperation::Write(write_op) => {
+                assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
+                assert_maps_equal!(
+                    interp(pre).update_reqs.insert(rid, write_op),
+                    interp(post).update_reqs
+                );
+                SimpleLog::show::update_start(interp(pre), interp(post), rid, write_op);
+            }
+        }
     }
 
     proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: RequestId) {
         UnboundedLog::State::consume_stub_inductive(pre, post, output, rid);
-        // TODO commented code from refinement_next proof should go here
+        match output {
+            OutputOperation::Read(response) => {
+                let op = pre.local_reads.index(rid).get_Done_op();
+                let version_upper_bound = pre.local_reads.index(rid).get_Done_version_upper_bound();
+
+                assert(exists |version: nat| #[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, response, version, op)) ;
+
+                let version : nat = choose |version| {
+                    version_upper_bound <= version <= pre.version_upper_bound
+                    && #[trigger] result_match(pre.log, response, version, op)
+                };
+
+                assert(response == DT::dispatch_spec(interp(pre).nrstate_at_version(version), op)) by {
+                    state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
+                }
+
+                assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
+                assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+                assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
+
+                SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version, response);
+
+            }
+            OutputOperation::Write(response) => {
+                assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+                assert_maps_equal!(interp(pre).update_resps.remove(rid), interp(post).update_resps);
+
+                SimpleLog::show::update_finish(interp(pre), interp(post), rid);
+            }
+        }
     }
 }
 
