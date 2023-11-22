@@ -249,9 +249,9 @@ pub open spec fn consume_stub<DT: Dispatch>(
             }
         }
         OutputOperation::Write(response) => {
-            !pre.local_updates.dom().contains(rid)
-            && pre.local_reads[rid].is_Done()
-            && pre.local_reads[rid].get_Done_ret() == response
+            pre.local_updates.dom().contains(rid)
+            && pre.local_updates[rid].is_Done()
+            && pre.local_updates[rid].get_Done_ret() == response
             && post == UnboundedLog::State::<DT> {
               local_updates: pre.local_updates.remove(rid),
               .. pre
