@@ -962,19 +962,6 @@ UnboundedLog<DT: Dispatch> {
     /*#[inductive(readonly_start)]
     fn readonly_start_inductive(pre: Self, post: Self, op: DT::ReadOperation) { }*/
 
-    pub proof fn add_ticket_inductive(
-        pre: UnboundedLog::State<DT>,
-        post: UnboundedLog::State<DT>,
-        input: crate::InputOperation<DT>,
-        rid: crate::RequestId,
-    )
-        requires pre.invariant(),
-            crate::add_ticket(pre, post, input, rid),
-        ensures pre.invariant(),
-    {
-    }
-
-
     #[inductive(readonly_version_upper_bound)]
     fn readonly_version_upper_bound_inductive(pre: Self, post: Self, rid: ReqId) { }
 
@@ -1004,6 +991,40 @@ UnboundedLog<DT: Dispatch> {
 
     //#[inductive(readonly_finish)]
     //fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: DT::ReadOperation, result: DT::Response) { }
+
+    pub proof fn add_ticket_inductive(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        input: crate::InputOperation<DT>,
+        rid: crate::RequestId,
+    )
+        requires pre.invariant(),
+            crate::add_ticket(pre, post, input, rid),
+        ensures pre.invariant(),
+    {
+        match input {
+            crate::InputOperation::Read(op) => { }
+            crate::InputOperation::Write(op) => {
+                assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
+                    assert(post.combiner[node_id] == pre.combiner[node_id]);
+                    match post.combiner[node_id] {
+                        CombinerState::Placed { queued_ops } => {
+                            LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
+                        }
+                        CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
+                            LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
+                        }
+                        CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
+                            LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
+                        }
+                        _ => {
+
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /*#[inductive(update_start)]
     fn update_start_inductive(pre: Self, post: Self, op: DT::WriteOperation) {
@@ -1046,7 +1067,37 @@ UnboundedLog<DT: Dispatch> {
                 _ => {}
             }
         }
+    }
 
+    pub proof fn consume_stub_inductive(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        output: crate::OutputOperation<DT>,
+        rid: crate::RequestId,
+    )
+        requires pre.invariant(),
+            crate::consume_stub(pre, post, output, rid),
+        ensures pre.invariant(),
+    {
+        match output {
+            crate::OutputOperation::Read(op) => { }
+            crate::OutputOperation::Write(op) => {
+                assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
+                    match post.combiner[node_id] {
+                        CombinerState::Placed { queued_ops } => {
+                            LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
+                        }
+                        CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
+                            LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
+                        }
+                        CombinerState::Loop { queued_ops, idx, lversion, tail } => {
+                            LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     /*#[inductive(update_finish)]

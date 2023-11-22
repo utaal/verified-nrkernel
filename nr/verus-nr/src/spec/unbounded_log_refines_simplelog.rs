@@ -52,11 +52,13 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
     proof fn finite_domains(post: UnboundedLog::State<DT>) { }
 
     proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>, rid: RequestId) {
-        // TODO
+        UnboundedLog::State::add_ticket_inductive(pre, post, input, rid);
+        // TODO commented code from refinement_next proof should go here
     }
 
     proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: RequestId) {
-        // TODO
+        UnboundedLog::State::consume_stub_inductive(pre, post, output, rid);
+        // TODO commented code from refinement_next proof should go here
     }
 }
 
