@@ -214,22 +214,22 @@ pub open spec fn add_ticket<DT: Dispatch>(
     input: InputOperation<DT>,
     rid: RequestId) -> bool
 {
-    match input {
+    !pre.local_reads.dom().contains(rid)
+    && !pre.local_updates.dom().contains(rid)
+    && (match input {
         InputOperation::Read(read_op) => {
-            !pre.local_reads.dom().contains(rid)
             && post == UnboundedLog::State::<DT> {
                 local_reads: pre.local_reads.insert(rid, crate::spec::unbounded_log::ReadonlyState::Init { op: read_op }),
                 .. pre
             }
         }
         InputOperation::Write(write_op) => {
-            !pre.local_updates.dom().contains(rid)
             && post == UnboundedLog::State::<DT> {
                 local_updates: pre.local_updates.insert(rid, crate::spec::unbounded_log::UpdateState::Init { op: write_op }),
                 .. pre
             }
         }
-    }
+    })
 }
 
 pub open spec fn consume_stub<DT: Dispatch>(
@@ -331,6 +331,7 @@ pub enum OutputOperation<DT: Dispatch> {
     Write(DT::Response),
 }
 
+#[is_variant]
 pub enum AsyncLabel<DT: Dispatch> {
     Internal,
     Start(RequestId, InputOperation<DT>),
@@ -391,5 +392,93 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
         }
     }
 }}
+
+#[is_variant]
+pub enum SimpleLogBehavior<DT: Dispatch> {
+    Stepped(SimpleLog::State<DT>, AsyncLabel<DT>, Box<SimpleLogBehavior<DT>>),
+    Inited(SimpleLog::State<DT>),
+}
+
+impl<DT: Dispatch> SimpleLogBehavior<DT> {
+    pub open spec fn get_last(self) -> SimpleLog::State<DT> {
+        match self {
+            SimpleLogBehavior::Stepped(post, op, tail) => post,
+            SimpleLogBehavior::Inited(post) => post,
+        }
+    }
+
+    pub open spec fn wf(self) -> bool
+        decreases self,
+    {
+        match self {
+            SimpleLogBehavior::Stepped(post, op, tail) => {
+                tail.wf() && SimpleLog::State::next(/* op, */ tail.get_last(), post)
+            }
+            SimpleLogBehavior::Inited(post) => {
+                SimpleLog::State::init(post)
+            }
+        }
+    }
+}
+
+#[is_variant]
+pub enum AsynchronousSingletonBehavior<DT: Dispatch> {
+    Stepped(AsynchronousSingleton::State<DT>, AsyncLabel<DT>, Box<AsynchronousSingletonBehavior<DT>>),
+    Inited(AsynchronousSingleton::State<DT>),
+}
+
+impl<DT: Dispatch> AsynchronousSingletonBehavior<DT> {
+    pub open spec fn get_last(self) -> AsynchronousSingleton::State<DT> {
+        match self {
+            AsynchronousSingletonBehavior::Stepped(post, op, tail) => post,
+            AsynchronousSingletonBehavior::Inited(post) => post,
+        }
+    }
+
+    pub open spec fn wf(self) -> bool
+        decreases self,
+    {
+        match self {
+            AsynchronousSingletonBehavior::Stepped(post, op, tail) => {
+                tail.wf() && AsynchronousSingleton::State::next(/* op, */ tail.get_last(), post)
+            }
+            AsynchronousSingletonBehavior::Inited(post) => {
+                AsynchronousSingleton::State::init(post)
+            }
+        }
+    }
+}
+
+pub open spec fn behavior_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, b: AsynchronousSingletonBehavior<DT>) -> bool
+    decreases a, b
+{
+    (a.is_Inited() && b.is_Inited())
+    // We can either take an 'internal' step on a and do nothing on b
+    || (match a {
+        SimpleLogBehavior::Stepped(state, op, tail) => op.is_Internal() && behavior_equiv(*tail, b),
+        _ => false
+    })
+    // Or an 'internal' step on b and nothing on a
+    || (match b {
+        AsynchronousSingletonBehavior::Stepped(state, op, tail) => op.is_Internal() && behavior_equiv(a, *tail),
+        _ => false,
+    })
+    // Or take the same step on both
+    || (match a {
+        SimpleLogBehavior::Stepped(_state1, op1, tail1) => {
+            match b {
+                AsynchronousSingletonBehavior::Stepped(_state2, op2, tail2) => op1 == op2 && behavior_equiv(*tail1, *tail2),
+                _ => false,
+            }
+        }
+        _ => false
+    })
+}
+
+trait SimpleLogRefinesAsynchronousSingleton<DT: Dispatch> {
+    proof fn exists_equiv_behavior(a: SimpleLogBehavior<DT>) -> (b: AsynchronousSingletonBehavior<DT>)
+        requires a.wf(),
+        ensures b.wf() && behavior_equiv(a, b);
+}
 
 } // verus!

@@ -1010,15 +1010,18 @@ UnboundedLog<DT: Dispatch> {
                     match post.combiner[node_id] {
                         CombinerState::Placed { queued_ops } => {
                             LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
+                            assert(post.wf_combiner_for_node_id(node_id));
                         }
                         CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
                             LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
+                            assert(post.wf_combiner_for_node_id(node_id));
                         }
                         CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
                             LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
+                            assert(post.wf_combiner_for_node_id(node_id));
                         }
                         _ => {
-
+                            assert(post.wf_combiner_for_node_id(node_id));
                         }
                     }
                 }
