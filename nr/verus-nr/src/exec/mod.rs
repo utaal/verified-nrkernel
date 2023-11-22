@@ -74,10 +74,26 @@ impl<DT: Dispatch> crate::ThreadTokenT<DT, Replica<DT>> for ThreadToken<DT> {
     }
 }
 
-impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
-    type Replica = Replica<DT>;
+impl<DT: Dispatch> for NodeReplicated {
+    fn create(num_replicas: usize) -> (res: Self)
+        requires num_replicas == crate::constants::NUM_REPLICAS,
+        ensures res.wf()
+    {
+
+    }
+
+    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<Self::TT>)
+    requires old(self).wf(),
+    ensures
+        self.wf(),
+        result.is_Some() ==> result.get_Some_0().wf(&self.replicas()[replica_id as int]);
+}
+
+impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
+    type Replica = Replica<T>;
     type ReplicaId = ReplicaId;
-    type TT = ThreadToken<DT>;
+    type TT = ThreadToken<T>;
+    type DT = T;
 
     /// Wellformedness of the NodeReplicated data structure
     open spec fn wf(&self) -> bool {
@@ -103,7 +119,7 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
         self.replicas
     }
 
-    open spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT> {
+    open spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<Self::DT> {
         self.log.unbounded_log_instance@
     }
 
@@ -113,7 +129,7 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
     ///
     ///  - Dafny: n/a ?
     ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
-    fn new(num_replicas: usize) -> (res: Self)
+    fn create(num_replicas: usize) -> (res: Self)
         // requires
         //     num_replicas == NUM_REPLICAS
         // ensures res.wf()
@@ -129,8 +145,8 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
             cyclic_buffer_instance: cyclic_buffer_instance,
         } = nr_log_tokens.get();
 
-        let mut actual_replicas : Vec<Box<Replica<DT>>> = Vec::new();
-        let mut thread_tokens : Vec<Vec<ThreadToken<DT>>> = Vec::new();
+        let mut actual_replicas : Vec<Box<Replica<T>>> = Vec::new();
+        let mut thread_tokens : Vec<Vec<ThreadToken<T>>> = Vec::new();
         let mut idx = 0;
         while idx < num_replicas
             invariant
@@ -149,7 +165,7 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
                     &&& #[trigger]  replicas.contains_key(i)
                     &&& replicas[i]@.instance == unbounded_log_instance
                     &&& replicas[i]@.key == i
-                    &&& replicas[i]@.value == DT::init_spec()
+                    &&& replicas[i]@.value == T::init_spec()
                 }),
                 (forall |i| #![trigger combiners[i]] idx <= i < num_replicas ==> {
                     &&& #[trigger] combiners.contains_key(i)
@@ -200,15 +216,15 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
     ///
     ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<DT>>)
+    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<T>>)
         // requires old(self).wf()
         // ensures
         //     self.wf(),
         //     result.is_Some() ==> result.get_Some_0().WF(&self.replicas[replica_id as int])
     {
         if (replica_id as usize) < self.replicas.len() {
-            let mut replica : Box<Replica<DT>> = self.replicas.remove(replica_id);
-            let res : Option<ThreadToken<DT>> = (*replica).register();
+            let mut replica : Box<Replica<T>> = self.replicas.remove(replica_id);
+            let res : Option<ThreadToken<T>> = (*replica).register();
             self.replicas.insert(replica_id, replica);
             res
         } else {
@@ -223,9 +239,9 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_updates<DT>>)
-        -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>),
-                           (ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>) > )
+    fn execute_mut(&self, op: T::WriteOperation, tkn: ThreadToken<T>, ticket: Tracked<UnboundedLog::local_updates<T>>)
+        -> (result: Result<(T::Response, ThreadToken<T>, Tracked<UnboundedLog::local_updates<T>>),
+                           (ThreadToken<T>, Tracked<UnboundedLog::local_updates<T>>) > )
         // requires
         //     self.wf(), // wf global node
         //     tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
@@ -237,7 +253,7 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
         let replica_id = tkn.replica_id() as usize;
         if replica_id < self.replicas.len() {
             // get the replica/node, execute it with the log and provide the thread id.
-            Ok(((&self.replicas[replica_id]).execute_mut(&self.log, op, tkn, ticket)))
+            Ok((&self.replicas[replica_id]).execute_mut(&self.log, op, tkn, ticket))
         } else {
             Err((tkn, ticket))
         }
@@ -251,8 +267,8 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
-            -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>), (ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>)>)
+    fn execute(&self, op: T::ReadOperation, tkn: ThreadToken<T>,  ticket: Tracked<UnboundedLog::local_reads<T>>)
+            -> (result: Result<(T::Response, ThreadToken<T>, Tracked<UnboundedLog::local_reads<T>>), (ThreadToken<T>, Tracked<UnboundedLog::local_reads<T>>)>)
         // requires
         //     self.wf(), // wf global node
         //     tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),

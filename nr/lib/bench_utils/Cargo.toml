@@ -14,7 +14,7 @@ authors = [
 debug = true
 
 [dependencies]
-verus-nr = { path = "../../verus-nr" }
+node-replication = { path = "../node-replication/node-replication" }
 arr_macro = "0.1.2"
 core_affinity = "0.5.10"
 crossbeam-utils = { version = "0.8", default-features = false }
@@ -27,8 +27,10 @@ parking_lot = "0.12"
 rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1", features = ["derive"] }
 static_assertions = "1.1.0"
+urcu-sys = "=0.0.5"
 nix = { version = "0.24", features = ["sched"] }
-builtin = { path = "../../../verus/source/builtin" }
+tokio = { version = "1.11.0", features = ["full"] }
+async-trait = "0.1.51"
 
 [features]
 smokebench = []

@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 use std::fmt::Debug;
 use std::marker::Sync;
+use std::time::Duration;
 
 use logging::warn;
 use rand::seq::SliceRandom;
@@ -14,7 +15,7 @@ use bench_utils::benchmark::*;
 use bench_utils::mkbench::{self, DsInterface};
 use bench_utils::topology::ThreadMapping;
 use bench_utils::Operation;
-use node_replication::nr::{Dispatch, NodeReplicated};
+use verus_nr::{Dispatch, NodeReplicated, NR};
 
 
 /// The initial amount of entries all Hashmaps are initialized with
@@ -72,16 +73,31 @@ impl NrCounter {
 impl Default for NrCounter {
     /// Return a dummy hash-map with `INITIAL_CAPACITY` elements.
     fn default() -> NrCounter {
-        NrCounter { counter: 0 }
+        NrCounter::init()
     }
 }
 
 impl Dispatch for NrCounter {
-    type ReadOperation<'rop> = OpRd;
+    type ReadOperation = OpRd;
     type WriteOperation = OpWr;
     type Response = Result<u64, ()>;
+    type View = NrCounter;
 
-    fn dispatch<'rop>(&self, op: Self::ReadOperation<'rop>) -> Self::Response {
+    fn init() ->  Self
+    {
+        NrCounter { counter: 0 }
+    }
+
+    // partial eq also add an exec operation
+    fn clone_write_op(op: &Self::WriteOperation) -> Self::WriteOperation{
+        op.clone()
+    }
+
+    fn clone_response(op: &Self::Response) -> Self::Response {
+        op.clone()
+    }
+
+    fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
         match op {
             OpRd::Get => return Ok(self.get()),
         }
@@ -129,22 +145,23 @@ fn counter_scale_out<R>(c: &mut TestHarness, name: &str, write_ratio: usize)
 where
     R: DsInterface + Send + Sync + 'static,
     R::D: Send,
-    R::D: Dispatch<ReadOperation<'static> = OpRd>,
+    R::D: Dispatch<ReadOperation = OpRd>,
     R::D: Dispatch<WriteOperation = OpWr>,
     <R::D as Dispatch>::WriteOperation: Send + Sync,
-    <R::D as Dispatch>::ReadOperation<'static>: Send + Sync,
+    <R::D as Dispatch>::ReadOperation: Send + Sync,
     <R::D as Dispatch>::Response: Sync + Send + Debug,
 {
     let ops = generate_operations(NOP, write_ratio);
     let bench_name = format!("{}-scaleout-wr{}", name, write_ratio);
 
     mkbench::ScaleBenchBuilder::<R>::new(ops)
-        .thread_defaults()
-        //.threads(1)
+        // .thread_defaults()
+        .threads(1)
+        .threads(16)
         //.threads(73)
         //.threads(96)
         //.threads(192)
-        .update_batch(32)
+        .update_batch(1)
         .log_size(2 * 1024 * 1024)
         .replica_strategy(mkbench::ReplicaStrategy::One)
         .replica_strategy(mkbench::ReplicaStrategy::Socket)
@@ -155,10 +172,16 @@ where
             &bench_name,
             |_cid, tkn, replica, op, _batch_size| match op {
                 Operation::ReadOperation(op) => {
-                    replica.execute(*op, tkn);
+                    match replica.execute(*op, tkn) {
+                        Ok(r) => r.1,
+                        Err(r) => r
+                    }
                 }
                 Operation::WriteOperation(op) => {
-                    replica.execute_mut(*op, tkn);
+                    match replica.execute_mut(*op, tkn) {
+                        Ok(r) => r.1,
+                        Err(r) => r
+                    }
                 }
             },
         );
@@ -172,7 +195,7 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = Default::default();
+    let mut harness = TestHarness::new(Duration::from_secs(30));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]
@@ -184,6 +207,6 @@ fn main() {
 
     //hashmap_single_threaded(&mut harness);
     for write_ratio in write_ratios.into_iter() {
-        counter_scale_out::<NodeReplicated<NrCounter>>(&mut harness, "counter", write_ratio);
+        counter_scale_out::<NodeReplicated<NrCounter>>(&mut harness, "vnr-counter", write_ratio);
     }
 }

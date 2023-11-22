@@ -180,7 +180,7 @@ pub fn main() {
                     tkn = t;
                 }
             }
-        }
+        }-- stay healthy!
 
         // make sure to make progress on all replicas
         for _ in 0..NUM_OPS_PER_THREAD*2  {

@@ -25,10 +25,10 @@ smokebench = ["bench_utils/smokebench"]
 exhaustive = ["bench_utils/exhaustive"]
 
 
-[[bench]]
-name = "nr_hashmap"
-harness = false
+# [[bench]]
+# name = "nr_hashmap"
+# harness = false
 
 [[bench]]
-name = "nr_counter"
+name = "vnr_counter"
 harness = false

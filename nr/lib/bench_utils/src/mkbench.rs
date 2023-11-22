@@ -23,53 +23,51 @@ use std::time::{Duration, Instant};
 use csv::WriterBuilder;
 use log::*;
 
-use verus_nr::{Dispatch, NodeReplicated, NR, ReplicaId, ThreadToken, constants::DEFAULT_LOG_BYTES};
+use node_replication::nr::{AffinityChange, Dispatch, NodeReplicated, ReplicaId, ThreadToken};
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use serde::Serialize;
 
-use builtin::Tracked;
-
 pub use crate::topology::ThreadMapping;
 use crate::{benchmark::*, topology::*, Operation};
 
-// fn chg_affinity(af: AffinityChange) -> usize {
-//     match af {
-//         AffinityChange::Replica(rid) => {
-//             let mut cpu: usize = 0;
-//             let mut node: usize = 0;
-//             unsafe { nix::libc::syscall(nix::libc::SYS_getcpu, &mut cpu, &mut node, 0) };
+fn chg_affinity(af: AffinityChange) -> usize {
+    match af {
+        AffinityChange::Replica(rid) => {
+            let mut cpu: usize = 0;
+            let mut node: usize = 0;
+            unsafe { nix::libc::syscall(nix::libc::SYS_getcpu, &mut cpu, &mut node, 0) };
 
-//             let mut cpu_set = nix::sched::CpuSet::new();
-//             trace!(
-//                 "cpus for node={} are {:#?}",
-//                 rid,
-//                 MACHINE_TOPOLOGY.cpus_on_node(rid as u64)
-//             );
-//             for ncpu in MACHINE_TOPOLOGY.cpus_on_node(rid as u64) {
-//                 debug!("ncpu is {:?}", ncpu);
-//                 cpu_set
-//                     .set(ncpu.cpu as usize)
-//                     .expect("Can't toggle CPU in cpu_set");
-//             }
-//             debug!(
-//                 "we are on cpu {} node {} and should handle things for replica {} now, changing affinity to {:?}",
-//                 cpu, node, rid, cpu_set
-//             );
-//             nix::sched::sched_setaffinity(nix::unistd::Pid::from_raw(0), &cpu_set)
-//                 .expect("Can't change thread affinity");
+            let mut cpu_set = nix::sched::CpuSet::new();
+            trace!(
+                "cpus for node={} are {:#?}",
+                rid,
+                MACHINE_TOPOLOGY.cpus_on_node(rid as u64)
+            );
+            for ncpu in MACHINE_TOPOLOGY.cpus_on_node(rid as u64) {
+                debug!("ncpu is {:?}", ncpu);
+                cpu_set
+                    .set(ncpu.cpu as usize)
+                    .expect("Can't toggle CPU in cpu_set");
+            }
+            debug!(
+                "we are on cpu {} node {} and should handle things for replica {} now, changing affinity to {:?}",
+                cpu, node, rid, cpu_set
+            );
+            nix::sched::sched_setaffinity(nix::unistd::Pid::from_raw(0), &cpu_set)
+                .expect("Can't change thread affinity");
 
-//             cpu as usize
-//         }
-//         AffinityChange::Revert(core_id) => {
-//             let mut cpu_set = nix::sched::CpuSet::new();
-//             cpu_set.set(core_id).expect("Can't toggle CPU in cpu_set");
-//             nix::sched::sched_setaffinity(nix::unistd::Pid::from_raw(0), &cpu_set)
-//                 .expect("Can't reset thread affinity");
-//             0xdead
-//         }
-//     }
-// }
+            cpu as usize
+        }
+        AffinityChange::Revert(core_id) => {
+            let mut cpu_set = nix::sched::CpuSet::new();
+            cpu_set.set(core_id).expect("Can't toggle CPU in cpu_set");
+            nix::sched::sched_setaffinity(nix::unistd::Pid::from_raw(0), &cpu_set)
+                .expect("Can't reset thread affinity");
+            0xdead
+        }
+    }
+}
 
 /// Threshold after how many iterations we log a warning for busy spinning loops.
 ///
@@ -95,14 +93,14 @@ struct Record {
 /// The function that executes the benchmark operation.
 type BenchFn<R> = fn(
     tid: crate::ThreadId,
-    idx: ThreadToken<<R as DsInterface>::D>,
+    idx: ThreadToken,
     replica: &Arc<R>,
     operations: &Operation<
-        <<R as DsInterface>::D as Dispatch>::ReadOperation,
+        <<R as DsInterface>::D as Dispatch>::ReadOperation<'static>,
         <<R as DsInterface>::D as Dispatch>::WriteOperation,
     >,
     usize,
-) -> ThreadToken<<R as DsInterface>::D>;
+);
 
 /// The interface a data-structure must implement to be benchmarked by
 /// `ScaleBench`.
@@ -113,68 +111,71 @@ pub trait DsInterface {
     ///
     /// - `replicas`: How many replicas the data-structure should maintain.
     /// - `logs`: How many logs the data-structure should be partitioned over.
-    fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self;
+    fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Arc<Self>;
 
     /// Register a thread with a data-structure.
     ///
     /// - `rid` indicates which replica the thread should use.
-    fn register(&mut self, rid: ReplicaId) -> Option<ThreadToken<Self::D >>;
+    fn register(&self, rid: ReplicaId) -> Option<ThreadToken>;
 
     /// Apply a mutable operation to the data-structure.
     fn execute_mut(
         &self,
         op: <Self::D as Dispatch>::WriteOperation,
-        idx: ThreadToken<Self::D >,
-    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D >), ThreadToken<Self::D >>;
+        idx: ThreadToken,
+    ) -> <Self::D as Dispatch>::Response;
+
+    /// Apply a mutable scan-operation to the data-structure.
+    fn execute_scan(
+        &self,
+        op: <Self::D as Dispatch>::WriteOperation,
+        idx: ThreadToken,
+    ) -> <Self::D as Dispatch>::Response;
 
     /// Apply a immutable operation to the data-structure.
     fn execute(
         &self,
-        op: <Self::D as Dispatch>::ReadOperation,
-        idx: ThreadToken<Self::D >,
-    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D >), ThreadToken<Self::D >>;
+        op: <Self::D as Dispatch>::ReadOperation<'static>,
+        idx: ThreadToken,
+    ) -> <Self::D as Dispatch>::Response;
 }
 
-// impl<T, U> SomeTrait for T
-//    where T: AnotherTrait<AssocType=U>
-
-impl<'a, T,U> DsInterface for U
-    where T: Dispatch + Sync + Default,
-    U: NR<DT=T, TT=ThreadToken<T>>
-
-{
+impl<'a, T: Dispatch + Sync + Default> DsInterface for NodeReplicated<T> {
     type D = T;
 
-    fn new(replicas: NonZeroUsize, _logs: NonZeroUsize, log_size: usize) -> Self {
-        let replicas : usize = replicas.into();
-        NR::create(replicas)
+    fn new(replicas: NonZeroUsize, _logs: NonZeroUsize, log_size: usize) -> Arc<Self> {
+        Arc::new(
+            NodeReplicated::with_log_size(replicas, chg_affinity, log_size)
+                .expect("Can't allocate NodeReplicated"),
+        )
     }
 
-    fn register(&mut self, rid: ReplicaId) -> Option<ThreadToken<Self::D >> {
-        NR::register(self, rid)
+    fn register(&self, rid: ReplicaId) -> Option<ThreadToken> {
+        NodeReplicated::register(self, rid)
     }
 
     fn execute_mut(
         &self,
         op: <Self::D as Dispatch>::WriteOperation,
-        idx: ThreadToken<Self::D >,
-    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D >), ThreadToken<Self::D >> {
-        match NR::execute_mut(self, op, idx, Tracked::assume_new()) {
-            Ok((res, tkn, _)) => Ok((res, tkn)),
-            Err((tkn, _)) => Err(tkn)
-        }
+        idx: ThreadToken,
+    ) -> <Self::D as Dispatch>::Response {
+        NodeReplicated::execute_mut(self, op, idx)
+    }
+
+    fn execute_scan(
+        &self,
+        _op: <Self::D as Dispatch>::WriteOperation,
+        _idx: ThreadToken,
+    ) -> <Self::D as Dispatch>::Response {
+        unreachable!("scan-ops are non-sensical for node_replication::NodeReplicated<T>")
     }
 
     fn execute(
         &self,
-        op: <Self::D as Dispatch>::ReadOperation,
-        idx: ThreadToken<Self::D >,
-    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D >), ThreadToken<Self::D >> {
-
-        match NR::execute(self, op, idx, Tracked::assume_new()) {
-            Ok((res, tkn, _)) => Ok((res, tkn)),
-            Err((tkn, _)) => Err(tkn)
-        }
+        op: <Self::D as Dispatch>::ReadOperation<'static>,
+        idx: ThreadToken,
+    ) -> <Self::D as Dispatch>::Response {
+        NodeReplicated::execute(self, op, idx)
     }
 }
 
@@ -230,14 +231,14 @@ pub fn baseline_comparison<R: DsInterface>(
     c: &mut TestHarness,
     name: &str,
     ops: Vec<
-        Operation<<R::D as Dispatch>::ReadOperation, <R::D as Dispatch>::WriteOperation>,
+        Operation<<R::D as Dispatch>::ReadOperation<'static>, <R::D as Dispatch>::WriteOperation>,
     >,
     log_size: usize,
 ) where
     R::D: Dispatch + Sync + Default,
-    <R::D as Dispatch>::WriteOperation: Send + Sync + Clone + PartialEq,
-    <R::D as Dispatch>::ReadOperation: Sync + Send + Clone,
-    <R::D as Dispatch>::Response: Send
+    <R::D as Dispatch>::WriteOperation: Send + Sync,
+    <R::D as Dispatch>::ReadOperation<'static>: Sync + Send + Clone,
+    <R::D as Dispatch>::Response: Send,
 {
     crate::disable_dvfs();
     let mut s: R::D = Default::default();
@@ -297,16 +298,16 @@ pub fn baseline_comparison<R: DsInterface>(
     .expect("Can't write resutls");
 
     // 2nd benchmark: we compare T with a log in front:
-    let mut r : NodeReplicated<R::D> = {
-        // let replicas = NonZeroUsize::new(1).expect("Can't create NonZeroUsize");
-        NR::create(1)
+    let r = {
+        let replicas = NonZeroUsize::new(1).expect("Can't create NonZeroUsize");
+        NodeReplicated::<R::D>::with_log_size(replicas, |_rid| 0, log_size)
+            .expect("Can't create NodeReplicated")
     };
+    let ridx = r.register(0).expect("Failed to register with Replica.");
 
     let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);
     group.bench_function("log", |b| {
         b.iter(|| {
-            let mut ridx = NR::register(&mut r, 0).expect("Failed to register with Replica.");
-
             let mut operations_completed: usize = 0;
             let nop: usize = ops.len();
             let mut iter: usize = 0;
@@ -316,21 +317,14 @@ pub fn baseline_comparison<R: DsInterface>(
             let mut next_log = start + log_period;
 
             while Instant::now() < end_experiment {
-                ridx = match &ops[iter % nop] {
+                match &ops[iter % nop] {
                     Operation::ReadOperation(op) => {
-                        match NR::execute(&r, op.clone(), ridx, Tracked::assume_new()) {
-                            Ok((_, tkn, _)) => tkn,
-                            Err((tkn, _)) => tkn,
-                        }
+                        r.execute(op.clone(), ridx);
                     }
                     Operation::WriteOperation(op) => {
-                        match NR::execute_mut(&r, op.clone(), ridx, Tracked::assume_new()) {
-                            Ok((_, tkn, _)) => tkn,
-                            Err((tkn, _)) => tkn,
-                        }
+                        r.execute_mut(op.clone(), ridx);
                     }
-                };
-
+                }
                 operations_completed += 1;
                 iter += 1;
 
@@ -438,8 +432,8 @@ impl fmt::Debug for LogStrategy {
 
 pub struct ScaleBenchmark<R: DsInterface>
 where
-    <R::D as Dispatch>::WriteOperation: Sync + Send + Copy + PartialEq + 'static,
-    <R::D as Dispatch>::ReadOperation: Sync + Send + Copy,
+    <R::D as Dispatch>::WriteOperation: Sync + Send + Copy + 'static,
+    <R::D as Dispatch>::ReadOperation<'static>: Sync + Send + Copy,
     <R::D as Dispatch>::Response: Send,
     R::D: Sync + Dispatch + Default + Send,
 {
@@ -461,7 +455,7 @@ where
     operations: Arc<
         Vec<
             Operation<
-                <R::D as Dispatch>::ReadOperation,
+                <R::D as Dispatch>::ReadOperation<'static>,
                 <R::D as Dispatch>::WriteOperation,
             >,
         >,
@@ -479,8 +473,8 @@ where
 
 impl<R: 'static> ScaleBenchmark<R>
 where
-    <R::D as Dispatch>::WriteOperation: Send + Sync + Copy + PartialEq,
-    <R::D as Dispatch>::ReadOperation: Send + Sync + Copy,
+    <R::D as Dispatch>::WriteOperation: Send + Sync + Copy,
+    <R::D as Dispatch>::ReadOperation<'static>: Send + Sync + Copy,
     <R::D as Dispatch>::Response: Send,
     R::D: 'static + Sync + Dispatch + Default + Send,
     R: DsInterface + Sync + Send,
@@ -497,7 +491,7 @@ where
         duration: Duration,
         operations: Vec<
             Operation<
-                <R::D as Dispatch>::ReadOperation,
+                <R::D as Dispatch>::ReadOperation<'static>,
                 <R::D as Dispatch>::WriteOperation,
             >,
         >,
@@ -565,7 +559,7 @@ where
             );
         } else {
             println!(
-                "Run({:?} {:?} {4:?} {:4} BS={}) => not measured",
+                "Run({:?} {:?} {:?} {:?} BS={}) => not measured",
                 self.rs, self.tm, self.ts, self.ls, self.batch_size,
             );
         }
@@ -608,20 +602,7 @@ where
 
         let start_sync = Arc::new(Barrier::new(thread_num));
         let replicas = NonZeroUsize::new(self.replicas()).unwrap();
-        let mut ds = R::new(replicas, NonZeroUsize::new(1).unwrap(), self.log_size);
-
-        let mut thread_tokens =  HashMap::with_capacity(replicas.into());
-        for (rid, cores) in self.rm.clone().into_iter() {
-            if thread_tokens.contains_key(&rid) {
-                let tks : &mut Vec<ThreadToken<R::D>> = thread_tokens.get_mut(&rid).unwrap();
-                tks.extend(cores.iter().map(|_| ds.register(rid).unwrap()));
-            } else {
-                let mut tks :  Vec<ThreadToken<R::D>> = Vec::new();
-                thread_tokens.insert(rid, cores.iter().map(|_| ds.register(rid).unwrap()).collect());
-            }
-        }
-
-        let ds = Arc::new(ds);
+        let ds = R::new(replicas, NonZeroUsize::new(1).unwrap(), self.log_size);
 
         debug!(
             "Execute benchmark {} with the following replica: [core_id] mapping: {:#?}",
@@ -642,26 +623,29 @@ where
                 let name = self.name.clone();
                 let operations = self.operations.clone();
                 let duration = self.duration.clone();
-                let mut thread_token = thread_tokens.get_mut(&rid).unwrap().pop().expect("Can't register replica, out of slots?");
 
                 self.handles.push(thread::spawn(move || {
                     crate::pin_thread(core_id);
 
+                    let thread_token = ds
+                        .register(rid)
+                        .expect("Can't register replica, out of slots?");
                     // Copy the actual Vec<Operations> data within the thread
                     let mut operations = (*operations).clone();
                     operations.shuffle(&mut rand::rngs::SmallRng::from_entropy());
 
                     if name.starts_with("urcu") {
-                        panic!("urcu is disabled!")
+                        unsafe {
+                            urcu_sys::rcu_register_thread();
+                        }
                     }
 
                     debug!(
-                        "Running {:?} on core {} replica#{} rtoken#{:?}.{:?} for {:?}",
+                        "Running {:?} on core {} replica#{} rtoken#{:?} for {:?}",
                         thread::current().id(),
                         core_id,
                         rid,
-                        thread_token.replica_id(),
-                        thread_token.thread_id(),
+                        thread_token,
                         duration
                     );
 
@@ -677,7 +661,7 @@ where
 
                     while Instant::now() < end_experiment {
                         for _i in 0..batch_size {
-                            thread_token = black_box((f)(
+                            black_box((f)(
                                 core_id,
                                 thread_token,
                                 &ds,
@@ -698,18 +682,19 @@ where
                     }
 
                     debug!(
-                        "Completed {:?} on core {} replica#{} rtoken#{:?}.{:?} did {} ops in {:?}",
+                        "Completed {:?} on core {} replica#{} rtoken#{:?} did {} ops in {:?}",
                         thread::current().id(),
                         core_id,
                         rid,
-                        thread_token.replica_id(),
-                        thread_token.thread_id(),
+                        thread_token,
                         operations_completed,
                         duration
                     );
 
                     if name.starts_with("urcu") {
-                        panic!("urcu is disabled!")
+                        unsafe {
+                            urcu_sys::rcu_unregister_thread();
+                        }
                     }
 
                     start_sync.wait();
@@ -837,8 +822,8 @@ where
 /// A generic benchmark configurator for node-replication scalability benchmarks.
 pub struct ScaleBenchBuilder<R: DsInterface>
 where
-    <R::D as Dispatch>::WriteOperation: Sync + Send + 'static + Clone + PartialEq,
-    <R::D as Dispatch>::ReadOperation: Sync + Send,
+    <R::D as Dispatch>::WriteOperation: Sync + Send + 'static,
+    <R::D as Dispatch>::ReadOperation<'static>: Sync + Send,
     <R::D as Dispatch>::Response: Send,
     R::D: 'static + Sync + Dispatch + Default,
 {
@@ -856,7 +841,7 @@ where
     log_size: usize,
     /// Operations executed on the log.
     operations: Vec<
-        Operation<<R::D as Dispatch>::ReadOperation, <R::D as Dispatch>::WriteOperation>,
+        Operation<<R::D as Dispatch>::ReadOperation<'static>, <R::D as Dispatch>::WriteOperation>,
     >,
     /// Marker for R
     _marker: PhantomData<R>,
@@ -865,8 +850,8 @@ where
 impl<R: 'static + DsInterface> ScaleBenchBuilder<R>
 where
     R::D: Dispatch + Default + Send + Sync,
-    <R::D as Dispatch>::WriteOperation: Send + Sync  + Clone + PartialEq,
-    <R::D as Dispatch>::ReadOperation: Sync + Send,
+    <R::D as Dispatch>::WriteOperation: Send + Sync,
+    <R::D as Dispatch>::ReadOperation<'static>: Sync + Send,
     <R::D as Dispatch>::Response: Send,
 {
     /// Initialize an "empty" ScaleBenchBuilder with a  MiB log.
@@ -877,7 +862,7 @@ where
     pub fn new(
         ops: Vec<
             Operation<
-                <R::D as Dispatch>::ReadOperation,
+                <R::D as Dispatch>::ReadOperation<'static>,
                 <R::D as Dispatch>::WriteOperation,
             >,
         >,
@@ -887,7 +872,7 @@ where
             log_strategies: Vec::new(),
             thread_mappings: Vec::new(),
             threads: Vec::new(),
-            log_size: DEFAULT_LOG_BYTES,
+            log_size: node_replication::log::DEFAULT_LOG_BYTES,
             batches: vec![1usize],
             operations: ops,
             _marker: PhantomData,
@@ -979,7 +964,7 @@ where
     pub fn configure(&self, c: &mut TestHarness, name: &str, f: BenchFn<R>)
     where
         <R::D as Dispatch>::WriteOperation: Sync + Send + Copy + 'static,
-        <R::D as Dispatch>::ReadOperation: Sync + Send + Copy + Clone,
+        <R::D as Dispatch>::ReadOperation<'static>: Sync + Send + Copy + Clone,
         <R::D as Dispatch>::Response: Send,
         R: DsInterface + Sync + Send,
         R::D: 'static + Send + Sync,

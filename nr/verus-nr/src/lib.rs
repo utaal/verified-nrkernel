@@ -16,6 +16,7 @@ pub mod constants;
 
 pub use crate::exec::context::ThreadToken;
 pub use crate::exec::NodeReplicated;
+pub use crate::exec::replica::ReplicaId;
 
 #[cfg(feature = "counter_dispatch_example")]
 mod counter_dispatch_example;
@@ -95,8 +96,7 @@ pub trait Dispatch: Sized {
     spec fn dispatch_mut_spec(ds: Self::View, op: Self::WriteOperation) -> (Self::View, Self::Response);
 }
 
-use crate::exec::replica::ReplicaId;
-// use crate::exec::context::ThreadToken;
+
 use crate::spec::unbounded_log::UnboundedLog;
 
 pub open spec fn is_readonly_ticket<DT: Dispatch>(
@@ -156,20 +156,21 @@ pub trait ThreadTokenT<DT: Dispatch, Replica> {
     spec fn replica_id_spec(&self) -> nat;
 }
 
-pub trait NR<DT: Dispatch + Sync>: Sized {
+pub trait NR: Sized {
     type Replica;
     type ReplicaId;
-    type TT: ThreadTokenT<DT, Self::Replica>;
+    type TT: ThreadTokenT<Self::DT, Self::Replica>;
+    type DT: Dispatch + Sync;
 
     spec fn wf(&self) -> bool;
 
     spec fn replicas(&self) -> Vec<Box<Self::Replica>>;
 
-    spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT>;
+    spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<Self::DT>;
 
     // TODO this does not properly ensures initialization I think
     // I think it needs to return the correct initialization token
-    fn new(num_replicas: usize) -> (res: Self)
+    fn create(num_replicas: usize) -> (res: Self)
         requires num_replicas == crate::constants::NUM_REPLICAS,
         ensures res.wf();
 
@@ -179,9 +180,9 @@ pub trait NR<DT: Dispatch + Sync>: Sized {
             self.wf(),
             result.is_Some() ==> result.get_Some_0().wf(&self.replicas()[replica_id as int]);
 
-    fn execute_mut(&self, op: DT::WriteOperation, tkn: Self::TT, ticket: Tracked<UnboundedLog::local_updates<DT>>)
-        -> (result: Result<(DT::Response, Self::TT, Tracked<UnboundedLog::local_updates<DT>>),
-                           (Self::TT, Tracked<UnboundedLog::local_updates<DT>>) > )
+    fn execute_mut(&self, op: <<Self as NR>::DT as Dispatch>::WriteOperation, tkn: Self::TT, ticket: Tracked<UnboundedLog::local_updates<Self::DT>>)
+        -> (result: Result<(<<Self as NR>::DT as Dispatch>::Response, Self::TT, Tracked<UnboundedLog::local_updates<Self::DT>>),
+                           (Self::TT, Tracked<UnboundedLog::local_updates<Self::DT>>) > )
         requires
             self.wf(), // wf global node
             tkn.wf(&self.replicas().spec_index(tkn.replica_id_spec() as int)),
@@ -190,8 +191,8 @@ pub trait NR<DT: Dispatch + Sync>: Sized {
             result.is_Ok() ==> is_update_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.unbounded_log_instance()) && result.get_Ok_0().1.wf(&self.replicas().spec_index(tkn.replica_id_spec() as int)),
             result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
 
-    fn execute(&self, op: DT::ReadOperation, tkn: Self::TT,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
-            -> (result: Result<(DT::Response, Self::TT, Tracked<UnboundedLog::local_reads<DT>>), (Self::TT, Tracked<UnboundedLog::local_reads<DT>>)>)
+    fn execute(&self, op: <<Self as NR>::DT as Dispatch>::ReadOperation, tkn: Self::TT,  ticket: Tracked<UnboundedLog::local_reads<Self::DT>>)
+            -> (result: Result<(<<Self as NR>::DT as Dispatch>::Response, Self::TT, Tracked<UnboundedLog::local_reads<Self::DT>>), (Self::TT, Tracked<UnboundedLog::local_reads<Self::DT>>)>)
         requires
             self.wf(), // wf global node
             tkn.wf(&self.replicas()[tkn.replica_id_spec() as int]),
@@ -202,7 +203,7 @@ pub trait NR<DT: Dispatch + Sync>: Sized {
 }
 
 
-spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NR<DT>>() -> bool { true }
+spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NR>() -> bool { true }
 
 proof fn theorem_1<DT: Dispatch + Sync>()
     ensures implements_NodeReplicated::<DT, NodeReplicated<DT>>(),

@@ -105,51 +105,6 @@ impl Dispatch for NrCounter {
     }
 }
 
-impl DsInterface<'a> for NodeReplicated<NrCounter> {
-    type ThreadToken = ThreadToken;
-    type RdOp<'a> = <NrCounter as Dispatch>::ReadOperation<'a>;
-    type WrOp = <NrCounter as Dispatch>::WriteOperation;
-    type Resp = <NrCounter as Dispatch>::Response;
-    type Disp = NrCounter;
-
-    /// Allocate a new data-structure.
-    ///
-    /// - `replicas`: How many replicas the data-structure should maintain.
-    /// - `logs`: How many logs the data-structure should be partitioned over.
-    fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Arc<Self>
-    {
-
-    }
-
-    /// Register a thread with a data-structure.
-    ///
-    /// - `rid` indicates which replica the thread should use.
-    fn register(&self, rid: ReplicaId) -> Option<Self::ThreadToken>
-    {
-
-    }
-
-    /// Apply a mutable operation to the data-structure.
-    fn execute_mut(
-        &self,
-        op: Self::WrOp,
-        idx: Self::ThreadToken,
-    ) -> Self::Resp
-    {
-
-    }
-
-    /// Apply a immutable operation to the data-structure.
-    fn execute(
-        &self,
-        op: Self::RdOp,
-        idx: Self::ThreadToken,
-    ) -> Self::Resp
-    {
-
-    }
-}
-
 
 /// Generate a random sequence of operations
 ///
