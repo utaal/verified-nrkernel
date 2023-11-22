@@ -219,7 +219,6 @@ impl ReturnType {
 }
 
 
-
 use  std::sync::Arc;
 
 struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructureType>);

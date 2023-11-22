@@ -8,4 +8,3 @@ builtin = { path = "../../verus/source/builtin" }
 builtin_macros = { path = "../../verus/source/builtin_macros" }
 state_machines_macros = { path = "../../verus/source/state_machines_macros" }
 vstd = { path = "../../verus/source/pervasive" }
-

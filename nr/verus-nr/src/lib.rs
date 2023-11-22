@@ -12,7 +12,10 @@ use state_machines_macros::state_machine;
 
 mod spec;
 mod exec;
-mod constants;
+pub mod constants;
+
+pub use crate::exec::context::ThreadToken;
+pub use crate::exec::NodeReplicated;
 
 #[cfg(feature = "counter_dispatch_example")]
 mod counter_dispatch_example;
@@ -147,16 +150,16 @@ pub open spec fn is_update_stub<DT: Dispatch>(
     &&& stub@.value.get_Done_ret() == result
 }
 
-trait ThreadToken<DT: Dispatch, Replica> {
+pub trait ThreadTokenT<DT: Dispatch, Replica> {
     spec fn wf(&self, replica: &Replica) -> bool;
 
     spec fn replica_id_spec(&self) -> nat;
 }
 
-trait NodeReplicated<DT: Dispatch + Sync>: Sized {
+pub trait NR<DT: Dispatch + Sync>: Sized {
     type Replica;
     type ReplicaId;
-    type TT: ThreadToken<DT, Self::Replica>;
+    type TT: ThreadTokenT<DT, Self::Replica>;
 
     spec fn wf(&self) -> bool;
 
@@ -198,12 +201,11 @@ trait NodeReplicated<DT: Dispatch + Sync>: Sized {
             result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
 }
 
-pub use crate::exec::NodeReplicated as NR;
 
-spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NodeReplicated<DT>>() -> bool { true }
+spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NR<DT>>() -> bool { true }
 
 proof fn theorem_1<DT: Dispatch + Sync>()
-    ensures implements_NodeReplicated::<DT, NR<DT>>(),
+    ensures implements_NodeReplicated::<DT, NodeReplicated<DT>>(),
 { }
 
 #[cfg(verus_keep_ghost)] use crate::spec::simple_log::SimpleLog;

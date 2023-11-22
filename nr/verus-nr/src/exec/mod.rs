@@ -64,7 +64,7 @@ pub struct NodeReplicated<#[verifier::reject_recursive_types] DT: Dispatch> {
     pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
 }
 
-impl<DT: Dispatch> crate::ThreadToken<DT, Replica<DT>> for ThreadToken<DT> {
+impl<DT: Dispatch> crate::ThreadTokenT<DT, Replica<DT>> for ThreadToken<DT> {
     open spec fn wf(&self, replica: &Replica<DT>) -> bool {
         ThreadToken::<DT>::wf(self, replica)
     }
@@ -74,7 +74,7 @@ impl<DT: Dispatch> crate::ThreadToken<DT, Replica<DT>> for ThreadToken<DT> {
     }
 }
 
-impl<DT: Dispatch + Sync> crate::NodeReplicated<DT> for NodeReplicated<DT> {
+impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
     type Replica = Replica<DT>;
     type ReplicaId = ReplicaId;
     type TT = ThreadToken<DT>;
