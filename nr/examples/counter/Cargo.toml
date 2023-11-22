@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 verus-nr = { path = "../../verus-nr" }
+builtin = { path = "../../../verus/source/builtin" }

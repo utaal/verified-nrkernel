@@ -2,6 +2,8 @@
 
 // trustedness: ignore this file
 
+use builtin::Tracked;
+
 use verus_nr::{Dispatch, NR, NodeReplicated, ThreadToken};
 use verus_nr::constants::NUM_REPLICAS;
 
@@ -64,6 +66,8 @@ impl Dispatch for DataStructureType {
     type WriteOperation = UpdateOp;
 
     type Response = ReturnType;
+
+    type View = DataStructureType;
 
     // type View = DataStructureSpec;
 
@@ -156,7 +160,7 @@ pub fn main() {
                 }
                 _ => {
                     // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
-                    match  counter.execute(ReadonlyOp::Get, tkn) {
+                    match  counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
                         Result::Ok((ret, t, _)) => {
                             tkn = t;
                         },
@@ -168,7 +172,7 @@ pub fn main() {
             };
 
             // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
-            match  counter.execute(ReadonlyOp::Get, tkn) {
+            match  counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
                 Result::Ok((ret, t, _)) => {
                     tkn = t;
                 },
@@ -181,7 +185,7 @@ pub fn main() {
         // make sure to make progress on all replicas
         for _ in 0..NUM_OPS_PER_THREAD*2  {
             std::thread::yield_now();
-            match counter.execute(ReadonlyOp::Get, tkn) {
+            match counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
                 Result::Ok((ret, t, _)) => {
                     tkn = t;
                 },
