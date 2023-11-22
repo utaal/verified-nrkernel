@@ -154,8 +154,8 @@ trait ThreadToken<DT: Dispatch, Replica> {
 }
 
 trait NodeReplicated<DT: Dispatch + Sync>: Sized {
-    type Replica; 
-    type ReplicaId; 
+    type Replica;
+    type ReplicaId;
     type TT: ThreadToken<DT, Self::Replica>;
 
     spec fn wf(&self) -> bool;

@@ -1001,11 +1001,13 @@ UnboundedLog<DT: Dispatch> {
         requires pre.invariant(),
             crate::add_ticket(pre, post, input, rid),
             rid == get_fresh_nat(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner)
-        ensures pre.invariant(),
+        ensures post.invariant(),
     {
         get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         match input {
-            crate::InputOperation::Read(op) => { }
+            crate::InputOperation::Read(op) => {
+                assert(post.invariant());
+            }
             crate::InputOperation::Write(op) => {
                 assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
                     assert(post.combiner[node_id] == pre.combiner[node_id]);
@@ -1080,7 +1082,7 @@ UnboundedLog<DT: Dispatch> {
     )
         requires pre.invariant(),
             crate::consume_stub(pre, post, output, rid),
-        ensures pre.invariant(),
+        ensures post.invariant(),
     {
         match output {
             crate::OutputOperation::Read(op) => { }
