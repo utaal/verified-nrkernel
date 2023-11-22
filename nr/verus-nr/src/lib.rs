@@ -264,10 +264,13 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
     spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>;
 
     // Prove that it is always possible to add a new ticket
-    proof fn finite_domains(post: UnboundedLog::State<DT>)
-        requires post.invariant(),
-        ensures post.local_reads.dom().finite(),
-            post.local_updates.dom().finite();
+    spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> RequestId;
+
+    proof fn fresh_rid_is_ok(pre: UnboundedLog::State<DT>)
+        requires pre.invariant(),
+        ensures
+            !pre.local_reads.dom().contains(Self::get_fresh_rid(pre)),
+            !pre.local_updates.dom().contains(Self::get_fresh_rid(pre));
 
     proof fn refinement_inv(vars: UnboundedLog::State<DT>)
         requires vars.invariant(),
@@ -292,11 +295,10 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
         pre: UnboundedLog::State<DT>,
         post: UnboundedLog::State<DT>,
         input: InputOperation<DT>,
-        rid: RequestId
     )
         requires
             pre.invariant(),
-            add_ticket(pre, post, input, rid),
+            add_ticket(pre, post, input, Self::get_fresh_rid(pre)),
         ensures
             post.invariant(),
             SimpleLog::State::next(Self::interp(pre), Self::interp(post));

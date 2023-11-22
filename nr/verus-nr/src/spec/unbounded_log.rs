@@ -1000,8 +1000,10 @@ UnboundedLog<DT: Dispatch> {
     )
         requires pre.invariant(),
             crate::add_ticket(pre, post, input, rid),
+            rid == get_fresh_nat(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner)
         ensures pre.invariant(),
     {
+        get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         match input {
             crate::InputOperation::Read(op) => { }
             crate::InputOperation::Write(op) => {
@@ -1018,10 +1020,8 @@ UnboundedLog<DT: Dispatch> {
                         }
                         CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
                             LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
-                            assert(post.wf_combiner_for_node_id(node_id));
                         }
                         _ => {
-                            assert(post.wf_combiner_for_node_id(node_id));
                         }
                     }
                 }

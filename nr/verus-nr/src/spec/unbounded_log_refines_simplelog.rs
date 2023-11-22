@@ -49,9 +49,18 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
     proof fn refinement_next(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>) {
         refinement_next(pre, post);
     }
-    proof fn finite_domains(post: UnboundedLog::State<DT>) { }
 
-    proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>, rid: RequestId) {
+    open spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> RequestId {
+        crate::spec::unbounded_log::get_fresh_nat(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner)
+    }
+
+    proof fn fresh_rid_is_ok(pre: UnboundedLog::State<DT>)
+    {
+        crate::spec::unbounded_log::get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
+    }
+
+    proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>) {
+        let rid = Self::get_fresh_rid(pre);
         UnboundedLog::State::add_ticket_inductive(pre, post, input, rid);
         // TODO commented code from refinement_next proof should go here
     }
