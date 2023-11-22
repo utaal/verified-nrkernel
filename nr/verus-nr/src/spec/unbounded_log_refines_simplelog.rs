@@ -13,7 +13,7 @@ use vstd::seq_lib::*;
 
 #[cfg(verus_keep_ghost)] use state_machines_macros::*;
 
-use crate::Dispatch;
+use crate::{Dispatch, InputOperation, OutputOperation, RequestId};
 
 #[cfg(verus_keep_ghost)] use super::simple_log::{
     compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
@@ -50,6 +50,14 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
         refinement_next(pre, post);
     }
     proof fn finite_domains(post: UnboundedLog::State<DT>) { }
+
+    proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>, rid: RequestId) {
+        // TODO
+    }
+
+    proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: RequestId) {
+        // TODO
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

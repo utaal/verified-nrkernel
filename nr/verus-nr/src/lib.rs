@@ -287,6 +287,32 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
             UnboundedLog::State::next_strong(pre, post),
         ensures
             SimpleLog::State::next(Self::interp(pre), Self::interp(post));
+
+    proof fn refinement_add_ticket(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        input: InputOperation<DT>,
+        rid: RequestId
+    )
+        requires
+            pre.invariant(),
+            add_ticket(pre, post, input, rid),
+        ensures
+            post.invariant(),
+            SimpleLog::State::next(Self::interp(pre), Self::interp(post));
+
+    proof fn refinement_consume_stub(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        output: OutputOperation<DT>,
+        rid: RequestId
+    )
+        requires
+            pre.invariant(),
+            consume_stub(pre, post, output, rid),
+        ensures
+            post.invariant(),
+            SimpleLog::State::next(Self::interp(pre), Self::interp(post));
 }
 
 spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRefinesSimpleLog<DT>>() -> bool { true }
