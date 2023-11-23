@@ -8,12 +8,17 @@ use vstd::map::*;
 
 verus! {
 
-#[verus::trusted]
-mod trusted {
+pub proof fn mod_of_mul_integer_ring(a: int, b: int) by (integer_ring)
+    ensures (a * b) % b == 0
+{ }
 
-use vstd::prelude::*;
-use crate::definitions_t::{aligned, bit, bitmask_inc};
-use vstd::map::*;
+pub proof fn mod_of_mul(a: nat, b: nat) by (nonlinear_arith)
+    requires b > 0,
+    ensures aligned(a * b, b),
+{
+    mod_of_mul_integer_ring(a as int, b as int);
+    assert((a * b) % b == 0);
+}
 
 pub proof fn mod_of_mul_auto() 
     ensures forall|a: nat, b: nat| b > 0 ==> aligned(#[trigger] (a * b), b),
@@ -23,61 +28,48 @@ pub proof fn mod_of_mul_auto()
     }
 }
 
-pub proof fn mod_of_mul(a: nat, b: nat)
-    requires b > 0,
-    ensures aligned(a * b, b),
-{
-    assert((a * b) % b == 0) by (nonlinear_arith)
-        requires b != 0
-    {
-        assume(false); // times out
-    }
-}
+pub proof fn mod_add_zero_integer_ring(a: int, b: int, c: int) by (integer_ring)
+    requires a % c == 0, b % c == 0
+    ensures (a + b) % c == 0
+{ }
 
 pub proof fn mod_add_zero(a: nat, b: nat, c: nat)
-    requires aligned(a, c), aligned(b, c), c > 0,
-    ensures aligned(a + b, c),
+    requires aligned(a, c), aligned(b, c), c > 0
+    ensures aligned(a + b, c)
 {
-    assert((a + b) % c == 0) by (nonlinear_arith)
-        requires a % c == 0 && b % c == 0 && c != 0
-    {
-        assume(false); // times out
-    }
+    mod_add_zero_integer_ring(a as int, b as int, c as int);
 }
 
-pub proof fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat)
-    requires aligned(a, b * c), c > 0,
-    ensures aligned(a, b),
+pub proof fn mod_mult_zero_implies_mod_zero_integer_ring(a: int, b: int, c: int) by (integer_ring)
+    requires a % (b * c) == 0
+    ensures a % b == 0
+{ }
+
+pub proof fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat) by (nonlinear_arith)
+    requires aligned(a, b * c), b > 0, c > 0
+    ensures aligned(a, b)
 {
-    assert(a % b == 0) by (nonlinear_arith)
-        requires a % (b * c) == 0 && c != 0,
-    {
-        // assert((a % b) * (a % c) == 0); // times out
-        assume(false);
-    }
+    mod_mult_zero_implies_mod_zero_integer_ring(a as int, b as int, c as int);
 }
+
+pub proof fn subtract_mod_eq_zero_integer_ring(a: int, b: int, c: int) by (integer_ring)
+    requires a % c == 0, b % c == 0
+    ensures (b - a) % c == 0
+{ }
 
 pub proof fn subtract_mod_eq_zero(a: nat, b: nat, c: nat)
-    requires c > 0, aligned(a, c), aligned(b, c), a <= b,
+    requires aligned(a, c), aligned(b, c), a <= b, c > 0
     ensures aligned((b - a) as nat, c)
 {
-    assert(((b - a) as nat) % c == 0) by (nonlinear_arith)
-        requires c > 0 && a % c == 0 && b % c == 0 && a <= b,
-    {
-        assume(false); // times out
-    }
+    subtract_mod_eq_zero_integer_ring(a as int, b as int, c as int)
 }
 
-pub proof fn leq_add_aligned_less(a: nat, b: nat, c: nat)
+pub proof fn leq_add_aligned_less(a: nat, b: nat, c: nat) by (nonlinear_arith)
     requires 0 < b, a < c, aligned(a, b), aligned(c, b),
     ensures a + b <= c,
 {
-    assert(a + b <= c) by (nonlinear_arith)
-        requires 0 < b, a < c && a % b == 0 && c % b == 0,
-    {
-        assume(false); // times out
-    }
-
+    assert(a == b * (a / b) + a % b);
+    assert(c == b * (c / b) + c % b);
 }
 
 pub proof fn aligned_transitive_auto()
@@ -88,21 +80,32 @@ pub proof fn aligned_transitive_auto()
     }
 }
 
-#[verifier(external_body)]
-pub proof fn aligned_transitive(a: nat, b: nat, c: nat) {
-    requires([
-             0 < b,
-             0 < c,
-             aligned(a, b),
-             aligned(b, c),
-    ]);
-    ensures(aligned(a, c));
+pub proof fn lemma_aligned_iff_eq_mul_div(a: nat, b: nat)
+    requires b > 0
+    ensures aligned(a, b) <==> a == b * (a / b)
+{
+    assert(a % b == 0 ==> a == b * (a / b)) by (nonlinear_arith)
+        requires b > 0;
+    assert(a == b * (a / b) ==> a % b == 0) by (nonlinear_arith)
+        requires b > 0;
 }
 
+pub proof fn aligned_transitive(a: nat, b: nat, c: nat)
+    requires
+        0 < b,
+        0 < c,
+        aligned(a, b),
+        aligned(b, c),
+    ensures aligned(a, c)
+{
+    lemma_aligned_iff_eq_mul_div(a, b);
+    lemma_aligned_iff_eq_mul_div(b, c);
+    lemma_aligned_iff_eq_mul_div(a, c);
+    let i = a / b; let j = b / c;
+    assert((c * j) * i == c * (j * i)) by (nonlinear_arith);
+    assert(a / c == j * i) by (nonlinear_arith)
+        requires 0 < c, a == c * (j * i);
 }
-
-pub use trusted::*;
-
 
 #[verifier(nonlinear)]
 pub proof fn mod_less_eq(a: nat, b: nat) {

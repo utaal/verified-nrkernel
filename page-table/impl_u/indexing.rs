@@ -32,6 +32,7 @@ pub open spec fn nat_mul(a: nat, b: nat) -> nat {
 // However, one of these postconditions triggers on every multiplication, hence this is separated
 // in its own lemma.
 pub proof fn lemma_entry_base_from_index_support(base: nat, idx: nat, entry_size: nat)
+    requires entry_size > 0
     ensures
         // forall|nested_es: nat, nested_num: nat|
         //     entry_size == nat_mul(nested_es, nested_num)
