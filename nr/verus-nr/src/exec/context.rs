@@ -51,9 +51,9 @@ pub struct ThreadToken<DT: Dispatch> {
 }
 
 impl<DT: Dispatch> ThreadToken<DT> {
-    pub open spec fn wf2(&self) -> bool
+    pub open spec fn wf2(&self, num_replicas: nat) -> bool
     {
-        &&& self.rid.wf()
+        &&& self.rid.wf(num_replicas)
         &&& self.fc_client@@.value.is_Idle()
         &&& (self.tid as nat) < MAX_THREADS_PER_REPLICA
         // &&& self.fc_client@@.instance == fc_inst
@@ -62,7 +62,7 @@ impl<DT: Dispatch> ThreadToken<DT> {
     }
 
     pub open spec fn wf(&self,  replica: &Replica<DT>) -> bool {
-        &&& self.wf2()
+        &&& self.wf2(replica.spec_id() + 1) // +1 here because ids got < replicas
         &&& self.rid@ == replica.spec_id()
         &&& self.fc_client@@.instance == replica.flat_combiner_instance
         &&& self.batch_perm@@.pcell == replica.contexts[self.thread_id_spec() as int].batch.0.id()

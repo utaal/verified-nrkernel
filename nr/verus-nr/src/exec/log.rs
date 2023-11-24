@@ -18,7 +18,7 @@ use crate::spec::unbounded_log::UnboundedLog;
 use crate::spec::cyclicbuffer::{CyclicBuffer, StoredType, LogicalLogIdx};
 #[cfg(verus_keep_ghost)] use crate::spec::cyclicbuffer::{stored_type_inv, log_entry_idx, log_entry_alive_value};
 
-use crate::constants::{MAX_REQUESTS, NUM_REPLICAS, MAX_IDX, GC_FROM_HEAD, WARN_THRESHOLD, LOG_SIZE};
+use crate::constants::{MAX_REQUESTS, MAX_REPLICAS, MAX_IDX, GC_FROM_HEAD, WARN_THRESHOLD, LOG_SIZE};
 use crate::exec::replica::{ReplicaToken, ReplicaId};
 use crate::exec::CachePadded;
 
@@ -153,7 +153,7 @@ pub struct NrLog<DT: Dispatch>
 
 pub open spec fn wf(&self) -> bool {
     predicate {
-        &&& self.num_replicas == NUM_REPLICAS
+        &&& 0 < self.num_replicas@ <=  MAX_REPLICAS
 
         &&& self.local_versions.len() == self.num_replicas
 
@@ -215,7 +215,7 @@ impl<DT: Dispatch> NrLog<DT> {
     pub fn new(num_replicas: usize, log_size: usize) -> (res: (Self, Vec<ReplicaToken>, Tracked<NrLogTokens<DT>>))
         requires
             log_size == LOG_SIZE,
-            num_replicas == NUM_REPLICAS
+            0 < num_replicas && num_replicas <=  MAX_REPLICAS
         ensures
             res.0.wf(),
             res.0.unbounded_log_instance@ == res.2@.unbounded_log_instance,
@@ -450,7 +450,7 @@ impl<DT: Dispatch> NrLog<DT> {
         while idx < num_replicas
             invariant
                 0 <= idx <= num_replicas,
-                num_replicas <= NUM_REPLICAS,
+                num_replicas <= MAX_REPLICAS,
                 replica_tokens.len() == idx,
                 forall |i| #![trigger replica_tokens[i]] 0 <= i < idx ==> replica_tokens[i].id_spec() == i,
         {
@@ -986,7 +986,7 @@ impl<DT: Dispatch> NrLog<DT> {
             -> (res: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
-            replica_token.wf(),
+            replica_token.wf(self.num_replicas@),
             ghost_data@.advance_head_pre(replica_token.id_spec(), old(actual_replica).view(), old(responses)@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
         ensures
             res@.advance_head_post(ghost_data@, replica_token.id_spec(), actual_replica.view(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
@@ -997,7 +997,7 @@ impl<DT: Dispatch> NrLog<DT> {
         loop
             invariant
                 self.wf(),
-                replica_token.wf(),
+                replica_token.wf(self.num_replicas@),
                 ghost_data_new@.cb_combiner@@.value.is_Idle(),
                 ghost_data_new@.combiner@@.value.is_Placed() ==> ghost_data_new@.pre_exec(responses@),
                 ghost_data_new@.advance_head_post(ghost_data@, replica_token.id_spec(), actual_replica.view(), responses@, self.unbounded_log_instance@, self.cyclic_buffer_instance@),
@@ -1058,6 +1058,8 @@ impl<DT: Dispatch> NrLog<DT> {
 
             let cb_combiner = Tracked(cb_combiner);
             let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
+
+            // replica_token@ < self.local_versions.len(),
             ghost_data_new = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
         }
     }
@@ -1689,6 +1691,8 @@ pub tracked struct NrLogTokens<DT: Dispatch> {
 pub open spec fn wf(&self, num_replicas: nat) -> bool {
     predicate {
         &&& self.num_replicas == num_replicas
+        &&& self.unbounded_log_instance.num_replicas() == self.num_replicas
+        &&& self.cyclic_buffer_instance.num_replicas() == self.num_replicas
         &&& (forall |i| #![trigger self.replicas[i]]0 <= i < self.num_replicas ==> {
             &&& #[trigger] self.replicas.contains_key(i)
             &&& self.replicas[i]@.instance == self.unbounded_log_instance

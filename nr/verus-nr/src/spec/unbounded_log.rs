@@ -348,7 +348,7 @@ UnboundedLog<DT: Dispatch> {
     }
 
     pub open spec fn wf_node_id(&self, node_id: NodeId) -> bool {
-        // 0 <= node_id < self.num_replicas
+        &&& 0 <= node_id < self.num_replicas
         &&& self.combiner.contains_key(node_id)
         &&& self.local_versions.contains_key(node_id)
         &&& self.replicas.contains_key(node_id)
@@ -1006,7 +1006,9 @@ UnboundedLog<DT: Dispatch> {
         get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         match input {
             crate::InputOperation::Read(op) => {
-                assert(post.invariant());
+                assert(post.inv_request_ids_finite());
+                assert(post.inv_local_combiner_complete());
+                // assert(post.invariant());
             }
             crate::InputOperation::Write(op) => {
                 assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {

@@ -7,7 +7,7 @@ use vstd::prelude::*;
 use crate::Dispatch;
 
 // spec imports
-use crate::spec::{
+use crate::spec::{self,
     cyclicbuffer::CyclicBuffer,
     unbounded_log::UnboundedLog,
 };
@@ -17,13 +17,14 @@ use crate::exec::log::{NrLog, NrLogTokens};
 use crate::exec::replica::{Replica, ReplicaConfig, ReplicaId};
 use crate::exec::context::ThreadToken;
 
-use crate::constants::{NUM_REPLICAS, LOG_SIZE, MAX_THREADS_PER_REPLICA};
+use crate::constants::{MAX_REPLICAS, LOG_SIZE, MAX_THREADS_PER_REPLICA};
 
 pub mod rwlock;
 pub mod log;
 pub mod replica;
 pub mod context;
 pub mod utils;
+
 
 
 verus! {
@@ -74,26 +75,10 @@ impl<DT: Dispatch> crate::ThreadTokenT<DT, Replica<DT>> for ThreadToken<DT> {
     }
 }
 
-impl<DT: Dispatch> for NodeReplicated {
-    fn create(num_replicas: usize) -> (res: Self)
-        requires num_replicas == crate::constants::NUM_REPLICAS,
-        ensures res.wf()
-    {
-
-    }
-
-    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<Self::TT>)
-    requires old(self).wf(),
-    ensures
-        self.wf(),
-        result.is_Some() ==> result.get_Some_0().wf(&self.replicas()[replica_id as int]);
-}
-
-impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
-    type Replica = Replica<T>;
+impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
+    type Replica = Replica<DT>;
     type ReplicaId = ReplicaId;
-    type TT = ThreadToken<T>;
-    type DT = T;
+    type TT = ThreadToken<DT>;
 
     /// Wellformedness of the NodeReplicated data structure
     open spec fn wf(&self) -> bool {
@@ -103,7 +88,7 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
         &&& self.cyclic_buffer_instance@ == self.log.cyclic_buffer_instance@
 
         // the number of replicas should be the as configured
-        &&& self.replicas.len() == NUM_REPLICAS
+        &&& self.replicas.len() <= MAX_REPLICAS
 
         // the replicas should be well-formed and the instances match
         &&& (forall |i| 0 <= i < self.replicas.len() ==> {
@@ -119,7 +104,7 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
         self.replicas
     }
 
-    open spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<Self::DT> {
+    open spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT> {
         self.log.unbounded_log_instance@
     }
 
@@ -129,9 +114,9 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
     ///
     ///  - Dafny: n/a ?
     ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
-    fn create(num_replicas: usize) -> (res: Self)
+    fn new(num_replicas: usize) -> (res: Self)
         // requires
-        //     num_replicas == NUM_REPLICAS
+        //     num_replicas <= MAX_REPLICAS
         // ensures res.wf()
     {
         let (log, replica_tokens, nr_log_tokens) = NrLog::new(num_replicas, LOG_SIZE);
@@ -145,12 +130,19 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
             cyclic_buffer_instance: cyclic_buffer_instance,
         } = nr_log_tokens.get();
 
-        let mut actual_replicas : Vec<Box<Replica<T>>> = Vec::new();
-        let mut thread_tokens : Vec<Vec<ThreadToken<T>>> = Vec::new();
+
+        assert(unbounded_log_instance.num_replicas() == num_replicas);
+        assert(cyclic_buffer_instance.num_replicas() == num_replicas);
+
+        let mut actual_replicas : Vec<Box<Replica<DT>>> = Vec::new();
+        let mut thread_tokens : Vec<Vec<ThreadToken<DT>>> = Vec::new();
         let mut idx = 0;
         while idx < num_replicas
             invariant
-                num_replicas <= NUM_REPLICAS,
+                num_replicas <= MAX_REPLICAS,
+                unbounded_log_instance.num_replicas() == num_replicas,
+                cyclic_buffer_instance.num_replicas() == num_replicas,
+                cyclic_buffer_instance.unbounded_log_instance() == unbounded_log_instance,
                 0 <= idx <= num_replicas,
                 replica_tokens.len() == num_replicas,
                 forall |i| 0 <= i < num_replicas ==> (#[trigger]replica_tokens[i]).id_spec() == i,
@@ -165,7 +157,7 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
                     &&& #[trigger]  replicas.contains_key(i)
                     &&& replicas[i]@.instance == unbounded_log_instance
                     &&& replicas[i]@.key == i
-                    &&& replicas[i]@.value == T::init_spec()
+                    &&& replicas[i]@.value == DT::init_spec()
                 }),
                 (forall |i| #![trigger combiners[i]] idx <= i < num_replicas ==> {
                     &&& #[trigger] combiners.contains_key(i)
@@ -216,15 +208,15 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
     ///
     ///  - Dafny: N/A (in c++ code?)
     ///  - Rust:  pub fn register(&self, replica_id: ReplicaId) -> Option<ThreadToken>
-    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<T>>)
+    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<ThreadToken<DT>>)
         // requires old(self).wf()
         // ensures
         //     self.wf(),
         //     result.is_Some() ==> result.get_Some_0().WF(&self.replicas[replica_id as int])
     {
         if (replica_id as usize) < self.replicas.len() {
-            let mut replica : Box<Replica<T>> = self.replicas.remove(replica_id);
-            let res : Option<ThreadToken<T>> = (*replica).register();
+            let mut replica : Box<Replica<DT>> = self.replicas.remove(replica_id);
+            let res : Option<ThreadToken<DT>> = (*replica).register();
             self.replicas.insert(replica_id, replica);
             res
         } else {
@@ -239,9 +231,9 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    fn execute_mut(&self, op: T::WriteOperation, tkn: ThreadToken<T>, ticket: Tracked<UnboundedLog::local_updates<T>>)
-        -> (result: Result<(T::Response, ThreadToken<T>, Tracked<UnboundedLog::local_updates<T>>),
-                           (ThreadToken<T>, Tracked<UnboundedLog::local_updates<T>>) > )
+    fn execute_mut(&self, op: DT::WriteOperation, tkn: ThreadToken<DT>, ticket: Tracked<UnboundedLog::local_updates<DT>>)
+        -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>),
+                           (ThreadToken<DT>, Tracked<UnboundedLog::local_updates<DT>>) > )
         // requires
         //     self.wf(), // wf global node
         //     tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),
@@ -267,8 +259,8 @@ impl<T: Dispatch + Sync> crate::NR for NodeReplicated<T> {
     ///             -> <D as Dispatch>::Response
     ///
     /// This is basically a wrapper around the `do_operation` of the interface defined in Dafny
-    fn execute(&self, op: T::ReadOperation, tkn: ThreadToken<T>,  ticket: Tracked<UnboundedLog::local_reads<T>>)
-            -> (result: Result<(T::Response, ThreadToken<T>, Tracked<UnboundedLog::local_reads<T>>), (ThreadToken<T>, Tracked<UnboundedLog::local_reads<T>>)>)
+    fn execute(&self, op: DT::ReadOperation, tkn: ThreadToken<DT>,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
+            -> (result: Result<(DT::Response, ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>), (ThreadToken<DT>, Tracked<UnboundedLog::local_reads<DT>>)>)
         // requires
         //     self.wf(), // wf global node
         //     tkn.WF(&self.replicas.spec_index(tkn.replica_id_spec() as int)),

@@ -11,7 +11,7 @@ use vstd::{
     atomic_with_ghost,
 };
 
-use crate::constants::{NUM_REPLICAS, MAX_REQUESTS, MAX_THREADS_PER_REPLICA, RESPONSE_CHECK_INTERVAL};
+use crate::constants::{MAX_REPLICAS, MAX_REQUESTS, MAX_THREADS_PER_REPLICA, RESPONSE_CHECK_INTERVAL};
 
 use crate::Dispatch;
 
@@ -71,8 +71,8 @@ impl ReplicaToken {
         ReplicaToken { rid: self.rid }
     }
 
-    pub open spec fn wf(&self) -> bool {
-        &&& self.rid < NUM_REPLICAS
+    pub open spec fn wf(&self, max_replicas: nat) -> bool {
+        &&& self.rid < max_replicas
     }
 
     pub const fn id(&self) -> (result: ReplicaId)
@@ -198,7 +198,7 @@ pub struct Replica<#[verifier::reject_recursive_types] DT: Dispatch> {
 
     // Thread index that will be handed out to the next thread that registers
     // with the replica when calling [`Replica::register()`].
-    // next: CachePadded<AtomicU64<_, FlatCombiner::num_threads, _>>,
+    pub num_threads: usize, // CachePadded<AtomicU64<_, Tracked<u64>, _>>,
 
     /// thread token that is handed out to the threads that register
     pub /* REVIEW: (crate) */ thread_tokens: Vec<ThreadToken<DT>>,
@@ -215,10 +215,13 @@ pub open spec fn wf(&self) -> bool {
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i as int]).flat_combiner_instance == self.flat_combiner_instance)
         &&& (forall |i: nat| 0 <= i < self.contexts.len() ==> (#[trigger] self.contexts[i as int]).unbounded_log_instance == self.unbounded_log_instance)
 
+        &&& self.replica_token.rid < self.unbounded_log_instance@.num_replicas()
+
         &&& self.contexts.len() == MAX_THREADS_PER_REPLICA
-        &&& 0 <= self.spec_id() < NUM_REPLICAS
+        &&& self.data.0.max_threads() == self.contexts.len()
+        &&& 0 <= self.spec_id() < MAX_REPLICAS
         &&& self.data.0.wf()
-        &&& (forall |v: ReplicatedDataStructure<DT>| #[trigger] self.data.0.inv(v) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
+        &&& (forall |v: ReplicatedDataStructure<DT>| (#[trigger] self.data.0.inv(v)) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
 
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
         &&& (forall |i| #![trigger self.thread_tokens[i]] 0 <= i < self.thread_tokens.len() ==> {
@@ -232,6 +235,10 @@ pub open spec fn wf(&self) -> bool {
         //
         &&& (g.is_some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), collected_operations.id(), collected_operations_per_thread.id()))
     }
+
+    // invariant on num_threads is (v: u64, g: Tracked<u64>) {
+    //     v == g@
+    // }
 }
 
 } // struct_with_invariants!
@@ -243,7 +250,7 @@ impl<DT: Dispatch> Replica<DT> {
     pub fn new(replica_token: ReplicaToken, num_threads: usize, config: Tracked<ReplicaConfig<DT>>) -> (res: Self)
         requires
             num_threads == MAX_THREADS_PER_REPLICA,
-            replica_token.id_spec() < NUM_REPLICAS,
+            replica_token.id_spec() < MAX_REPLICAS,
             config@.wf(replica_token.id_spec())
         ensures
             res.wf(),
@@ -258,7 +265,6 @@ impl<DT: Dispatch> Replica<DT> {
             unbounded_log_instance: unbounded_log_instance,
             cyclic_buffer_instance: cyclic_buffer_instance,
         } = config.get();
-
 
         //
         // initialize the flat combiner
@@ -304,7 +310,7 @@ impl<DT: Dispatch> Replica<DT> {
         let ghost data_structure_inv = |s: ReplicatedDataStructure<DT>| {
             s.wf(replica_token.id_spec(), unbounded_log_instance, cyclic_buffer_instance)
         };
-        let data = CachePadded(RwLock::new(replicated_data_structure, Ghost(data_structure_inv)));
+        let data = CachePadded(RwLock::new(MAX_THREADS_PER_REPLICA, replicated_data_structure, Ghost(data_structure_inv)));
 
         //
         // Create the thread contexts
@@ -316,7 +322,7 @@ impl<DT: Dispatch> Replica<DT> {
         while idx < num_threads
             invariant
                 num_threads <= MAX_THREADS_PER_REPLICA,
-                replica_token.id_spec() < NUM_REPLICAS,
+                replica_token.id_spec() < unbounded_log_instance.num_replicas(),
                 contexts.len() == idx,
                 thread_tokens.len() == idx,
                 0 <= idx <= num_threads,
@@ -339,7 +345,7 @@ impl<DT: Dispatch> Replica<DT> {
                     &&& contexts[i].unbounded_log_instance == unbounded_log_instance
                 },
                 forall |i| #![trigger thread_tokens[i]] 0 <= i < thread_tokens.len() ==> {
-                    &&& thread_tokens[i].wf2()
+                    &&& thread_tokens[i].wf2(unbounded_log_instance.num_replicas())
                     &&& thread_tokens[i].thread_id_spec() == i
                     &&& thread_tokens[i].rid@ == replica_token.id_spec()
                     &&& thread_tokens[i].fc_client@@.instance == fc_instance
@@ -364,6 +370,8 @@ impl<DT: Dispatch> Replica<DT> {
                 batch_perm
             };
 
+            // assert(token.wf2(unbounded_log_instance.num_replicas()));
+
             contexts.push(context);
             thread_tokens.push(token);
 
@@ -379,7 +387,7 @@ impl<DT: Dispatch> Replica<DT> {
 
         let tracked fc_inst = fc_instance.clone();
         let combiner = CachePadded(AtomicU64::new(Ghost((Tracked(fc_inst), responses, collected_operations, collected_operations_per_thread)), 0, Tracked(Option::Some(context_ghost))));
-
+        let num_threads = 0; //AtomicU64::new(Ghost(()), 0, Tracked(0));
         //
         // Assemble the data struture
         //
@@ -393,6 +401,7 @@ impl<DT: Dispatch> Replica<DT> {
             responses,
             data,
             thread_tokens,
+            num_threads,
             unbounded_log_instance: Tracked(unbounded_log_instance),
             cyclic_buffer_instance: Tracked(cyclic_buffer_instance),
             flat_combiner_instance: Tracked(fc_instance),
@@ -923,9 +932,14 @@ impl<DT: Dispatch> Replica<DT> {
 
         // Step 3: Take the read-only lock, and read the value
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
-        let read_handle = self.data.0.acquire_read();
-        let replica = self.data.0.borrow(&read_handle);
+        assert(tkn.thread_id_spec() < self.data.0.max_threads());
+
+        let read_handle = self.data.0.acquire_read(tkn.thread_id() as usize);
+        let replica = self.data.0.borrow(Tracked(&read_handle));
         let result = replica.data.dispatch(op);
+        // assert(replica.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@));
+        // assert(replica.replica@.view().instance == self.unbounded_log_instance);
+        // assert(replica.replica@.view().key == rid);
 
         let tracked ticket = self.unbounded_log_instance.borrow().readonly_apply(rid, replica.replica.borrow(), ticket, replica.combiner.borrow());
         self.data.0.release_read(read_handle);
@@ -1076,6 +1090,9 @@ impl<DT: Dispatch> ReplicaConfig<DT> {
     pub open spec fn wf(&self, nid: nat) -> bool {
         &&& self.combiner@.instance == self.unbounded_log_instance
         &&& self.cb_combiner@.instance == self.cyclic_buffer_instance
+        &&& self.cyclic_buffer_instance.unbounded_log_instance() == self.unbounded_log_instance
+        &&& self.unbounded_log_instance.num_replicas() == self.cyclic_buffer_instance.num_replicas()
+        &&& nid < self.unbounded_log_instance.num_replicas()
 
         &&& self.replica@.value == DT::init_spec()
         &&& self.replica@.key == nid

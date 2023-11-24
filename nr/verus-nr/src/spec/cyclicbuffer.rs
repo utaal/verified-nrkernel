@@ -35,7 +35,7 @@ pub type LogicalLogIdx = int;
 type Key = int;
 
 verus! {
-    pub  open const LOG_SIZE: usize = 1024;
+    use crate::constants::LOG_SIZE;
 
     // pub type StoredType = PointsTo<LogEntry>;
 

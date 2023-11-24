@@ -3,11 +3,7 @@ use builtin::*;
 use builtin_macros::*;
 use vstd::{
     prelude::*,
-    multiset::*,
-    invariant::*,
-    cell::*,
-    atomic_ghost::{AtomicBool, AtomicU64},
-    atomic_with_ghost};
+    multiset::*,};
 use state_machines_macros::tokenized_state_machine;
 
 verus!{
@@ -305,11 +301,6 @@ tokenized_state_machine!{
         }
     }
 }
-
-
-
-fn main() { }
-
 
 
 } // verus!
