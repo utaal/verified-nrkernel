@@ -322,6 +322,7 @@ name = "nrspec"
 version = "0.1.0"
 dependencies = [
  "bench_utils",
+ "builtin",
  "env_logger",
  "log",
  "rand",

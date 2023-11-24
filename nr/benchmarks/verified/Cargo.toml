@@ -10,6 +10,7 @@ edition = "2021"
 # nothing yet
 
 [dev-dependencies]
+builtin = { path = "../../../verus/source/builtin" }
 verus-nr = { path = "../../verus-nr" }
 bench_utils = { path = "../../lib/bench_utils_verus_nr" }
 env_logger = "0.9.0"

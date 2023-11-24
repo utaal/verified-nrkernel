@@ -142,13 +142,14 @@ where
     mkbench::ScaleBenchBuilder::<R>::new(ops)
         // .thread_defaults()
         .threads(1)
+        .threads(8)
         .threads(16)
         //.threads(73)
         //.threads(96)
         //.threads(192)
         .update_batch(1)
         .log_size(2 * 1024 * 1024)
-        .replica_strategy(mkbench::ReplicaStrategy::One)
+        // .replica_strategy(mkbench::ReplicaStrategy::One)
         .replica_strategy(mkbench::ReplicaStrategy::Socket)
         .thread_mapping(ThreadMapping::Interleave)
         .log_strategy(mkbench::LogStrategy::One)
@@ -174,7 +175,7 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = TestHarness::new(Duration::from_secs(30));
+    let mut harness = TestHarness::new(Duration::from_secs(10));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]

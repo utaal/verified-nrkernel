@@ -6,6 +6,7 @@
 #![allow(dead_code)]
 use std::fmt::Debug;
 use std::marker::Sync;
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use logging::warn;
@@ -15,8 +16,9 @@ use bench_utils::benchmark::*;
 use bench_utils::mkbench::{self, DsInterface};
 use bench_utils::topology::ThreadMapping;
 use bench_utils::Operation;
-use verus_nr::{Dispatch, NodeReplicated, NR};
+use verus_nr::{Dispatch, NodeReplicated, ReplicaId, ThreadToken, NR};
 
+use builtin::Tracked;
 
 /// The initial amount of entries all Hashmaps are initialized with
 #[cfg(feature = "smokebench")]
@@ -43,7 +45,7 @@ pub const NOP: usize = 25_000_000;
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum OpWr {
     /// Increment the Counter
-    Inc
+    Inc,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
@@ -83,13 +85,12 @@ impl Dispatch for NrCounter {
     type Response = Result<u64, ()>;
     type View = NrCounter;
 
-    fn init() ->  Self
-    {
+    fn init() -> Self {
         NrCounter { counter: 0 }
     }
 
     // partial eq also add an exec operation
-    fn clone_write_op(op: &Self::WriteOperation) -> Self::WriteOperation{
+    fn clone_write_op(op: &Self::WriteOperation) -> Self::WriteOperation {
         op.clone()
     }
 
@@ -106,9 +107,60 @@ impl Dispatch for NrCounter {
     /// Implements how we execute operation from the log against our local stack
     fn dispatch_mut(&mut self, op: Self::WriteOperation) -> Self::Response {
         match op {
-            OpWr::Inc => {
-                Ok(self.inc())
-            }
+            OpWr::Inc => Ok(self.inc()),
+        }
+    }
+}
+
+// impl<T, U> SomeTrait for T
+//    where T: AnotherTrait<AssocType=U>
+struct VNRWrapper {
+    val: NodeReplicated<NrCounter>,
+}
+
+/// The interface a data-structure must implement to be benchmarked by
+/// `ScaleBench`.
+impl DsInterface for VNRWrapper {
+    type D = NrCounter; //: Dispatch + Default + Sync;
+
+    /// Allocate a new data-structure.
+    ///
+    /// - `replicas`: How many replicas the data-structure should maintain.
+    /// - `logs`: How many logs the data-structure should be partitioned over.
+    fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self {
+        VNRWrapper {
+            val: NR::<NrCounter>::new(replicas.into()),
+        }
+    }
+
+    /// Register a thread with a data-structure.
+    ///
+    /// - `rid` indicates which replica the thread should use.
+    fn register(&mut self, rid: ReplicaId) -> Option<ThreadToken<Self::D>> {
+        NR::<NrCounter>::register(&mut self.val, rid)
+    }
+
+    /// Apply a mutable operation to the data-structure.
+    fn execute_mut(
+        &self,
+        op: <Self::D as Dispatch>::WriteOperation,
+        idx: ThreadToken<Self::D>,
+    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D>), ThreadToken<Self::D>> {
+        match NR::execute_mut(&self.val, op, idx, Tracked::assume_new()) {
+            Ok((res, tkn, _)) => Ok((res, tkn)),
+            Err((tkn, _)) => Err(tkn),
+        }
+    }
+
+    /// Apply a immutable operation to the data-structure.
+    fn execute(
+        &self,
+        op: <Self::D as Dispatch>::ReadOperation,
+        idx: ThreadToken<Self::D>,
+    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D>), ThreadToken<Self::D>> {
+        match NR::execute(&self.val, op, idx, Tracked::assume_new()) {
+            Ok((res, tkn, _)) => Ok((res, tkn)),
+            Err((tkn, _)) => Err(tkn),
         }
     }
 }
@@ -120,10 +172,7 @@ impl Dispatch for NrCounter {
 ///  - `write`: true will Put, false will generate Get sequences
 ///  - `span`: Maximum key
 ///  - `distribution`: Supported distribution 'uniform' or 'skewed'
-pub fn generate_operations(
-    nop: usize,
-    write_ratio: usize,
-) -> Vec<Operation<OpRd, OpWr>> {
+pub fn generate_operations(nop: usize, write_ratio: usize) -> Vec<Operation<OpRd, OpWr>> {
     let mut ops = Vec::with_capacity(nop);
 
     let mut t_rng = rand::thread_rng();
@@ -157,13 +206,14 @@ where
     mkbench::ScaleBenchBuilder::<R>::new(ops)
         // .thread_defaults()
         .threads(1)
+        .threads(8)
         .threads(16)
         //.threads(73)
         //.threads(96)
         //.threads(192)
         .update_batch(1)
         .log_size(2 * 1024 * 1024)
-        .replica_strategy(mkbench::ReplicaStrategy::One)
+        // .replica_strategy(mkbench::ReplicaStrategy::One)
         .replica_strategy(mkbench::ReplicaStrategy::Socket)
         .thread_mapping(ThreadMapping::Interleave)
         .log_strategy(mkbench::LogStrategy::One)
@@ -171,18 +221,14 @@ where
             c,
             &bench_name,
             |_cid, tkn, replica, op, _batch_size| match op {
-                Operation::ReadOperation(op) => {
-                    match replica.execute(*op, tkn) {
-                        Ok(r) => r.1,
-                        Err(r) => r
-                    }
-                }
-                Operation::WriteOperation(op) => {
-                    match replica.execute_mut(*op, tkn) {
-                        Ok(r) => r.1,
-                        Err(r) => r
-                    }
-                }
+                Operation::ReadOperation(op) => match replica.execute(*op, tkn) {
+                    Ok(r) => r.1,
+                    Err(r) => r,
+                },
+                Operation::WriteOperation(op) => match replica.execute_mut(*op, tkn) {
+                    Ok(r) => r.1,
+                    Err(r) => r,
+                },
             },
         );
 }
@@ -195,7 +241,7 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = TestHarness::new(Duration::from_secs(30));
+    let mut harness = TestHarness::new(Duration::from_secs(10));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]
@@ -207,6 +253,6 @@ fn main() {
 
     //hashmap_single_threaded(&mut harness);
     for write_ratio in write_ratios.into_iter() {
-        counter_scale_out::<NodeReplicated<NrCounter>>(&mut harness, "vnr-counter", write_ratio);
+        counter_scale_out::<VNRWrapper>(&mut harness, "vnr-counter", write_ratio);
     }
 }
