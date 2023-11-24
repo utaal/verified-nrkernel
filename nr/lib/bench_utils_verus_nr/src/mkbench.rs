@@ -137,21 +137,69 @@ pub trait DsInterface {
 
 // impl<T, U> SomeTrait for T
 //    where T: AnotherTrait<AssocType=U>
-
-impl<'a, T,U> DsInterface for U
-    where T: Dispatch + Sync + Default,
-    U: NR<DT=T, TT=ThreadToken<T>>
-
+struct VNRWrapper<DT: Dispatch + Default + Sync>
 {
-    type D = T;
+    val: NodeReplicated<DT>
+}
 
-    fn new(replicas: NonZeroUsize, _logs: NonZeroUsize, log_size: usize) -> Self {
-        let replicas : usize = replicas.into();
-        NR::create(replicas)
+impl<DT:Dispatch + Default + Sync> VNRWrapper<DT>
+{
+    /// Allocate a new data-structure.
+    ///
+    /// - `replicas`: How many replicas the data-structure should maintain.
+    /// - `logs`: How many logs the data-structure should be partitioned over.
+    fn do_new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self {
+        VNRWrapper {
+            val: NR::new(replicas.into())
+        }
+    }
+
+    /// Register a thread with a data-structure.
+    ///
+    /// - `rid` indicates which replica the thread should use.
+    fn do_register(&mut self, rid: ReplicaId) -> Option<ThreadToken<DT >> {
+        NR::register(&mut self.val, rid)
+    }
+
+    /// Apply a mutable operation to the data-structure.
+    fn do_execute_mut(
+        &self,
+        op: <DT as Dispatch>::WriteOperation,
+        idx: ThreadToken<DT>,
+    ) -> Result<(<DT as Dispatch>::Response, ThreadToken<DT >), ThreadToken<DT >> {
+        match NR::execute_mut(&self.val, op, idx, Tracked::assume_new()) {
+            Ok((res, tkn, _)) => Ok((res, tkn)),
+            Err((tkn, _)) => Err(tkn)
+        }
+    }
+
+    /// Apply a immutable operation to the data-structure.
+    fn do_execute(
+        &self,
+        op: <DT as Dispatch>::ReadOperation,
+        idx: ThreadToken<DT >,
+    ) -> Result<(<DT as Dispatch>::Response, ThreadToken<DT >), ThreadToken<DT>> {
+        match NR::execute(&self.val, op, idx, Tracked::assume_new()) {
+            Ok((res, tkn, _)) => Ok((res, tkn)),
+            Err((tkn, _)) => Err(tkn)
+        }
+    }
+}
+
+
+
+
+impl<'a, DT:Dispatch + Default + Sync> DsInterface for VNRWrapper<DT>
+    where DT: Dispatch + Sync + Default,
+{
+    type D = DT;
+
+    fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self {
+        Self::do_new(replicas, logs, log_size)
     }
 
     fn register(&mut self, rid: ReplicaId) -> Option<ThreadToken<Self::D >> {
-        NR::register(self, rid)
+        self.do_register(rid)
     }
 
     fn execute_mut(
@@ -159,10 +207,7 @@ impl<'a, T,U> DsInterface for U
         op: <Self::D as Dispatch>::WriteOperation,
         idx: ThreadToken<Self::D >,
     ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D >), ThreadToken<Self::D >> {
-        match NR::execute_mut(self, op, idx, Tracked::assume_new()) {
-            Ok((res, tkn, _)) => Ok((res, tkn)),
-            Err((tkn, _)) => Err(tkn)
-        }
+        self.do_execute_mut(op, idx)
     }
 
     fn execute(
@@ -170,11 +215,7 @@ impl<'a, T,U> DsInterface for U
         op: <Self::D as Dispatch>::ReadOperation,
         idx: ThreadToken<Self::D >,
     ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D >), ThreadToken<Self::D >> {
-
-        match NR::execute(self, op, idx, Tracked::assume_new()) {
-            Ok((res, tkn, _)) => Ok((res, tkn)),
-            Err((tkn, _)) => Err(tkn)
-        }
+        self.do_execute(op, idx)
     }
 }
 
@@ -299,7 +340,7 @@ pub fn baseline_comparison<R: DsInterface>(
     // 2nd benchmark: we compare T with a log in front:
     let mut r : NodeReplicated<R::D> = {
         // let replicas = NonZeroUsize::new(1).expect("Can't create NonZeroUsize");
-        NR::create(1)
+        NR::new(1)
     };
 
     let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);

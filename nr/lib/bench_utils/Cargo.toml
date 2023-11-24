@@ -14,7 +14,7 @@ authors = [
 debug = true
 
 [dependencies]
-node-replication = { path = "../node-replication/node-replication" }
+node-replication = { path = "../node-replication/node-replication", default-features = false }
 arr_macro = "0.1.2"
 core_affinity = "0.5.10"
 crossbeam-utils = { version = "0.8", default-features = false }
