@@ -12,6 +12,8 @@ pub mod benchmark;
 pub mod mkbench;
 pub mod topology;
 
+pub use mkbench::chg_affinity;
+
 /// A wrapper type to distinguish between arbitrary generated read or write operations
 /// in the test harness.
 #[derive(Clone)]
