@@ -241,8 +241,8 @@ impl MachineTopology {
                     num_alloc_cpus += 1;
                 }
 
-                let c = allocated.into_iter().flatten().collect();
-                assert!(c.len( == how_many));
+                let c : Vec<CpuInfo> = allocated.into_iter().flatten().collect();
+                assert!(c.len() == how_many);
                 c
             }
             ThreadMapping::Sequential => {

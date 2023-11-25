@@ -26,6 +26,8 @@ use log::*;
 use verus_nr::{Dispatch, AffinityFn, NodeReplicated, NR, ReplicaId, ThreadToken, constants::DEFAULT_LOG_BYTES};
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::prelude::*;
+use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 
 use builtin::Tracked;
@@ -716,7 +718,7 @@ where
 
                     // Copy the actual Vec<Operations> data within the thread
                     let mut operations = (*operations).clone();
-                    operations.shuffle(&mut rand::rngs::SmallRng::from_entropy());
+                    operations.shuffle(&mut ChaCha8Rng::seed_from_u64(42 + core_id));
 
                     if name.starts_with("urcu") {
                         panic!("urcu is disabled!")

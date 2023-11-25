@@ -26,6 +26,8 @@ use log::*;
 use node_replication::nr::{AffinityChange, Dispatch, NodeReplicated, ReplicaId, ThreadToken};
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
+use rand::prelude::*;
+use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 
 pub use crate::topology::ThreadMapping;
@@ -632,7 +634,7 @@ where
                         .expect("Can't register replica, out of slots?");
                     // Copy the actual Vec<Operations> data within the thread
                     let mut operations = (*operations).clone();
-                    operations.shuffle(&mut rand::rngs::SmallRng::from_entropy());
+                    operations.shuffle(&mut ChaCha8Rng::seed_from_u64(42 + core_id));
 
                     if name.starts_with("urcu") {
                         unsafe {

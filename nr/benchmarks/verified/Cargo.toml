@@ -15,6 +15,7 @@ verus-nr = { path = "../../verus-nr" }
 bench_utils = { path = "../../lib/bench_utils_verus_nr" }
 env_logger = "0.9.0"
 rand = { version = "0.8", features = ["small_rng"] }
+rand_chacha = "0.3.1"
 logging = { version = "0.4", package = "log" }
 zipf = "7.0"
 

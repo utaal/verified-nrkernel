@@ -11,12 +11,14 @@ use std::time::Duration;
 
 use logging::warn;
 use rand::seq::SliceRandom;
+use rand::prelude::*;
+use rand_chacha::ChaCha8Rng;
 
 use bench_utils::benchmark::*;
 use bench_utils::mkbench::{self, DsInterface};
 use bench_utils::topology::ThreadMapping;
 use bench_utils::Operation;
-use verus_nr::{Dispatch, NodeReplicated, ReplicaId, ThreadToken, NR};
+use verus_nr::{Dispatch, AffinityFn, NodeReplicated, ReplicaId, ThreadToken, NR};
 
 use builtin::Tracked;
 
@@ -129,7 +131,7 @@ impl DsInterface for VNRWrapper {
     /// - `logs`: How many logs the data-structure should be partitioned over.
     fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self {
         VNRWrapper {
-            val: NR::<NrCounter>::new(replicas.into()),
+            val: NR::<NrCounter>::new(replicas.into(), AffinityFn::new(mkbench::chg_affinity)),
         }
     }
 
@@ -175,7 +177,7 @@ impl DsInterface for VNRWrapper {
 pub fn generate_operations(nop: usize, write_ratio: usize) -> Vec<Operation<OpRd, OpWr>> {
     let mut ops = Vec::with_capacity(nop);
 
-    let mut t_rng = rand::thread_rng();
+    let mut rng = ChaCha8Rng::seed_from_u64(42);
 
     for idx in 0..nop {
         if idx % 100 < write_ratio {
@@ -185,7 +187,7 @@ pub fn generate_operations(nop: usize, write_ratio: usize) -> Vec<Operation<OpRd
         }
     }
 
-    ops.shuffle(&mut t_rng);
+    ops.shuffle(&mut rng);
     ops
 }
 
@@ -204,14 +206,14 @@ where
     let bench_name = format!("{}-scaleout-wr{}", name, write_ratio);
 
     mkbench::ScaleBenchBuilder::<R>::new(ops)
-        // .thread_defaults()
-        .threads(1)
-        .threads(8)
-        .threads(16)
+        .thread_defaults()
+        // .threads(1)
+        // .threads(8)
+        // .threads(16)
         //.threads(73)
         //.threads(96)
         //.threads(192)
-        .update_batch(1)
+        .update_batch(32)
         .log_size(2 * 1024 * 1024)
         // .replica_strategy(mkbench::ReplicaStrategy::One)
         .replica_strategy(mkbench::ReplicaStrategy::Socket)
@@ -241,14 +243,14 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = TestHarness::new(Duration::from_secs(10));
+    let mut harness = TestHarness::new(Duration::from_secs(60));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]
     } else if cfg!(feature = "smokebench") {
         vec![10]
     } else {
-        vec![0, 10, 100]
+        vec![0, 10, 50, 100]
     };
 
     //hashmap_single_threaded(&mut harness);
