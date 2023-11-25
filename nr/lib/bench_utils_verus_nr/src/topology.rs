@@ -203,6 +203,7 @@ impl MachineTopology {
             ThreadMapping::None => v,
             ThreadMapping::Interleave => {
                 let mut ht1 = cpus.clone();
+
                 // Get cores first, remove HT
                 ht1.sort_by_key(|c| c.core);
                 ht1.dedup_by(|a, b| a.core == b.core);
@@ -217,8 +218,31 @@ impl MachineTopology {
                 ht2.sort_by_key(|c| c.core);
                 ht1.extend(ht2);
 
-                //cpus.dedup_by(|a, b| a.core == b.core);
-                let c = ht1.iter().take(how_many).map(|c| *c).collect();
+                // now get the sockets
+                let sockets = self.sockets();
+                let num_sockets = sockets.len();
+
+                // calculate how many CPUs we need per socket, rounded up to the next core
+                let cpus_per_socket = (how_many + num_sockets - 1) / num_sockets;
+
+                let mut allocated : Vec<Vec<CpuInfo>> = sockets.iter().map(|_| Vec::new()).collect();
+                let mut num_alloc_cpus = 0;
+                for cpu in ht1.into_iter() {
+                    if num_alloc_cpus == how_many {
+                        break;
+                    }
+                    // if we already reached the target on that node, skip that core
+                    // XXX: assumes all node have the same number of cores
+                    if allocated[cpu.socket as usize].len() == cpus_per_socket {
+                        continue;
+                    }
+
+                    allocated.get_mut(cpu.socket as usize).unwrap().push(cpu);
+                    num_alloc_cpus += 1;
+                }
+
+                let c = allocated.into_iter().flatten().collect();
+                assert!(c.len( == how_many));
                 c
             }
             ThreadMapping::Sequential => {

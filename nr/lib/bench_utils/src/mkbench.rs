@@ -249,7 +249,7 @@ pub fn baseline_comparison<R: DsInterface>(
     let mut group = c.benchmark_group(name);
     let duration = group.duration;
 
-    let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);
+    let mut operations_per_second: Vec<usize> = Vec::with_capacity(128);
     group.bench_function("baseline", |b| {
         b.iter(|| {
             let mut operations_completed: usize = 0;
@@ -649,7 +649,7 @@ where
                         duration
                     );
 
-                    let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);
+                    let mut operations_per_second: Vec<usize> = Vec::with_capacity(128);
                     let mut operations_completed: usize = 0;
                     let mut iter: usize = 0;
                     let nop: usize = operations.len();

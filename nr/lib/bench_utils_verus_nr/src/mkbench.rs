@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use csv::WriterBuilder;
 use log::*;
 
-use verus_nr::{Dispatch, NodeReplicated, NR, ReplicaId, ThreadToken, constants::DEFAULT_LOG_BYTES};
+use verus_nr::{Dispatch, AffinityFn, NodeReplicated, NR, ReplicaId, ThreadToken, constants::DEFAULT_LOG_BYTES};
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
 use serde::Serialize;
@@ -70,6 +70,32 @@ use crate::{benchmark::*, topology::*, Operation};
 //         }
 //     }
 // }
+
+pub fn chg_affinity(rid: ReplicaId) {
+    let mut cpu: usize = 0;
+    let mut node: usize = 0;
+    unsafe { nix::libc::syscall(nix::libc::SYS_getcpu, &mut cpu, &mut node, 0) };
+
+    let mut cpu_set = nix::sched::CpuSet::new();
+    trace!(
+        "cpus for node={} are {:#?}",
+        rid,
+        MACHINE_TOPOLOGY.cpus_on_node(rid as u64)
+    );
+    for ncpu in MACHINE_TOPOLOGY.cpus_on_node(rid as u64) {
+        debug!("ncpu is {:?}", ncpu);
+        cpu_set
+            .set(ncpu.cpu as usize)
+            .expect("Can't toggle CPU in cpu_set");
+    }
+    debug!(
+        "we are on cpu {} node {} and should handle things for replica {} now, changing affinity to {:?}",
+        cpu, node, rid, cpu_set
+    );
+    nix::sched::sched_setaffinity(nix::unistd::Pid::from_raw(0), &cpu_set)
+        .expect("Can't change thread affinity");
+}
+
 
 /// Threshold after how many iterations we log a warning for busy spinning loops.
 ///
@@ -150,7 +176,7 @@ impl<DT:Dispatch + Default + Sync> VNRWrapper<DT>
     /// - `logs`: How many logs the data-structure should be partitioned over.
     fn do_new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self {
         VNRWrapper {
-            val: NR::new(replicas.into())
+            val: NR::new(replicas.into(), AffinityFn::new(chg_affinity))
         }
     }
 
@@ -289,7 +315,7 @@ pub fn baseline_comparison<R: DsInterface>(
     let mut group = c.benchmark_group(name);
     let duration = group.duration;
 
-    let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);
+    let mut operations_per_second: Vec<usize> = Vec::with_capacity(128);
     group.bench_function("baseline", |b| {
         b.iter(|| {
             let mut operations_completed: usize = 0;
@@ -340,7 +366,7 @@ pub fn baseline_comparison<R: DsInterface>(
     // 2nd benchmark: we compare T with a log in front:
     let mut r : NodeReplicated<R::D> = {
         // let replicas = NonZeroUsize::new(1).expect("Can't create NonZeroUsize");
-        NR::new(1)
+        NR::new(1, AffinityFn::new(chg_affinity))
     };
 
     let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);
@@ -706,7 +732,7 @@ where
                         duration
                     );
 
-                    let mut operations_per_second: Vec<usize> = Vec::with_capacity(32);
+                    let mut operations_per_second: Vec<usize> = Vec::with_capacity(128);
                     let mut operations_completed: usize = 0;
                     let mut iter: usize = 0;
                     let nop: usize = operations.len();
