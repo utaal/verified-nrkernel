@@ -7,6 +7,7 @@
 #[allow(unused_imports)]
 use builtin::*;
 use vstd::*;
+use vstd::seq::*;
 use vstd::prelude::*;
 use state_machines_macros::state_machine;
 
@@ -489,5 +490,109 @@ trait SimpleLogRefinesAsynchronousSingleton<DT: Dispatch> {
         requires a.wf(),
         ensures b.wf() && behavior_equiv(a, b);
 }
+
+
+struct Foo;
+
+
+
+impl<DT: Dispatch> SimpleLogRefinesAsynchronousSingleton<DT> for Foo {
+    proof fn exists_equiv_behavior(a: SimpleLogBehavior<DT>) -> (b: AsynchronousSingletonBehavior<DT>)
+        // requires a.wf(),
+        // ensures b.wf() && behavior_equiv(a, b)
+    {
+        match a {
+            // Stepped(SimpleLog::State<DT>, AsyncLabel<DT>, Box<SimpleLogBehavior<DT>>),
+            // pub enum AsyncLabel<DT: Dispatch> { Internal, Start(RequestId, InputOperation<DT>), End(RequestId, InputOperation<DT>),
+            SimpleLogBehavior::Stepped(post, op, tail) => {
+                let prev = tail.get_last();
+                assert(
+                    exists |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(prev, post, step)
+                );
+                let step = choose|step: SimpleLog::Step<DT>| SimpleLog::State::next_by(prev, post, step);
+
+                match step {
+                    //                              ReqId, DT::ReadOperation
+                    SimpleLog::Step::readonly_start(rid, op) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    SimpleLog::Step::readonly_read_version(rid) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    //                              ReqId, LogIdx, DT::ReadOperation
+                    SimpleLog::Step::readonly_finish(rid, logidx, op) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    //                            ReqId, DT::WriteOperation
+                    SimpleLog::Step::update_start(rid, op) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    //                                     Seq<ReqId>
+                    SimpleLog::Step::update_add_ops_to_log(updates) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    SimpleLog::Step::update_add_ops_to_log_one(rid) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    SimpleLog::Step::update_incr_version(logidx) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    SimpleLog::Step::update_finish(rid) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    SimpleLog::Step::no_op() => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                    //                                        SimpleLog::State<DT>
+                    SimpleLog::Step::dummy_to_use_type_params(state) => {
+                        // TODO: prove me!
+                        let res : AsynchronousSingletonBehavior<DT> = arbitrary();
+                        assume(res.wf() && behavior_equiv(a, res));
+                        res
+                    }
+                }
+            }
+            // Inited(SimpleLog::State<DT>),
+            SimpleLogBehavior::Inited(sl_state) => {
+                let res = AsynchronousSingletonBehavior::Inited(
+                    AsynchronousSingleton::State {
+                    state: DT::init_spec(),
+                    reqs: Map::empty(),
+                    resps: Map::empty(),
+                });
+                assume(res.wf() && behavior_equiv(a, res));
+                res
+            }
+        }
+    }
+}
+
 
 } // verus!
