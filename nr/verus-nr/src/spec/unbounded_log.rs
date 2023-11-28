@@ -1008,7 +1008,7 @@ UnboundedLog<DT: Dispatch> {
             crate::InputOperation::Read(op) => {
                 assert(post.inv_request_ids_finite());
                 assert(post.inv_local_combiner_complete());
-                // assert(post.invariant());
+                assert(post.invariant());
             }
             crate::InputOperation::Write(op) => {
                 assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {

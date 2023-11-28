@@ -43,6 +43,15 @@ pub enum ReadReq<R> {
     Req { version: LogIdx, op: R },
 }
 
+impl<R> ReadReq<R> {
+    pub open spec fn op(self) -> R {
+        match self {
+            ReadReq::Init { op } => op,
+            ReadReq::Req { op, ..} => op
+        }
+    }
+}
+
 /// Represents the state of an update requeset, returning the index of the update in the log
 pub struct UpdateResp(pub LogIdx);
 
@@ -208,26 +217,26 @@ state_machine! {
         ///
         /// Collect the updates given by the sequence of requests ids and place them in the log
         /// in-order. This moves the requests from update_reqs to update_resps.
-        transition!{
-            update_add_ops_to_log(rids: Seq<ReqId>) {
-                // all request ids must be in the update requests
-                require(forall |r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.contains_key(r));
-                // the request ids must be unique, the sequence defines the update order
-                require(seq_unique(rids));
+        // transition!{
+        //     update_add_ops_to_log(rids: Seq<ReqId>) {
+        //         // all request ids must be in the update requests
+        //         require(forall |r: ReqId|  #[trigger] rids.contains(r) ==> pre.update_reqs.contains_key(r));
+        //         // the request ids must be unique, the sequence defines the update order
+        //         require(seq_unique(rids));
 
-                // add the update operations to the log
-                update log = pre.log + Seq::new(rids.len(), |i: int| pre.update_reqs[i as nat]);
+        //         // add the update operations to the log
+        //         update log = pre.log + Seq::new(rids.len(), |i: int| pre.update_reqs[i as nat]);
 
-                // remove all update requests
-                update update_reqs = pre.update_reqs.remove_keys(Set::new(|i| rids.contains(i)));
+        //         // remove all update requests
+        //         update update_reqs = pre.update_reqs.remove_keys(Set::new(|i| rids.contains(i)));
 
-                // add the responses to the update requests
-                update update_resps = pre.update_resps.union_prefer_right(
-                        Map::new(|r: ReqId| { rids.contains(r) },
-                                 |r: ReqId| { UpdateResp(pre.log.len() + rids.index_of(r) as nat)})
-                );
-            }
-        }
+        //         // add the responses to the update requests
+        //         update update_resps = pre.update_resps.union_prefer_right(
+        //                 Map::new(|r: ReqId| { rids.contains(r) },
+        //                          |r: ReqId| { UpdateResp(pre.log.len() + rids.index_of(r) as nat)})
+        //         );
+        //     }
+        // }
 
         /// Update Request: Add the update operations to the log
         ///
@@ -304,8 +313,8 @@ state_machine! {
         #[inductive(update_start)]
         fn update_start_inductive(pre: Self, post: Self, rid: ReqId, op: DT::WriteOperation) { }
 
-        #[inductive(update_add_ops_to_log)]
-        fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
+        // #[inductive(update_add_ops_to_log)]
+        // fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
 
         #[inductive(update_add_ops_to_log_one)]
         fn update_add_ops_to_log_one_inductive(pre: Self, post: Self, rid: ReqId) { }
