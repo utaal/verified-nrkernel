@@ -150,10 +150,8 @@ state_machine! {
         transition!{
             readonly_start(rid: ReqId, op: DT::ReadOperation) {
                 require(!pre.readonly_reqs.contains_key(rid));
-
-                // XXX: do we actually care whether an update request has the same id as an readonly request?
-                // require(!pre.update_reqs.contains_key(rid));
-                // require(!pre.update_resps.contains_key(rid));
+                require(!pre.update_reqs.contains_key(rid));
+                require(!pre.update_resps.contains_key(rid));
 
                 update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Init{ op };
             }
@@ -204,8 +202,7 @@ state_machine! {
         /// Update Request: place an update request in the system
         transition!{
             update_start(rid: ReqId, op: DT::WriteOperation) {
-                // XXX: do we actually care whether an readonly request has the same id as an update request?
-                // require(!pre.readonly_reqs.contains_key(rid));
+                require(!pre.readonly_reqs.contains_key(rid));
                 require(!pre.update_reqs.contains_key(rid));
                 require(!pre.update_resps.contains_key(rid));
 
@@ -243,7 +240,7 @@ state_machine! {
         /// Collect the updates given by the sequence of requests ids and place them in the log
         /// in-order. This moves the requests from update_reqs to update_resps.
         transition!{
-            update_add_ops_to_log_one(rid: ReqId) {
+            update_add_op_to_log(rid: ReqId) {
                 // all request ids must be in the update requests
                 require(pre.update_reqs.contains_key(rid));
 
@@ -271,12 +268,13 @@ state_machine! {
 
         /// Update: Finish the update operation by removing it from the update responses
         transition!{
-            update_finish(rid: nat) {
+            update_finish(rid: nat, ret: DT::Response) {
                 require(pre.update_resps.contains_key(rid));
                 let uidx = pre.update_resps.index(rid).0;
 
                 require(pre.version > uidx);
                 require(pre.log.len() > uidx);
+                require(ret == DT::dispatch_mut_spec(pre.nrstate_at_version(uidx), pre.log[uidx as int]).1);
 
                 update update_resps = pre.update_resps.remove(rid);
             }
@@ -316,14 +314,14 @@ state_machine! {
         // #[inductive(update_add_ops_to_log)]
         // fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
 
-        #[inductive(update_add_ops_to_log_one)]
-        fn update_add_ops_to_log_one_inductive(pre: Self, post: Self, rid: ReqId) { }
+        #[inductive(update_add_op_to_log)]
+        fn update_add_op_to_log_inductive(pre: Self, post: Self, rid: ReqId) { }
 
         #[inductive(update_incr_version)]
         fn update_incr_version_inductive(pre: Self, post: Self, new_version: LogIdx) { }
 
         #[inductive(update_finish)]
-        fn update_finish_inductive(pre: Self, post: Self, rid: nat) { }
+        fn update_finish_inductive(pre: Self, post: Self, rid: nat,  ret: DT::Response) { }
 
         #[inductive(no_op)]
         fn no_op_inductive(pre: Self, post: Self) { }

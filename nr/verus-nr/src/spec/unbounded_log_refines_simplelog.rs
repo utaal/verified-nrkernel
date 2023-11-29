@@ -114,8 +114,12 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
             OutputOperation::Write(response) => {
                 assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
                 assert_maps_equal!(interp(pre).update_resps.remove(rid), interp(post).update_resps);
+                let version = pre.local_updates[rid].get_Done_idx();
+                assert(response == DT::dispatch_mut_spec(interp(pre).nrstate_at_version(version), interp(pre).log[version as int]).1) by {
+                    state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
+                }
 
-                SimpleLog::show::update_finish(interp(pre), interp(post), rid);
+                SimpleLog::show::update_finish(interp(pre), interp(post), rid, response);
             }
         }
     }
@@ -278,7 +282,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             assert(forall |version|#[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) ==> version_in_log(pre.log, version));
 
             // assert(exists |version : nat | version_upper_bound <= version <= pre.version_upper_bound
-            // ==> VersionInLog(pre.log, version) && result_match(s.log, output, version,  s.localReads[rid].op)) by 
+            // ==> VersionInLog(pre.log, version) && result_match(s.log, output, version,  s.localReads[rid].op)) by
 
             assert(exists |version: nat| #[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, ret, version, op)) ;
 
@@ -326,7 +330,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
                 interp(post).update_resps
             );
 
-            SimpleLog::show::update_add_ops_to_log_one(interp(pre), interp(post), rid);
+            SimpleLog::show::update_add_op_to_log(interp(pre), interp(post), rid);
         }
 
         update_done(rid) => {
