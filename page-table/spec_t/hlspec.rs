@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-#[verus::trusted]
+#![verus::trusted]
 // trusted:
 // this is the process-level specification of the kernel's behaviour
 

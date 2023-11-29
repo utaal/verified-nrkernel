@@ -202,8 +202,8 @@ pub open spec(checked) fn overlap(region1: MemRegion, region2: MemRegion) -> boo
     }
 }
 
-// TODO #[verus::line_count_ignore]
 // hardens spec for overlap
+#[verus::line_count::ignore]
 proof fn overlap_sanity_check() {
     assert(overlap(
             MemRegion { base: 0, size: 4096 },

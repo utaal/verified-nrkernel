@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 
-#[verus::trusted]
+#![verus::trusted]
 // trusted:
 // these are wrappers for the interface with the memory
 // `check_overflow` is a proof to harden the specification, it reduces the overall
@@ -182,7 +182,7 @@ impl PageTableMemory {
     /// overflow. The preconditions are those of `read`, which are a subset of the `write`
     /// preconditions.
     /// (This is an exec function so it generates the normal overflow VCs.)
-    // TODO #[verus::line_count_ignore]
+    #[verus::line_count::ignore]
     fn check_overflow(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>)
         requires
             pbase <= MAX_PHYADDR,
