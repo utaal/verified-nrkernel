@@ -874,50 +874,15 @@ proof fn trick_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, a2: SimpleLogBehavi
         a.get_Stepped_1().is_Internal(), a2.get_Stepped_1().is_Internal()
     ensures
         behavior_equiv(a2, b)
+    decreases b
 {
-
-    assert(behavior_equiv(*a2.get_Stepped_2(), b) == behavior_equiv(*a.get_Stepped_2(), b));
-    assert(behavior_equiv(*a2.get_Stepped_2(), *b.get_Stepped_2()) == behavior_equiv(*a.get_Stepped_2(), *b.get_Stepped_2()));
-
-    if !behavior_equiv(a2, b) {
-        if b.is_Stepped() {
-            if  b.get_Stepped_1().is_Internal() {
-
-                assert(behavior_equiv(*a.get_Stepped_2(), b) || behavior_equiv(a, *b.get_Stepped_2()) || behavior_equiv(*a.get_Stepped_2(), *b.get_Stepped_2()));
-                assert(behavior_equiv(*a2.get_Stepped_2(), b) || behavior_equiv(a, *b.get_Stepped_2()) || behavior_equiv(*a2.get_Stepped_2(), *b.get_Stepped_2()));
-
-                assert(!(behavior_equiv(*a2.get_Stepped_2(), b)));
-                assert(!(behavior_equiv(a2, *b.get_Stepped_2())));
-                assert(!(behavior_equiv(*a2.get_Stepped_2(), *b.get_Stepped_2())));
-
-                assert(false);
-            } else {
-                assert(false);
-            }
-        } else {
-            assert(false);
-        }
+    if b.is_Inited() {
+        // base case
     } else {
-        assert(behavior_equiv(a2, b));
+        if behavior_equiv(a, *b.get_Stepped_2()) {
+            trick_equiv(a, a2, *b.get_Stepped_2());
+        }
     }
-
-    // if b.is_Stepped() {
-    //     assert(a.get_Stepped_1().is_Internal());
-    //     assert(a2.get_Stepped_1().is_Internal());
-    //     if b.get_Stepped_1().is_Internal() {
-    //         assert(behavior_equiv(a, *b.get_Stepped_2()));
-
-    //         assert(a.get_Stepped_1() == b.get_Stepped_1());
-    //         assert(a2.get_Stepped_1() == b.get_Stepped_1());
-
-    //         assert(behavior_equiv(a2, b));
-    //     } else {
-    //         assert(behavior_equiv(a2, b));
-    //     }
-    // } else {
-    //     assert(b.is_Inited());
-    //     assert(behavior_equiv(a2, b));
-    // }
 }
 
 use crate::spec::simple_log::ReadReq;
@@ -1080,7 +1045,7 @@ proof fn update_incr_version_refines<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_p
     ensures
         b.wf(), behavior_equiv(a, b), state_refinement_relation(a.get_last(), b.get_last(), r_points)
     decreases
-        *a.get_Stepped_2(), new_version
+        *a.get_Stepped_2(), 1nat, new_version
 {
     assert(new_version >= a.get_Stepped_2().get_last().version);
     assert(new_version >= a.get_last().version);
@@ -1121,7 +1086,7 @@ proof fn exists_equiv_behavior_rec<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_poi
     -> (b: AsynchronousSingletonBehavior<DT>)
     requires a.wf() && future_points_ok(a.get_last(), r_points)
     ensures  b.wf() && behavior_equiv(a, b) && state_refinement_relation(a.get_last(), b.get_last(), r_points)
-    decreases a
+    decreases a, 0nat, 0nat
 {
     match a {
         SimpleLogBehavior::Stepped(post, aop, tail) => {
