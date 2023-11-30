@@ -1080,16 +1080,16 @@ proof fn update_incr_version_refines<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_p
     ensures
         b.wf(), behavior_equiv(a, b), state_refinement_relation(a.get_last(), b.get_last(), r_points)
     decreases
-        decreases *a.get_Stepped_2()
+        *a.get_Stepped_2(), new_version
 {
     assert(new_version >= a.get_Stepped_2().get_last().version);
     assert(new_version >= a.get_last().version);
     if new_version == a.get_Stepped_2().get_last().version {
         assert(a.get_last() == a.get_Stepped_2().get_last());
         // TODO: how to fix the recursion here?
-        // exists_equiv_behavior_rec(*a.get_Stepped_2(), r_points)
-        assume(false);
-        arbitrary()
+        exists_equiv_behavior_rec(*a.get_Stepped_2(), r_points)
+        // assume(false);
+        // arbitrary()
     } else {
         /* var amid := a.(s := a.s.(ctail := a.s.ctail - 1)); */
         let mut new_st = a.get_Stepped_0();
