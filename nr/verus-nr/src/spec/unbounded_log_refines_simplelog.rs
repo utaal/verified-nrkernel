@@ -13,7 +13,7 @@ use vstd::seq_lib::*;
 
 #[cfg(verus_keep_ghost)] use state_machines_macros::*;
 
-use crate::{Dispatch, InputOperation, OutputOperation, RequestId};
+use crate::{Dispatch, InputOperation, OutputOperation, ReqId};
 
 #[cfg(verus_keep_ghost)] use super::simple_log::{
     compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
@@ -50,7 +50,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
         refinement_next(pre, post);
     }
 
-    open spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> RequestId {
+    open spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> ReqId {
         crate::spec::unbounded_log::get_fresh_nat(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner)
     }
 
@@ -86,7 +86,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
         }
     }
 
-    proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: RequestId) {
+    proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: ReqId) {
         UnboundedLog::State::consume_stub_inductive(pre, post, output, rid);
         match output {
             OutputOperation::Read(response) => {

@@ -220,7 +220,7 @@ pub open spec fn add_ticket<DT: Dispatch>(
     pre: UnboundedLog::State<DT>,
     post: UnboundedLog::State<DT>,
     input: InputOperation<DT>,
-    rid: RequestId) -> bool
+    rid: ReqId) -> bool
 {
     !pre.local_reads.dom().contains(rid)
     && !pre.local_updates.dom().contains(rid)
@@ -244,7 +244,7 @@ pub open spec fn consume_stub<DT: Dispatch>(
     pre: UnboundedLog::State<DT>,
     post: UnboundedLog::State<DT>,
     output: OutputOperation<DT>,
-    rid: RequestId) -> bool
+    rid: ReqId) -> bool
 {
     match output {
         OutputOperation::Read(response) => {
@@ -272,7 +272,7 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
     spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>;
 
     // Prove that it is always possible to add a new ticket
-    spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> RequestId;
+    spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> ReqId;
 
     proof fn fresh_rid_is_ok(pre: UnboundedLog::State<DT>)
         requires pre.invariant(),
@@ -315,7 +315,7 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
         pre: UnboundedLog::State<DT>,
         post: UnboundedLog::State<DT>,
         output: OutputOperation<DT>,
-        rid: RequestId
+        rid: ReqId
     )
         requires
             pre.invariant(),
@@ -330,6 +330,8 @@ spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRe
 proof fn theorem_2<DT: Dispatch + Sync>()
     ensures implements_UnboundedLogRefinesSimpleLog::<DT, crate::spec::unbounded_log_refines_simplelog::RefinementProof<DT>>(),
 { }
+
+
 
 #[is_variant]
 pub enum InputOperation<DT: Dispatch> {
@@ -346,17 +348,15 @@ pub enum OutputOperation<DT: Dispatch> {
 #[is_variant]
 pub enum AsyncLabel<DT: Dispatch> {
     Internal,
-    Start(RequestId, InputOperation<DT>),
-    End(RequestId, OutputOperation<DT>),
+    Start(ReqId, InputOperation<DT>),
+    End(ReqId, OutputOperation<DT>),
 }
-
-type RequestId = nat;
 
 state_machine!{ AsynchronousSingleton<DT: Dispatch> {
     fields {
         pub state: DT::View,
-        pub reqs: Map<RequestId, InputOperation<DT>>,
-        pub resps: Map<RequestId, OutputOperation<DT>>,
+        pub reqs: Map<ReqId, InputOperation<DT>>,
+        pub resps: Map<ReqId, OutputOperation<DT>>,
     }
 
     //pub type Label<DT> = AsyncLabel<DT>;
@@ -370,7 +370,7 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
     }
 
     transition!{
-        internal_next(rid: RequestId, input: InputOperation<DT>, output: OutputOperation<DT>) {
+        internal_next(rid: ReqId, input: InputOperation<DT>, output: OutputOperation<DT>) {
             require pre.reqs.dom().contains(rid);
             require pre.reqs[rid] == input;
             update reqs = pre.reqs.remove(rid);
@@ -396,14 +396,14 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
     }
 
     transition!{
-        start(rid: RequestId, input: InputOperation<DT>) {
+        start(rid: ReqId, input: InputOperation<DT>) {
             require !pre.reqs.dom().contains(rid);
             update reqs = pre.reqs.insert(rid, input);
         }
     }
 
     transition!{
-        end(rid: RequestId, output: OutputOperation<DT>) {
+        end(rid: ReqId, output: OutputOperation<DT>) {
             require pre.resps.dom().contains(rid);
             require pre.resps[rid] == output;
             update resps = pre.resps.remove(rid);
@@ -528,658 +528,11 @@ trait SimpleLogRefinesAsynchronousSingleton<DT: Dispatch> {
         ensures b.wf() && behavior_equiv(a, b);
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Linearization Proof
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-use crate::spec::simple_log::UpdateResp;
-
-/// checks whether the version of a single request id is ok (FutureRidOk)
-spec fn future_rid_ok<DT: Dispatch>(s:SimpleLog::State<DT>, rid: RequestId, version: LogIdx) -> bool {
-    &&& s.readonly_reqs.contains_key(rid)
-    &&& s.readonly_reqs[rid].is_Init() ==> s.version <= version
-    &&& s.readonly_reqs[rid].is_Req() ==> s.readonly_reqs[rid].get_Req_version() <= version
-}
-
-/// checks whether the version of the request ids are ok (FuturePointsOk)
-spec fn future_points_ok<DT: Dispatch>(s:SimpleLog::State<DT>, r_points: Map<RequestId, LogIdx>) -> bool {
-    &&& r_points.dom().finite()
-    &&& (forall |rid| #[trigger] r_points.contains_key(rid) ==> future_rid_ok(s, rid, r_points[rid]))
-}
-
-/// checks whether the readonly requests are valid  (rel_r)
-spec fn readonly_requests_valid<DT: Dispatch>(s:SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>) -> bool {
-    &&& (forall |rid| (#[trigger] s.readonly_reqs.contains_key(rid) && #[trigger] t.reqs.contains_key(rid) )==> readonly_request_is_valid(s, t, r_points, rid))
-    &&& (forall |rid| (#[trigger] s.readonly_reqs.contains_key(rid) && #[trigger] t.resps.contains_key(rid)) ==> readonly_response_is_valid(s, t, r_points, rid))
-}
-
-/// checks whether the readonly request is valid  (readonly_is_req)
-spec fn readonly_request_is_valid<DT: Dispatch>(s:SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId) -> bool {
-    &&& s.readonly_reqs.contains_key(rid)
-    &&& (s.readonly_reqs[rid].is_Req() ==> s.readonly_reqs[rid].get_Req_version() <= s.version)
-
-    &&& t.reqs.contains_key(rid)
-    &&& t.reqs[rid] == InputOperation::<DT>::Read(s.readonly_reqs[rid].op())
-
-    &&& (r_points.contains_key(rid) ==> {
-        &&& s.version <= r_points[rid]
-        &&& (s.readonly_reqs[rid].is_Req() ==> s.version < r_points[rid])
-    })
-}
-
-/// checks whether the readonly response is valid (readonly_is_resp)
-spec fn readonly_response_is_valid<DT: Dispatch>(s:SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId) -> bool {
-    &&& s.readonly_reqs.contains_key(rid)
-    &&& s.readonly_reqs[rid].is_Req()
-    &&& s.readonly_reqs[rid].get_Req_version() <= s.version
-
-    &&& t.resps.contains_key(rid)
-
-    &&& (r_points.contains_key(rid) ==> {
-        &&& s.readonly_reqs[rid].get_Req_version() <= r_points[rid] && r_points[rid] <= s.version
-        &&& 0 <= r_points[rid] && r_points[rid] <= s.log.len()
-        &&& t.resps[rid] == OutputOperation::<DT>::Read(DT::dispatch_spec(s.nrstate_at_version(r_points[rid]),  s.readonly_reqs[rid].op()))
-    })
-}
-
-/// checks whether the update response is valid  (update_is_done)
-spec fn update_response_is_valid<DT: Dispatch>(s:SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId) -> bool {
-    &&& s.update_resps.contains_key(rid)
-    &&& s.update_resps[rid].0 < s.log.len()
-
-    &&& t.resps.contains_key(rid)
-    &&& t.resps[rid] == OutputOperation::<DT>::Write(
-        DT::dispatch_mut_spec(s.nrstate_at_version(s.update_resps[rid].0), s.log[s.update_resps[rid].0 as int]).1
-    )
-}
-
-/// checks whether the upate responses have versions that matche the log  (HasVersion)
-spec fn log_has_version(update_resps: Map<RequestId, UpdateResp>, version: LogIdx) -> bool
-{
-    exists |rid| #[trigger] update_resps.contains_key(rid) && update_resps[rid].0 == version
-}
-
-/// basic state relation  (rel_basic)
-spec fn state_refinement_relation_basic<DT: Dispatch>(s:SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>) -> bool {
-    &&& (0 <= s.version && s.version <= s.log.len())
-    &&& t.state == s.nrstate_at_version(s.version)
-
-    &&& s.readonly_reqs.dom().disjoint( s.update_reqs.dom())
-    &&& s.readonly_reqs.dom().disjoint( s.update_resps.dom())
-    &&& s.update_reqs.dom().disjoint( s.update_resps.dom())
-    &&& t.reqs.dom().disjoint(t.resps.dom())
-
-    // the requests must be present in both, and in the right map
-    &&& (forall |rid|
-        (#[trigger] s.readonly_reqs.contains_key(rid) || #[trigger] s.update_reqs.contains_key(rid) || #[trigger] s.update_resps.contains_key(rid))
-        <==>
-        (#[trigger] t.reqs.contains_key(rid) || #[trigger] t.resps.contains_key(rid))
-    )
-    &&& (forall |rid| #[trigger] t.reqs.contains_key(rid) && #[trigger] t.reqs[rid].is_Read() ==> s.readonly_reqs.contains_key(rid))
-    &&& (forall |rid| #[trigger] t.reqs.contains_key(rid) && #[trigger] t.reqs[rid].is_Write() ==> s.update_reqs.contains_key(rid) || s.update_resps.contains_key(rid))
-    &&& (forall |rid| #[trigger] t.resps.contains_key(rid) ==> s.readonly_reqs.contains_key(rid) || s.update_resps.contains_key(rid))
-
-    // check if there is a update
-    &&& (forall |v: LogIdx|  s.version <= v && v < s.log.len() ==> log_has_version(s.update_resps, v))
-
-    &&& (forall |rid1, rid2| #[trigger] s.update_resps.contains_key(rid1) && #[trigger] s.update_resps.contains_key(rid2) && rid1 != rid2
-            ==> s.update_resps[rid1] != s.update_resps[rid2])
-
-    &&& (forall |rid| #[trigger] s.update_resps.contains_key(rid) ==> s.update_resps[rid].0 < s.log.len())
-
-    &&& (forall |rid| #[trigger] s.update_reqs.contains_key(rid) ==> t.reqs.contains_key(rid) && t.reqs[rid] == InputOperation::<DT>::Write(s.update_reqs[rid]))
-
-    &&& (forall |rid| #[trigger] s.update_resps.contains_key(rid) && s.update_resps[rid].0 >= s.version ==> {
-        &&& t.reqs.contains_key(rid)
-        &&& 0 <= s.update_resps[rid].0 &&  s.update_resps[rid].0 < s.log.len()
-        &&& t.reqs[rid] == InputOperation::<DT>::Write(s.log[s.update_resps[rid].0 as int])
-    })
-
-    &&& (forall |rid| #[trigger] s.update_resps.contains_key(rid) && s.update_resps[rid].0 < s.version ==>
-        update_response_is_valid(s, t, r_points, rid)
-    )
-}
-
-/// relates the state between the two points state machines  (rel)
-spec fn state_refinement_relation<DT: Dispatch>(s:SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>) -> bool
-{
-    &&& state_refinement_relation_basic(s, t, r_points)
-    &&& readonly_requests_valid(s, t, r_points)
-}
-
-
-//--------------------------------------------------------------------------------------------------
-// Readonly Transition Refinements
-//--------------------------------------------------------------------------------------------------
-
-// simple.Variables -> SimpleLog::State<DT>
-// one.Variables -> AsynchronousSingleton::State<DT>
-
-proof fn readonly_start_refines<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId, rop: DT::ReadOperation) -> ( t2: AsynchronousSingleton::State<DT>)
-    requires
-        SimpleLog::State::readonly_start(s, s2, rid, rop),
-        state_refinement_relation(s, t, r_points.remove(rid)),
-        future_points_ok(s2, r_points)
-    ensures
-        state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) // one.Next(Is, Is', AI.Start(rid, nrifc.ROp(rop)))
-{
-    // Is' := Is.(reqs := Is.reqs[rid := nrifc.ROp(rop)]);
-    let res = AsynchronousSingleton::State {
-        state: t.state,
-        reqs: t.reqs.insert(rid, InputOperation::Read(rop)),
-        resps: t.resps,
-    };
-
-    reveal(AsynchronousSingleton::State::next_by);
-    reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::start(rid,  InputOperation::Read(rop))));
-    res
-}
-
-proof fn readonly_read_version_refines<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId) -> ( t2: AsynchronousSingleton::State<DT>)
-    requires
-        SimpleLog::State::readonly_read_version(s, s2, rid),
-        state_refinement_relation(s, t, r_points),
-        future_points_ok(s2, r_points)
-    ensures
-        state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) // one.Next(Is, Is', AI.InternalOp)
-{
-    reveal(AsynchronousSingleton::State::next_by);
-    reveal(AsynchronousSingleton::State::next);
-    if r_points.contains_key(rid) && r_points[rid] == s.version {
-        // assert(s.readonly_reqs[rid].is_Init());
-
-        let op =  s.readonly_reqs[rid].get_Init_op();
-
-        assert(t.reqs.contains_key(rid) || t.resps.contains_key(rid));
-
-        let retval = DT::dispatch_spec(s.nrstate_at_version(r_points[rid]), op);
-
-        // Is' := Is.(reqs := Is.reqs - {rid})
-        //         .(resps := Is.resps[rid := retval]);
-        let res = AsynchronousSingleton::State {
-            state: t.state,
-            reqs: t.reqs.remove(rid),
-            resps: t.resps.insert(rid, OutputOperation::Read(retval)),
-        };
-
-        assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::internal_next(rid, InputOperation::Read(op), OutputOperation::Read(retval))));
-        res
-    } else {
-        assert(AsynchronousSingleton::State::next_by(t, t, AsynchronousSingleton::Step::no_op())); // one.Next(Is, Is', AI.InternalOp);
-        t
-    }
-}
-
-
-proof fn readonly_finish_refines<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId, version: LogIdx, ret: DT::Response) -> ( t2: AsynchronousSingleton::State<DT>)
-    requires
-        SimpleLog::State::readonly_finish(s, s2, rid, version, ret),
-        state_refinement_relation(s, t, r_points.insert(rid, version)),
-    ensures
-        state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) // one.Next(Is, Is', AI.End(rid, return_value))
-{
-    let res = AsynchronousSingleton::State {
-        state: t.state,
-        reqs: t.reqs,
-        resps: t.resps.remove(rid),
-    };
-
-    if t.reqs.contains_key(rid) {
-        assert(false); // proof by contradiction
-    } else {
-        assert(t.resps.contains_key(rid));
-    }
-
-    reveal(AsynchronousSingleton::State::next_by);
-    reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::end(t, res, rid, OutputOperation::Read(ret))); // fails
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::end(rid,  OutputOperation::Read(ret))));
-    res
-}
-
-//--------------------------------------------------------------------------------------------------
-// Update Transition Refinements
-//--------------------------------------------------------------------------------------------------
-
-proof fn update_start_refines<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId, uop: DT::WriteOperation) -> ( t2: AsynchronousSingleton::State<DT>)
-    requires
-        SimpleLog::State::update_start(s, s2, rid, uop),
-        state_refinement_relation(s, t, r_points),
-    ensures
-        state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) //  one.Next(Is, Is', AI.Start(rid, nrifc.UOp(uop)))
-{
-    //  Is' := Is.(reqs := Is.reqs[rid := nrifc.UOp(uop)]);
-    let res = AsynchronousSingleton::State {
-        state: t.state,
-        reqs: t.reqs.insert(rid, InputOperation::Write(uop)),
-        resps: t.resps,
-    };
-
-    reveal(AsynchronousSingleton::State::next_by);
-    reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::start(rid,  InputOperation::Write(uop))));
-    res
-}
-
-use crate::spec::simple_log::compute_nrstate_at_version;
-proof fn state_at_version_preserves<DT: Dispatch>(a: Seq<DT::WriteOperation>, b: Seq<DT::WriteOperation>, x: DT::WriteOperation, i: LogIdx)
-    requires b == a.push(x), i <= a.len(), i <= b.len()
-    ensures compute_nrstate_at_version::<DT>(a, i) == compute_nrstate_at_version::<DT>(b, i)
-    decreases i
-{
-    if i > 0 {
-        state_at_version_preserves::<DT>(a, b, x, (i-1) as LogIdx);
-    } else {
-        assert(compute_nrstate_at_version::<DT>(a, i) == DT::init_spec());
-        assert(compute_nrstate_at_version::<DT>(b, i) == DT::init_spec());
-    }
-}
-
-
-proof fn update_add_update_to_log_refines<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId) -> ( t2: AsynchronousSingleton::State<DT>)
-    requires
-        SimpleLog::State::update_add_op_to_log(s, s2, rid),
-        state_refinement_relation(s, t, r_points),
-    ensures
-        state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) //  one.Next(Is, Is', AI.InternalOp)
-{
-    assert(s2.log == s.log.push(s.update_reqs[rid]));
-    state_at_version_preserves::<DT>(s.log, s2.log, s.update_reqs[rid], s.version);
-
-    assert forall |r| #[trigger] s2.readonly_reqs.contains_key(r) && #[trigger] t.resps.contains_key(r)
-        ==> readonly_response_is_valid(s2, t, r_points, r) by {
-        if s2.readonly_reqs.contains_key(r) && #[trigger] t.resps.contains_key(r) {
-            if r_points.contains_key(r) {
-                assert(r_points[r] <= s.version);
-                state_at_version_preserves::<DT>(s.log, s2.log, s.update_reqs[rid], r_points[r]);
-            }
-        }
-    }
-
-    assert forall |r| (#[trigger] s2.update_resps.contains_key(r) && s2.update_resps[r].0 < s2.version)
-        ==> update_response_is_valid(s2, t, r_points, r) by {
-        if s2.update_resps.contains_key(r) && s2.update_resps[r].0 < s2.version {
-            state_at_version_preserves::<DT>(s.log, s2.log, s.update_reqs[rid], s.update_resps[r].0);
-            assert(update_response_is_valid(s2, t, r_points, r));
-        }
-    }
-
-    assert forall |v: LogIdx| (s2.version <= v && v < s2.log.len()) ==> log_has_version(s2.update_resps, v) by {
-        if s2.version <= v && v < s2.log.len() {
-            if v < s2.log.len() - 1 {
-                assert(log_has_version(s.update_resps, v));
-                let qid = choose|qid| #[trigger]s.update_resps.contains_key(qid) && s.update_resps[qid].0 == v;
-                assert(s2.update_resps.contains_key(qid) && s2.update_resps[qid].0 == v);
-            } else {
-                assert(s2.update_resps.contains_key(rid) && s2.update_resps[rid].0 == v);
-            }
-        }
-    }
-
-    reveal(AsynchronousSingleton::State::next_by);
-    reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, t, AsynchronousSingleton::Step::no_op()));
-    assert(AsynchronousSingleton::State::next(t, t));
-    t
-}
-
-proof fn update_finish_refines<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, rid: RequestId, resp: DT::Response) -> ( t2: AsynchronousSingleton::State<DT>)
-    requires
-        SimpleLog::State::update_finish(s, s2, rid, resp),
-        state_refinement_relation(s, t, r_points),
-    ensures
-        state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) //  one.Next(Is, Is', AI.End(rid, return_value))
-{
-    // Is' := Is.(resps := Is.resps - {rid});
-    let res = AsynchronousSingleton::State {
-        state: t.state,
-        reqs: t.reqs,
-        resps: t.resps.remove(rid),
-    };
-    assert forall |v: LogIdx| (s2.version <= v && v < s2.log.len()) ==> log_has_version(s2.update_resps, v) by {
-        if s2.version <= v && v < s2.log.len() {
-            assert(log_has_version(s.update_resps, v));
-            let qid = choose|qid| #[trigger]s.update_resps.contains_key(qid) && s.update_resps[qid].0 == v;
-            assert(s2.update_resps.contains_key(qid) && s2.update_resps[qid].0 == v);
-
-        }
-    }
-
-    reveal(AsynchronousSingleton::State::next_by);
-    reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::end(rid, OutputOperation::Write(resp))));
-    assert(AsynchronousSingleton::State::next(t, res));
-    res
-}
-
-spec fn simple_log_state_equiv_inc_version<DT: Dispatch>(a: SimpleLog::State<DT>, a2: SimpleLog::State<DT>) -> bool {
-    // a'.s == a.s.(ctail := a.s.ctail + 1)
-    &&& a2.log == a.log
-    &&& a2.version == a.version + 1
-    &&& a2.readonly_reqs == a.readonly_reqs
-    &&& a2.update_reqs == a.update_reqs
-    &&& a2.update_resps == a.update_resps
-}
-
-proof fn trick_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, a2: SimpleLogBehavior<DT>, b: AsynchronousSingletonBehavior<DT>)
-    requires
-        behavior_equiv(a, b), a.is_Stepped(), a2.is_Stepped(), a.get_Stepped_2() == a2.get_Stepped_2(),
-        a.get_Stepped_1().is_Internal(), a2.get_Stepped_1().is_Internal()
-    ensures
-        behavior_equiv(a2, b)
-    decreases b
-{
-    if b.is_Inited() {
-        // base case
-    } else {
-        if behavior_equiv(a, *b.get_Stepped_2()) {
-            trick_equiv(a, a2, *b.get_Stepped_2());
-        }
-    }
-}
-
-use crate::spec::simple_log::ReadReq;
-spec fn all_reads_for<DT: Dispatch>(readonly_reqs: Map<RequestId, ReadReq<DT::ReadOperation>>, r_points: Map<RequestId, LogIdx>, version: LogIdx) -> Set<RequestId>
-    recommends r_points.dom().finite()
-{
-    r_points.dom().filter(|rid| r_points[rid] == version && readonly_reqs.contains_key(rid) && readonly_reqs[rid].is_Req())
-    // Set::new(|rid: RequestId| {
-    //     &&& r_points.contains_key(rid) && r_points[rid] == version
-    //     &&& readonly_reqs.contains_key(rid) && readonly_reqs[rid].is_Req()
-    // })
-}
-
-proof fn pop_rid(t: Set<RequestId>) -> (res: (Set<RequestId>, RequestId))
-    requires !t.is_empty(), t.finite()
-    ensures res.0.len() < t.len(), t.contains(res.1), res.0 =~= t.remove(res.1), res.0.finite()
-{
-    let r = t.choose();
-    (t.remove(r), r)
-}
-
-spec fn recursion_invariant<DT: Dispatch>(s: SimpleLog::State<DT>, s2: SimpleLog::State<DT>, t2: AsynchronousSingleton::State<DT>, r_points: Map<RequestId, LogIdx>, the_reads: Set<RequestId>) -> bool {
-    &&& the_reads.finite()
-    &&& s.version + 1 <= s.log.len()
-    &&&  state_refinement_relation_basic(s2, t2, r_points)
-    &&& (forall |rid| #[trigger]the_reads.contains(rid) ==> {
-        &&& r_points.contains_key(rid)
-        &&& r_points[rid] == s.version + 1
-        &&& s.readonly_reqs.contains_key(rid)
-        &&& s.readonly_reqs[rid].is_Req()
-    })
-    &&& (forall |rid| #[trigger]s.readonly_reqs.contains_key(rid) && t2.reqs.contains_key(rid) ==> {
-        !the_reads.contains(rid) ==> readonly_request_is_valid(s2, t2, r_points, rid)
-    })
-    &&& (forall |rid| #[trigger]s.readonly_reqs.contains_key(rid) && t2.resps.contains_key(rid) ==> {
-        !the_reads.contains(rid) ==> readonly_response_is_valid(s2, t2, r_points, rid)
-    })
-    &&& (forall |rid| #[trigger]s.readonly_reqs.contains_key(rid) && t2.reqs.contains_key(rid) ==> {
-        the_reads.contains(rid) ==> readonly_request_is_valid(s, t2, r_points, rid)
-    })
-    &&& (forall |rid| #[trigger]s.readonly_reqs.contains_key(rid) && t2.resps.contains_key(rid) ==> {
-        the_reads.contains(rid) ==> readonly_response_is_valid(s, t2, r_points, rid)
-    })
-}
-
-proof fn update_incr_version_1_read_reqs<DT: Dispatch>(b2: AsynchronousSingletonBehavior<DT>, a: SimpleLogBehavior<DT>, a2: SimpleLogBehavior<DT>, r_points: Map<RequestId, LogIdx>, the_reads: Set<RequestId>) -> (res: AsynchronousSingletonBehavior<DT>)
-    requires
-        b2.wf(), behavior_equiv(a2, b2),
-        recursion_invariant(a.get_last(), a2.get_last(), b2.get_last(), r_points, the_reads),
-        simple_log_state_equiv_inc_version(a.get_last(), a2.get_last()),
-    ensures
-        res.wf(), behavior_equiv(a2, res),
-        recursion_invariant(a.get_last(), a2.get_last(), res.get_last(), r_points, Set::<RequestId>::empty()),
-    decreases
-        the_reads.len()
-{
-    if the_reads.is_empty() {
-        assert(the_reads =~= Set::empty());
-        b2
-    } else {
-        let s = a.get_last();
-        let s2 = a2.get_last();
-
-        let (the_reads2, rid) = pop_rid(the_reads);
-
-        let ret = DT::dispatch_spec(s.nrstate_at_version(r_points[rid]), s.readonly_reqs[rid].op());
-        let input = InputOperation::<DT>::Read(s.readonly_reqs[rid].op());
-        let output = OutputOperation::Read(ret);
-
-        let st = AsynchronousSingleton::State {
-            state: b2.get_last().state,
-            reqs: b2.get_last().reqs.remove(rid),
-            resps: b2.get_last().resps.insert(rid, output),
-        };
-        let b2_new = AsynchronousSingletonBehavior::Stepped(st, AsyncLabel::Internal, Box::new(b2));
-
-        assert(b2_new.wf()) by {
-            reveal(AsynchronousSingleton::State::next);
-            reveal(AsynchronousSingleton::State::next_by);
-            assert(AsynchronousSingleton::State::internal_next(b2.get_last(), b2_new.get_last(), rid, input, output));
-            assert(AsynchronousSingleton::State::next_by(b2.get_last(), b2_new.get_last(),
-                AsynchronousSingleton::Step::internal_next(rid, input, output)
-            ));
-        }
-
-        // if s.readonly_reqs.contains_key(rid) && st.resps.contains_key(rid) && !the_reads2.contains(rid) {
-        //     assert( readonly_response_is_valid(s2, b2_new.get_last(), r_points, rid));
-        // }
-        // assert(forall |rid| #[trigger]s.readonly_reqs.contains_key(rid) && #[trigger]st.resps.contains_key(rid) && !the_reads2.contains(rid)
-        //     ==> readonly_response_is_valid(s2, b2_new.get_last(), r_points, rid));
-
-        // assert(the_reads2.len() < the_reads.len());
-        update_incr_version_1_read_reqs(b2_new, a, a2, r_points, the_reads2)
-    }
-}
-
-proof fn update_incr_version_1_refines<DT: Dispatch>(b: AsynchronousSingletonBehavior<DT>, a: SimpleLogBehavior<DT>, a2: SimpleLogBehavior<DT>, r_points: Map<RequestId, LogIdx>) -> (b2: AsynchronousSingletonBehavior<DT>)
-    requires
-        a.wf(),
-        future_points_ok(a2.get_last(), r_points),
-        a.is_Stepped() && a2.is_Stepped(),
-        a.get_Stepped_2() == a2.get_Stepped_2(), // a.tail == a'.tail
-        a.get_Stepped_1().is_Internal() && a2.get_Stepped_1().is_Internal(),
-        simple_log_state_equiv_inc_version(a.get_last(), a2.get_last()),
-        a.get_last().version + 1 <= a.get_last().log.len(),
-        b.wf(),
-        behavior_equiv(a, b),
-        state_refinement_relation(a.get_last(), b.get_last(), r_points)
-    ensures
-        b2.wf(), behavior_equiv(a2, b2), state_refinement_relation(a2.get_last(), b2.get_last(), r_points)
-{
-    let s = a.get_last();
-    let s2 = a2.get_last();
-
-    assert(s.version < s.log.len());
-    assert(log_has_version(s.update_resps, s.version));
-
-    let urid  = choose |urid| #[trigger] s.update_resps.contains_key(urid) && s.update_resps[urid].0 == s.version;
-
-    let x = DT::dispatch_mut_spec(s.nrstate_at_version(s.update_resps[urid].0),  s.log[s.update_resps[urid].0 as int]);
-    let uret = x.1;
-
-    let input = InputOperation::Write(s.log[s.update_resps[urid].0 as int]);
-    let output = OutputOperation::Write(uret);
-
-    let st = AsynchronousSingleton::State {
-        state: x.0,
-        reqs: b.get_last().reqs.remove(urid),
-        resps: b.get_last().resps.insert(urid, output),
-    };
-    let b2 = AsynchronousSingletonBehavior::Stepped(st, AsyncLabel::Internal, Box::new(b));
-
-    assert(b2.wf()) by {
-        reveal(AsynchronousSingleton::State::next);
-        reveal(AsynchronousSingleton::State::next_by);
-        assert(AsynchronousSingleton::State::next_by(b2.get_Stepped_2().get_last(), b2.get_last(),
-            AsynchronousSingleton::Step::internal_next(urid, input, output)
-        ));
-    }
-
-    assert(behavior_equiv(a2, b2)) by {
-        trick_equiv(a, a2, b2)
-    }
-
-    let the_reads = all_reads_for::<DT>(s.readonly_reqs, r_points, s.version + 1);
-    assert(the_reads.finite());
-
-    let b2 = update_incr_version_1_read_reqs(b2, a, a2, r_points, the_reads);
-
-    assert(recursion_invariant(a.get_last(), a2.get_last(), b2.get_last(), r_points, Set::empty()));
-    assert(readonly_requests_valid(a2.get_last(), b2.get_last(), r_points));
-    assert(state_refinement_relation(a2.get_last(), b2.get_last(), r_points));
-    b2
-}
-
-proof fn update_incr_version_refines<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_points: Map<RequestId, LogIdx>, new_version: LogIdx) -> (b: AsynchronousSingletonBehavior<DT>)
-    requires
-        a.wf(), future_points_ok(a.get_last(), r_points), a.is_Stepped(), a.get_Stepped_1().is_Internal(),
-        SimpleLog::State::update_incr_version(a.get_Stepped_2().get_last(), a.get_last(), new_version),
-    ensures
-        b.wf(), behavior_equiv(a, b), state_refinement_relation(a.get_last(), b.get_last(), r_points)
-    decreases
-        *a.get_Stepped_2(), 1nat, new_version
-{
-    assert(new_version >= a.get_Stepped_2().get_last().version);
-    assert(new_version >= a.get_last().version);
-    if new_version == a.get_Stepped_2().get_last().version {
-        assert(a.get_last() == a.get_Stepped_2().get_last());
-        // TODO: how to fix the recursion here?
-        exists_equiv_behavior_rec(*a.get_Stepped_2(), r_points)
-        // assume(false);
-        // arbitrary()
-    } else {
-        /* var amid := a.(s := a.s.(ctail := a.s.ctail - 1)); */
-        let mut new_st = a.get_Stepped_0();
-        new_st.version = (new_st.version - 1) as nat;
-        /* do this */
-        let amid = SimpleLogBehavior::Stepped(
-            new_st,
-            a.get_Stepped_1(),
-            a.get_Stepped_2(),
-        );
-
-        reveal(SimpleLog::State::next);
-        reveal(SimpleLog::State::next_by);
-        // assert simple.NextStep(amid.tail.s, amid.s, AI.InternalOp, simple.IncreaseCtail_Step(new_ctail - 1));
-        assert(SimpleLog::State::next_by(amid.get_Stepped_2().get_last(), amid.get_last(), SimpleLog::Step::update_incr_version((new_version - 1) as nat)));
-
-        // var bmid := CtailRec(amid, r_points, new_ctail - 1);
-        let bmid = update_incr_version_refines(amid, r_points, (new_version - 1) as LogIdx);
-
-        update_incr_version_1_refines(bmid, amid, a, r_points)
-    }
-}
-
-//--------------------------------------------------------------------------------------------------
-// Refinement Theorem
-//--------------------------------------------------------------------------------------------------
-
-proof fn exists_equiv_behavior_rec<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_points: Map<RequestId, LogIdx>)
-    -> (b: AsynchronousSingletonBehavior<DT>)
-    requires a.wf() && future_points_ok(a.get_last(), r_points)
-    ensures  b.wf() && behavior_equiv(a, b) && state_refinement_relation(a.get_last(), b.get_last(), r_points)
-    decreases a, 0nat, 0nat
-{
-    match a {
-        SimpleLogBehavior::Stepped(post, aop, tail) => {
-            // reveal the next transition
-            reveal(SimpleLog::State::next);
-            reveal(SimpleLog::State::next_by);
-            reveal(AsynchronousSingleton::State::next);
-            reveal(AsynchronousSingleton::State::next_by);
-
-            let prev = tail.get_last();
-            assert(exists |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(prev, post, step));
-            let step = choose |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(prev, post, step);
-            match step {
-                //                              ReqId, DT::ReadOperation
-                SimpleLog::Step::readonly_start(rid, rop) => {
-                    let b0 = exists_equiv_behavior_rec(*tail, r_points.remove(rid));
-                    let a0 = readonly_start_refines(prev, post, b0.get_last(), r_points, rid, rop);
-                    AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
-                }
-                //                              ReqId,
-                SimpleLog::Step::readonly_read_version(rid) => {
-                    let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = readonly_read_version_refines(prev, post, b0.get_last(), r_points, rid);
-                    AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
-                }
-                //                              ReqId, LogIdx, DT::ReadOperation
-                SimpleLog::Step::readonly_finish(rid, logidx, rop) => {
-                    let b0 = exists_equiv_behavior_rec(*tail, r_points.insert(rid, logidx));
-                    let a0 = readonly_finish_refines(prev, post, b0.get_last(), r_points, rid, logidx, rop);
-                    AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
-                }
-                //                            ReqId, DT::WriteOperation
-                SimpleLog::Step::update_start(rid, uop) => {
-                    let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = update_start_refines(prev, post, b0.get_last(), r_points, rid, uop);
-                    AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
-                }
-                //                              ReqId,
-                SimpleLog::Step::update_add_op_to_log(rid) => {
-                    let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = update_add_update_to_log_refines(prev, post, b0.get_last(), r_points, rid);
-                    AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
-                }
-                SimpleLog::Step::update_incr_version(logidx) => {
-                    update_incr_version_refines(a, r_points, logidx)
-                }
-                SimpleLog::Step::update_finish(rid, resp) => {
-                    let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = update_finish_refines(prev, post, b0.get_last(), r_points, rid, resp);
-                    AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
-                }
-                SimpleLog::Step::no_op() => {
-                    exists_equiv_behavior_rec(*tail, r_points)
-                }
-                //                                        SimpleLog::State<DT>
-                SimpleLog::Step::dummy_to_use_type_params(state) => {
-                    // nothing to be done here.
-                    assert(false);
-                    arbitrary()
-                }
-            }
-        }
-        // Inited(SimpleLog::State<DT>),
-        SimpleLogBehavior::Inited(sl_state) => {
-            let st = AsynchronousSingleton::State {
-                state: DT::init_spec(),
-                reqs: Map::empty(),
-                resps: Map::empty(),
-            };
-            let res =  AsynchronousSingletonBehavior::Inited(st);
-            // yeah we need a bunch of reveals here... :(
-            reveal(SimpleLog::State::init);
-            reveal(SimpleLog::State::init_by);
-            reveal(AsynchronousSingleton::State::init);
-            reveal(AsynchronousSingleton::State::init_by);
-
-            assert(AsynchronousSingleton::State::init_by(st, AsynchronousSingleton::Config::initialize()));
-            res
-        }
-    }
-}
-
-
-struct Foo;
-impl<DT: Dispatch> SimpleLogRefinesAsynchronousSingleton<DT> for Foo {
-    proof fn exists_equiv_behavior(a: SimpleLogBehavior<DT>) -> (b: AsynchronousSingletonBehavior<DT>)
-        // requires a.wf(),
-        // ensures b.wf() && behavior_equiv(a, b)
-        decreases a
-    {
-        return exists_equiv_behavior_rec(a, Map::empty())
-    }
-}
+spec fn implements_SimpleLogRefinesAsynchronousSingleton<DT: Dispatch, RP: SimpleLogRefinesAsynchronousSingleton<DT>>() -> bool { true }
+
+proof fn theorem_3<DT: Dispatch + Sync>()
+    ensures implements_SimpleLogRefinesAsynchronousSingleton::<DT, crate::spec::linearization::RefinementProof>(),
+{ }
 
 
 } // verus!

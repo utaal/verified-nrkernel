@@ -151,10 +151,10 @@ pub enum ReadonlyState<DT: Dispatch> {
 // of return values to line up with all the update requests that it started with.
 //
 // What this means is that we need to show:
-//   - When we process a "local" operation, its RequestId corresponds to the next
-//     RequestId recorded in the queued_ops (i.e., the one at 'queue_index'.)
+//   - When we process a "local" operation, its ReqId corresponds to the next
+//     ReqId recorded in the queued_ops (i.e., the one at 'queue_index'.)
 //   - When we have finished the entire loop, we have finished processing all
-//     the RequestIds we expected (i.e., `queue_index == queued_ops.len()`).
+//     the ReqIds we expected (i.e., `queue_index == queued_ops.len()`).
 //
 // This means we need to establish an invariant between the combiner state and the
 // log state at all times. Specifically, we need an invariant that relates the combiner
@@ -162,9 +162,9 @@ pub enum ReadonlyState<DT: Dispatch> {
 // they are and in what order.
 //
 // The invariant roughly says that during step (4), (the "Loop" state):
-//   The RequestIds in `queued_ops`, sliced from queue_index .. queued_ops.len()
+//   The ReqIds in `queued_ops`, sliced from queue_index .. queued_ops.len()
 //   match
-//   The RequestIds in the log that are local, sliced from
+//   The ReqIds in the log that are local, sliced from
 //          local_head .. tail
 // (Note that queue_index and local_head are the cursors that advance throughout the loop,
 // while tail is the one recorded in step 3, so it's fixed.)
@@ -211,7 +211,7 @@ pub enum ReadonlyState<DT: Dispatch> {
 // be the definition of `LogRangeMatchesQueue`, but as I explained earlier, I didn't
 // find it helpful.
 //
-// Another technical note: the LogEntry doesn't actually store the RequestId on it;
+// Another technical note: the LogEntry doesn't actually store the ReqId on it;
 // `LogRangeMatchesQueue` has to connect the request id to the UpdateState, which then
 // has a pointer into the log via `idx`. (It's possible that this could be simplified.)
 
@@ -996,7 +996,7 @@ UnboundedLog<DT: Dispatch> {
         pre: UnboundedLog::State<DT>,
         post: UnboundedLog::State<DT>,
         input: crate::InputOperation<DT>,
-        rid: crate::RequestId,
+        rid: crate::ReqId,
     )
         requires pre.invariant(),
             crate::add_ticket(pre, post, input, rid),
@@ -1080,7 +1080,7 @@ UnboundedLog<DT: Dispatch> {
         pre: UnboundedLog::State<DT>,
         post: UnboundedLog::State<DT>,
         output: crate::OutputOperation<DT>,
-        rid: crate::RequestId,
+        rid: crate::ReqId,
     )
         requires pre.invariant(),
             crate::consume_stub(pre, post, output, rid),
