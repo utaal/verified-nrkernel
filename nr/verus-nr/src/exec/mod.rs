@@ -7,7 +7,7 @@ use vstd::prelude::*;
 use crate::Dispatch;
 
 // spec imports
-use crate::spec::{self,
+use crate::spec::{
     cyclicbuffer::CyclicBuffer,
     unbounded_log::UnboundedLog,
 };

@@ -10,7 +10,6 @@ use state_machines_macros::*;
 use vstd::prelude::*;
 
 use super::types::*;
-use super::utils::*;
 
 use crate::Dispatch;
 
