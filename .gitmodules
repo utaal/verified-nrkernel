@@ -4,3 +4,6 @@
 [submodule "verus"]
 	path = verus
 	url = git@github.com:verus-lang/verus.git
+[submodule "nr/ironsync-osdi2023"]
+	path = nr/ironsync-osdi2023
+	url = git@github.com:secure-foundations/ironsync-osdi2023.git
