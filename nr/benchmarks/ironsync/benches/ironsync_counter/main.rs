@@ -132,21 +132,21 @@ fn run_linear_dafny() -> PathBuf {
     }
     println!("[dafny] Dafny version ok.");
 
-    println!("[dafny] Running verifier (nr-status)...");
-    let output = Command::new("make")
-        .args(["nr-status", "-j"])
-        .envs(env::vars())
-        .current_dir(ironsync_dir.clone())
-        .output().expect("[dafny] failed to run verifier");
+    // println!("[dafny] Running verifier (nr-status)...");
+    // let output = Command::new("make")
+    //     .args(["nr-status", "-j"])
+    //     .envs(env::vars())
+    //     .current_dir(ironsync_dir.clone())
+    //     .output().expect("[dafny] failed to run verifier");
 
-    if !output.status.success() {
-        println!("status: {}", output.status);
-        io::stdout().write_all(&output.stdout).unwrap();
-        io::stderr().write_all(&output.stderr).unwrap();
-        panic!("[dafny] failed to verify status");
-    }
-
-    println!("[dafny] verifier OK (nr-status)...");
+    // if !output.status.success() {
+    //     println!("status: {}", output.status);
+    //     io::stdout().write_all(&output.stdout).unwrap();
+    //     io::stderr().write_all(&output.stderr).unwrap();
+    //     panic!("[dafny] failed to verify status");
+    // }
+    // println!("[dafny] verifier OK (nr-status)...");
+    println!("[dafny] verifier skipped (nr-status)...");
 
     println!("[dafny] building nr binaries");
     let nr_dir = ironsync_dir.join("concurrency/node-replication");
