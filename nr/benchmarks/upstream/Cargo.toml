@@ -10,13 +10,16 @@ edition = "2021"
 # nothing yet
 
 [dev-dependencies]
-node-replication = { path = "../../lib/node-replication/node-replication", default-features = false }
-bench_utils = { path = "../../lib/bench_utils" }
+x86 = "0.52"
+node-replication = "0.1.1"
+bench_utils = { path = "../../lib/bench_utils",  features = ["unverified"]  }
 env_logger = "0.9.0"
 rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "0.3.1"
 logging = { version = "0.4", package = "log" }
 zipf = "7.0"
+mmap = "0.1.*"
+libc = "0.2"
 
 [features]
 
@@ -26,10 +29,15 @@ smokebench = ["bench_utils/smokebench"]
 exhaustive = ["bench_utils/exhaustive"]
 
 
+
 # [[bench]]
 # name = "nr_hashmap"
 # harness = false
 
 [[bench]]
 name = "nr_counter"
+harness = false
+
+[[bench]]
+name = "nr_vspace"
 harness = false

@@ -14,7 +14,6 @@ authors = [
 debug = true
 
 [dependencies]
-node-replication = { path = "../node-replication/node-replication", default-features = false }
 arr_macro = "0.1.2"
 core_affinity = "0.5.10"
 crossbeam-utils = { version = "0.8", default-features = false }
@@ -32,8 +31,13 @@ urcu-sys = "=0.0.5"
 nix = { version = "0.24", features = ["sched"] }
 tokio = { version = "1.11.0", features = ["full"] }
 async-trait = "0.1.51"
+node-replication = { version = "0.1.1", optional = true }
+verus-nr = { path = "../../verus-nr", optional = true }
 
 [features]
 smokebench = []
 # Very exhaustive parameter sweep (may take a day to run on a big machine)
 exhaustive = []
+# verified and unverified features
+verified = ["dep:verus-nr"]
+unverified = ["dep:node-replication"]

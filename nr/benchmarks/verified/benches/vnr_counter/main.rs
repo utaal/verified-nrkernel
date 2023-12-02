@@ -243,7 +243,7 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = TestHarness::new(Duration::from_secs(60));
+    let mut harness = TestHarness::new(Duration::from_secs(10));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]

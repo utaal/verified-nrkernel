@@ -14,10 +14,10 @@ use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
 use bench_utils::benchmark::*;
-use bench_utils::mkbench::{self, DsInterface};
+use bench_utils::mkbench::{self, DsInterface, NodeReplicated};
 use bench_utils::topology::ThreadMapping;
 use bench_utils::Operation;
-use node_replication::nr::{Dispatch, NodeReplicated};
+use node_replication::{Dispatch};
 
 
 /// The initial amount of entries all Hashmaps are initialized with
@@ -80,11 +80,11 @@ impl Default for NrCounter {
 }
 
 impl Dispatch for NrCounter {
-    type ReadOperation<'rop> = OpRd;
+    type ReadOperation = OpRd;
     type WriteOperation = OpWr;
     type Response = Result<u64, ()>;
 
-    fn dispatch<'rop>(&self, op: Self::ReadOperation<'rop>) -> Self::Response {
+    fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
         match op {
             OpRd::Get => return Ok(self.get()),
         }
@@ -131,10 +131,10 @@ fn counter_scale_out<R>(c: &mut TestHarness, name: &str, write_ratio: usize)
 where
     R: DsInterface + Send + Sync + 'static,
     R::D: Send,
-    R::D: Dispatch<ReadOperation<'static> = OpRd>,
+    R::D: Dispatch<ReadOperation = OpRd>,
     R::D: Dispatch<WriteOperation = OpWr>,
     <R::D as Dispatch>::WriteOperation: Send + Sync,
-    <R::D as Dispatch>::ReadOperation<'static>: Send + Sync,
+    <R::D as Dispatch>::ReadOperation: Send + Sync,
     <R::D as Dispatch>::Response: Sync + Send + Debug,
 {
     let ops = generate_operations(NOP, write_ratio);
@@ -160,9 +160,11 @@ where
             |_cid, tkn, replica, op, _batch_size| match op {
                 Operation::ReadOperation(op) => {
                     replica.execute(*op, tkn);
+                    tkn
                 }
                 Operation::WriteOperation(op) => {
                     replica.execute_mut(*op, tkn);
+                    tkn
                 }
             },
         );
@@ -176,7 +178,7 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = TestHarness::new(Duration::from_secs(60));
+    let mut harness = TestHarness::new(Duration::from_secs(10));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]

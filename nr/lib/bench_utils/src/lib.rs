@@ -3,13 +3,21 @@
 
 //! Helper code for benchmarks.
 
-#![feature(bench_black_box)]
-#![feature(get_mut_unchecked)]
+
+#[cfg(all(feature = "verified", feature = "unverified"))]
+compile_error!("feature \"verified\" and feature \"unverified\" cannot be enabled at the same time");
+
+#[cfg(not(any(feature = "verified", feature = "unverified")))]
+compile_error!("must define either feature \"verified\" or \"unverified\" ");
+
+// #[cfg(feature = "unverified")]
+// #![feature(bench_black_box)]
+// #[cfg(feature = "unverified")]
+// #![feature(get_mut_unchecked)]
 
 use std::fmt::Debug;
 
 pub mod benchmark;
-// pub mod cnr_mkbench;
 pub mod mkbench;
 pub mod topology;
 

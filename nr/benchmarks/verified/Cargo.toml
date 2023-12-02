@@ -10,14 +10,17 @@ edition = "2021"
 # nothing yet
 
 [dev-dependencies]
+x86 = "0.52"
 builtin = { path = "../../../verus/source/builtin" }
 verus-nr = { path = "../../verus-nr" }
-bench_utils = { path = "../../lib/bench_utils_verus_nr" }
+bench_utils = { path = "../../lib/bench_utils",  features = ["verified"]  }
 env_logger = "0.9.0"
 rand = { version = "0.8", features = ["small_rng"] }
 rand_chacha = "0.3.1"
 logging = { version = "0.4", package = "log" }
 zipf = "7.0"
+mmap = "0.1.*"
+libc = "0.2"
 
 [features]
 
@@ -33,4 +36,8 @@ exhaustive = ["bench_utils/exhaustive"]
 
 [[bench]]
 name = "vnr_counter"
+harness = false
+
+[[bench]]
+name = "vnr_vspace"
 harness = false

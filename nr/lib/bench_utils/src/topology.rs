@@ -28,6 +28,8 @@ pub enum ThreadMapping {
     None,
     /// Allocate threads on the same socket (as much as possible).
     Sequential,
+    /// fills up a numa node (cores first, then hyperthreads once all NUMA nodes are full)
+    NUMAFill,
     /// Spread thread allocation out across sockets (as much as possible).
     #[allow(unused)]
     Interleave,
@@ -39,6 +41,7 @@ impl fmt::Display for ThreadMapping {
             ThreadMapping::None => write!(f, "None"),
             ThreadMapping::Sequential => write!(f, "Sequential"),
             ThreadMapping::Interleave => write!(f, "Interleave"),
+            ThreadMapping::NUMAFill => write!(f, "NUMAFill"),
         }
     }
 }
@@ -49,6 +52,7 @@ impl fmt::Debug for ThreadMapping {
             ThreadMapping::None => write!(f, "TM=None"),
             ThreadMapping::Sequential => write!(f, "TM=Sequential"),
             ThreadMapping::Interleave => write!(f, "TM=Interleave"),
+            ThreadMapping::NUMAFill => write!(f, "TM=NUMAFill"),
         }
     }
 }
@@ -257,6 +261,29 @@ impl MachineTopology {
                 });
                 let c = cpus.iter().take(how_many).map(|c| *c).collect();
                 c
+            }
+            ThreadMapping::NUMAFill => {
+                let mut ht1 = cpus.clone();
+
+                // Get cores first, remove HT
+                ht1.sort_by_key(|c| c.core);
+                ht1.dedup_by(|a, b| a.core == b.core);
+
+                // Add the HTs removed by dedup at the end
+                let mut ht2 = vec![];
+                for cpu in cpus {
+                    if !ht1.contains(&cpu) {
+                        ht2.push(cpu);
+                    }
+                }
+                // sort the core list by socket, and combine them
+                ht2.sort_by_key(|c| c.socket);
+                ht1.sort_by_key(|c| c.socket);
+                ht1.extend(ht2);
+
+                // ht1 should now have all cores sorted by socket, then all hyperthreads sorted by socket
+
+                ht1.into_iter().take(how_many).collect()
             }
         }
     }

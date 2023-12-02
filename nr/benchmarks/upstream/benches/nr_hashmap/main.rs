@@ -4,11 +4,12 @@
 
 //! Defines a hash-map that can be replicated.
 #![allow(dead_code)]
-#![feature(generic_associated_types)]
+// #![feature(generic_associated_types)]
 
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::Sync;
+use std::time::Duration;
 
 use logging::warn;
 use rand::seq::SliceRandom;
@@ -16,10 +17,10 @@ use rand::{distributions::Distribution, Rng, RngCore};
 use zipf::ZipfDistribution;
 
 use bench_utils::benchmark::*;
-use bench_utils::mkbench::{self, DsInterface};
+use bench_utils::mkbench::{self, DsInterface, NodeReplicated};
 use bench_utils::topology::ThreadMapping;
 use bench_utils::Operation;
-use node_replication::nr::{Dispatch, NodeReplicated};
+use node_replication::{Dispatch};
 
 
 /// The initial amount of entries all Hashmaps are initialized with
@@ -87,11 +88,11 @@ impl Default for NrHashMap {
 }
 
 impl Dispatch for NrHashMap {
-    type ReadOperation<'rop> = OpRd;
+    type ReadOperation = OpRd;
     type WriteOperation = OpWr;
     type Response = Result<Option<u64>, ()>;
 
-    fn dispatch<'rop>(&self, op: Self::ReadOperation<'rop>) -> Self::Response {
+    fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
         match op {
             OpRd::Get(key) => return Ok(self.get(key)),
         }
@@ -153,10 +154,10 @@ fn hashmap_scale_out<R>(c: &mut TestHarness, name: &str, write_ratio: usize)
 where
     R: DsInterface + Send + Sync + 'static,
     R::D: Send,
-    R::D: Dispatch<ReadOperation<'static> = OpRd>,
+    R::D: Dispatch<ReadOperation = OpRd>,
     R::D: Dispatch<WriteOperation = OpWr>,
     <R::D as Dispatch>::WriteOperation: Send + Sync,
-    <R::D as Dispatch>::ReadOperation<'static>: Send + Sync,
+    <R::D as Dispatch>::ReadOperation: Send + Sync,
     <R::D as Dispatch>::Response: Sync + Send + Debug,
 {
     let ops = generate_operations(NOP, write_ratio, KEY_SPACE, UNIFORM);
@@ -180,9 +181,11 @@ where
             |_cid, tkn, replica, op, _batch_size| match op {
                 Operation::ReadOperation(op) => {
                     replica.execute(*op, tkn);
+                    tkn
                 }
                 Operation::WriteOperation(op) => {
                     replica.execute_mut(*op, tkn);
+                    tkn
                 }
             },
         );
@@ -196,7 +199,7 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = Default::default();
+    let mut harness = TestHarness::new(Duration::from_secs(10));
 
     let write_ratios = if cfg!(feature = "exhaustive") {
         vec![0, 10, 20, 40, 60, 80, 100]
