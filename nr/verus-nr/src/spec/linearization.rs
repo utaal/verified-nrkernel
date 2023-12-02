@@ -7,17 +7,19 @@ use builtin::*;
 use vstd::seq::*;
 use vstd::prelude::*;
 
+#[cfg(verus_keep_ghost)]
 use crate::spec::simple_log::{UpdateResp, ReadReq, SimpleLog, compute_nrstate_at_version};
 use crate::{LogIdx, ReqId};
 use crate::Dispatch;
+#[cfg(verus_keep_ghost)]
 use crate::{SimpleLogRefinesAsynchronousSingleton, AsyncLabel, AsynchronousSingletonBehavior, AsynchronousSingleton, SimpleLogBehavior,
 behavior_equiv, InputOperation, OutputOperation};
 
-type SState<DT> = SimpleLog::State<DT>;
-type AState<DT> = AsynchronousSingleton::State<DT>;
-
 verus! {
-
+#[cfg(verus_keep_ghost)]
+type SState<DT> = SimpleLog::State<DT>;
+#[cfg(verus_keep_ghost)]
+type AState<DT> = AsynchronousSingleton::State<DT>;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                  LINEARIZATION PROOF                                           //
@@ -28,8 +30,9 @@ verus! {
 // Refinement Theorem
 // =================================================================================================
 
-
+#[cfg(verus_keep_ghost)]
 pub struct RefinementProof;
+#[cfg(verus_keep_ghost)]
 impl<DT: Dispatch> SimpleLogRefinesAsynchronousSingleton<DT> for RefinementProof {
     proof fn exists_equiv_behavior(a: SimpleLogBehavior<DT>) -> (b: AsynchronousSingletonBehavior<DT>)
         // requires a.wf(),

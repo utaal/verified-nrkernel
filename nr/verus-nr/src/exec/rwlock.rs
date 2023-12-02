@@ -350,38 +350,55 @@ impl<T> RwLock<T> {
                 tid < self.ref_counts.len()
         {
             // TODO: figure out how to do the optimized read here!
+            let rc = atomic_with_ghost!(
+                &self.ref_counts[tid].0 => load();
+                returning rc;
+                ghost g => { }
+            );
 
-            // let rc = atomic_with_ghost!(
-            //     &self.ref_counts[tid].0 => load();
-            //     returning rc;
-            //     ghost g => { }
-            // );
-
-            // fetch add on the reader lock
-            // let tracked mut ref_counts : Tracked<RwLockSpec::ref_counts<PointsTo<T>>>;
-            let tracked mut shared_pending: Option<RwLockSpec::shared_pending<PointsTo<T>>>;
-            let res = atomic_with_ghost!(
-                &self.ref_counts[tid].0 => fetch_add(1);
-                ghost g =>
-            {
-                assume(g@.value < MAX_RC);
-                // Tracked<ref_counts<T>>,Tracked<shared_pending<T>>
-                let tracked (_ref_counts, _shared_pending) = self.inst.borrow().shared_start(tid as int, g);
-                // ref_counts = _ref_counts;
-                shared_pending = Some(_shared_pending.get());
-                g = _ref_counts.get();
-
-                // assert(g@.instance == self.inst@);
-                // assert(g@.key == tid as nat);
-            });
-
-            if res >= MAX_RC {
+            if rc == MAX_RC {
                 panic_with_ref_count_too_big();
                 ////////////////////////////////////////////////////////////////////////////////////
                 // !!! THIS IS A PANIC CASE! WE DO NOT RETURN FROM HERE !!!
                 ////////////////////////////////////////////////////////////////////////////////////
                 #[allow(while_true)]
                 while true {} // TODO: is that fine?
+            }
+
+            // fetch add on the reader lock
+            // let tracked mut ref_counts : Tracked<RwLockSpec::ref_counts<PointsTo<T>>>;
+            let tracked mut shared_pending: Option<RwLockSpec::shared_pending<PointsTo<T>>>;
+            let res = atomic_with_ghost!(
+                &self.ref_counts[tid].0 => compare_exchange(rc, rc+1);
+                update prev->next;
+                ghost g =>
+            {
+                if prev == rc {
+                    assert(rc < MAX_RC);
+                    // Tracked<ref_counts<T>>,Tracked<shared_pending<T>>
+                    let tracked (_ref_counts, _shared_pending) = self.inst.borrow().shared_start(tid as int, g);
+                    // ref_counts = _ref_counts;
+                    shared_pending = Some(_shared_pending.get());
+                    g = _ref_counts.get();
+
+                    // assert(g@.value <= MAX_RC);
+                } else {
+                    shared_pending = None;
+                }
+
+                // assume(g@.value < MAX_RC);
+                // // Tracked<ref_counts<T>>,Tracked<shared_pending<T>>
+                // let tracked (_ref_counts, _shared_pending) = self.inst.borrow().shared_start(tid as int, g);
+                // // ref_counts = _ref_counts;
+                // shared_pending = Some(_shared_pending.get());
+                // g = _ref_counts.get();
+
+                // assert(g@.instance == self.inst@);
+                // assert(g@.key == tid as nat);
+            });
+
+            if res.is_err() {
+                continue;
             }
 
             // exc_locked: CachePadded<AtomicBool<_, RwLockSpec::exc_locked<PointsTo<T>>, _>>,
@@ -392,14 +409,6 @@ impl<T> RwLock<T> {
                 returning res;
                 ghost g => {
                 if !res {
-
-                    // assert(exc_locked@.instance == self.inst);
-                    // assert(!exc_locked@.value == false);
-
-                    // assert(shared_pending@.instance == self.inst);
-                    // assert(shared_pending@.key == tid);
-                    // assert(shared_pending@.count == 1);
-                    // (Ghost<Option<T>>, Tracked<shared_guard<T>>)
                     let tracked (_perms, _shared_guard) = self.inst.borrow().shared_finish(tid as int, &g, shared_pending.tracked_unwrap());
                     perms = _perms@.unwrap();
                     shared_guard = Some(_shared_guard.get());

@@ -158,6 +158,22 @@ pub trait ThreadTokenT<DT: Dispatch, Replica> {
     spec fn replica_id_spec(&self) -> nat;
 }
 
+#[verifier(external_body)] /* vattr */
+pub struct AffinityFn {
+    f: Box<dyn Fn(ReplicaId)>
+}
+
+impl AffinityFn {
+    #[verifier(external_body)] /* vattr */
+    pub fn new(f: impl Fn(ReplicaId) + 'static) -> Self {
+        Self{ f: Box::new(f)}
+    }
+    #[verifier(external_body)] /* vattr */
+    pub fn call(&self, rid: ReplicaId) {
+        (self.f)(rid)
+    }
+}
+
 pub trait NR<DT: Dispatch + Sync>: Sized {
     type Replica;
     type ReplicaId;
@@ -171,7 +187,7 @@ pub trait NR<DT: Dispatch + Sync>: Sized {
 
     // TODO this does not properly ensures initialization I think
     // I think it needs to return the correct initialization token
-    fn new(num_replicas: usize) -> (res: Self)
+    fn new(num_replicas: usize, chg_mem_affinity: AffinityFn) -> (res: Self)
         requires
             0 < num_replicas && num_replicas <= crate::constants::MAX_REPLICAS
         ensures
@@ -485,6 +501,7 @@ impl<DT: Dispatch> AsynchronousSingletonBehavior<DT> {
         }
     }
 }
+
 
 pub open spec fn behavior_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, b: AsynchronousSingletonBehavior<DT>) -> bool
     decreases a, b

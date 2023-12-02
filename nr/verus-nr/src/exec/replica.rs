@@ -33,6 +33,7 @@ use crate::exec::log::{NrLog, NrLogAppendExecDataGhost};
 use crate::exec::context::{Context, PendingOperation, ThreadId, ThreadToken, FCClientRequestResponseGhost};
 #[cfg(verus_keep_ghost)] use crate::exec::utils::{rids_match, rids_match_pop, rids_match_add_rid, rids_match_add_none};
 
+// use crate::exec::rwlock_unverified::RwLock as RwLockUnverified;
 
 verus! {
 
@@ -195,6 +196,7 @@ pub struct Replica<#[verifier::reject_recursive_types] DT: Dispatch> {
     ///   - Dafny: linear replica: RwLock,
     ///   - Rust:  data: CachePadded<RwLock<D>>,
     pub data: CachePadded<RwLock<ReplicatedDataStructure<DT>>>,
+    // pub _data: CachePadded<RwLockUnverified<ReplicatedDataStructure<DT>>>,
 
     // Thread index that will be handed out to the next thread that registers
     // with the replica when calling [`Replica::register()`].
@@ -312,6 +314,14 @@ impl<DT: Dispatch> Replica<DT> {
         };
         let data = CachePadded(RwLock::new(MAX_THREADS_PER_REPLICA, replicated_data_structure, Ghost(data_structure_inv)));
 
+        // let _replicated_data_structure = ReplicatedDataStructure {
+            // data: DT::init(),
+            // replica: Tracked(replica),
+            // combiner: Tracked(combiner),
+            // cb_combiner: Tracked(cb_combiner),
+        // };
+        // let _data = CachePadded(RwLockUnverified::new(_replicated_data_structure));
+
         //
         // Create the thread contexts
         //
@@ -400,6 +410,7 @@ impl<DT: Dispatch> Replica<DT> {
             collected_operations_per_thread,
             responses,
             data,
+            // _data,
             thread_tokens,
             num_threads,
             unbounded_log_instance: Tracked(unbounded_log_instance),
@@ -543,9 +554,15 @@ impl<DT: Dispatch> Replica<DT> {
         let combiner = replicated_data_structure.combiner;
         let cb_combiner = replicated_data_structure.cb_combiner;
 
+        // let mut replicated_data_structure = self._data.0.write(MAX_THREADS_PER_REPLICA);
+        // let data = &mut replicated_data_structure.data;
+
         // Step 3: Append all operations to the log
         let tracked append_exec_ghost_data = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids};
         let append_exec_ghost_data = slog.append(&self.replica_token, &operations, &mut responses, &mut data, Tracked(append_exec_ghost_data));
+
+        // // TODO: release lock here!
+        // drop(replicated_data_structure);
 
 
         // Step 3: Execute all operations
@@ -934,6 +951,7 @@ impl<DT: Dispatch> Replica<DT> {
         // let res = self.data.read(idx.tid() - 1).dispatch(op)
         assert(tkn.thread_id_spec() < self.data.0.max_threads());
 
+        // let result = self._data.0.read(tkn.thread_id() as usize).data.dispatch(op);
         let read_handle = self.data.0.acquire_read(tkn.thread_id() as usize);
         let replica = self.data.0.borrow(Tracked(&read_handle));
         let result = replica.data.dispatch(op);

@@ -17,6 +17,7 @@ use crate::exec::log::{NrLog, NrLogTokens};
 use crate::exec::replica::{Replica, ReplicaConfig, ReplicaId};
 use crate::exec::context::ThreadToken;
 
+use crate::AffinityFn;
 use crate::constants::{MAX_REPLICAS, LOG_SIZE, MAX_THREADS_PER_REPLICA};
 
 pub mod rwlock;
@@ -114,11 +115,14 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
     ///
     ///  - Dafny: n/a ?
     ///  - Rust:  pub fn new(num_replicas: NonZeroUsize) -> Result<Self, NodeReplicatedError>
-    fn new(num_replicas: usize) -> (res: Self)
+    fn new(num_replicas: usize, chg_mem_affinity: AffinityFn) -> (res: Self)
         // requires
         //     num_replicas <= MAX_REPLICAS
         // ensures res.wf()
     {
+        // switch affinity to the first replica
+        chg_mem_affinity.call(0);
+
         let (log, replica_tokens, nr_log_tokens) = NrLog::new(num_replicas, LOG_SIZE);
 
         let tracked NrLogTokens {
@@ -189,10 +193,16 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
             assert(config.wf(idx as nat));
             assert(replica_token.id_spec() == idx as nat);
 
+            // switch the affinity of the replica before we do the allocation
+            chg_mem_affinity.call(replica_token.id());
+
             let replica = Replica::new(replica_token, MAX_THREADS_PER_REPLICA, Tracked(config));
             actual_replicas.push(Box::new(replica));
             idx = idx + 1;
         }
+
+        // change the affinity back
+        chg_mem_affinity.call(0);
 
         let unbounded_log_instance = Tracked(unbounded_log_instance);
         let cyclic_buffer_instance = Tracked(cyclic_buffer_instance);
