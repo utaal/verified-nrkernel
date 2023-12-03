@@ -6,26 +6,21 @@
 #![allow(dead_code)]
 // #![feature(generic_associated_types)]
 
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::marker::Sync;
-use std::num::NonZeroUsize;
 use std::time::Duration;
 
 use logging::warn;
 use rand::seq::SliceRandom;
-use rand::{distributions::Distribution, Rng, RngCore};
+use rand::{Rng};
 use rand_chacha::ChaCha8Rng;
 use rand::SeedableRng;
-use zipf::ZipfDistribution;
 
 use bench_utils::benchmark::*;
-use bench_utils::mkbench::{self, DsInterface};
+use bench_utils::mkbench::{self, DsInterface, NodeReplicated};
 use bench_utils::topology::ThreadMapping;
 use bench_utils::Operation;
-use verus_nr::{Dispatch, AffinityFn, NodeReplicated, ReplicaId, ThreadToken, NR};
 
-use builtin::Tracked;
 
 // Number of operation for test-harness.
 #[cfg(feature = "smokebench")]
@@ -46,6 +41,7 @@ use std::pin::Pin;
 use logging::{debug, trace};
 use x86::bits64::paging::*;
 
+use node_replication::{Dispatch};
 const VSPACE_RANGE: u64 = 512*1024*1024*1024;
 
 
@@ -197,17 +193,11 @@ impl Dispatch for VSpace {
    type ReadOperation = Access;
    type WriteOperation = Modify;
    type Response = u64;
-   type View = VSpace;
-
-   fn init() -> Self {
-        Default::default()
-    }
-
 
    /// The `dispatch` function applies the immutable operations.
    fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
        match op {
-           Access::Resolve(key) => self.resolveWrapped(key),
+           Access::Resolve(key) => self.resolve_wrapped(key),
        }
    }
 
@@ -217,79 +207,13 @@ impl Dispatch for VSpace {
        op: Self::WriteOperation,
    ) -> Self::Response {
        match op {
-           Modify::Map(key, value) => self.mapGenericWrapped(key, value, 0x1000) as u64,
+           Modify::Map(key, value) => self.map_generic_wrapped(key, value, 0x1000) as u64,
        }
    }
-
-    // partial eq also add an exec operation
-    fn clone_write_op(op: &Self::WriteOperation) -> Self::WriteOperation {
-        op.clone()
-    }
-
-    fn clone_response(op: &Self::Response) -> Self::Response {
-        op.clone()
-    }
-
 }
-
-
-
-// impl<T, U> SomeTrait for T
-//    where T: AnotherTrait<AssocType=U>
-struct VNRWrapper {
-    val: NodeReplicated<VSpace>,
-}
-
-/// The interface a data-structure must implement to be benchmarked by
-/// `ScaleBench`.
-impl DsInterface for VNRWrapper {
-    type D = VSpace; //: Dispatch + Default + Sync;
-
-    /// Allocate a new data-structure.
-    ///
-    /// - `replicas`: How many replicas the data-structure should maintain.
-    /// - `logs`: How many logs the data-structure should be partitioned over.
-    fn new(replicas: NonZeroUsize, logs: NonZeroUsize, log_size: usize) -> Self {
-        VNRWrapper {
-            val: NR::<Self::D>::new(replicas.into(), AffinityFn::new(mkbench::chg_affinity)),
-        }
-    }
-
-    /// Register a thread with a data-structure.
-    ///
-    /// - `rid` indicates which replica the thread should use.
-    fn register(&mut self, rid: ReplicaId) -> Option<ThreadToken<Self::D>> {
-        NR::<Self::D>::register(&mut self.val, rid)
-    }
-
-    /// Apply a mutable operation to the data-structure.
-    fn execute_mut(
-        &self,
-        op: <Self::D as Dispatch>::WriteOperation,
-        idx: ThreadToken<Self::D>,
-    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D>), ThreadToken<Self::D>> {
-        match NR::execute_mut(&self.val, op, idx, Tracked::assume_new()) {
-            Ok((res, tkn, _)) => Ok((res, tkn)),
-            Err((tkn, _)) => Err(tkn),
-        }
-    }
-
-    /// Apply a immutable operation to the data-structure.
-    fn execute(
-        &self,
-        op: <Self::D as Dispatch>::ReadOperation,
-        idx: ThreadToken<Self::D>,
-    ) -> Result<(<Self::D as Dispatch>::Response, ThreadToken<Self::D>), ThreadToken<Self::D>> {
-        match NR::execute(&self.val, op, idx, Tracked::assume_new()) {
-            Ok((res, tkn, _)) => Ok((res, tkn)),
-            Err((tkn, _)) => Err(tkn),
-        }
-    }
-}
-
 
 /*
-        pub fn mapGenericWrapped(
+        pub fn map_generic_wrapped(
             self: &mut VSpace,
             vbase: u64,
             pregion: u64,
@@ -297,7 +221,7 @@ impl DsInterface for VNRWrapper {
             //rights: &MapAction,
         ) -> bool;
 
-        pub fn resolveWrapped(self: &mut VSpace, vbase: u64) -> u64;
+        pub fn resolve_wrapped(self: &mut VSpace, vbase: u64) -> u64;
  */
 
 impl Drop for VSpace {
@@ -324,9 +248,9 @@ pub const ONE_GIB: usize = 1024 * 1024 * 1024;
 // sudo sh -c "echo 16 > /sys/devices/system/node/node3/hugepages/hugepages-1048576kB/nr_hugepages"
 
 pub fn alloc(size: usize, ps: usize) -> mmap::MemoryMap {
-    use libc;
+    // use libc;
     use libc::{MAP_ANON, MAP_HUGETLB, MAP_POPULATE, MAP_SHARED};
-    use mmap;
+    // use mmap;
 
     const MAP_HUGE_SHIFT: usize = 26;
     const MAP_HUGE_2MB: i32 = 21 << MAP_HUGE_SHIFT;
@@ -366,34 +290,7 @@ pub fn alloc(size: usize, ps: usize) -> mmap::MemoryMap {
 }
 
 // cpp glue fun
-pub fn createVSpace() -> &'static mut VSpace {
-    //env_logger::try_init();
-    //log::error!("createVSpace");
-    let mapping = alloc(3*ONE_GIB, ONE_GIB);
-    let mem_ptr = mapping.data();
 
-    //unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align_unchecked(1075851264, 4096)) };
-
-    let vs = Box::leak(Box::new(VSpace {
-        pml4: Box::pin(
-            [PML4Entry::new(PAddr::from(0x0u64), PML4Flags::empty()); PAGE_SIZE_ENTRIES],
-        ),
-        //allocs: Vec::with_capacity(1024),
-        mapping,
-        mem_counter: 4096,
-        mem_ptr
-    }));
-
-    for i in 0..VSPACE_RANGE / 4096 {
-        assert!(vs.map_generic(
-            VAddr::from(i * 4096),
-            (PAddr::from(i * 4096), 4096),
-            MapAction::ReadWriteExecuteUser,
-        ).is_ok());
-    }
-
-    vs
-}
 
 
 impl Default for VSpace {
@@ -425,14 +322,14 @@ impl Default for VSpace {
             ).is_ok());
         }
 
-        logging::error!("vs.mem_counter {}", vs.mem_counter);
+        // logging::error!("vs.mem_counter {}", vs.mem_counter);
 
         vs
     }
 }
 
 impl VSpace {
-    pub fn mapGenericWrapped(
+    pub fn map_generic_wrapped(
         self: &mut VSpace,
         vbase: u64,
         pregion: u64,
@@ -716,7 +613,7 @@ impl VSpace {
         unsafe { transmute::<VAddr, &mut PDPT>(paddr_to_kernel_vaddr(entry.address())) }
     }
 
-    pub fn resolveWrapped(&self, addr: u64) -> u64 {
+    pub fn resolve_wrapped(&self, addr: u64) -> u64 {
         let a = self.resolve_addr(VAddr::from(addr)).map(|pa| pa.as_u64()).unwrap_or(0x0);
         //log::error!("{:#x} -> {:#x}", addr, a);
         a
@@ -731,18 +628,18 @@ impl VSpace {
             if pdpt[pdpt_idx].is_present() {
                 if pdpt[pdpt_idx].is_page() {
                     // Page is a 1 GiB mapping, we have to return here
-                    let page_offset = addr.huge_page_offset();
+                    // let page_offset = addr.huge_page_offset();
                     unreachable!("dont go here");
-                    return Some(pdpt[pdpt_idx].address() + page_offset);
+                    // return Some(pdpt[pdpt_idx].address() + page_offset);
                 } else {
                     let pd_idx = pd_index(addr);
                     let pd = self.get_pd(pdpt[pdpt_idx]);
                     if pd[pd_idx].is_present() {
                         if pd[pd_idx].is_page() {
                             // Encountered a 2 MiB mapping, we have to return here
-                            let page_offset = addr.large_page_offset();
+                            // let page_offset = addr.large_page_offset();
                             unreachable!("dont go here");
-                            return Some(pd[pd_idx].address() + page_offset);
+                            // return Some(pd[pd_idx].address() + page_offset);
                         } else {
                             let pt_idx = pt_index(addr);
                             let pt = self.get_pt(pd[pd_idx]);
@@ -762,7 +659,7 @@ impl VSpace {
         }
 
         unreachable!("dont go here");
-        None
+        // None
     }
 
     pub fn map_new(
@@ -778,164 +675,8 @@ impl VSpace {
         Ok((paddr, size))
     }
 }
-/*
-mod mkbench;
-mod utils;
-
-use rand::{thread_rng, Rng};
-use node_replication::Dispatch;
-use node_replication::Replica;
-use utils::benchmark::*;
-use utils::Operation;
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-enum OpcodeWr {
-    Map(VAddr, usize, MapAction, PAddr),
-    MapDevice(VAddr, PAddr, usize),
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-enum OpcodeRd {
-    Identify(u64),
-}
-
-#[derive(Default)]
-struct VSpaceDispatcher {
-    vspace: VSpace,
-}
-
-impl Dispatch for VSpaceDispatcher {
-    type ReadOperation = OpcodeRd;
-    type WriteOperation = OpcodeWr;
-    type Response = Result<(u64, u64), VSpaceError>;
-
-    fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
-        match op {
-            OpcodeRd::Identify(base) => {
-                let paddr = self.vspace.resolve_addr(VAddr::from(base));
-                Ok((paddr.map(|pnum| pnum.as_u64()).unwrap_or(0x0), 0x0))
-            }
-        }
-    }
-
-    fn dispatch_mut(&mut self, op: Self::WriteOperation) -> Self::Response {
-        match op {
-            OpcodeWr::Map(vbase, length, rights, pbase) => {
-                let (retaddr, len) = self.vspace.map_new(vbase, length, rights, pbase)?;
-                Ok((retaddr.as_u64(), len as u64))
-            }
-            OpcodeWr::MapDevice(base, paddr, bound) => {
-                self.vspace
-                    .map_generic(base, (paddr, bound as usize), MapAction::ReadWriteUser)?;
-                Ok((0, 0))
-            }
-        }
-    }
-}
-
-fn generate_operations(nop: usize) -> Vec<Operation<OpcodeRd, OpcodeWr>> {
-    let mut ops = Vec::with_capacity(nop);
-    let mut rng = thread_rng();
-
-    const PAGE_RANGE_MASK: u64 = !0xffff_0000_0000_0fff;
-    const MAP_SIZE_MASK: u64 = !0xffff_ffff_f000_0fff;
-    for _i in 0..nop {
-        match rng.gen::<usize>() % 3 {
-            0 => ops.push(Operation::ReadOperation(OpcodeRd::Identify(
-                rng.gen::<u64>(),
-            ))),
-            1 => ops.push(Operation::WriteOperation(OpcodeWr::Map(
-                VAddr::from(rng.gen::<u64>() & PAGE_RANGE_MASK),
-                rng.gen::<usize>() & MAP_SIZE_MASK as usize,
-                MapAction::ReadWriteUser,
-                PAddr::from(rng.gen::<u64>() & PAGE_RANGE_MASK),
-            ))),
-            2 => ops.push(Operation::WriteOperation(OpcodeWr::MapDevice(
-                VAddr::from(rng.gen::<u64>() & PAGE_RANGE_MASK),
-                PAddr::from(rng.gen::<u64>() & PAGE_RANGE_MASK),
-                rng.gen::<usize>() & MAP_SIZE_MASK as usize,
-            ))),
-            _ => unreachable!(),
-        }
-    }
-    ops
-}
-
-fn vspace_single_threaded(c: &mut TestHarness) {
-    const NOP: usize = 3000;
-    const LOG_SIZE_BYTES: usize = 16 * 1024 * 1024;
-    mkbench::baseline_comparison::<Replica<VSpaceDispatcher>>(
-        c,
-        "vspace",
-        generate_operations(NOP),
-        LOG_SIZE_BYTES,
-    );
-}
-
-fn vspace_scale_out(c: &mut TestHarness) {
-    const NOP: usize = 3000;
-    let ops = generate_operations(NOP);
-
-    mkbench::ScaleBenchBuilder::<Replica<VSpaceDispatcher>>::new(ops)
-        .machine_defaults()
-        .log_strategy(mkbench::LogStrategy::One)
-        .configure(
-            c,
-            "vspace-scaleout",
-            |_cid, rid, _log, replica, op, _batch_size| match op {
-                Operation::ReadOperation(o) => {
-                    let _r = replica.execute(*o, rid);
-                }
-                Operation::WriteOperation(o) => {
-                    let _r = replica.execute_mut(*o, rid);
-                }
-            },
-        );
-}
-
-fn main() {
-    let _r = env_logger::try_init();
-    let mut harness = Default::default();
-
-    vspace_single_threaded(&mut harness);
-    vspace_scale_out(&mut harness);
-}
-*/
-
-#[test]
-fn silly2() {
-    let _r = env_logger::try_init();
-    let vs = createVSpace();
-    log::error!("mem counter is {:?}", vs.mem_counter);
-}
-
-#[test]
-fn silly() {
-    let vs = createVSpace();
-    assert!(vs.resolveWrapped(0x0) == 0x0);
-    assert!(vs.resolveWrapped(0x1000) == 0x1000);
-    assert!(vs.resolveWrapped((VSPACE_RANGE) - 4096) == (VSPACE_RANGE) - 4096);
-    assert!(vs.resolveWrapped(VSPACE_RANGE) == 0x0);
-    assert!(vs.resolveWrapped((VSPACE_RANGE) + 4096) == 0x0);
-
-    assert!(vs.mapGenericWrapped(VSPACE_RANGE, 0xf000, 0x1000));
-    assert!(vs.resolveWrapped(VSPACE_RANGE) == 0xf000);
-
-    assert!(vs.mapGenericWrapped((VSPACE_RANGE) - 4096, 0xd000, 0x1000));
-    assert!(vs.resolveWrapped((VSPACE_RANGE) - 4096) == 0xd000);
 
 
-/*        pub fn mapGenericWrapped(
-            self: &mut VSpace,
-            vbase: u64,
-            pregion: u64,
-            pregion_len: usize,
-            //rights: &MapAction,
-        ) -> bool;
-
-        pub fn resolveWrapped(self: &mut VSpace, vbase: u64) -> u64;
-*/
-}
 
 
 
@@ -953,66 +694,24 @@ pub fn generate_operations(
     let mut ops = Vec::with_capacity(nop);
     let mut rng = ChaCha8Rng::seed_from_u64(42);
 
+    const MASK: u64 = 0x7fffffffff & !0xfffu64;
     const PAGE_RANGE_MASK: u64 = !0xffff_0000_0000_0fff;
     const MAP_SIZE_MASK: u64 = !0xffff_ffff_f000_0fff;
-    for _i in 0..nop {
-        match rng.gen::<usize>() % 2 {
-            0 => ops.push(Operation::ReadOperation(Access::Resolve(
-                rng.gen::<u64>(),
-            ))),
-            1 => ops.push(Operation::WriteOperation(Modify::Map(
-                rng.gen::<u64>() & PAGE_RANGE_MASK,
-                rng.gen::<u64>() & PAGE_RANGE_MASK,
-            ))),
-            _ => unreachable!(),
+    for idx in 0..nop {
+        if idx % 100 < write_ratio {
+            ops.push(Operation::WriteOperation(Modify::Map(
+                rng.gen::<u64>() & MASK,
+                rng.gen::<u64>() & MASK,
+            )))
+        } else {
+            ops.push(Operation::ReadOperation(Access::Resolve(
+                rng.gen::<u64>() & MASK,
+            )))
         }
     }
 
     ops.shuffle(&mut rng);
     ops
-}
-
-/// Compare scale-out behaviour of synthetic data-structure.
-fn hashmap_scale_out<R>(c: &mut TestHarness, name: &str, write_ratio: usize)
-where
-    R: DsInterface + Send + Sync + 'static,
-    R::D: Send,
-    R::D: Dispatch<ReadOperation = Access>,
-    R::D: Dispatch<WriteOperation = Modify>,
-    <R::D as Dispatch>::WriteOperation: Send + Sync,
-    <R::D as Dispatch>::ReadOperation: Send + Sync,
-    <R::D as Dispatch>::Response: Sync + Send + Debug,
-{
-    let ops = generate_operations(NOP, write_ratio);
-    let bench_name = format!("{}-scaleout-wr{}", name, write_ratio);
-
-    mkbench::ScaleBenchBuilder::<R>::new(ops)
-        .thread_defaults()
-        //.threads(1)
-        //.threads(73)
-        //.threads(96)
-        //.threads(192)
-        .update_batch(32)
-        .log_size(32 * 1024 * 1024)
-        .replica_strategy(mkbench::ReplicaStrategy::One)
-        .replica_strategy(mkbench::ReplicaStrategy::Socket)
-        .thread_mapping(ThreadMapping::Interleave)
-        .thread_mapping(ThreadMapping::NUMAFill)
-        .log_strategy(mkbench::LogStrategy::One)
-        .configure(
-            c,
-            &bench_name,
-            |_cid, tkn, replica, op, _batch_size| match op {
-                Operation::ReadOperation(op) => match replica.execute(*op, tkn) {
-                    Ok(r) => r.1,
-                    Err(r) => r,
-                },
-                Operation::WriteOperation(op) => match replica.execute_mut(*op, tkn) {
-                    Ok(r) => r.1,
-                    Err(r) => r,
-                },
-            },
-        );
 }
 
 fn main() {
@@ -1023,18 +722,47 @@ fn main() {
 
     bench_utils::disable_dvfs();
 
-    let mut harness = TestHarness::new(Duration::from_secs(10));
-
-    let write_ratios = if cfg!(feature = "exhaustive") {
-        vec![0, 10, 20, 40, 60, 80, 100]
-    } else if cfg!(feature = "smokebench") {
-        vec![10]
-    } else {
-        vec![0, 10, 100]
-    };
-
-    //hashmap_single_threaded(&mut harness);
-    for write_ratio in write_ratios.into_iter() {
-        hashmap_scale_out::<VNRWrapper>(&mut harness, "vnr-vspace", write_ratio);
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 6 {
+        println!("Usage: cargo run -- n_threads reads_pct, runtime, numa_policy, run_id_num");
     }
-}
+
+    let n_threads = args[1].parse::<usize>().unwrap();
+    let reads_pct = args[2].parse::<usize>().unwrap();
+    let write_ratio = 100 - reads_pct;
+    let runtime = args[3].parse::<u64>().unwrap();
+    let numa_policy = match args[4].as_str() {
+        "fill" => ThreadMapping::NUMAFill,
+        "interleave" => ThreadMapping::Interleave,
+        _ => panic!("supply fill or interleave as numa mapping")
+    };
+    let run_id_num = &args[5];
+
+    let mut harness = TestHarness::new(Duration::from_secs(runtime));
+
+    let ops = generate_operations(NOP, write_ratio);
+    let bench_name = format!("nr_vspace-{}-{}-{}-{}", n_threads, write_ratio, numa_policy, run_id_num);
+
+    mkbench::ScaleBenchBuilder::<NodeReplicated<VSpace>>::new(ops)
+        .threads(n_threads)
+        .update_batch(32)
+        .log_size(2 * 1024 * 1024)
+        .replica_strategy(mkbench::ReplicaStrategy::Socket)
+        .thread_mapping(numa_policy)
+        .read_pct(reads_pct)
+        .log_strategy(mkbench::LogStrategy::One)
+        .configure(
+            &mut harness,
+            &bench_name,
+            |_cid, tkn, replica, op, _batch_size| match op {
+                Operation::ReadOperation(op) => {
+                    replica.execute(*op, tkn);
+                    tkn
+                }
+                Operation::WriteOperation(op) => {
+                    replica.execute_mut(*op, tkn);
+                    tkn
+                }
+            },
+        );
+    }

@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::fmt::{self};
 use std::fs::OpenOptions;
+use std::fs::File;
 use std::hint::black_box;
 use std::marker::{PhantomData, Send, Sync};
 use std::num::NonZeroUsize;
@@ -19,7 +20,7 @@ use std::path::Path;
 use std::sync::{Arc, Barrier};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-
+use std::io::Write;
 use csv::WriterBuilder;
 use log::*;
 
@@ -50,7 +51,7 @@ impl ThreadToken {
 type ReplicaId = usize;
 
 #[cfg(feature = "verified")]
-use verus_nr::{Dispatch, AffinityFn, NodeReplicated, NR, ReplicaId, ThreadToken};
+use verus_nr::{Dispatch, /* AffinityFn, NodeReplicated, NR,*/ ReplicaId, ThreadToken};
 
 
 use rand::seq::SliceRandom;
@@ -412,10 +413,11 @@ where
     batch_size: usize,
     /// Benchmark function to execute
     f: BenchFn<R>,
+    read_pct: usize,
+    ///
+    file_name: String,
     /// Thread handles
     handles: Vec<JoinHandle<(Core, Vec<usize>)>>,
-    /// Where to write the results
-    file_name: &'static str,
 }
 
 impl<R: 'static> ScaleBenchmark<R>
@@ -443,13 +445,14 @@ where
             >,
         >,
         batch_size: usize,
+        read_pct: usize,
         f: BenchFn<R>,
     ) -> ScaleBenchmark<R>
     where
         R: Sync,
     {
         // Log the per-thread runtimes to the CSV file
-        let file_name = "scaleout_benchmarks.csv";
+        let file_name = format!("nr_benchmarks_{name}.csv");
 
         ScaleBenchmark {
             name,
@@ -463,8 +466,9 @@ where
             operations: Arc::new(operations),
             batch_size,
             f,
-            handles: Default::default(),
             file_name,
+            read_pct,
+            handles: Default::default(),
         }
     }
 
@@ -485,6 +489,12 @@ where
         let mut everything =
             Vec::<usize>::with_capacity(self.handles.len() * self.duration.as_secs() as usize);
 
+        let num_threads =  self.threads();
+        let num_replicas = self.replicas();
+        let duration_sec = self.duration.as_secs();
+        let name = self.name.clone();
+        let tm = self.tm;
+
         for (tid, handle) in self.handles.into_iter().enumerate() {
             let (cid, thread_results) = handle.join().unwrap();
             everything.extend(&thread_results);
@@ -493,7 +503,31 @@ where
 
         if cfg!(not(feature = "smokebench")) {
             let avg = crate::benchmark::mean(&everything).unwrap();
+            let sum = crate::benchmark::sum(&everything).unwrap();
+            let ops_per_sec = sum / (duration_sec as f64);
             let stdev = crate::benchmark::std_deviation(&everything).unwrap();
+
+            // XXX: some hacky way to get JSON output
+            let mut json_file = File::create(self.file_name.replace("csv", "json"))?;
+
+            let _ = json_file.write_all("{\n".as_bytes());
+            let _ = json_file.write_all(format!("    \"bench_name\": \"{name}\",\n").as_bytes());
+            let _ = json_file.write_all(format!("    \"n_threads\": {},\n", num_threads).as_bytes());
+            let _ = json_file.write_all(format!("    \"reads_pct\": {},\n", self.read_pct).as_bytes());
+            let _ = json_file.write_all(format!("    \"n_replicas\": {},\n", num_replicas).as_bytes());
+            let _ = json_file.write_all(format!("    \"run_seconds\": {},\n", duration_sec).as_bytes());
+            let _ = json_file.write_all(format!("    \"numa_policy\": \"{tm}\",\n").as_bytes());
+            let _ = json_file.write_all("    \"core_policy\": 0,\n".as_bytes());
+            let _ = json_file.write_all("    \"reads\": 0,\n".as_bytes());
+            let _ = json_file.write_all("    \"updates\": 0,\n".as_bytes());
+            let _ = json_file.write_all("    \"total_ops\": 0,\n".as_bytes());
+            let _ = json_file.write_all("    \"reads_per_s\": 0,\n".as_bytes());
+            let _ = json_file.write_all("    \"updates_per_s\": 0,\n".as_bytes());
+            let _ = json_file.write_all(format!("    \"ops_per_s\": {ops_per_sec},\n").as_bytes());
+            let _ = json_file.write_all(format!("    \"stdev\": {stdev}\n").as_bytes());
+            let _ = json_file.write_all("}\n".as_bytes());
+
+
             println!(
                 "Run({:?} {:?} {:3} {:?} BS={}) => {:20.5} ({:.5})",
                 self.rs,
@@ -511,7 +545,7 @@ where
             );
         }
 
-        let write_headers = !Path::new(self.file_name).exists(); // write headers only to new file
+        let write_headers = !Path::new(&self.file_name).exists(); // write headers only to new file
         let csv_file = OpenOptions::new()
             .append(true)
             .create(true)
@@ -549,6 +583,7 @@ where
 
         let start_sync = Arc::new(Barrier::new(thread_num));
         let replicas = NonZeroUsize::new(self.replicas()).unwrap();
+
         let mut ds = R::new(replicas, NonZeroUsize::new(1).unwrap(), self.log_size);
 
         #[cfg(feature = "verified")]
@@ -559,7 +594,7 @@ where
                     let tks : &mut Vec<ThreadToken<R::D>> = thread_tokens.get_mut(&rid).unwrap();
                     tks.extend(cores.iter().map(|_| ds.register(rid).unwrap()));
                 } else {
-                    let mut tks :  Vec<ThreadToken<R::D>> = Vec::new();
+                    // let tks :  Vec<ThreadToken<R::D>> = Vec::new();
                     thread_tokens.insert(rid, cores.iter().map(|_| ds.register(rid).unwrap()).collect());
                 }
             }
@@ -569,7 +604,7 @@ where
         #[cfg(feature = "verified")]
         let ds = Arc::new(ds);
 
-        debug!(
+        println!(
             "Execute benchmark {} with the following replica: [core_id] mapping: {:#?}",
             self.name, self.rm
         );
@@ -813,6 +848,7 @@ where
     operations: Vec<
         Operation<<R::D as Dispatch>::ReadOperation, <R::D as Dispatch>::WriteOperation>,
     >,
+    read_pct: usize,
     /// Marker for R
     _marker: PhantomData<R>,
 }
@@ -845,6 +881,7 @@ where
             log_size: MY_DEFAULT_LOG_BYTES,
             batches: vec![1usize],
             operations: ops,
+            read_pct: 100,
             _marker: PhantomData,
         }
     }
@@ -889,6 +926,11 @@ where
     pub fn update_batch(&mut self, b: usize) -> &mut Self {
         self.batches.clear();
         self.batches.push(b);
+        self
+    }
+
+    pub fn read_pct(&mut self, pct: usize) -> &mut Self {
+        self.read_pct = pct;
         self
     }
 
@@ -959,6 +1001,7 @@ where
                                 c.duration,
                                 self.operations.to_vec(),
                                 *b,
+                                self.read_pct,
                                 f,
                             );
                             runner.startup();

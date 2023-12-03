@@ -6,10 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-
-# nothing yet
-
-[dev-dependencies]
 x86 = "0.52"
 node-replication = "0.1.1"
 bench_utils = { path = "../../lib/bench_utils",  features = ["unverified"]  }
@@ -21,14 +17,16 @@ zipf = "7.0"
 mmap = "0.1.*"
 libc = "0.2"
 
-[features]
 
+[features]
 # Make benchmark finish quickly to check if things work:
 smokebench = ["bench_utils/smokebench"]
 # Very exhaustive parameter sweep (takes a day to run on 4 sockets/192 threads):
 exhaustive = ["bench_utils/exhaustive"]
 
-
+[[bin]]
+name = "vspace"
+path = "src/nr_vspace.rs"
 
 # [[bench]]
 # name = "nr_hashmap"

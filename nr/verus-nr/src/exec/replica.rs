@@ -200,7 +200,7 @@ pub struct Replica<#[verifier::reject_recursive_types] DT: Dispatch> {
 
     // Thread index that will be handed out to the next thread that registers
     // with the replica when calling [`Replica::register()`].
-    pub num_threads: usize, // CachePadded<AtomicU64<_, Tracked<u64>, _>>,
+    pub num_threads: u64, //CachePadded<AtomicU64<_, Tracked<u64>, _>>,
 
     /// thread token that is handed out to the threads that register
     pub /* REVIEW: (crate) */ thread_tokens: Vec<ThreadToken<DT>>,
@@ -238,7 +238,7 @@ pub open spec fn wf(&self) -> bool {
         &&& (g.is_some() ==> g.get_Some_0().inv(flat_combiner_instance@, responses.id(), collected_operations.id(), collected_operations_per_thread.id()))
     }
 
-    // invariant on num_threads is (v: u64, g: Tracked<u64>) {
+    // invariant on num_threads with (flat_combiner_instance) specifically (self.num_threads.0)  is (v: u64, g: Tracked<u64>) {
     //     v == g@
     // }
 }
@@ -444,6 +444,14 @@ impl<DT: Dispatch> Replica<DT> {
         // for _ in 0..4 {
         //     if self.combiner.load(Ordering::Relaxed) != 0 { return None; }
         // }
+        let res = atomic_with_ghost!(
+                // upstream is compare_exchange_weak
+                &self.combiner.0 => load();
+                ghost g => { }
+            );
+        if res != 0 {
+            return  (false, Tracked(Option::None));
+        }
 
         // XXX: we should pass in the replica token here, just setting the tid to 1 should work
         //      as the lock is basically a spinlock anyway
@@ -458,6 +466,7 @@ impl<DT: Dispatch> Replica<DT> {
 
         let tracked lock_g: Option<CombinerLockStateGhost<DT>>;
         let res = atomic_with_ghost!(
+            // upstream is compare_exchange_weak
             &self.combiner.0 => compare_exchange(0, tid + 1);
             update prev->next;
             ghost g => {
@@ -477,6 +486,7 @@ impl<DT: Dispatch> Replica<DT> {
         }
     }
 
+    #[inline(always)]
     fn release_combiner_lock(&self, lock_state: Tracked<CombinerLockStateGhost<DT>>)
         requires
             self.wf(),
@@ -561,7 +571,8 @@ impl<DT: Dispatch> Replica<DT> {
         let tracked append_exec_ghost_data = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids};
         let append_exec_ghost_data = slog.append(&self.replica_token, &operations, &mut responses, &mut data, Tracked(append_exec_ghost_data));
 
-        // // TODO: release lock here!
+        // TODO: release lock here! upstream does release the lock here and the reacquire it!
+
         // drop(replicated_data_structure);
 
 
@@ -1029,6 +1040,7 @@ impl<DT: Dispatch> Replica<DT> {
 
     /// Enqueues an operation inside a thread local context. Returns a boolean
     /// indicating whether the operation was enqueued (true) or not (false).
+    #[inline(always)]
     fn make_pending(&self, op: DT::WriteOperation, tid: ThreadId, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
      -> (res: (bool, Tracked<FCClientRequestResponseGhost<DT>>))
         requires

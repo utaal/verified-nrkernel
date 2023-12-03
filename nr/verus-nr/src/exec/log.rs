@@ -659,6 +659,7 @@ impl<DT: Dispatch> NrLog<DT> {
 
 
     /// Inserts a slice of operations into the log.
+    #[inline(always)]
     pub fn append(&self, replica_token: &ReplicaToken, operations: &Vec<DT::WriteOperation>,
         // responses and actual replica are part of the closure
         responses: &mut Vec<DT::Response>,
@@ -707,7 +708,6 @@ impl<DT: Dispatch> NrLog<DT> {
             if iteration == WARN_THRESHOLD {
                 print_starvation_warning(line!());
                 iteration = 0;
-                // TODO: return;
             }
 
             iteration = iteration + 1;
@@ -738,7 +738,6 @@ impl<DT: Dispatch> NrLog<DT> {
                 if waitgc == WARN_THRESHOLD {
                     print_starvation_warning(line!());
                     waitgc = 0;
-                    // TODO: Return?
                 }
 
                 waitgc = waitgc + 1;
@@ -977,6 +976,7 @@ impl<DT: Dispatch> NrLog<DT> {
     /// Advances the head of the log forward. If a replica has stopped making
     /// progress, then this method will never return. Accepts a closure that is
     /// passed into execute() to ensure that this replica does not deadlock GC.
+    #[inline(always)]
     fn advance_head(&self, replica_token: &ReplicaToken,
                     // the following were part of the closure
                     responses: &mut Vec<DT::Response>,
@@ -1038,22 +1038,27 @@ impl<DT: Dispatch> NrLog<DT> {
                     // return Tracked(ghost_data);
                     iteration = 0;
                 }
-                iteration = iteration + 1;
-            } else {
-                // There are entries that can be freed up; update the head offset.
-                // self.head.store(min_local_tail, Ordering::Relaxed);
-                atomic_with_ghost!(
-                    &self.head.0 => store(min_local_version);
-                    update old_val -> new_val;
-                    ghost g => {
-                        cb_combiner = self.cyclic_buffer_instance.borrow().advance_head_finish(replica_token.id_spec(), &mut g, cb_combiner);
-                });
+                let cb_combiner = Tracked(cb_combiner);
+                let tracked ghost_data0 = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
+                ghost_data_new = self.execute(replica_token, responses, actual_replica, Tracked(ghost_data0));
+                continue;
+            }
 
-                if global_tail < min_local_version + self.slog.len() as u64 - GC_FROM_HEAD as u64 {
-                    let cb_combiner = Tracked(cb_combiner);
-                    let tracked ghost_data_new = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
-                    return Tracked(ghost_data_new);
-                }
+
+
+            // There are entries that can be freed up; update the head offset.
+            // self.head.store(min_local_tail, Ordering::Relaxed);
+            atomic_with_ghost!(
+                &self.head.0 => store(min_local_version);
+                update old_val -> new_val;
+                ghost g => {
+                    cb_combiner = self.cyclic_buffer_instance.borrow().advance_head_finish(replica_token.id_spec(), &mut g, cb_combiner);
+            });
+
+            if global_tail < min_local_version + self.slog.len() as u64 - GC_FROM_HEAD as u64 {
+                let cb_combiner = Tracked(cb_combiner);
+                let tracked ghost_data_new = NrLogAppendExecDataGhost { local_updates, ghost_replica, combiner, cb_combiner, request_ids };
+                return Tracked(ghost_data_new);
             }
 
             let cb_combiner = Tracked(cb_combiner);

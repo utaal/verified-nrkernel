@@ -167,6 +167,17 @@ impl Default for TestHarness {
     }
 }
 
+pub fn sum(data: &[usize]) -> Option<f64> {
+    let sum = data.iter().sum::<usize>() as f64;
+    let count = data.len();
+    if count > 0 {
+        Some(sum)
+    } else {
+        None
+    }
+
+}
+
 pub fn mean(data: &[usize]) -> Option<f64> {
     let sum = data.iter().sum::<usize>() as f64;
     let count = data.len();
