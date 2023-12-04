@@ -294,21 +294,25 @@ impl PageDirectoryEntry {
     }
 }
 
+#[allow(unused_macros)]
 macro_rules! l0_bits {
     ($addr:expr) => { ($addr & bitmask_inc!(39u64,47u64)) >> 39u64 }
 }
 pub(crate) use l0_bits;
 
+#[allow(unused_macros)]
 macro_rules! l1_bits {
     ($addr:expr) => { ($addr & bitmask_inc!(30u64,38u64)) >> 30u64 }
 }
 pub(crate) use l1_bits;
 
+#[allow(unused_macros)]
 macro_rules! l2_bits {
     ($addr:expr) => { ($addr & bitmask_inc!(21u64,29u64)) >> 21u64 }
 }
 pub(crate) use l2_bits;
 
+#[allow(unused_macros)]
 macro_rules! l3_bits {
     ($addr:expr) => { ($addr & bitmask_inc!(12u64,20u64)) >> 12u64 }
 }

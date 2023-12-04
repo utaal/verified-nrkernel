@@ -16,7 +16,8 @@ use crate::definitions_u::{lemma_new_seq, x86_arch_inv};
 use crate::impl_u::l1;
 use crate::impl_u::l0;
 use crate::spec_t::impl_spec;
-use crate::impl_u::l2_impl;
+use crate::impl_u::l2_impl::{ PTDir };
+use crate::impl_u::l2_impl::PT;
 use crate::impl_u::spec_pt;
 use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec, MemRegion};
 use crate::spec_t::hardware::{interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GhostPageDirectoryEntry, nat_to_u64};
@@ -25,22 +26,21 @@ verus! {
 
 pub proof fn lemma_page_table_walk_interp()
     ensures
-        forall|pt: l2_impl::PageTable| #![auto] pt.inv() && pt.interp().inv() ==> pt.interp().interp().map === interp_pt_mem(pt.memory)
+        forall|mem: mem::PageTableMemory, pt: PTDir| #![auto] PT::inv(&mem, pt) && PT::interp(&mem, pt).inv() ==> PT::interp(&mem, pt).interp().map === interp_pt_mem(mem)
 {
-    assert forall|pt: l2_impl::PageTable| #![auto]
-        pt.inv() && pt.interp().inv() implies pt.interp().interp().map === interp_pt_mem(pt.memory)
-    by { lemma_page_table_walk_interp_aux(pt); }
+    assert forall|mem: mem::PageTableMemory, pt: PTDir| #![auto]
+        PT::inv(&mem, pt) && PT::interp(&mem, pt).inv() implies PT::interp(&mem, pt).interp().map === interp_pt_mem(mem)
+    by { lemma_page_table_walk_interp_aux(mem, pt); }
 }
 
-pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
-    requires pt.inv() && pt.interp().inv()
-    ensures pt.interp().interp().map === interp_pt_mem(pt.memory)
+pub proof fn lemma_page_table_walk_interp_aux(mem: mem::PageTableMemory, pt: PTDir)
+    requires PT::inv(&mem, pt) && PT::interp(&mem, pt).inv()
+    ensures PT::interp(&mem, pt).interp().map === interp_pt_mem(mem)
 {
-    let mem = pt.memory;
     let m1 = interp_pt_mem(mem);
-    let m2 = pt.interp().interp().map;
-    pt.interp().lemma_inv_implies_interp_inv();
-    assert(pt.interp().interp().inv());
+    let m2 = PT::interp(&mem, pt).interp().map;
+    PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
+    assert(PT::interp(&mem, pt).interp().inv());
     assert forall|addr: nat, pte: PageTableEntry|
         m1.contains_pair(addr, pte) implies #[trigger] m2.contains_pair(addr, pte)
     by {
@@ -48,7 +48,7 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
         assert(addr < MAX_BASE);
         let pte = choose|pte: PageTableEntry| valid_pt_walk(mem, addr, pte);
         assert(valid_pt_walk(mem, addr as u64, pte));
-        pt.lemma_interp_at_facts(0, mem.cr3_spec().base, 0, pt.ghost_pt@);
+        PT::lemma_interp_at_facts(&mem, pt, 0, mem.cr3_spec().base, 0);
 
         let l0_idx_u64:  u64 = l0_bits!(addr);
         let l0_idx:      nat = l0_idx_u64 as nat;
@@ -69,8 +69,8 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
         assert(bitmask_inc!(30u64,38u64) == 0x007F_C000_0000) by (compute);
         assert(bitmask_inc!(21u64,29u64) == 0x0000_3FE0_0000) by (compute);
         assert(bitmask_inc!(12u64,20u64) == 0x0000_001F_F000) by (compute);
-        let interp_l0_dir   = pt.interp();
-        let interp_l0_entry = pt.interp_at_entry(0, mem.cr3_spec().base, 0, l0_idx, pt.ghost_pt@);
+        let interp_l0_dir   = PT::interp(&mem, pt);
+        let interp_l0_entry = PT::interp_at_entry(&mem, pt, 0, mem.cr3_spec().base, 0, l0_idx);
         interp_l0_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l0_idx);
         match read_entry(mem, mem.cr3_spec()@.base, 0, l0_idx) {
             GhostPageDirectoryEntry::Directory {
@@ -78,12 +78,14 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
             } => {
                 assert(interp_l0_entry.is_Directory());
                 let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
-                let l0_dir_ghost_pt = pt.ghost_pt@.entries[l0_idx as int].get_Some_0();
-                assert(pt.directories_obey_invariant_at(0, mem.cr3_spec().base, pt.ghost_pt@));
-                assert(pt.inv_at(1, l0_dir_addr, l0_dir_ghost_pt));
-                pt.lemma_interp_at_facts(1, l0_dir_addr, l1_base_vaddr, l0_dir_ghost_pt);
-                let interp_l1_dir   = pt.interp_at(1, l0_dir_addr, l1_base_vaddr, l0_dir_ghost_pt);
-                let interp_l1_entry = pt.interp_at_entry(1, l0_dir_addr, l1_base_vaddr, l1_idx, l0_dir_ghost_pt);
+                let l0_dir_ghost_pt = pt.entries[l0_idx as int].get_Some_0();
+                assert(PT::directories_obey_invariant_at(&mem, pt, 0, mem.cr3_spec().base));
+                assert(PT::inv_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
+                assert(interp_l0_dir.directories_obey_invariant());
+                assert(interp_l0_dir.entries[l0_idx as int].get_Directory_0().inv());
+                PT::lemma_interp_at_facts(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
+                let interp_l1_dir   = PT::interp_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
+                let interp_l1_entry = PT::interp_at_entry(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr, l1_idx);
                 interp_l1_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l1_idx);
                 match read_entry(mem, l0_dir_addr as nat, 1, l1_idx) {
                     GhostPageDirectoryEntry::Page {
@@ -121,11 +123,11 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                         assert(interp_l1_entry.is_Directory());
                         let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
                         let l1_dir_ghost_pt = l0_dir_ghost_pt.entries[l1_idx as int].get_Some_0();
-                        assert(pt.directories_obey_invariant_at(1, l0_dir_addr, l0_dir_ghost_pt));
-                        assert(pt.inv_at(2, l1_dir_addr, l1_dir_ghost_pt));
-                        pt.lemma_interp_at_facts(2, l1_dir_addr, l2_base_vaddr, l1_dir_ghost_pt);
-                        let interp_l2_dir   = pt.interp_at(2, l1_dir_addr, l2_base_vaddr, l1_dir_ghost_pt);
-                        let interp_l2_entry = pt.interp_at_entry(2, l1_dir_addr, l2_base_vaddr, l2_idx, l1_dir_ghost_pt);
+                        assert(PT::directories_obey_invariant_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
+                        assert(PT::inv_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr));
+                        PT::lemma_interp_at_facts(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr);
+                        let interp_l2_dir   = PT::interp_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr);
+                        let interp_l2_entry = PT::interp_at_entry(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr, l2_idx);
                         interp_l2_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l2_idx);
                         match read_entry(mem, l1_dir_addr as nat, 2, l2_idx) {
                             GhostPageDirectoryEntry::Page {
@@ -171,11 +173,11 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                 assert(interp_l2_entry.is_Directory());
                                 let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
                                 let l2_dir_ghost_pt = l1_dir_ghost_pt.entries[l2_idx as int].get_Some_0();
-                                assert(pt.directories_obey_invariant_at(2, l1_dir_addr, l1_dir_ghost_pt));
-                                assert(pt.inv_at(3, l2_dir_addr, l2_dir_ghost_pt));
-                                pt.lemma_interp_at_facts(3, l2_dir_addr, l3_base_vaddr, l2_dir_ghost_pt);
-                                let interp_l3_dir   = pt.interp_at(3, l2_dir_addr, l3_base_vaddr, l2_dir_ghost_pt);
-                                let interp_l3_entry = pt.interp_at_entry(3, l2_dir_addr, l3_base_vaddr, l3_idx, l2_dir_ghost_pt);
+                                assert(PT::directories_obey_invariant_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr));
+                                assert(PT::inv_at(&mem, l2_dir_ghost_pt, 3, l2_dir_addr));
+                                PT::lemma_interp_at_facts(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr);
+                                let interp_l3_dir   = PT::interp_at(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr);
+                                let interp_l3_entry = PT::interp_at_entry(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr, l3_idx);
                                 interp_l3_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l3_idx);
                                 match read_entry(mem, l2_dir_addr as nat, 3, l3_idx) {
                                     GhostPageDirectoryEntry::Page {
@@ -233,8 +235,8 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
         };
     };
     assert forall|addr: nat| !m1.contains_key(addr) ==> !m2.contains_key(addr) by {
-        pt.lemma_interp_at_facts(0, mem.cr3_spec().base, 0, pt.ghost_pt@);
-        pt.interp().lemma_inv_implies_interp_inv();
+        PT::lemma_interp_at_facts(&mem, pt, 0, mem.cr3_spec().base, 0);
+        PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
         if addr < MAX_BASE && (exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte)) {
         } else {
             if addr >= MAX_BASE {
@@ -263,8 +265,8 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                 assert(bitmask_inc!(30u64,38u64) == 0x007F_C000_0000) by (compute);
                 assert(bitmask_inc!(21u64,29u64) == 0x0000_3FE0_0000) by (compute);
                 assert(bitmask_inc!(12u64,20u64) == 0x0000_001F_F000) by (compute);
-                let interp_l0_dir   = pt.interp();
-                let interp_l0_entry = pt.interp_at_entry(0, mem.cr3_spec().base, 0, l0_idx, pt.ghost_pt@);
+                let interp_l0_dir   = PT::interp(&mem, pt);
+                let interp_l0_entry = PT::interp_at_entry(&mem, pt, 0, mem.cr3_spec().base, 0, l0_idx);
                 interp_l0_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l0_idx);
                 match read_entry(mem, mem.cr3_spec()@.base, 0, l0_idx) {
                     GhostPageDirectoryEntry::Directory {
@@ -272,13 +274,14 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                     } => {
                         assert(interp_l0_entry.is_Directory());
                         let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
-                        let l1_upper_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx + 1);
-                        let l0_dir_ghost_pt = pt.ghost_pt@.entries[l0_idx as int].get_Some_0();
-                        assert(pt.directories_obey_invariant_at(0, mem.cr3_spec().base, pt.ghost_pt@));
-                        assert(pt.inv_at(1, l0_dir_addr, l0_dir_ghost_pt));
-                        pt.lemma_interp_at_facts(1, l0_dir_addr, l1_base_vaddr, l0_dir_ghost_pt);
-                        let interp_l1_dir   = pt.interp_at(1, l0_dir_addr, l1_base_vaddr, l0_dir_ghost_pt);
-                        let interp_l1_entry = pt.interp_at_entry(1, l0_dir_addr, l1_base_vaddr, l1_idx, l0_dir_ghost_pt);
+                        let l0_dir_ghost_pt = pt.entries[l0_idx as int].get_Some_0();
+                        assert(PT::directories_obey_invariant_at(&mem, pt, 0, mem.cr3_spec().base));
+                        assert(PT::inv_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
+                        assert(interp_l0_dir.directories_obey_invariant());
+                        assert(interp_l0_dir.entries[l0_idx as int].get_Directory_0().inv());
+                        PT::lemma_interp_at_facts(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
+                        let interp_l1_dir   = PT::interp_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
+                        let interp_l1_entry = PT::interp_at_entry(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr, l1_idx);
                         interp_l1_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l1_idx);
 
                         let low_bits: u64 = addr % (L1_ENTRY_SIZE as u64);
@@ -322,11 +325,11 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                 assert(interp_l1_entry.is_Directory());
                                 let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
                                 let l1_dir_ghost_pt = l0_dir_ghost_pt.entries[l1_idx as int].get_Some_0();
-                                assert(pt.directories_obey_invariant_at(1, l0_dir_addr, l0_dir_ghost_pt));
-                                assert(pt.inv_at(2, l1_dir_addr, l1_dir_ghost_pt));
-                                pt.lemma_interp_at_facts(2, l1_dir_addr, l2_base_vaddr, l1_dir_ghost_pt);
-                                let interp_l2_dir   = pt.interp_at(2, l1_dir_addr, l2_base_vaddr, l1_dir_ghost_pt);
-                                let interp_l2_entry = pt.interp_at_entry(2, l1_dir_addr, l2_base_vaddr, l2_idx, l1_dir_ghost_pt);
+                                assert(PT::directories_obey_invariant_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
+                                assert(PT::inv_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr));
+                                PT::lemma_interp_at_facts(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr);
+                                let interp_l2_dir   = PT::interp_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr);
+                                let interp_l2_entry = PT::interp_at_entry(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr, l2_idx);
                                 interp_l2_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l2_idx);
 
                                 let low_bits: u64 = addr % (L2_ENTRY_SIZE as u64);
@@ -376,11 +379,11 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
                                         assert(interp_l2_entry.is_Directory());
                                         let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
                                         let l2_dir_ghost_pt = l1_dir_ghost_pt.entries[l2_idx as int].get_Some_0();
-                                        assert(pt.directories_obey_invariant_at(2, l1_dir_addr, l1_dir_ghost_pt));
-                                        assert(pt.inv_at(3, l2_dir_addr, l2_dir_ghost_pt));
-                                        pt.lemma_interp_at_facts(3, l2_dir_addr, l3_base_vaddr, l2_dir_ghost_pt);
-                                        let interp_l3_dir   = pt.interp_at(3, l2_dir_addr, l3_base_vaddr, l2_dir_ghost_pt);
-                                        let interp_l3_entry = pt.interp_at_entry(3, l2_dir_addr, l3_base_vaddr, l3_idx, l2_dir_ghost_pt);
+                                        assert(PT::directories_obey_invariant_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr));
+                                        assert(PT::inv_at(&mem, l2_dir_ghost_pt, 3, l2_dir_addr));
+                                        PT::lemma_interp_at_facts(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr);
+                                        let interp_l3_dir   = PT::interp_at(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr);
+                                        let interp_l3_entry = PT::interp_at_entry(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr, l3_idx);
                                         interp_l3_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l3_idx);
 
                                         let low_bits: u64 = addr % (L3_ENTRY_SIZE as u64);
@@ -493,221 +496,89 @@ pub proof fn lemma_page_table_walk_interp_aux(pt: l2_impl::PageTable)
     };
 }
 
-proof fn lemma_no_entries_implies_interp_at_aux_no_entries(pt: l2_impl::PageTable, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>, ghost_pt: l2_impl::PTDir)
+proof fn lemma_no_entries_implies_interp_at_aux_no_entries(mem: mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
     requires
-        pt.memory.regions() == set![pt.memory.cr3_spec()@],
-        (forall|i: nat| i < 512 ==> pt.memory.region_view(pt.memory.cr3_spec()@)[i as int] == 0),
+        mem.regions() == set![mem.cr3_spec()@],
+        (forall|i: nat| i < 512 ==> mem.region_view(mem.cr3_spec()@)[i as int] == 0),
         layer == 0,
-        pt.inv_at(layer, ptr, ghost_pt),
+        PT::inv_at(&mem, pt, layer, ptr),
         forall|i: nat| i < init.len() ==> init[i as int] == l1::NodeEntry::Empty(),
         init.len() <= 512,
     ensures
-        ({ let res = pt.interp_at_aux(layer, ptr, base_vaddr, init, ghost_pt);
+        ({ let res = PT::interp_at_aux(&mem, pt, layer, ptr, base_vaddr, init);
             &&& res.len() == 512
             &&& forall|i: nat| i < res.len() ==> res[i as int] == l1::NodeEntry::Empty()
         })
     decreases 512 - init.len()
 {
-    lemma_new_seq::<Option<l2_impl::PTDir>>(512, Option::None);
-    let res = pt.interp_at_aux(layer, ptr, base_vaddr, init, ghost_pt);
+    lemma_new_seq::<Option<PTDir>>(512, Option::None);
+    let res = PT::interp_at_aux(&mem, pt, layer, ptr, base_vaddr, init);
     if init.len() >= 512 {
     } else {
-        let entry = pt.interp_at_entry(layer, ptr, base_vaddr, init.len(), ghost_pt);
-        assert(pt.ghost_pt_matches_structure(layer, ptr, ghost_pt));
-        assert forall|i: nat| i < 512 implies pt.view_at(layer, ptr, i, ghost_pt).is_Empty() by {
-            let entry = pt.memory.spec_read(i, ghost_pt.region);
+        let entry = PT::interp_at_entry(&mem, pt, layer, ptr, base_vaddr, init.len());
+        assert(PT::ghost_pt_matches_structure(&mem, pt, layer, ptr));
+        assert forall|i: nat| i < 512 implies PT::view_at(&mem, pt, layer, ptr, i).is_Empty() by {
+            let entry = mem.spec_read(i, pt.region);
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
         assert(entry == l1::NodeEntry::Empty());
-        lemma_no_entries_implies_interp_at_aux_no_entries(pt, layer, ptr, base_vaddr, init.push(entry), ghost_pt);
+        lemma_no_entries_implies_interp_at_aux_no_entries(mem, pt, layer, ptr, base_vaddr, init.push(entry));
     }
-}
-
-pub open spec fn dummy_trigger(x: l2_impl::PTDir) -> bool {
-    true
 }
 
 impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
-    closed spec fn ispec_inv(&self, memory: mem::PageTableMemory) -> bool {
-        exists|ghost_pt: l2_impl::PTDir| {
-            let page_table = l2_impl::PageTable {
-                memory: memory,
-                ghost_pt: Ghost::new(ghost_pt),
-            };
-            &&& page_table.inv()
-            &&& page_table.interp().inv()
-            &&& #[trigger] dummy_trigger(ghost_pt)
-        }
+    closed spec fn ispec_inv(&self, mem: &mem::PageTableMemory) -> bool {
+        exists|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv()
     }
 
-    proof fn ispec_init_implies_inv(&self, memory: mem::PageTableMemory) {
-        let ptr: usize = memory.cr3_spec().base;
-        let pt = l2_impl::PTDir {
-            region: memory.cr3_spec()@,
+    proof fn ispec_init_implies_inv(&self, mem: &mem::PageTableMemory) {
+        let pt = PTDir {
+            region: mem.cr3_spec()@,
             entries: new_seq(512, Option::None),
-            used_regions: set![memory.cr3_spec()@],
+            used_regions: set![mem.cr3_spec()@],
         };
-        lemma_new_seq::<Option<l2_impl::PTDir>>(512, Option::None);
-        let page_table = l2_impl::PageTable {
-            memory: memory,
-            ghost_pt: Ghost::new(pt),
-        };
-        assert(page_table.inv()) by {
+        lemma_new_seq::<Option<PTDir>>(512, Option::None);
+        assert(PT::inv(mem, pt)) by {
             x86_arch_inv();
             axiom_x86_arch_exec_spec();
-            page_table.lemma_zeroed_page_implies_empty_at(0, ptr, pt);
+            PT::lemma_zeroed_page_implies_empty_at(mem, pt, 0, mem.cr3_spec().base);
         };
-
-        lemma_no_entries_implies_interp_at_aux_no_entries(page_table, 0, ptr, 0, seq![], pt);
-        assert(page_table.interp().inv());
-        assert(dummy_trigger(pt));
+        lemma_no_entries_implies_interp_at_aux_no_entries(*mem, pt, 0, mem.cr3_spec().base, 0, seq![]);
     }
 
-    fn ispec_map_frame(&self, memory: mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: (MapResult, mem::PageTableMemory)) {
-        // requires
-        assert(spec_pt::step_Map_enabled(interp_pt_mem(memory), vaddr as nat, pte@));
-        assert(aligned(vaddr as nat, pte@.frame.size));
-        assert(aligned(pte.frame.base as nat, pte@.frame.size));
-        assert(candidate_mapping_in_bounds(vaddr as nat, pte@));
-        assert({
-            ||| pte.frame.size == L3_ENTRY_SIZE
-            ||| pte.frame.size == L2_ENTRY_SIZE
-            ||| pte.frame.size == L1_ENTRY_SIZE
-        });
-        assert(self.ispec_inv(memory));
-        let ghost_pt: Ghost<l2_impl::PTDir> = Ghost(
-            choose|ghost_pt: l2_impl::PTDir| {
-                let page_table = l2_impl::PageTable {
-                    memory: memory,
-                    ghost_pt: Ghost::new(ghost_pt),
-                };
-                &&& page_table.inv()
-                &&& page_table.interp().inv()
-                &&& #[trigger] dummy_trigger(ghost_pt)
-            }
-        );
-
-        let mut page_table = l2_impl::PageTable {
-            memory:    memory,
-            ghost_pt:  ghost_pt,
-        };
-        assert(page_table.inv());
-        assert(page_table.interp().inv());
-
-        assert(page_table.accepted_mapping(vaddr as nat, pte@)) by {
-            reveal(l2_impl::PageTable::accepted_mapping);
-            if pte@.frame.size == L3_ENTRY_SIZE {
-            } else if pte@.frame.size == L2_ENTRY_SIZE {
-            } else {
-                assert(pte@.frame.size == L1_ENTRY_SIZE);
-            }
-        };
+    fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult) {
+        let mut pt: Ghost<PTDir> = Ghost(choose|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv());
         proof {
-            let cr3 = page_table.memory.cr3_spec();
-            page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
-            assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
-        }
-        assert(page_table.interp().accepted_mapping(vaddr as nat, pte@));
-        assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
-        let old_page_table: Ghost<l2_impl::PageTable> = Ghost(page_table);
-        let res = page_table.map_frame(vaddr, pte);
-        assert(page_table.inv());
-        assert(page_table.interp().inv());
-        // ensures
-        proof {
-            let page_table_post_state = page_table;
-            assert(self.ispec_inv(page_table.memory)) by {
-                assert(dummy_trigger(page_table_post_state.ghost_pt@));
-            };
+            PT::lemma_interp_at_facts(mem, pt@, 0, mem.cr3_spec().base, 0);
+            PT::interp(mem, pt@).lemma_inv_implies_interp_inv();
+            assert(x86_arch_spec.upper_vaddr(0, 0) == crate::definitions_t::PT_BOUND_HIGH) by (compute_only);
             lemma_page_table_walk_interp();
-            old_page_table@.interp().lemma_inv_implies_interp_inv();
-            page_table.interp().lemma_inv_implies_interp_inv();
-            if candidate_mapping_overlaps_existing_vmem(interp_pt_mem(memory), vaddr as nat, pte@) {
-                assert(res.is_ErrOverlap());
-                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory));
-            } else {
-                assert(res.is_Ok());
-                assert(interp_pt_mem(page_table.memory) === interp_pt_mem(memory).insert(vaddr as nat, pte@));
-            }
-            assert(spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr as nat, pte@, res));
         }
-        (res, page_table.memory)
+        PT::map_frame(mem, &mut pt, vaddr, pte)
     }
 
-    fn ispec_unmap(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (UnmapResult, mem::PageTableMemory)) {
-        assert(self.ispec_inv(memory));
-        let ghost_pt: Ghost<l2_impl::PTDir> = Ghost(
-            choose|ghost_pt: l2_impl::PTDir| {
-                let page_table = l2_impl::PageTable {
-                    memory: memory,
-                    ghost_pt: Ghost::new(ghost_pt),
-                };
-                &&& page_table.inv()
-                &&& page_table.interp().inv()
-                &&& #[trigger] dummy_trigger(ghost_pt)
-            }
-        );
-
-        let mut page_table = l2_impl::PageTable {
-            memory:    memory,
-            ghost_pt:  ghost_pt,
-        };
+    fn ispec_unmap(&self, mem: &mut mem::PageTableMemory, vaddr: usize) -> (res: UnmapResult) {
+        let mut pt: Ghost<PTDir> = Ghost(choose|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv());
         proof {
-            let cr3 = page_table.memory.cr3_spec();
-            page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
-            page_table.interp().lemma_inv_implies_interp_inv();
-        }
-        let res = page_table.unmap(vaddr);
-        // ensures
-        proof {
-            assert(self.ispec_inv(page_table.memory)) by {
-                assert(dummy_trigger(page_table.ghost_pt@));
-            };
+            PT::lemma_interp_at_facts(mem, pt@, 0, mem.cr3_spec().base, 0);
+            PT::interp(mem, pt@).lemma_inv_implies_interp_inv();
+            assert(x86_arch_spec.upper_vaddr(0, 0) == crate::definitions_t::PT_BOUND_HIGH) by (compute_only);
             lemma_page_table_walk_interp();
-            page_table.interp().lemma_inv_implies_interp_inv();
-            assert(spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(memory) }, spec_pt::PageTableVariables { map: interp_pt_mem(page_table.memory) }, vaddr as nat, res));
         }
-        (res, page_table.memory)
-
+        PT::unmap(mem, &mut pt, vaddr)
     }
 
-    fn ispec_resolve(&self, memory: mem::PageTableMemory, vaddr: usize) -> (res: (ResolveResultExec, mem::PageTableMemory)) {
-        assert(self.ispec_inv(memory));
-        let ghost_pt: Ghost<l2_impl::PTDir> = Ghost(
-            choose|ghost_pt: l2_impl::PTDir| {
-                let page_table = l2_impl::PageTable {
-                    memory: memory,
-                    ghost_pt: Ghost::new(ghost_pt),
-                };
-                &&& page_table.inv()
-                &&& page_table.interp().inv()
-                &&& #[trigger] dummy_trigger(ghost_pt)
-            }
-        );
-
-        let page_table = l2_impl::PageTable {
-            memory:    memory,
-            ghost_pt:  ghost_pt,
-        };
+    fn ispec_resolve(&self, mem: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec) {
+        let pt: Ghost<PTDir> = Ghost(choose|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv());
         proof {
-            x86_arch_inv();
-        }
-        assert(page_table.inv());
-        assert(page_table.interp().inv());
-
-        proof {
-            let cr3 = page_table.memory.cr3_spec();
-            page_table.lemma_interp_at_facts(0, cr3.base, 0, page_table.ghost_pt@);
-            assert(page_table.interp().upper_vaddr() == x86_arch_spec.upper_vaddr(0, 0));
-            assert(page_table.interp().interp().upper == x86_arch_spec.upper_vaddr(0, 0));
-            assert(MAX_BASE == 512 * L0_ENTRY_SIZE);
-            assert(page_table.interp().interp().accepted_resolve(vaddr as nat));
+            PT::lemma_interp_at_facts(mem, pt@, 0, mem.cr3_spec().base, 0);
+            PT::interp(mem, pt@).lemma_inv_implies_interp_inv();
+            assert(x86_arch_spec.upper_vaddr(0, 0) == crate::definitions_t::PT_BOUND_HIGH) by (compute_only);
             lemma_page_table_walk_interp();
         }
-        assert(page_table.interp().interp().map == interp_pt_mem(memory));
-        match page_table.resolve(vaddr) {
-            Ok((v,pte)) => (ResolveResultExec::Ok(v,pte),   page_table.memory),
-            Err(e)      => (ResolveResultExec::ErrUnmapped, page_table.memory),
+        match PT::resolve(mem, pt, vaddr) {
+            Ok((v,pte)) => ResolveResultExec::Ok(v,pte),
+            Err(e)      => ResolveResultExec::ErrUnmapped,
         }
     }
 }

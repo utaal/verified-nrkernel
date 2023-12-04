@@ -89,12 +89,12 @@ impl PageTableContents {
 
     pub open spec(checked) fn mappings_dont_overlap(self) -> bool {
         forall|b1: nat, b2: nat|
-            // TODO verus the default triggers were bad
-            #![trigger self.map.index(b1), self.map.index(b2)] #![trigger self.map.dom().contains(b1), self.map.dom().contains(b2)]
+            #![trigger self.map[b1], self.map[b2]]
+            #![trigger self.map.dom().contains(b1), self.map.dom().contains(b2)]
             self.map.dom().contains(b1) && self.map.dom().contains(b2) ==>
             ((b1 == b2) || !overlap(
-                    MemRegion { base: b1, size: self.map.index(b1).frame.size },
-                    MemRegion { base: b2, size: self.map.index(b2).frame.size }))
+                    MemRegion { base: b1, size: self.map[b1].frame.size },
+                    MemRegion { base: b2, size: self.map[b2].frame.size }))
     }
 
     pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PageTableEntry) -> bool {
@@ -103,9 +103,9 @@ impl PageTableContents {
 
     pub open spec(checked) fn mappings_in_bounds(self) -> bool {
         forall|b1: nat|
-            #![trigger self.map.index(b1)] #![trigger self.map.dom().contains(b1)]
-            #![trigger self.candidate_mapping_in_bounds(b1, self.map.index(b1))]
-            self.map.dom().contains(b1) ==> self.candidate_mapping_in_bounds(b1, self.map.index(b1))
+            #![trigger self.map[b1]] #![trigger self.map.dom().contains(b1)]
+            #![trigger self.candidate_mapping_in_bounds(b1, self.map[b1])]
+            self.map.dom().contains(b1) ==> self.candidate_mapping_in_bounds(b1, self.map[b1])
     }
 
     pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PageTableEntry) -> bool {
@@ -181,7 +181,7 @@ impl PageTableContents {
         }
     }
 
-    pub open spec(checked) fn accepted_unmap(self, base:nat) -> bool {
+    pub open spec(checked) fn accepted_unmap(self, base: nat) -> bool {
         &&& between(base, self.lower, self.upper)
         &&& exists|size: nat|
             #![trigger self.arch.contains_entry_size(size)]
