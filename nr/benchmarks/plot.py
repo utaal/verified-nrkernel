@@ -17,7 +17,7 @@ import warnings
 from io import BytesIO
 
 # this is the width of a column in the latex template
-LATEX_TEMPLATE_COLUMNWIDTH =  10# 3.25 # 2.8
+LATEX_TEMPLATE_COLUMNWIDTH =  4# 3.25 # 2.8
 
 
 # the unit of the latex template column width
@@ -39,11 +39,21 @@ PLOT_HEIGHT = PLOT_WIDTH/PLOT_ASPECT_RATIO
 # What machine, max cores, sockets, revision
 MACHINE = ('cascadelake4x', 192, 4, '4b3c410')
 
-CATEGORIES=['verus_nr', 'upstream_nr', 'dafny_nr', 'rust_nr', 'dafny_rwlock', 'shfllock', 'mcs', 'cpp_shared_mutex']
+
+
+ALL_CATEGORIES=['verus_nr', 'upstream_nr', 'dafny_nr', 'rust_nr', 'dafny_rwlock', 'shfllock', 'mcs', 'cpp_shared_mutex']
+ALL_LABELS=['Verus-NR', 'Upstream-NR', 'IronSync-NR', 'Reference-NR', 'DistRwLock', 'Shuffle Lock', 'MCS', 'libstdc++ shared_mutex']
+
+CATEGORIES=['verus_nr', 'upstream_nr', 'dafny_nr', 'rust_nr']
+
 REPLICA_CATEGORIES=[1, 2, 4]
-LABELS=['Verus-NR', 'Upstream-NR', 'IronSync-NR', 'Reference-NR', 'DistRwLock', 'Shuffle Lock', 'MCS', 'libstdc++ shared_mutex']
+LABELS = ALL_LABELS[0:len(CATEGORIES)]
+
+
 BREAKS=CATEGORIES
+
 COLORS=[ "#bf0040", "#0000ff", "#4daf4a", "#984ea3", "#ff7f00", "#f781bf", "#999999", "#a6cee3" ]
+
 MARKERS=[ 's', 'o', 'D', '^', 'v', '*', '+', 'x' ]
 
 
@@ -73,12 +83,12 @@ class theme_my538(theme_gray):
                 panel_border     = element_line(color='#000000', linetype='solid', size=0.2),
                 panel_grid_major = element_blank(),
                 panel_grid_minor = element_blank(),
-                panel_spacing    = 0.02,
+                panel_spacing    = 0.01,
                 #panel_grid_major=element_line(
                   #color='#E5E5E5', linetype='solid', size=0.5),
                 # plot setup
                 plot_background = element_rect(fill=bgcolor, color=bgcolor, size=1),
-                plot_margin=0.04,
+                plot_margin=0.025,
 
                 # background
                 strip_background=element_rect(fill='#FFFFFF', size=0.2)),
@@ -128,8 +138,8 @@ def throughput_vs_cores(machine, df, graph='compare-locks'):
             breaks=[1, 4] + list(range(xskip, 513, xskip)),
             name='threads') +
         scale_y_continuous(
-            name='ops/sec',
-            labels=lambda lst: ["{:,.0f}M".format(x / 1_000_000) for x in lst]) +
+            name='Mops/sec',
+            labels=lambda lst: ["{:,.0f}".format(x / 1_000_000) for x in lst]) +
         scale_color_manual(values=COLORS, labels=labels, breaks=breaks) +
         scale_shape_manual(values=MARKERS,labels=labels, breaks=breaks) +
         #scale_linetype_manual(linetypes, labels=replicas_labels, size=0.2) +
@@ -197,6 +207,8 @@ def read_data():
     df = pd.concat([df_upstream, df_verus, df_ironsync])
 
 #    df = df.loc[df['bench_name'] == 'verus_nr']
+
+    df = df.loc[df['bench_name'].isin(CATEGORIES)]
 
 
     print(df)
