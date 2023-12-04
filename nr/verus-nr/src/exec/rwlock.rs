@@ -34,8 +34,8 @@ pub tracked struct RwLockWriteGuard<#[cfg_attr(verus_keep_ghost, verifier::maybe
 /// This structure is created by the read and try_read methods on RwLockSpec.
 pub struct RwLockReadGuard<#[cfg_attr(verus_keep_ghost, verifier::maybe_negative)]T> {
     tid: usize,
-    perms: Ghost<PointsTo<T>>, // $line_count$Proof${$
-    handle: Tracked<RwLockSpec::shared_guard<PointsTo<T>>>, // $line_count$}$
+    perms: Ghost<PointsTo<T>>,
+    handle: Tracked<RwLockSpec::shared_guard<PointsTo<T>>>,
 }
 
 impl<T> RwLockReadGuard<T> {
