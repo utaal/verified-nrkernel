@@ -1,5 +1,7 @@
 // trustedness: ignore this file
 
+#![verus::trusted]
+
 // TODO fix?
 // #![feature(register_tool)]
 // #![register_tool(verifier)]
@@ -15,9 +17,8 @@ mod spec;
 mod exec;
 pub mod constants;
 
-pub use crate::exec::context::ThreadToken;
 pub use crate::exec::NodeReplicated;
-pub use crate::exec::replica::ReplicaId;
+pub type ReplicaId = usize;
 
 #[cfg(feature = "counter_dispatch_example")]
 mod counter_dispatch_example;
@@ -35,16 +36,16 @@ global size_of usize == 8;
 // implement.
 
 /// type of the node / replica id
-pub type NodeId = nat;
+pub type NodeId = nat; // $line_count$Trusted$
 
 /// the log index
-pub type LogIdx = nat;
+pub type LogIdx = nat; // $line_count$Trusted$
 
 /// the request id
-pub type ReqId = nat;
+pub type ReqId = nat; // $line_count$Trusted$
 
 /// the id of a thread on a replica node
-pub type ThreadId = nat;
+pub type ThreadId = nat; // $line_count$Trusted$
 
 
 pub trait Dispatch: Sized {

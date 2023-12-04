@@ -40,7 +40,7 @@ verus! {
     // pub type StoredType = PointsTo<LogEntry>;
 
 ///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
-pub struct StoredType<DT: Dispatch> {
+pub tracked struct StoredType<DT: Dispatch> {
     pub cell_perms: PointsTo<Option<ConcreteLogEntry<DT>>>,
     pub log_entry: Option<UnboundedLog::log<DT>>
 }
@@ -69,7 +69,7 @@ pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cel
 
 ///
 #[is_variant]
-pub enum ReaderState<DT: Dispatch> {
+pub tracked enum ReaderState<DT: Dispatch> {
     ///
     Starting {
         ///
@@ -96,7 +96,7 @@ pub enum ReaderState<DT: Dispatch> {
 
 /// represents the combiner
 #[is_variant]
-pub enum CombinerState<DT: Dispatch> {
+pub tracked enum CombinerState<DT: Dispatch> {
     Idle,
     Reading(ReaderState<DT>),
     AdvancingHead { idx: LogIdx, min_local_version: LogIdx },

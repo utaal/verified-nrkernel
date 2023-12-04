@@ -2,14 +2,16 @@
 use builtin::*;
 use builtin_macros::*;
 
+
 verus! {
 
 /// the maximum number of replicas
 pub open const MAX_REPLICAS_PER_LOG: usize = 16;
 
 /// the number of replicas we have
-pub open const NUM_REPLICAS: usize = 4;
+// pub open const NUM_REPLICAS: usize = 4;
 
+#[verus::trusted]
 pub open const MAX_REPLICAS: usize = 16;
 
 /// the size of the log in bytes

@@ -52,7 +52,7 @@ vstd::prelude::verus! {
 /// we only track the nodeId to make sure that steps 2 and 3 use the same node.
 ///
 #[is_variant]
-pub enum ReadonlyState<DT: Dispatch> {
+pub ghost enum ReadonlyState<DT: Dispatch> {
     /// a new read request that has come in
     Init { op: DT::ReadOperation },
     /// has read the version upper bound value
@@ -216,7 +216,7 @@ pub enum ReadonlyState<DT: Dispatch> {
 // has a pointer into the log via `idx`. (It's possible that this could be simplified.)
 
 #[is_variant]
-pub enum UpdateState<DT: Dispatch> {
+pub ghost enum UpdateState<DT: Dispatch> {
     /// upated request has entered the system
     Init { op: DT::WriteOperation },
     /// update has been placed into the log
@@ -228,7 +228,7 @@ pub enum UpdateState<DT: Dispatch> {
 }
 
 #[is_variant]
-pub enum CombinerState {
+pub ghost enum CombinerState {
     Ready,
     Placed {
         queued_ops: Seq<ReqId>,

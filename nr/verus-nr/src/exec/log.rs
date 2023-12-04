@@ -29,14 +29,14 @@ verus! {
 // Utils
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#[verifier(external_body)] /* vattr */
+#[verus::line_count::ignore] #[verus::trusted] #[verifier(external_body)] /* vattr */
 pub fn print_starvation_warning(line: u32) {
-    println!("WARNING({line}): has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
+    eprintln!("WARNING({line}): has been looping for `WARN_THRESHOLD` iterations. Are we starving?");
 }
 
-#[verifier(external_body)] /* vattr */
-pub fn panic_with_tail_too_big() {
-    panic!("WARNING: Tail value exceeds the maximum value of u64.");
+#[verus::trusted] #[verifier(external_body)] /* vattr */
+pub fn warn_with_tail_too_big() {
+    eprintln!("WARNING: Tail value exceeds the maximum value of u64.");
 }
 
 
@@ -771,7 +771,7 @@ impl<DT: Dispatch> NrLog<DT> {
 
             // capture the warning here
             if new_tail >= MAX_IDX {
-                panic_with_tail_too_big();
+                warn_with_tail_too_big();
                 ////////////////////////////////////////////////////////////////////////////////////
                 // !!! THIS IS A PANIC CASE! WE DO NOT RETURN FROM HERE !!!
                 ////////////////////////////////////////////////////////////////////////////////////

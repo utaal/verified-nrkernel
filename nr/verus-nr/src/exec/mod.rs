@@ -62,8 +62,8 @@ pub struct NodeReplicated<#[verifier::reject_recursive_types] DT: Dispatch> {
     // pub /* REVIEW: (crate) */ thread_tokens: Vec<Vec<ThreadToken<DT>>>,
 
     /// XXX: should that be here, or go into the NrLog / replicas?
-    pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
-    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>,
+    pub unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>, // $line_count$Proof${$
+    pub cyclic_buffer_instance: Tracked<CyclicBuffer::Instance<DT>>, // $line_count$}$
 }
 
 impl<DT: Dispatch> crate::ThreadTokenT<DT, Replica<DT>> for ThreadToken<DT> {

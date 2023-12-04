@@ -35,7 +35,7 @@ vstd::prelude::verus! {
 
 /// Represents the state of a read-request
 #[is_variant]
-pub enum ReadReq<R> {
+pub ghost enum ReadReq<R> {
     /// a new read request that has entered the system
     Init { op: R },
     /// a request that has been dispatched at a specific version
@@ -52,7 +52,7 @@ impl<R> ReadReq<R> {
 }
 
 /// Represents the state of an update requeset, returning the index of the update in the log
-pub struct UpdateResp(pub LogIdx);
+pub ghost struct UpdateResp(pub LogIdx);
 
 state_machine! {
     SimpleLog<DT: Dispatch> {

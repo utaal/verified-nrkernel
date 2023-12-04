@@ -34,8 +34,8 @@ pub tracked struct RwLockWriteGuard<#[cfg_attr(verus_keep_ghost, verifier::maybe
 /// This structure is created by the read and try_read methods on RwLockSpec.
 pub struct RwLockReadGuard<#[cfg_attr(verus_keep_ghost, verifier::maybe_negative)]T> {
     tid: usize,
-    perms: Ghost<PointsTo<T>>,
-    handle: Tracked<RwLockSpec::shared_guard<PointsTo<T>>>,
+    perms: Ghost<PointsTo<T>>, // $line_count$Proof${$
+    handle: Tracked<RwLockSpec::shared_guard<PointsTo<T>>>, // $line_count$}$
 }
 
 impl<T> RwLockReadGuard<T> {
@@ -50,8 +50,8 @@ impl<T> RwLockReadGuard<T> {
 
 pub const MAX_RC: u64 =  0xffff_ffff_ffff_fff0;
 
-#[verifier(external_body)] /* vattr */
-pub fn panic_with_ref_count_too_big() {
+#[verus::trusted] #[verifier(external_body)] /* vattr */
+pub fn warn_with_ref_count_too_big() {
     panic!("WARNING: Tail value exceeds the maximum value of u64.");
 }
 
@@ -103,10 +103,10 @@ struct_with_invariants!{
     }
 }
 
-#[verifier(external_body)] /* vattr */
-pub fn panic_with_value_too_big() {
-    panic!("WARNING: Tail value exceeds the maximum value of u64.");
-}
+// #[verifier(external_body)] /* vattr */
+// pub fn panic_with_value_too_big() {
+//     panic!("WARNING: Tail value exceeds the maximum value of u64.");
+// }
 
 
 impl<T> RwLock<T> {
@@ -357,7 +357,7 @@ impl<T> RwLock<T> {
             );
 
             if rc == MAX_RC {
-                panic_with_ref_count_too_big();
+                warn_with_ref_count_too_big();
                 ////////////////////////////////////////////////////////////////////////////////////
                 // !!! THIS IS A PANIC CASE! WE DO NOT RETURN FROM HERE !!!
                 ////////////////////////////////////////////////////////////////////////////////////

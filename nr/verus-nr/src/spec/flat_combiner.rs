@@ -13,14 +13,14 @@ verus! {
 
 /// represents the state of a client thread
 #[is_variant]
-pub enum ClientState {
+pub tracked enum ClientState {
     Idle,
     Waiting(ReqId),
 }
 
 /// represents the state of a request in the queue
 #[is_variant]
-pub enum SlotState {
+pub tracked enum SlotState {
     Empty,
     Request(ReqId),
     InProgress(ReqId),
@@ -40,7 +40,7 @@ impl SlotState {
 
 /// represents the combiner state
 #[is_variant]
-pub enum CombinerState {
+pub tracked enum CombinerState {
     Collecting(Seq<Option<ReqId>>),
     Responding(Seq<Option<ReqId>>, nat),
 }

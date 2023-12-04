@@ -37,7 +37,7 @@ use crate::exec::context::{Context, PendingOperation, ThreadId, ThreadToken, FCC
 
 verus! {
 
-#[verifier(external_body)] /* vattr */
+#[verus::trusted] #[verifier(external_body)] /* vattr */
 fn spin_loop_hint() {
     core::hint::spin_loop();
 }
