@@ -13,7 +13,7 @@ verus! {
 
 pub use crate::{NodeId, LogIdx, ReqId, ThreadId};
 
-pub struct LogEntry<DT: Dispatch> {
+pub tracked struct LogEntry<DT: Dispatch> {
     pub op: DT::WriteOperation,
     pub node_id: NodeId,
 }

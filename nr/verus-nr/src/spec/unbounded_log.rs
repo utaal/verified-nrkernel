@@ -1364,7 +1364,6 @@ proof fn combiner_request_ids_decreases(combiners: Map<NodeId, CombinerState>) {
         } else {
             let node_id = combiners.dom().choose();
             assert(combiners.remove(node_id).dom().len() < combiners.dom().len()); // INCOMPLETENESS weird incompleteness
-
         }
     } else {
     }
@@ -1443,13 +1442,10 @@ pub closed spec fn get_fresh_nat(reqs: Set<ReqId>, combiner: Map<NodeId, Combine
 }
 
 
-
-
-
 proof fn max_of_set(s:Set<nat>) -> (r:nat)
-requires s.finite(),
-ensures forall |x:nat| #[trigger] s.contains(x) ==> x <= r
-decreases s.len(),
+    requires s.finite(),
+    ensures forall |x:nat| #[trigger] s.contains(x) ==> x <= r
+    decreases s.len(),
 {
   if s.is_empty() {
       0
@@ -1457,11 +1453,7 @@ decreases s.len(),
       let v1 = s.choose();
       let v2 = max_of_set(s.remove(v1));
       assert (forall |x:nat| #[trigger] s.contains(x) && x != v1 ==> s.remove(v1).contains(x));
-      if v1 >= v2 {
-          v1
-      } else {
-          v2
-      }
+      if v1 >= v2 { v1 } else { v2 }
   }
 }
 
@@ -1594,49 +1586,44 @@ proof fn LogRangeMatchesQueue_update_change<DT: Dispatch>(queue: Seq<nat>, log: 
     queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, nodeId: nat,
     updates1: Map<ReqId, UpdateState<DT>>,
     updates2: Map<ReqId, UpdateState<DT>>)
-requires
-    0 <= queueIndex <= queue.len(),
-    logIndexLower <= logIndexUpper,
-    LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
-    forall |rid| #[trigger] updates1.contains_key(rid) ==>
-      updates1[rid].is_Placed() && logIndexLower <= updates1[rid].get_Placed_idx() < logIndexUpper ==>
-          updates2.contains_key(rid) && updates2[rid] === updates1[rid],
-ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2)
-decreases logIndexUpper - logIndexLower
+    requires
+        0 <= queueIndex <= queue.len(),
+        logIndexLower <= logIndexUpper,
+        LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
+        forall |rid| #[trigger] updates1.contains_key(rid) ==>
+        updates1[rid].is_Placed() && logIndexLower <= updates1[rid].get_Placed_idx() < logIndexUpper ==>
+            updates2.contains_key(rid) && updates2[rid] === updates1[rid],
+    ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2)
+    decreases logIndexUpper - logIndexLower
 {
   if logIndexLower == logIndexUpper {
   } else {
     if log.index(logIndexLower).node_id == nodeId {
-      LogRangeMatchesQueue_update_change(queue, log, queueIndex + 1,
-        logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
+      LogRangeMatchesQueue_update_change(queue, log, queueIndex + 1, logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
     } else {
-      LogRangeMatchesQueue_update_change(queue, log, queueIndex,
-        logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
+      LogRangeMatchesQueue_update_change(queue, log, queueIndex, logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
     }
   }
 }
 
 proof fn LogRangeMatchesQueue_update_change_2<DT: Dispatch>(queue: Seq<nat>, log: Map<nat, LogEntry<DT>>,
     queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, nodeId: nat,
-    updates1: Map<ReqId, UpdateState<DT>>,
-    updates2: Map<ReqId, UpdateState<DT>>)
-requires
-    0 <= queueIndex <= queue.len(),
-    logIndexLower <= logIndexUpper,
-    LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
-    forall |rid| #[trigger] updates1.contains_key(rid) ==> queue.contains(rid) ==>
-          updates2.contains_key(rid) && updates2[rid] === updates1[rid],
-ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2),
-decreases logIndexUpper - logIndexLower,
+    updates1: Map<ReqId, UpdateState<DT>>, updates2: Map<ReqId, UpdateState<DT>>)
+    requires
+        0 <= queueIndex <= queue.len(),
+        logIndexLower <= logIndexUpper,
+        LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates1),
+        forall |rid| #[trigger] updates1.contains_key(rid) ==> queue.contains(rid) ==>
+            updates2.contains_key(rid) && updates2[rid] === updates1[rid],
+    ensures LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, nodeId, updates2),
+    decreases logIndexUpper - logIndexLower,
 {
   if logIndexLower == logIndexUpper {
   } else {
     if log.index(logIndexLower).node_id == nodeId {
-      LogRangeMatchesQueue_update_change_2(queue, log, queueIndex + 1,
-        logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
+      LogRangeMatchesQueue_update_change_2(queue, log, queueIndex + 1, logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
     } else {
-      LogRangeMatchesQueue_update_change_2(queue, log, queueIndex,
-        logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
+      LogRangeMatchesQueue_update_change_2(queue, log, queueIndex, logIndexLower + 1, logIndexUpper, nodeId, updates1, updates2);
     }
   }
 }
@@ -1652,16 +1639,12 @@ proof fn LogRangeMatchesQueue_append<DT: Dispatch>(
         logIndexLower <= logIndexUpper,
         log_entry.node_id == node_id,
         new_updates.contains_key(new_rid),
-        new_updates.index(new_rid) === (UpdateState::Placed{
-            op: log_entry.op,
-            idx: logIndexUpper,
-        }),
+        new_updates.index(new_rid) === (UpdateState::Placed{ op: log_entry.op, idx: logIndexUpper,}),
         !queue.contains(new_rid),
         forall |rid| #[trigger] updates.contains_key(rid) && rid != new_rid ==>
             new_updates.contains_key(rid)
             && new_updates[rid] === updates[rid],
-        LogRangeMatchesQueue(queue, log,
-            queueIndex, logIndexLower, logIndexUpper, node_id, updates),
+        LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, node_id, updates),
         new_log === log.insert(logIndexUpper, log_entry),
 
     ensures LogRangeMatchesQueue(
@@ -1675,11 +1658,7 @@ proof fn LogRangeMatchesQueue_append<DT: Dispatch>(
   } else if logIndexLower == logIndexUpper {
      assert( new_log.contains_key(logIndexLower) );
      if new_log.index(logIndexLower).node_id == node_id {
-        assert( queueIndex < queue.push(new_rid).len());
-        assert( new_updates.contains_key(queue.push(new_rid).index(queueIndex as int)));
-        assert( new_updates.index(queue.push(new_rid).index(queueIndex as int)).is_Placed());
-        assert( new_updates.index(queue.push(new_rid).index(queueIndex as int)).get_Placed_idx() == logIndexLower);
-        assert( LogRangeMatchesQueue(queue.push(new_rid), new_log, queueIndex+1, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
+        assert(LogRangeMatchesQueue(queue.push(new_rid), new_log, queueIndex+1, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
       }
       if new_log.index(logIndexLower).node_id != node_id {
         assert(LogRangeMatchesQueue(queue.push(new_rid), new_log, queueIndex, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
@@ -1687,28 +1666,11 @@ proof fn LogRangeMatchesQueue_append<DT: Dispatch>(
   } else {
     assert(new_log.index(logIndexLower) === log.index(logIndexLower));
     if new_log.index(logIndexLower).node_id == node_id {
-        LogRangeMatchesQueue_append(queue, log, new_log, queueIndex + 1,
-            logIndexLower + 1, logIndexUpper, node_id, updates, new_updates, new_rid, log_entry);
-
-        /*assert( queueIndex < queue.push(new_rid).len());
-
-        assert( updates.contains_key(queue.index(queueIndex)));
-        let q = queue.push(new_rid).index(queueIndex);
-        assert( updates.contains_key(q));
-        assert(q != new_rid);
-        assert( new_updates.contains_key(q));
-
-        assert( new_updates.index(queue.push(new_rid).index(queueIndex)).is_Placed());
-        assert( new_updates.index(queue.push(new_rid).index(queueIndex)).get_Placed_idx() == logIndexLower);
-        assert( LogRangeMatchesQueue(queue.push(new_rid), new_log, queueIndex+1, logIndexLower+1, logIndexUpper+1, node_id, new_updates));*/
-
-        assert(LogRangeMatchesQueue(
-            queue.push(new_rid),
-            new_log,
-            queueIndex, logIndexLower, logIndexUpper + 1, node_id, new_updates));
+        LogRangeMatchesQueue_append(queue, log, new_log, queueIndex + 1, logIndexLower + 1, logIndexUpper, node_id, updates, new_updates, new_rid, log_entry);
+        assert(LogRangeMatchesQueue( queue.push(new_rid), new_log, queueIndex, logIndexLower, logIndexUpper + 1, node_id, new_updates));
     } else {
-      LogRangeMatchesQueue_append(queue, log, new_log, queueIndex, logIndexLower + 1, logIndexUpper,
-                                  node_id, updates, new_updates, new_rid, log_entry);
+        LogRangeMatchesQueue_append(queue, log, new_log, queueIndex, logIndexLower + 1, logIndexUpper,
+                                    node_id, updates, new_updates, new_rid, log_entry);
     }
   }
 }
@@ -1724,16 +1686,12 @@ proof fn LogRangeMatchesQueue_append_other<DT: Dispatch>(
         logIndexLower <= logIndexUpper <= logLen,
         log_entry.node_id != node_id,
         new_updates.contains_key(new_rid),
-        new_updates.index(new_rid) === (UpdateState::Placed{
-            op: log_entry.op,
-            idx: logLen,
-        }),
+        new_updates.index(new_rid) === (UpdateState::Placed{ op: log_entry.op, idx: logLen }),
         !queue.contains(new_rid),
         forall |rid| #[trigger] updates.contains_key(rid) && rid != new_rid ==>
             new_updates.contains_key(rid)
             && new_updates[rid] === updates[rid],
-        LogRangeMatchesQueue(queue, log,
-            queueIndex, logIndexLower, logIndexUpper, node_id, updates),
+        LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, node_id, updates),
         new_log === log.insert(logLen, log_entry),
 
     ensures LogRangeMatchesQueue(
@@ -1770,22 +1728,15 @@ proof fn LogRangeMatchesQueue_append_other_augment<DT: Dispatch>(
         logIndexLower <= logIndexUpper,
         log_entry.node_id != node_id,
         new_updates.contains_key(new_rid),
-        new_updates.index(new_rid) === (UpdateState::Placed{
-            op: log_entry.op,
-            idx: logIndexUpper,
-        }),
+        new_updates.index(new_rid) === (UpdateState::Placed{ op: log_entry.op, idx: logIndexUpper }),
         !queue.contains(new_rid),
         forall |rid| #[trigger] updates.contains_key(rid) && rid != new_rid ==>
             new_updates.contains_key(rid)
             && new_updates[rid] === updates[rid],
-        LogRangeMatchesQueue(queue, log,
-            queueIndex, logIndexLower, logIndexUpper, node_id, updates),
+        LogRangeMatchesQueue(queue, log, queueIndex, logIndexLower, logIndexUpper, node_id, updates),
         new_log === log.insert(logIndexUpper, log_entry),
 
-    ensures LogRangeMatchesQueue(
-        queue,
-        new_log,
-        queueIndex, logIndexLower, logIndexUpper + 1, node_id, new_updates),
+    ensures LogRangeMatchesQueue(queue, new_log, queueIndex, logIndexLower, logIndexUpper + 1, node_id, new_updates),
 
     decreases(logIndexUpper - logIndexLower),
 {
@@ -1800,10 +1751,7 @@ proof fn LogRangeMatchesQueue_append_other_augment<DT: Dispatch>(
         LogRangeMatchesQueue_append_other_augment(queue, log, new_log, queueIndex + 1,
             logIndexLower + 1, logIndexUpper, node_id, updates, new_updates, new_rid, log_entry);
 
-        assert(LogRangeMatchesQueue(
-            queue,
-            new_log,
-            queueIndex, logIndexLower, logIndexUpper + 1, node_id, new_updates));
+        assert(LogRangeMatchesQueue(queue,new_log,queueIndex, logIndexLower, logIndexUpper + 1, node_id, new_updates));
     } else {
       LogRangeMatchesQueue_append_other_augment(queue, log, new_log, queueIndex,
         logIndexLower + 1, logIndexUpper, node_id, updates, new_updates, new_rid, log_entry);
@@ -1822,7 +1770,6 @@ proof fn LogRangeNoNodeId_append_other<DT: Dispatch>(
         LogRangeNoNodeId(log, logIndexLower, logIndexUpper, node_id),
         new_log === log.insert(logIndexUpper, log_entry),
     ensures LogRangeNoNodeId(new_log, logIndexLower, logIndexUpper + 1, node_id),
-
     decreases(logIndexUpper - logIndexLower),
 {
   if logIndexLower == logIndexUpper + 1 {
@@ -1833,15 +1780,10 @@ proof fn LogRangeNoNodeId_append_other<DT: Dispatch>(
   } else {
     assert(new_log.index(logIndexLower) === log.index(logIndexLower));
     if new_log.index(logIndexLower).node_id == node_id {
-        LogRangeNoNodeId_append_other(log, new_log,
-            logIndexLower + 1, logIndexUpper, node_id, log_entry);
-
-        assert(LogRangeNoNodeId(
-            new_log,
-            logIndexLower, logIndexUpper + 1, node_id));
+        LogRangeNoNodeId_append_other(log, new_log, logIndexLower + 1, logIndexUpper, node_id, log_entry);
+        assert(LogRangeNoNodeId(new_log, logIndexLower, logIndexUpper + 1, node_id));
     } else {
-      LogRangeNoNodeId_append_other(log, new_log,
-        logIndexLower + 1, logIndexUpper, node_id, log_entry);
+      LogRangeNoNodeId_append_other(log, new_log, logIndexLower + 1, logIndexUpper, node_id, log_entry);
     }
   }
 }
@@ -1879,20 +1821,17 @@ pub open spec fn QueueRidsUpdatePlaced<DT: Dispatch>(queued_ops: Seq<ReqId>, loc
 proof fn concat_LogRangeNoNodeId_LogRangeMatchesQueue<DT: Dispatch>(
     queue: Seq<ReqId>, log: Map<LogIdx, LogEntry<DT>>,
     queueIndex: nat, a: nat, b: nat, c: nat, nodeId: nat, updates: Map<ReqId, UpdateState<DT>>)
-requires
-    a <= b <= c,
-    0 <= queueIndex <= queue.len(),
-    LogRangeNoNodeId(log, a, b, nodeId),
-    LogRangeMatchesQueue(queue, log, queueIndex, b, c, nodeId, updates),
-ensures LogRangeMatchesQueue(queue, log, queueIndex, a, c, nodeId, updates)
+    requires
+        a <= b <= c,
+        0 <= queueIndex <= queue.len(),
+        LogRangeNoNodeId(log, a, b, nodeId),
+        LogRangeMatchesQueue(queue, log, queueIndex, b, c, nodeId, updates),
+    ensures LogRangeMatchesQueue(queue, log, queueIndex, a, c, nodeId, updates)
 decreases b - a
 {
   if a == b {
   } else {
-    concat_LogRangeNoNodeId_LogRangeMatchesQueue(
-        queue, log, queueIndex,
-        a+1, b, c,
-        nodeId, updates);
+    concat_LogRangeNoNodeId_LogRangeMatchesQueue(queue, log, queueIndex, a+1, b, c, nodeId, updates);
   }
 }
 
@@ -1917,7 +1856,6 @@ pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Map<LogIdx, LogEn
 
 pub proof fn compute_nrstate_at_version_preserves<DT: Dispatch>(a: Map<LogIdx, LogEntry<DT>>, b: Map<LogIdx, LogEntry<DT>>, version: LogIdx)
     requires
-        forall |i| 0 <= i < version ==> a.contains_key(i),
         forall |i| 0 <= i < version ==> a.contains_key(i),
         forall |i| 0 <= i < version ==> a[i] == b[i]
     ensures compute_nrstate_at_version(a, version) == compute_nrstate_at_version(b, version)

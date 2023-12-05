@@ -38,7 +38,7 @@ use super::utils::*;
 verus! {
 
 #[verifier::external_body]
-pub struct RefinementProof<#[verifier::reject_recursive_types] DT: Dispatch> {
+pub tracked  struct RefinementProof<#[verifier::reject_recursive_types] DT: Dispatch> {
     _p: std::marker::PhantomData<DT>,
 }
 

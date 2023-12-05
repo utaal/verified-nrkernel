@@ -134,10 +134,6 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
             cyclic_buffer_instance: cyclic_buffer_instance,
         } = nr_log_tokens.get();
 
-
-        assert(unbounded_log_instance.num_replicas() == num_replicas);
-        assert(cyclic_buffer_instance.num_replicas() == num_replicas);
-
         let mut actual_replicas : Vec<Box<Replica<DT>>> = Vec::new();
         let mut thread_tokens : Vec<Vec<ThreadToken<DT>>> = Vec::new();
         let mut idx = 0;
@@ -179,19 +175,14 @@ impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
         {
             let ghost mut idx_ghost; proof { idx_ghost = idx as nat };
 
-            let tracked combiner = combiners.tracked_remove(idx_ghost);
-            let tracked cb_combiner = cb_combiners.tracked_remove(idx_ghost);
-            let tracked replica = replicas.tracked_remove(idx_ghost);
             let replica_token = replica_tokens[idx].clone();
             let tracked config = ReplicaConfig {
-                replica,
-                combiner,
-                cb_combiner,
+                replica: replicas.tracked_remove(idx_ghost),
+                combiner: combiners.tracked_remove(idx_ghost),
+                cb_combiner: cb_combiners.tracked_remove(idx_ghost),
                 unbounded_log_instance: unbounded_log_instance.clone(),
-                cyclic_buffer_instance: cyclic_buffer_instance.clone(),
+                cyclic_buffer_instance: cyclic_buffer_instance.clone()
             };
-            assert(config.wf(idx as nat));
-            assert(replica_token.id_spec() == idx as nat);
 
             // switch the affinity of the replica before we do the allocation
             chg_mem_affinity.call(replica_token.id());

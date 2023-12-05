@@ -52,7 +52,7 @@ pub const MAX_RC: u64 =  0xffff_ffff_ffff_fff0;
 
 #[verus::trusted] #[verifier(external_body)] /* vattr */
 pub fn warn_with_ref_count_too_big() {
-    panic!("WARNING: Tail value exceeds the maximum value of u64.");
+    panic!("WARNING: Refcount value exceeds the maximum value of u64.");
 }
 
 struct_with_invariants!{
@@ -85,28 +85,21 @@ struct_with_invariants!{
         }
 
         invariant on exc_locked with (inst) specifically (self.exc_locked.0) is (b: bool, g: RwLockSpec::exc_locked<PointsTo<T>>) {
-            g@.instance == inst@
-            && g@.value == b
+            &&& g@.instance == inst@
+            &&& g@.value == b
         }
 
         invariant on ref_counts with (inst)
-            forall |i: int|
-            where (0 <= i < self.ref_counts@.len())
-            specifically (self.ref_counts@[i].0)
+            forall |i: int| where (0 <= i < self.ref_counts@.len()) specifically (self.ref_counts@[i].0)
             is (v: u64, g: RwLockSpec::ref_counts<PointsTo<T>>)
         {
-            g@.instance == inst@
-            && g@.key == i
-            && g@.value == v as int
-            && g@.value <= MAX_RC
+            &&& g@.instance == inst@
+            &&& g@.key == i
+            &&& g@.value == v as int
+            &&& g@.value <= MAX_RC
         }
     }
 }
-
-// #[verifier(external_body)] /* vattr */
-// pub fn panic_with_value_too_big() {
-//     panic!("WARNING: Tail value exceeds the maximum value of u64.");
-// }
 
 
 impl<T> RwLock<T> {
@@ -123,7 +116,6 @@ impl<T> RwLock<T> {
     pub closed spec fn max_threads(&self) -> nat {
         self.ref_counts@.len()
     }
-
 
     pub closed spec fn wf_read_handle(&self, read_handle: &RwLockReadGuard<T>) -> bool {
         &&& self.thread_id_valid(read_handle.tid as nat)
@@ -143,9 +135,10 @@ impl<T> RwLock<T> {
     #[verifier(spinoff_prover)]
     pub fn new(rc_width: usize, t: T, inv: Ghost<FnSpec(T) -> bool>) -> (s: Self)
         requires
-            0 < rc_width,
-            inv@(t)
-        ensures s.wf(), forall |v: T| s.inv(v) == inv@(v), s.max_threads() == rc_width
+            0 < rc_width && inv@(t)
+        ensures
+            s.wf() && s.max_threads() == rc_width,
+            forall |v: T| s.inv(v) == inv@(v),
     {
         let tracked inst;
         let tracked exc_locked_token;
@@ -181,8 +174,7 @@ impl<T> RwLock<T> {
             = Vec::new();
         let mut i: usize = 0;
 
-        assert forall |j: int|
-            i <= j && j < rc_width implies
+        assert forall |j: int| i <= j && j < rc_width implies
             #[trigger] ref_counts_tokens.dom().contains(j)
                   && equal(ref_counts_tokens.index(j)@.instance, inst)
                   && equal(ref_counts_tokens.index(j)@.key, j)
@@ -209,8 +201,7 @@ impl<T> RwLock<T> {
                 i <= rc_width,
                 v@.len() == i as int,
                 forall|j: int| #![trigger v@.index(j)] 0 <= j && j < i ==>
-                    v@.index(j).0.well_formed()
-                      && equal(v@.index(j).0.constant(), (tracked_inst, j)),
+                    v@.index(j).0.well_formed() && equal(v@.index(j).0.constant(), (tracked_inst, j)),
                 tracked_inst@ == inst,
                 forall |j: int|
                     #![trigger( ref_counts_tokens.dom().contains(j) )]
@@ -231,8 +222,7 @@ impl<T> RwLock<T> {
 
             i = i + 1;
 
-            assert forall |j: int|
-                i <= j && j < rc_width implies
+            assert forall |j: int| i <= j && j < rc_width implies
                 #[trigger] ref_counts_tokens.dom().contains(j)
                       && equal(ref_counts_tokens.index(j)@.instance, inst)
                       && equal(ref_counts_tokens.index(j)@.key, j)
@@ -263,8 +253,7 @@ impl<T> RwLock<T> {
         requires
             self.wf()
         ensures
-            self.wf(),
-            self.wf_write_handle(&res.1@) && self.inv(res.0)
+            self.wf() && self.wf_write_handle(&res.1@) && self.inv(res.0)
     {
         // -----------------------------------------------------------------------------------------
         // First: acquire the write lock
@@ -317,9 +306,9 @@ impl<T> RwLock<T> {
                     &self.ref_counts[idx].0 => load();
                     returning res;
                     ghost g => {
-                    if res == 0 {
-                        token = self.inst.borrow().exc_check_count(&g, token);
-                    }
+                        if res == 0 {
+                            token = self.inst.borrow().exc_check_count(&g, token);
+                        }
                 });
                 taken = result != 0;
             }
@@ -339,15 +328,13 @@ impl<T> RwLock<T> {
 
     pub fn acquire_read<'a>(&'a self, tid: usize) -> (res: RwLockReadGuard<T>)
         requires
-            self.wf(), self.thread_id_valid(tid as nat)
+            self.wf() && self.thread_id_valid(tid as nat)
         ensures
-            self.wf(), self.wf_read_handle(&res), self.inv(res@)
-
+            self.wf() && self.wf_read_handle(&res) && self.inv(res@)
     {
         loop
             invariant
-                self.wf(),
-                tid < self.ref_counts.len()
+                self.wf() &&  tid < self.ref_counts.len()
         {
             // TODO: figure out how to do the optimized read here!
             let rc = atomic_with_ghost!(
@@ -408,14 +395,14 @@ impl<T> RwLock<T> {
                 &self.exc_locked.0 => load();
                 returning res;
                 ghost g => {
-                if !res {
-                    let tracked (_perms, _shared_guard) = self.inst.borrow().shared_finish(tid as int, &g, shared_pending.tracked_unwrap());
-                    perms = _perms@.unwrap();
-                    shared_guard = Some(_shared_guard.get());
-                    shared_pending = None;
-                } else {
-                    shared_guard = None;
-                }
+                    if !res {
+                        let tracked (_perms, _shared_guard) = self.inst.borrow().shared_finish(tid as int, &g, shared_pending.tracked_unwrap());
+                        perms = _perms@.unwrap();
+                        shared_guard = Some(_shared_guard.get());
+                        shared_pending = None;
+                    } else {
+                        shared_guard = None;
+                    }
             });
 
             let perms = Ghost(perms);
@@ -424,11 +411,9 @@ impl<T> RwLock<T> {
                 // writer lock still held, try again
                 let res = atomic_with_ghost!(
                     &self.ref_counts[tid].0 => fetch_sub(1);
-                    ghost g =>
-                {
+                    ghost g => {
                     let tracked shared_pending = shared_pending.tracked_unwrap();
                     self.inst.borrow().rc_not_zero_guard(tid as int, &g, &shared_pending);
-
                     g = self.inst.borrow().shared_abandon(tid as int, g, shared_pending);
                 });
             } else {
@@ -439,8 +424,10 @@ impl<T> RwLock<T> {
     }
 
     pub fn borrow<'a>(&'a self, read_handle: Tracked<&'a RwLockReadGuard<T>>) -> (res: &'a T)
-        requires self.wf() && self.wf_read_handle(&read_handle@)
-        ensures res == read_handle@@
+        requires
+            self.wf() && self.wf_read_handle(&read_handle@)
+        ensures
+            res == read_handle@@
     {
         let ghost val = (read_handle@.tid as int, read_handle@.perms@);
         let tracked handle = read_handle.borrow().handle.borrow();
@@ -451,9 +438,7 @@ impl<T> RwLock<T> {
 
     pub fn release_write(&self, val: T, write_handle: Tracked<RwLockWriteGuard<T>>)
         requires
-            self.wf(),
-            self.wf_write_handle(&write_handle@),
-            self.inv(val)
+            self.wf() && self.inv(val) && self.wf_write_handle(&write_handle@)
         ensures
             self.wf()
     {
@@ -462,11 +447,9 @@ impl<T> RwLock<T> {
 
         self.data.put(Tracked(&mut cell_perms), val);
 
-
         let res = atomic_with_ghost!(
             &self.exc_locked.0 => store(false);
-            ghost g =>
-        {
+            ghost g => {
             let tracked exc_guard = handle.get();
             self.inst.borrow().exc_release(cell_perms, cell_perms, &mut g, exc_guard);
         });
@@ -475,18 +458,16 @@ impl<T> RwLock<T> {
 
     pub fn release_read(&self, read_handle: RwLockReadGuard<T>)
         requires
-            self.wf(),
-            self.wf_read_handle(&read_handle)
+            self.wf() && self.wf_read_handle(&read_handle)
         ensures
             self.wf()
     {
         let RwLockReadGuard {tid, perms, handle } = read_handle;
         let res = atomic_with_ghost!(
             &self.ref_counts[tid].0 => fetch_sub(1);
-            ghost g =>
-        {
-            let val = (tid as int, perms@);
-            g = self.inst.borrow().shared_release(val, g, handle.get());
+            ghost g => {
+                let val = (tid as int, perms@);
+                g = self.inst.borrow().shared_release(val, g, handle.get());
         });
 
     }

@@ -216,9 +216,7 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
     #[invariant]
     pub spec fn pointer_differences(&self) -> bool {
         forall |i| self.local_versions.contains_key(i) ==>
-            self.local_versions[i]
-            <= self.tail
-            <= self.local_versions[i] + self.buffer_size
+            self.local_versions[i] <= self.tail <= self.local_versions[i] + self.buffer_size
     }
 
     #[invariant]
@@ -547,20 +545,12 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
                 |i: int| pre.contents[i],
             );
 
-            withdraw contents -= (withdrawn)
-            by {
-                assert forall |i: int|
-                    pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
-                    implies
-                    pre.contents.contains_key(i)
-                by {
+            withdraw contents -= (withdrawn) by {
+                assert forall |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size implies pre.contents.contains_key(i) by {
                     let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
                     map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
-                    assert(map_contains_value(pre.local_versions, min_local_head));
-                    assert(observed_head <= min_local_head);
                 }
             };
-
 
             assert forall
               |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
@@ -569,17 +559,10 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
                 assert forall
                   |i: int| pre.tail - pre.buffer_size <= i < new_tail - pre.buffer_size
                     implies stored_type_inv(#[trigger] withdrawn[i], i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance) by {
-
                         assert(pre.contents.contains_key(i) && #[trigger] withdrawn.contains_key(i)) by {
                             let min_local_head = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
                             map_min_value_smallest(pre.local_versions,  (pre.num_replicas - 1) as nat);
-                            assert(map_contains_value(pre.local_versions, min_local_head));
-                            assert(observed_head <= min_local_head);
                         };
-
-                        assert(pre.contents[i] == withdrawn[i]);
-
-                        assert(stored_type_inv(withdrawn[i], i, pre.cell_ids[log_entry_idx(i, pre.buffer_size) as int], pre.unbounded_log_instance));
                     };
                 };
         }
@@ -680,24 +663,11 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
 
         let myidx = pre.combiner[node_id].get_Appending_cur_idx();
         let mytail = pre.combiner[node_id].get_Appending_tail();
-        assert(post.contents.contains_key(myidx as int));
-        assert(log_entry_is_alive(post.alive_bits, myidx as int, post.buffer_size));
-
-        assert(post.tail - post.buffer_size <= myidx < post.tail);
-        assert(map_min_value(pre.local_versions,(pre.num_replicas - 1) as nat) <= myidx);
 
         let min_local_head = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
         map_min_value_smallest(post.local_versions, (post.num_replicas - 1) as nat);
 
-        assert(min_local_head <= myidx < min_local_head + post.buffer_size);
-        assert(post.tail <= min_local_head + post.buffer_size);
-
-
-        assert(forall |i| min_local_head <= i < min_local_head + post.buffer_size && i != myidx ==>
-            log_entry_idx(i, post.buffer_size) != log_entry_idx(myidx as int, post.buffer_size)) by {
-                log_entry_idx_wrap_around(min_local_head, post.buffer_size, myidx);
-            }
-
+        log_entry_idx_wrap_around(min_local_head, post.buffer_size, myidx);
 
         assert(forall |i| min_local_head <= i < min_local_head + post.buffer_size && i != myidx ==>
             log_entry_is_alive(pre.alive_bits, i, pre.buffer_size) == log_entry_is_alive(post.alive_bits, i, post.buffer_size));
@@ -725,9 +695,7 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
     fn reader_start_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
     #[inductive(reader_enter)]
-    fn reader_enter_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_versions.contains_key(node_id));
-    }
+    fn reader_enter_inductive(pre: Self, post: Self, node_id: NodeId) { }
 
     #[inductive(reader_guard)]
     fn reader_guard_inductive(pre: Self, post: Self, node_id: NodeId) {
@@ -746,7 +714,6 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
 
     #[inductive(reader_finish)]
     fn reader_finish_inductive(pre: Self, post: Self, node_id: NodeId) {
-        assert(post.local_versions.contains_key(node_id));
 
         let min_local_versions_pre = map_min_value(pre.local_versions, (pre.num_replicas - 1) as nat);
         let min_local_versions_post = map_min_value(post.local_versions, (post.num_replicas - 1) as nat);
@@ -759,11 +726,6 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
 
             map_min_value_smallest(pre.local_versions, (pre.num_replicas - 1) as nat);
             map_min_value_smallest(post.local_versions, (post.num_replicas - 1) as nat);
-
-            assert(min_local_versions_pre < min_local_versions_post);
-
-            assert(forall |i| #[trigger] pre.local_versions.contains_key(i) && i != node_id
-                ==> pre.local_versions[i] == post.local_versions[i]);
 
             assert(pre.local_versions[node_id] != post.local_versions[node_id]);
 
@@ -827,9 +789,7 @@ pub proof fn log_entry_idx_wrap_around(start: nat, buffer_size: nat, idx: nat)
   ensures
     forall |i| start <= i < start + buffer_size && i != idx ==>
             log_entry_idx(i, buffer_size) != log_entry_idx(idx as int, buffer_size)
-{
-
-}
+{ }
 
 
 

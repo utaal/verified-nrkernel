@@ -193,30 +193,18 @@ impl<DT: Dispatch> Context<DT> {
             res.1@@.value.is_None()
         {
         let ghost mut thread_id_g;
-        proof {
-            thread_id_g = thread_id as nat;
-        }
+        proof { thread_id_g = thread_id as nat; }
 
         // create the storage for storing the update operation
         let (batch, batch_perms) = PCell::empty();
         let batch = CachePadded(batch);
 
         // create the atomic with the ghost context
-        let tracked context_ghost = ContextGhost {
-            batch_perms: None,
-            slots: slot.get(),
-            update: Option::None,
-        };
-        let atomic = AtomicU64::new(Ghost((flat_combiner_instance, unbounded_log_instance, batch, Ghost(thread_id_g))), 0, Tracked(context_ghost));
+        let tracked context_ghost = ContextGhost { batch_perms: None, slots: slot.get(), update: Option::None };
+        let atomic = CachePadded(AtomicU64::new(Ghost((flat_combiner_instance, unbounded_log_instance, batch, Ghost(thread_id_g))), 0, Tracked(context_ghost)));
 
         // Assemble the context, return with the permissions
-        (Context {
-            batch: batch,
-            atomic: CachePadded(atomic),
-            thread_id_g: Ghost(thread_id_g),
-            flat_combiner_instance,
-            unbounded_log_instance
-        }, batch_perms)
+        (Context { batch, atomic, thread_id_g: Ghost(thread_id_g), flat_combiner_instance, unbounded_log_instance }, batch_perms)
     }
 
     /// Enqueues an operation onto this context's batch of pending operations.
@@ -316,44 +304,44 @@ impl<DT: Dispatch> Context<DT> {
     }
 
 
-    /// Enqueues a response onto this context. This is invoked by the combiner
-    /// after it has executed operations (obtained through a call to ops()) against the
-    /// replica this thread is registered against.
-    pub fn enqueue_response(&self, resp: DT::Response) -> bool
-        requires
-            self.wf(self.thread_id_g@)
-            // self.atomic != 0
-    {
-        // let tracked token : Option<Tracked<PointsTo<PendingOperation>>>;
-        // let res = atomic_with_ghost!(
-        //     &self.atomic.0 => load();
-        //     returning res;
-        //     ghost g => {
-        //         if res == 1 {
-        //             // store the operatin in the cell
-        //             token =  Some(g.batch_perms);
-        //         } else {
-        //             token = None;
-        //         }
-        //     }
-        // );
+    // /// Enqueues a response onto this context. This is invoked by the combiner
+    // /// after it has executed operations (obtained through a call to ops()) against the
+    // /// replica this thread is registered against.
+    // pub fn enqueue_response(&self, resp: DT::Response) -> bool
+    //     requires
+    //         self.wf(self.thread_id_g@)
+    //         // self.atomic != 0
+    // {
+    //     // let tracked token : Option<Tracked<PointsTo<PendingOperation>>>;
+    //     // let res = atomic_with_ghost!(
+    //     //     &self.atomic.0 => load();
+    //     //     returning res;
+    //     //     ghost g => {
+    //     //         if res == 1 {
+    //     //             // store the operatin in the cell
+    //     //             token =  Some(g.batch_perms);
+    //     //         } else {
+    //     //             token = None;
+    //     //         }
+    //     //     }
+    //     // );
 
-        // if res != 0 {
-        //     let tracked token = token.get_Some_0();
-        //     // take the operation from the cell
-        //     // HERE
-        //     // let mut prev = self.batch.0.take(&mut token);
-        //     // prev.set_result(resp);
-        //     // store the operation in the cell again
-        //     // self.batch.0.put(&mut token, prev);
+    //     // if res != 0 {
+    //     //     let tracked token = token.get_Some_0();
+    //     //     // take the operation from the cell
+    //     //     // HERE
+    //     //     // let mut prev = self.batch.0.take(&mut token);
+    //     //     // prev.set_result(resp);
+    //     //     // store the operation in the cell again
+    //     //     // self.batch.0.put(&mut token, prev);
 
-        //     true
-        // } else {
-        //     false
-        // }
+    //     //     true
+    //     // } else {
+    //     //     false
+    //     // }
 
-        false
-    }
+    //     false
+    // }
 
 
     /// Returns the maximum number of operations that will go pending on this context.
@@ -363,12 +351,12 @@ impl<DT: Dispatch> Context<DT> {
         1
     }
 
-    /// Given a logical address, returns an index into the batch at which it falls.
-    #[inline(always)]
-    pub(crate) fn index(&self, logical: usize) -> usize {
-        // logical & (MAX_PENDING_OPS - 1)
-        0
-    }
+    // /// Given a logical address, returns an index into the batch at which it falls.
+    // #[inline(always)]
+    // pub(crate) fn index(&self, logical: usize) -> usize {
+    //     // logical & (MAX_PENDING_OPS - 1)
+    //     0
+    // }
 }
 
 
@@ -461,7 +449,6 @@ impl<DT: Dispatch> FCClientRequestResponseGhost<DT> {
         &&& self.local_updates.get_Some_0()@.instance == inst
         &&& self.local_updates.get_Some_0()@.value.is_Init()
         &&& self.local_updates.get_Some_0()@.value.get_Init_op() == op
-
 
         &&& self.batch_perms.is_Some()
         &&& self.batch_perms.get_Some_0()@.pcell == self.cell_id
