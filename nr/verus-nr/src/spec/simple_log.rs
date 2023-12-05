@@ -6,6 +6,7 @@
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
+use crate::{AsyncLabel, InputOperation, OutputOperation};
 
 use vstd::prelude::*;
 
@@ -68,6 +69,8 @@ state_machine! {
             /// responses to update requests that haven't been returned
             pub update_resps: Map<ReqId, UpdateResp>,
         }
+
+        pub type Label<DT> = AsyncLabel<DT>;
 
         ////////////////////////////////////////////////////////////////////////////////////////////
         // Invariant
@@ -147,7 +150,8 @@ state_machine! {
 
         /// Read Request: Enter the read request operation into the system
         transition!{
-            readonly_start(rid: ReqId, op: DT::ReadOperation) {
+            readonly_start(label: Label<DT>, rid: ReqId, op: DT::ReadOperation) {
+                require label == AsyncLabel::<DT>::Start(rid, InputOperation::Read(op));
                 require(!pre.readonly_reqs.contains_key(rid));
                 require(!pre.update_reqs.contains_key(rid));
                 require(!pre.update_resps.contains_key(rid));
@@ -158,7 +162,8 @@ state_machine! {
 
         /// Read Request: Read the current version of the log
         transition!{
-            readonly_read_version(rid: ReqId) {
+            readonly_read_version(label: Label<DT>, rid: ReqId) {
+                require label.is_Internal();
                 require(pre.readonly_reqs.contains_key(rid));
                 require let ReadReq::<DT::ReadOperation>::Init { op } = pre.readonly_reqs.index(rid);
 
@@ -170,7 +175,9 @@ state_machine! {
         ///
         /// This computes the state at version the request started
         transition!{
-            readonly_finish(rid: ReqId, version: LogIdx, ret: DT::Response) {
+            readonly_finish(label: Label<DT>, rid: ReqId, version: LogIdx, ret: DT::Response) {
+                require label == AsyncLabel::<DT>::End(rid, OutputOperation::Read(ret));
+
                 require(pre.readonly_reqs.contains_key(rid));
 
                 require let ReadReq::<DT::ReadOperation>::Req { op, version: current } = pre.readonly_reqs.index(rid);
@@ -200,7 +207,9 @@ state_machine! {
 
         /// Update Request: place an update request in the system
         transition!{
-            update_start(rid: ReqId, op: DT::WriteOperation) {
+            update_start(label: Label<DT>, rid: ReqId, op: DT::WriteOperation) {
+                require label == AsyncLabel::<DT>::Start(rid, InputOperation::Write(op));
+
                 require(!pre.readonly_reqs.contains_key(rid));
                 require(!pre.update_reqs.contains_key(rid));
                 require(!pre.update_resps.contains_key(rid));
@@ -239,7 +248,9 @@ state_machine! {
         /// Collect the updates given by the sequence of requests ids and place them in the log
         /// in-order. This moves the requests from update_reqs to update_resps.
         transition!{
-            update_add_op_to_log(rid: ReqId) {
+            update_add_op_to_log(label: Label<DT>, rid: ReqId) {
+                require label.is_Internal();
+
                 // all request ids must be in the update requests
                 require(pre.update_reqs.contains_key(rid));
 
@@ -259,7 +270,9 @@ state_machine! {
         /// The version value is monotonically increasing and must not be larger than the
         /// length of the log.
         transition!{
-            update_incr_version(new_version: LogIdx) {
+            update_incr_version(label: Label<DT>, new_version: LogIdx) {
+                require label.is_Internal();
+
                 require(pre.version <= new_version <= pre.log.len());
                 update version = new_version;
             }
@@ -267,7 +280,9 @@ state_machine! {
 
         /// Update: Finish the update operation by removing it from the update responses
         transition!{
-            update_finish(rid: nat, ret: DT::Response) {
+            update_finish(label: Label<DT>, rid: nat, ret: DT::Response) {
+                require label == AsyncLabel::<DT>::End(rid, OutputOperation::Write(ret));
+
                 require(pre.update_resps.contains_key(rid));
                 let uidx = pre.update_resps.index(rid).0;
 
@@ -286,7 +301,9 @@ state_machine! {
 
 
         transition!{
-            no_op() { }
+            no_op(label: Label<DT>, ) {
+                require label.is_Internal();
+            }
         }
 
 
@@ -299,31 +316,31 @@ state_machine! {
         fn initialize_inductive(post: Self) { }
 
         #[inductive(readonly_start)]
-        fn readonly_start_inductive(pre: Self, post: Self, rid: ReqId, op: DT::ReadOperation) { }
+        fn readonly_start_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId, op: DT::ReadOperation) { }
 
         #[inductive(readonly_read_version)]
-        fn readonly_read_version_inductive(pre: Self, post: Self, rid: ReqId) { }
+        fn readonly_read_version_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId) { }
 
         #[inductive(readonly_finish)]
-        fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, version: LogIdx, ret: DT::Response) { }
+        fn readonly_finish_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId, version: LogIdx, ret: DT::Response) { }
 
         #[inductive(update_start)]
-        fn update_start_inductive(pre: Self, post: Self, rid: ReqId, op: DT::WriteOperation) { }
+        fn update_start_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId, op: DT::WriteOperation) { }
 
         // #[inductive(update_add_ops_to_log)]
         // fn update_add_ops_to_log_inductive(pre: Self, post: Self, rids: Seq<ReqId>) { }
 
         #[inductive(update_add_op_to_log)]
-        fn update_add_op_to_log_inductive(pre: Self, post: Self, rid: ReqId) { }
+        fn update_add_op_to_log_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId) { }
 
         #[inductive(update_incr_version)]
-        fn update_incr_version_inductive(pre: Self, post: Self, new_version: LogIdx) { }
+        fn update_incr_version_inductive(pre: Self, post: Self, label: Label<DT>, new_version: LogIdx) { }
 
         #[inductive(update_finish)]
-        fn update_finish_inductive(pre: Self, post: Self, rid: nat,  ret: DT::Response) { }
+        fn update_finish_inductive(pre: Self, post: Self, label: Label<DT>, rid: nat,  ret: DT::Response) { }
 
         #[inductive(no_op)]
-        fn no_op_inductive(pre: Self, post: Self) { }
+        fn no_op_inductive(pre: Self, post: Self, label: Label<DT>) { }
     }
 }
 

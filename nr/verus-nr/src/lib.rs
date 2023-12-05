@@ -314,7 +314,7 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
             post.invariant(),
             UnboundedLog::State::next_strong(pre, post),
         ensures
-            SimpleLog::State::next(Self::interp(pre), Self::interp(post));
+            SimpleLog::State::next(Self::interp(pre), Self::interp(post), AsyncLabel::Internal);
 
     proof fn refinement_add_ticket(
         pre: UnboundedLog::State<DT>,
@@ -326,7 +326,7 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
             add_ticket(pre, post, input, Self::get_fresh_rid(pre)),
         ensures
             post.invariant(),
-            SimpleLog::State::next(Self::interp(pre), Self::interp(post));
+            SimpleLog::State::next(Self::interp(pre), Self::interp(post), AsyncLabel::Start(Self::get_fresh_rid(pre), input));
 
     proof fn refinement_consume_stub(
         pre: UnboundedLog::State<DT>,
@@ -339,7 +339,7 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
             consume_stub(pre, post, output, rid),
         ensures
             post.invariant(),
-            SimpleLog::State::next(Self::interp(pre), Self::interp(post));
+            SimpleLog::State::next(Self::interp(pre), Self::interp(post), AsyncLabel::End(rid, output));
 }
 
 spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRefinesSimpleLog<DT>>() -> bool { true }
@@ -376,7 +376,7 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
         pub resps: Map<ReqId, OutputOperation<DT>>,
     }
 
-    //pub type Label<DT> = AsyncLabel<DT>;
+    pub type Label<DT> = AsyncLabel<DT>;
 
     init!{
         initialize() {
@@ -387,7 +387,8 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
     }
 
     transition!{
-        internal_next(rid: ReqId, input: InputOperation<DT>, output: OutputOperation<DT>) {
+        internal_next(label: Label<DT>, rid: ReqId, input: InputOperation<DT>, output: OutputOperation<DT>) {
+            require label.is_Internal();
             require pre.reqs.dom().contains(rid);
             require pre.reqs[rid] == input;
             update reqs = pre.reqs.remove(rid);
@@ -407,20 +408,23 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
     }
 
     transition!{
-        no_op() {
+        no_op(label: Label<DT>) {
+            require label.is_Internal();
             /* stutter step */
         }
     }
 
     transition!{
-        start(rid: ReqId, input: InputOperation<DT>) {
+        start(label: Label<DT>, rid: ReqId, input: InputOperation<DT>) {
+            require label == AsyncLabel::<DT>::Start(rid, input);
             require !pre.reqs.dom().contains(rid);
             update reqs = pre.reqs.insert(rid, input);
         }
     }
 
     transition!{
-        end(rid: ReqId, output: OutputOperation<DT>) {
+        end(label: Label<DT>, rid: ReqId, output: OutputOperation<DT>) {
+            require label == AsyncLabel::<DT>::End(rid, output);
             require pre.resps.dom().contains(rid);
             require pre.resps[rid] == output;
             update resps = pre.resps.remove(rid);
@@ -432,24 +436,6 @@ state_machine!{ AsynchronousSingleton<DT: Dispatch> {
 pub enum SimpleLogBehavior<DT: Dispatch> {
     Stepped(SimpleLog::State<DT>, AsyncLabel<DT>, Box<SimpleLogBehavior<DT>>),
     Inited(SimpleLog::State<DT>),
-}
-
-pub open spec fn async_op_matches<DT: Dispatch>(pre: SimpleLog::State<DT>, post:SimpleLog::State<DT>, op: AsyncLabel<DT>) -> bool
-    recommends exists |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(pre, post, step)
-{
-    let step = choose |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(pre, post, step);
-    match step {
-         SimpleLog::Step::readonly_start(rid, rd_op)=> op == AsyncLabel::Start(rid, InputOperation::<DT>::Read(rd_op)),
-         SimpleLog::Step::readonly_read_version(_rid) => op.is_Internal(),
-         SimpleLog::Step::readonly_finish(rid, _logidx, resp) => op == AsyncLabel::End(rid, OutputOperation::<DT>::Read(resp)),
-         SimpleLog::Step::update_start(rid, wr_op)=> op == AsyncLabel::Start(rid, InputOperation::<DT>::Write(wr_op)),
-        //  SimpleLog::Step::update_add_ops_to_log(_rids) => op.is_Internal(),
-         SimpleLog::Step::update_add_op_to_log(_rid) => op.is_Internal(),
-         SimpleLog::Step::update_incr_version(_logidx) => op.is_Internal(),
-         SimpleLog::Step::update_finish(rid, resp) => op == AsyncLabel::End(rid, OutputOperation::<DT>::Read(resp)),
-         SimpleLog::Step::no_op() => op.is_Internal(),
-         SimpleLog::Step::dummy_to_use_type_params(_st) => op.is_Internal(),
-    }
 }
 
 impl<DT: Dispatch> SimpleLogBehavior<DT> {
@@ -465,8 +451,7 @@ impl<DT: Dispatch> SimpleLogBehavior<DT> {
     {
         match self {
             SimpleLogBehavior::Stepped(post, op, tail) => {
-                tail.wf() && SimpleLog::State::next(/* op, */ tail.get_last(), post)
-                && async_op_matches(tail.get_last(), post, op)
+                tail.wf() && SimpleLog::State::next(tail.get_last(), post, op)
             }
             SimpleLogBehavior::Inited(post) => {
                 SimpleLog::State::init(post)
@@ -494,7 +479,7 @@ impl<DT: Dispatch> AsynchronousSingletonBehavior<DT> {
     {
         match self {
             AsynchronousSingletonBehavior::Stepped(post, op, tail) => {
-                tail.wf() && AsynchronousSingleton::State::next(/* op, */ tail.get_last(), post)
+                tail.wf() && AsynchronousSingleton::State::next(tail.get_last(), post, op)
             }
             AsynchronousSingletonBehavior::Inited(post) => {
                 AsynchronousSingleton::State::init(post)

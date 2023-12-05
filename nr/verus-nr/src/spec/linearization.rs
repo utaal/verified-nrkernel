@@ -58,31 +58,31 @@ proof fn exists_equiv_behavior_rec<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_poi
             reveal(AsynchronousSingleton::State::next_by);
 
             let prev = tail.get_last();
-            let step = choose |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(prev, post, step);
+            let step = choose |step: SimpleLog::Step<DT>| SimpleLog::State::next_by(prev, post, aop, step);
             match step {
                 SimpleLog::Step::readonly_start(rid, rop) => {
                     let b0 = exists_equiv_behavior_rec(*tail, r_points.remove(rid));
-                    let a0 = readonly_start_refines(prev, post, b0.get_last(), r_points, rid, rop);
+                    let a0 = readonly_start_refines(prev, post, aop, b0.get_last(), r_points, rid, rop);
                     AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
                 }
                 SimpleLog::Step::readonly_read_version(rid) => {
                     let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = readonly_read_version_refines(prev, post, b0.get_last(), r_points, rid);
+                    let a0 = readonly_read_version_refines(prev, post, aop, b0.get_last(), r_points, rid);
                     AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
                 }
                 SimpleLog::Step::readonly_finish(rid, logidx, rop) => {
                     let b0 = exists_equiv_behavior_rec(*tail, r_points.insert(rid, logidx));
-                    let a0 = readonly_finish_refines(prev, post, b0.get_last(), r_points, rid, logidx, rop);
+                    let a0 = readonly_finish_refines(prev, post, aop, b0.get_last(), r_points, rid, logidx, rop);
                     AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
                 }
                 SimpleLog::Step::update_start(rid, uop) => {
                     let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = update_start_refines(prev, post, b0.get_last(), r_points, rid, uop);
+                    let a0 = update_start_refines(prev, post, aop, b0.get_last(), r_points, rid, uop);
                     AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
                 }
                 SimpleLog::Step::update_add_op_to_log(rid) => {
                     let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = update_add_update_to_log_refines(prev, post, b0.get_last(), r_points, rid);
+                    let a0 = update_add_update_to_log_refines(prev, post, aop, b0.get_last(), r_points, rid);
                     AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
                 }
                 SimpleLog::Step::update_incr_version(logidx) => {
@@ -90,7 +90,7 @@ proof fn exists_equiv_behavior_rec<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_poi
                 }
                 SimpleLog::Step::update_finish(rid, resp) => {
                     let b0 = exists_equiv_behavior_rec(*tail, r_points);
-                    let a0 = update_finish_refines(prev, post, b0.get_last(), r_points, rid, resp);
+                    let a0 = update_finish_refines(prev, post, aop, b0.get_last(), r_points, rid, resp);
                     AsynchronousSingletonBehavior::Stepped(a0, aop, Box::new(b0))
                 }
                 SimpleLog::Step::no_op() => {
@@ -276,13 +276,13 @@ spec fn state_refinement_relation<DT: Dispatch>(s:SState<DT>, t: AState<DT>, r_p
 /// Refinement Proof of the ReadOnly_Start transition of the SimpleLog
 ///
 /// This corresponds to the "Start" transition that introduces a new request into the system
-proof fn readonly_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, rop: DT::ReadOperation) -> (t2: AState<DT>)
+proof fn readonly_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop: AsyncLabel<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, rop: DT::ReadOperation) -> (t2: AState<DT>)
     requires
-        SimpleLog::State::readonly_start(s, s2, rid, rop),
+        SimpleLog::State::readonly_start(s, s2, aop, rid, rop),
         state_refinement_relation(s, t, r_points.remove(rid)), future_points_ok(s2, r_points)
     ensures
         state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) // one.Next(Is, Is', AI.Start(rid, nrifc.ROp(rop)))
+        AsynchronousSingleton::State::next(t, t2, aop) // one.Next(Is, Is', AI.Start(rid, nrifc.ROp(rop)))
 {
     // Is' := Is.(reqs := Is.reqs[rid := nrifc.ROp(rop)]);
     let res = AsynchronousSingleton::State {
@@ -293,7 +293,7 @@ proof fn readonly_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: 
 
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::start(rid, InputOperation::Read(rop))));
+    assert(AsynchronousSingleton::State::next_by(t, res, aop, AsynchronousSingleton::Step::start(rid, InputOperation::Read(rop))));
 
     res
 }
@@ -301,13 +301,13 @@ proof fn readonly_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: 
 /// Refinement Proof of the Readonly_ReadVersion transition of the SimpleLog
 ///
 /// This corresponds to an "InternalOp" transition
-proof fn readonly_read_version_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId) -> ( t2: AState<DT>)
+proof fn readonly_read_version_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop: AsyncLabel<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId) -> ( t2: AState<DT>)
     requires
-        SimpleLog::State::readonly_read_version(s, s2, rid),
+        SimpleLog::State::readonly_read_version(s, s2, aop, rid),
         state_refinement_relation(s, t, r_points), future_points_ok(s2, r_points)
     ensures
         state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) // one.Next(Is, Is', AI.InternalOp)
+        AsynchronousSingleton::State::next(t, t2, aop) // one.Next(Is, Is', AI.InternalOp)
 {
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
@@ -327,11 +327,11 @@ proof fn readonly_read_version_refines<DT: Dispatch>(s: SState<DT>, s2: SState<D
             resps: t.resps.insert(rid, OutputOperation::Read(retval)),
         };
 
-        assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::internal_next(rid, InputOperation::Read(op), OutputOperation::Read(retval))));
+        assert(AsynchronousSingleton::State::next_by(t, res, aop, AsynchronousSingleton::Step::internal_next(rid, InputOperation::Read(op), OutputOperation::Read(retval))));
         res
     } else {
         // if the request id is not part of the supplied r_points then this corresponds to a no-op
-        assert(AsynchronousSingleton::State::next_by(t, t, AsynchronousSingleton::Step::no_op()));
+        assert(AsynchronousSingleton::State::next_by(t, t, aop, AsynchronousSingleton::Step::no_op()));
         t
     }
 }
@@ -339,13 +339,13 @@ proof fn readonly_read_version_refines<DT: Dispatch>(s: SState<DT>, s2: SState<D
 /// Refinement Proof of the Readonly_Finish transition of the SimpleLog
 ///
 /// This corresponds to a "End" transition where a response leaves the system
-proof fn readonly_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, version: LogIdx, ret: DT::Response) -> ( t2: AState<DT>)
+proof fn readonly_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop: AsyncLabel<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, version: LogIdx, ret: DT::Response) -> ( t2: AState<DT>)
     requires
-        SimpleLog::State::readonly_finish(s, s2, rid, version, ret),
+        SimpleLog::State::readonly_finish(s, s2, aop, rid, version, ret),
         state_refinement_relation(s, t, r_points.insert(rid, version)),
     ensures
         state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) // one.Next(Is, Is', AI.End(rid, return_value))
+        AsynchronousSingleton::State::next(t, t2, aop) // one.Next(Is, Is', AI.End(rid, return_value))
 {
     // Is' := Is.(resps := Is.resps - {rid});
     let res = AsynchronousSingleton::State {
@@ -362,7 +362,7 @@ proof fn readonly_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t:
 
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::end(rid,  OutputOperation::Read(ret))));
+    assert(AsynchronousSingleton::State::next_by(t, res, aop, AsynchronousSingleton::Step::end(rid,  OutputOperation::Read(ret))));
     res
 }
 
@@ -375,13 +375,13 @@ proof fn readonly_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t:
 /// Refinement Proof of the Update_Start transition of the SimpleLog
 ///
 /// This corresponds to the "Start" transition that introduces a new request into the system
-proof fn update_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, uop: DT::WriteOperation) -> ( t2: AState<DT>)
+proof fn update_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop: AsyncLabel<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, uop: DT::WriteOperation) -> ( t2: AState<DT>)
     requires
-        SimpleLog::State::update_start(s, s2, rid, uop),
+        SimpleLog::State::update_start(s, s2, aop, rid, uop),
         state_refinement_relation(s, t, r_points),
     ensures
         state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) //  one.Next(Is, Is', AI.Start(rid, nrifc.UOp(uop)))
+        AsynchronousSingleton::State::next(t, t2, aop) //  one.Next(Is, Is', AI.Start(rid, nrifc.UOp(uop)))
 {
     //  Is' := Is.(reqs := Is.reqs[rid := nrifc.UOp(uop)]);
     let res = AsynchronousSingleton::State {
@@ -392,7 +392,7 @@ proof fn update_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AS
 
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::start(rid,  InputOperation::Write(uop))));
+    assert(AsynchronousSingleton::State::next_by(t, res, aop, AsynchronousSingleton::Step::start(rid,  InputOperation::Write(uop))));
     res
 }
 
@@ -400,13 +400,13 @@ proof fn update_start_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AS
 /// Refinement Proof of the Update_AddUpdateToLog transition of the SimpleLog
 ///
 /// This corresponds to an "InternalOp transition"
-proof fn update_add_update_to_log_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId) -> ( t2: AState<DT>)
+proof fn update_add_update_to_log_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop: AsyncLabel<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId) -> ( t2: AState<DT>)
     requires
-        SimpleLog::State::update_add_op_to_log(s, s2, rid),
+        SimpleLog::State::update_add_op_to_log(s, s2, aop, rid),
         state_refinement_relation(s, t, r_points),
     ensures
         state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) //  one.Next(Is, Is', AI.InternalOp)
+        AsynchronousSingleton::State::next(t, t2, aop) //  one.Next(Is, Is', AI.InternalOp)
 {
     state_at_version_preserves::<DT>(s.log, s2.log, s.update_reqs[rid], s.version);
 
@@ -440,7 +440,7 @@ proof fn update_add_update_to_log_refines<DT: Dispatch>(s: SState<DT>, s2: SStat
 
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, t, AsynchronousSingleton::Step::no_op()));
+    assert(AsynchronousSingleton::State::next_by(t, t, aop, AsynchronousSingleton::Step::no_op()));
     t
 }
 
@@ -448,13 +448,13 @@ proof fn update_add_update_to_log_refines<DT: Dispatch>(s: SState<DT>, s2: SStat
 /// Refinement Proof ot the Update_Finish transition of the SimpleLog
 ///
 /// This corresponds to the "End" transition that removes a response from the system
-proof fn update_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, resp: DT::Response) -> ( t2: AState<DT>)
+proof fn update_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop: AsyncLabel<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId, resp: DT::Response) -> ( t2: AState<DT>)
     requires
-        SimpleLog::State::update_finish(s, s2, rid, resp),
+        SimpleLog::State::update_finish(s, s2, aop, rid, resp),
         state_refinement_relation(s, t, r_points),
     ensures
         state_refinement_relation(s2, t2, r_points),
-        AsynchronousSingleton::State::next(t, t2) //  one.Next(Is, Is', AI.End(rid, return_value))
+        AsynchronousSingleton::State::next(t, t2, aop) //  one.Next(Is, Is', AI.End(rid, return_value))
 {
     // Is' := Is.(resps := Is.resps - {rid});
     let res = AsynchronousSingleton::State {
@@ -474,7 +474,7 @@ proof fn update_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t: A
 
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
-    assert(AsynchronousSingleton::State::next_by(t, res, AsynchronousSingleton::Step::end(rid, OutputOperation::Write(resp))));
+    assert(AsynchronousSingleton::State::next_by(t, res, aop, AsynchronousSingleton::Step::end(rid, OutputOperation::Write(resp))));
     res
 }
 

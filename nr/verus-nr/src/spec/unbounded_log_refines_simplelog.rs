@@ -61,6 +61,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
 
     proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>) {
         let rid = Self::get_fresh_rid(pre);
+        let aop = crate::AsyncLabel::Start(rid, input);
         crate::spec::unbounded_log::get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         UnboundedLog::State::add_ticket_inductive(pre, post, input, rid);
         match input {
@@ -73,7 +74,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op: read_op}),
                     interp(post).readonly_reqs
                 );
-                SimpleLog::show::readonly_start(interp(pre), interp(post), rid, read_op);
+                SimpleLog::show::readonly_start(interp(pre), interp(post), aop, rid, read_op);
             }
             InputOperation::Write(write_op) => {
                 assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
@@ -81,12 +82,13 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     interp(pre).update_reqs.insert(rid, write_op),
                     interp(post).update_reqs
                 );
-                SimpleLog::show::update_start(interp(pre), interp(post), rid, write_op);
+                SimpleLog::show::update_start(interp(pre), interp(post), aop, rid, write_op);
             }
         }
     }
 
     proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: ReqId) {
+        let aop = crate::AsyncLabel::End(rid, output);
         UnboundedLog::State::consume_stub_inductive(pre, post, output, rid);
         match output {
             OutputOperation::Read(response) => {
@@ -108,7 +110,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                 assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
                 assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
 
-                SimpleLog::show::readonly_finish(interp(pre), interp(post), rid, version, response);
+                SimpleLog::show::readonly_finish(interp(pre), interp(post), aop, rid, version, response);
 
             }
             OutputOperation::Write(response) => {
@@ -119,7 +121,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
                 }
 
-                SimpleLog::show::update_finish(interp(pre), interp(post), rid, response);
+                SimpleLog::show::update_finish(interp(pre), interp(post), aop, rid, response);
             }
         }
     }
@@ -214,8 +216,9 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
         post.invariant(),
         UnboundedLog::State::next_strong(pre, post),
     ensures
-        SimpleLog::State::next(interp(pre), interp(post)),
+        SimpleLog::State::next(interp(pre), interp(post), crate::AsyncLabel::Internal),
 {
+    let aop = crate::AsyncLabel::Internal;
     case_on_next_strong! {
       pre, post, UnboundedLog::<DT> => {
         /*readonly_start(op) => {
@@ -241,17 +244,17 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
                 interp(post).readonly_reqs
             );
 
-            SimpleLog::show::readonly_read_version(interp(pre), interp(post), rid);
+            SimpleLog::show::readonly_read_version(interp(pre), interp(post), aop, rid);
         }
 
         readonly_ready_to_read(rid, node_id) => {
             assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         readonly_apply(rid) => {
             assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         /*readonly_finish(rid, op, ret) => {
@@ -330,14 +333,14 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
                 interp(post).update_resps
             );
 
-            SimpleLog::show::update_add_op_to_log(interp(pre), interp(post), rid);
+            SimpleLog::show::update_add_op_to_log(interp(pre), interp(post), aop, rid);
         }
 
         update_done(rid) => {
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
             assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
 
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         /*update_finish(rid) => {
@@ -351,29 +354,29 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
         }*/
 
         exec_trivial_start(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_load_local_version(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_load_local_version(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_load_global_head(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_dispatch_local(node_id) => {
             assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_dispatch_remote(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_update_version_upper_bound(node_id) => {
@@ -383,15 +386,15 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             } else {
                 global_tail
             };
-            SimpleLog::show::update_incr_version(interp(pre), interp(post), version);
+            SimpleLog::show::update_incr_version(interp(pre), interp(post), aop, version);
         }
 
         exec_finish(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_finish_no_change(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post));
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
       }
     }
