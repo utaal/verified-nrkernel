@@ -485,7 +485,7 @@ proof fn update_finish_refines<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, aop:
 proof fn update_incr_version_refines<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_points: Map<ReqId, LogIdx>, new_version: LogIdx) -> (b: AsynchronousSingletonBehavior<DT>)
     requires
         a.wf(), future_points_ok(a.get_last(), r_points), a.is_Stepped(), a.get_Stepped_1().is_Internal(),
-        SimpleLog::State::update_incr_version(a.get_Stepped_2().get_last(), a.get_last(), new_version),
+        SimpleLog::State::update_incr_version(a.get_Stepped_2().get_last(), a.get_last(), AsyncLabel::Internal, new_version),
     ensures
         b.wf(), behavior_equiv(a, b), state_refinement_relation(a.get_last(), b.get_last(), r_points)
     decreases
@@ -505,7 +505,7 @@ proof fn update_incr_version_refines<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_p
 
         reveal(SimpleLog::State::next);
         reveal(SimpleLog::State::next_by);
-        assert(SimpleLog::State::next_by(amid.get_Stepped_2().get_last(), amid.get_last(), SimpleLog::Step::update_incr_version((new_version - 1) as nat)));
+        assert(SimpleLog::State::next_by(amid.get_Stepped_2().get_last(), amid.get_last(), AsyncLabel::Internal, SimpleLog::Step::update_incr_version((new_version - 1) as nat)));
 
         let bmid = update_incr_version_refines(amid, r_points, (new_version - 1) as LogIdx);
         update_incr_version_1_refines(bmid, amid, a, r_points)
@@ -551,7 +551,7 @@ proof fn update_incr_version_1_refines<DT: Dispatch>(b: AsynchronousSingletonBeh
     assert(b2.wf()) by {
         reveal(AsynchronousSingleton::State::next);
         reveal(AsynchronousSingleton::State::next_by);
-        assert(AsynchronousSingleton::State::next_by(b2.get_Stepped_2().get_last(), b2.get_last(), AsynchronousSingleton::Step::internal_next(urid, input, output)));
+        assert(AsynchronousSingleton::State::next_by(b2.get_Stepped_2().get_last(), b2.get_last(), AsyncLabel::Internal,  AsynchronousSingleton::Step::internal_next(urid, input, output)));
     }
 
 
@@ -628,8 +628,8 @@ proof fn update_incr_version_1_read_reqs<DT: Dispatch>(b2: AsynchronousSingleton
         assert(b2_new.wf()) by {
             reveal(AsynchronousSingleton::State::next);
             reveal(AsynchronousSingleton::State::next_by);
-            assert(AsynchronousSingleton::State::internal_next(b2.get_last(), b2_new.get_last(), rid, input, output));
-            assert(AsynchronousSingleton::State::next_by(b2.get_last(), b2_new.get_last(),
+            assert(AsynchronousSingleton::State::internal_next(b2.get_last(), b2_new.get_last(), AsyncLabel::Internal, rid, input, output));
+            assert(AsynchronousSingleton::State::next_by(b2.get_last(), b2_new.get_last(), AsyncLabel::Internal,
                 AsynchronousSingleton::Step::internal_next(rid, input, output)
             ));
         }
