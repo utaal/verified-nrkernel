@@ -979,7 +979,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                 &&& mem.regions() === old(mem).regions().union(new_regions)
                 &&& pt_res.used_regions === pt.used_regions.union(new_regions)
                 // and only those we added
-                &&& (forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] old(mem).regions().contains(r)))
+                &&& new_regions.disjoint(old(mem).regions())
                 &&& (forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] pt.used_regions.contains(r)))
                 // Invariant preserved
                 &&& inv_at(mem, pt_res, layer as nat, ptr)
@@ -1048,7 +1048,6 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                         let new_regions: Ghost<Set<MemRegion>> = Ghost(rec_res@.1);
 
                         assert(dir_pt_res@.used_regions === dir_pt@.used_regions.union(new_regions@));
-                        assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] dir_pt@.used_regions.contains(r)));
                         assert(inv_at(mem, dir_pt_res@, (layer + 1) as nat, dir_addr));
                         assert(Ok(interp_at(mem, dir_pt_res@, (layer + 1) as nat, dir_addr, entry_base as nat))
                                === interp_at(&*old(mem), dir_pt@, (layer + 1) as nat, dir_addr, entry_base as nat).map_frame(vaddr as nat, pte@));
@@ -1232,8 +1231,6 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                         { assert(!dir_pt@.used_regions.contains(r)); };
                         assert(mem.regions() === old(mem).regions().union(new_regions@));
                         assert(pt_res@.used_regions === pt.used_regions.union(new_regions@));
-                        assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] old(mem).regions().contains(r)));
-                        assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt.used_regions.contains(r)));
                         assert(pt_res@.region === pt.region);
 
                         Ok(Ghost((pt_res@,new_regions@)))
@@ -1863,7 +1860,9 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                 // Invariant preserved
                 &&& inv_at(mem, pt_res, layer as nat, ptr)
                 // We only touch regions in pt.used_regions
-                &&& (forall|r: MemRegion| !(#[trigger] pt_res.used_regions.contains(r))
+                &&& (forall|r: MemRegion|
+                     !(#[trigger] pt_res.used_regions.contains(r))
+                     && !(#[trigger] removed_regions.contains(r))
                     ==> mem.region_view(r) === old(mem).region_view(r))
                 &&& pt_res.region === pt.region
             },
@@ -1968,12 +1967,13 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
 
                             // postconditions
                             assert((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] mem.regions().contains(r))));
-                            assert_sets_equal!(old(mem).regions(), mem.regions().union(removed_regions@));
-                            assert_sets_equal!(pt.used_regions, pt_res@.used_regions.union(removed_regions@));
+                            assert(old(mem).regions() =~= mem.regions().union(removed_regions@));
+                            assert(pt.used_regions =~= pt_res@.used_regions.union(removed_regions@));
                             assert((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] pt_res@.used_regions.contains(r))));
-                            // unstable
-                            assume(forall|r: MemRegion| !(#[trigger] pt_res@.used_regions.contains(r))
-                                   ==> mem.region_view(r) === old(mem).region_view(r));
+                            assert(forall|r: MemRegion|
+                                 !(#[trigger] pt_res@.used_regions.contains(r))
+                                 && !(#[trigger] removed_regions@.contains(r))
+                                ==> mem.region_view(r) === old(mem).region_view(r));
                             assert(mem.cr3_spec() == old(mem).cr3_spec());
 
                             // Refinement
@@ -2038,11 +2038,12 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                             };
 
                             // postconditions
-                            assert_sets_equal!(old(mem).regions(), mem.regions().union(removed_regions@));
-                            assert_sets_equal!(pt.used_regions, pt_res@.used_regions.union(removed_regions@));
-                            // unstable
-                            assert(forall|r: MemRegion| !(#[trigger] pt_res@.used_regions.contains(r))
-                                   ==> mem.region_view(r) === old(mem).region_view(r));
+                            assert(old(mem).regions() =~= mem.regions().union(removed_regions@));
+                            assert(pt.used_regions =~= pt_res@.used_regions.union(removed_regions@));
+                            assert(forall|r: MemRegion|
+                                 !(#[trigger] pt_res@.used_regions.contains(r))
+                                 && !(#[trigger] removed_regions@.contains(r))
+                                ==> mem.region_view(r) === old(mem).region_view(r));
                             assert(pt_res@.region === pt.region);
                             assert(mem.cr3_spec() == old(mem).cr3_spec());
                             // Refinement
