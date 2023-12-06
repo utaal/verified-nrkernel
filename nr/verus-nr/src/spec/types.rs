@@ -13,6 +13,7 @@ verus! {
 
 pub use crate::{NodeId, LogIdx, ReqId, ThreadId};
 
+/// This represents an entry in the abstract log
 pub tracked struct LogEntry<DT: Dispatch> {
     pub op: DT::WriteOperation,
     pub node_id: NodeId,

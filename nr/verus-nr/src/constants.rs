@@ -46,7 +46,7 @@ pub open const GC_FROM_HEAD: usize = MAX_PENDING_OPS * MAX_THREADS_PER_REPLICA;
 /// as stuck for busy spinning loops.
 ///
 /// Should be a power of two to avoid divisions.
-pub open const WARN_THRESHOLD: usize = (0x10000000);
+pub open const WARN_THRESHOLD: usize = 0x10000000;
 
 
 pub open const MAX_IDX : u64 = 0xffff_ffff_f000_0000;

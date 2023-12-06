@@ -1,7 +1,3 @@
-// trustedness: ignore this file
-
-#![verus::trusted]
-
 // TODO fix?
 // #![feature(register_tool)]
 // #![register_tool(verifier)]
@@ -17,13 +13,20 @@ mod spec;
 mod exec;
 pub mod constants;
 
+use crate::spec::unbounded_log::UnboundedLog;
+use crate::spec::simple_log::SimpleLog;
+
+
 pub use crate::exec::NodeReplicated;
-pub type ReplicaId = usize;
+pub use crate::exec::context::ThreadToken;
+
 
 #[cfg(feature = "counter_dispatch_example")]
 mod counter_dispatch_example;
 
 verus! {
+
+pub type ReplicaId = usize; // $line_count$Trusted$
 
 global size_of usize == 8;
 
@@ -47,7 +50,7 @@ pub type ReqId = nat; // $line_count$Trusted$
 /// the id of a thread on a replica node
 pub type ThreadId = nat; // $line_count$Trusted$
 
-
+#[verus::trusted]
 pub trait Dispatch: Sized {
     /// A read-only operation. When executed against the data structure, an
     /// operation of this type must not mutate the data structure in any way.
@@ -99,9 +102,9 @@ pub trait Dispatch: Sized {
 }
 
 
-// use crate::exec::context::ThreadToken;
-use crate::spec::unbounded_log::UnboundedLog;
 
+
+#[verus::trusted]
 pub open spec fn is_readonly_ticket<DT: Dispatch>(
     ticket: UnboundedLog::local_reads<DT>,
     op: DT::ReadOperation,
@@ -113,6 +116,7 @@ pub open spec fn is_readonly_ticket<DT: Dispatch>(
     &&& ticket@.instance == log
 }
 
+#[verus::trusted]
 pub open spec fn is_readonly_stub<DT: Dispatch>(
     stub: UnboundedLog::local_reads<DT>,
     rid: ReqId,
@@ -127,7 +131,7 @@ pub open spec fn is_readonly_stub<DT: Dispatch>(
     &&& stub@.value.get_Done_ret() == result
 }
 
-
+#[verus::trusted]
 pub open spec fn is_update_ticket<DT: Dispatch>(
     ticket: UnboundedLog::local_updates<DT>,
     op: DT::WriteOperation,
@@ -139,6 +143,7 @@ pub open spec fn is_update_ticket<DT: Dispatch>(
     &&& ticket@.instance == log
 }
 
+#[verus::trusted]
 pub open spec fn is_update_stub<DT: Dispatch>(
     stub: UnboundedLog::local_updates<DT>,
     rid: ReqId,
@@ -153,6 +158,7 @@ pub open spec fn is_update_stub<DT: Dispatch>(
     &&& stub@.value.get_Done_ret() == result
 }
 
+#[verus::trusted]
 pub trait ThreadTokenT<DT: Dispatch, Replica> {
     spec fn wf(&self, replica: &Replica) -> bool;
 
@@ -160,10 +166,12 @@ pub trait ThreadTokenT<DT: Dispatch, Replica> {
 }
 
 #[verifier(external_body)] /* vattr */
+#[verus::trusted]
 pub struct AffinityFn {
     f: Box<dyn Fn(ReplicaId)>
 }
 
+#[verus::trusted]
 impl AffinityFn {
     #[verifier(external_body)] /* vattr */
     pub fn new(f: impl Fn(ReplicaId) + 'static) -> Self {
@@ -175,6 +183,7 @@ impl AffinityFn {
     }
 }
 
+#[verus::trusted]
 pub trait NR<DT: Dispatch + Sync>: Sized {
     type Replica;
     type ReplicaId;
@@ -223,16 +232,16 @@ pub trait NR<DT: Dispatch + Sync>: Sized {
             result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
 }
 
-
+#[verus::trusted]
 spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NR<DT>>() -> bool { true }
 
+#[verus::trusted]
 proof fn theorem_1<DT: Dispatch + Sync>()
     ensures implements_NodeReplicated::<DT, NodeReplicated<DT>>(),
 { }
 
 
-use crate::spec::simple_log::SimpleLog;
-
+#[verus::trusted]
 pub open spec fn add_ticket<DT: Dispatch>(
     pre: UnboundedLog::State<DT>,
     post: UnboundedLog::State<DT>,
@@ -257,6 +266,7 @@ pub open spec fn add_ticket<DT: Dispatch>(
     })
 }
 
+#[verus::trusted]
 pub open spec fn consume_stub<DT: Dispatch>(
     pre: UnboundedLog::State<DT>,
     post: UnboundedLog::State<DT>,
@@ -285,6 +295,7 @@ pub open spec fn consume_stub<DT: Dispatch>(
     }
 }
 
+#[verus::trusted]
 trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
     spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>;
 
@@ -342,8 +353,10 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
             SimpleLog::State::next(Self::interp(pre), Self::interp(post), AsyncLabel::End(rid, output));
 }
 
+#[verus::trusted]
 spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRefinesSimpleLog<DT>>() -> bool { true }
 
+#[verus::trusted]
 proof fn theorem_2<DT: Dispatch + Sync>()
     ensures implements_UnboundedLogRefinesSimpleLog::<DT, crate::spec::unbounded_log_refines_simplelog::RefinementProof<DT>>(),
 { }
@@ -351,93 +364,99 @@ proof fn theorem_2<DT: Dispatch + Sync>()
 
 
 #[is_variant]
+#[verus::trusted]
 pub enum InputOperation<DT: Dispatch> {
     Read(DT::ReadOperation),
     Write(DT::WriteOperation),
 }
 
 #[is_variant]
+#[verus::trusted]
 pub enum OutputOperation<DT: Dispatch> {
     Read(DT::Response),
     Write(DT::Response),
 }
 
 #[is_variant]
+#[verus::trusted]
 pub enum AsyncLabel<DT: Dispatch> {
     Internal,
     Start(ReqId, InputOperation<DT>),
     End(ReqId, OutputOperation<DT>),
 }
 
-state_machine!{ AsynchronousSingleton<DT: Dispatch> {
-    fields {
-        pub state: DT::View,
-        pub reqs: Map<ReqId, InputOperation<DT>>,
-        pub resps: Map<ReqId, OutputOperation<DT>>,
-    }
 
-    pub type Label<DT> = AsyncLabel<DT>;
+state_machine!{ AsynchronousSingleton<DT: Dispatch> {           // $line_count$Trusted$
+    fields {                                                    // $line_count$Trusted$
+        pub state: DT::View,                                    // $line_count$Trusted$
+        pub reqs: Map<ReqId, InputOperation<DT>>,               // $line_count$Trusted$
+        pub resps: Map<ReqId, OutputOperation<DT>>,             // $line_count$Trusted$
+    }                                                           // $line_count$Trusted$
 
-    init!{
-        initialize() {
-            init state = DT::init_spec();
-            init reqs = Map::empty();
-            init resps = Map::empty();
-        }
-    }
+    pub type Label<DT> = AsyncLabel<DT>;                        // $line_count$Trusted$
 
-    transition!{
-        internal_next(label: Label<DT>, rid: ReqId, input: InputOperation<DT>, output: OutputOperation<DT>) {
-            require label.is_Internal();
-            require pre.reqs.dom().contains(rid);
-            require pre.reqs[rid] == input;
-            update reqs = pre.reqs.remove(rid);
-            update resps = pre.resps.insert(rid, output);
+    init!{                                                      // $line_count$Trusted$
+        initialize() {                                          // $line_count$Trusted$
+            init state = DT::init_spec();                       // $line_count$Trusted$
+            init reqs = Map::empty();                           // $line_count$Trusted$
+            init resps = Map::empty();                          // $line_count$Trusted$
+        }                                                       // $line_count$Trusted$
+    }                                                           // $line_count$Trusted$
 
-            match input {
-                InputOperation::Read(read_op) => {
-                    require output === OutputOperation::Read(DT::dispatch_spec(pre.state, read_op));
-                }
-                InputOperation::Write(write_op) => {
-                    let (next_state, out) = DT::dispatch_mut_spec(pre.state, write_op);
-                    require output === OutputOperation::Write(out);
-                    update state = next_state;
-                }
-            }
-        }
-    }
+    transition!{                                                // $line_count$Trusted$
+        internal_next(label: Label<DT>, rid: ReqId, input: InputOperation<DT>, output: OutputOperation<DT>) {   // $line_count$Trusted$
+            require label.is_Internal();                     // $line_count$Trusted$
+            require pre.reqs.dom().contains(rid);            // $line_count$Trusted$
+            require pre.reqs[rid] == input;                  // $line_count$Trusted$
+            update reqs = pre.reqs.remove(rid);              // $line_count$Trusted$
+            update resps = pre.resps.insert(rid, output);    // $line_count$Trusted$
 
-    transition!{
-        no_op(label: Label<DT>) {
-            require label.is_Internal();
-            /* stutter step */
-        }
-    }
+            match input {                                    // $line_count$Trusted$
+                InputOperation::Read(read_op) => {           // $line_count$Trusted$
+                    require output === OutputOperation::Read(DT::dispatch_spec(pre.state, read_op));  // $line_count$Trusted$
+                }                                                                           // $line_count$Trusted$
+                InputOperation::Write(write_op) => {                                        // $line_count$Trusted$
+                    let (next_state, out) = DT::dispatch_mut_spec(pre.state, write_op);     // $line_count$Trusted$
+                    require output === OutputOperation::Write(out);                         // $line_count$Trusted$
+                    update state = next_state;                                              // $line_count$Trusted$
+                }                                                                           // $line_count$Trusted$
+            }                                                                               // $line_count$Trusted$
+        }                                                                                   // $line_count$Trusted$
+    }                                                                                       // $line_count$Trusted$
 
-    transition!{
-        start(label: Label<DT>, rid: ReqId, input: InputOperation<DT>) {
-            require label == AsyncLabel::<DT>::Start(rid, input);
-            require !pre.reqs.dom().contains(rid);
-            update reqs = pre.reqs.insert(rid, input);
-        }
-    }
+    transition!{                                        // $line_count$Trusted$
+        no_op(label: Label<DT>) {                       // $line_count$Trusted$
+            require label.is_Internal();                // $line_count$Trusted$
+            /* stutter step */                          // $line_count$Trusted$
+        }                                               // $line_count$Trusted$
+    }                                                   // $line_count$Trusted$
 
-    transition!{
-        end(label: Label<DT>, rid: ReqId, output: OutputOperation<DT>) {
-            require label == AsyncLabel::<DT>::End(rid, output);
-            require pre.resps.dom().contains(rid);
-            require pre.resps[rid] == output;
-            update resps = pre.resps.remove(rid);
-        }
-    }
-}}
+    transition!{                                                            // $line_count$Trusted$
+        start(label: Label<DT>, rid: ReqId, input: InputOperation<DT>) {    // $line_count$Trusted$
+            require label == AsyncLabel::<DT>::Start(rid, input);           // $line_count$Trusted$
+            require !pre.reqs.dom().contains(rid);                          // $line_count$Trusted$
+            update reqs = pre.reqs.insert(rid, input);                      // $line_count$Trusted$
+        }                                                                   // $line_count$Trusted$
+    }                                                                       // $line_count$Trusted$
+
+    transition!{                                                            // $line_count$Trusted$
+        end(label: Label<DT>, rid: ReqId, output: OutputOperation<DT>) {    // $line_count$Trusted$
+            require label == AsyncLabel::<DT>::End(rid, output);            // $line_count$Trusted$
+            require pre.resps.dom().contains(rid);                          // $line_count$Trusted$
+            require pre.resps[rid] == output;                               // $line_count$Trusted$
+            update resps = pre.resps.remove(rid);                           // $line_count$Trusted$
+        }                                                                   // $line_count$Trusted$
+    }                                                                       // $line_count$Trusted$
+}}                                                                          // $line_count$Trusted$
 
 #[is_variant]
+#[verus::trusted]
 pub enum SimpleLogBehavior<DT: Dispatch> {
     Stepped(SimpleLog::State<DT>, AsyncLabel<DT>, Box<SimpleLogBehavior<DT>>),
     Inited(SimpleLog::State<DT>),
 }
 
+#[verus::trusted]
 impl<DT: Dispatch> SimpleLogBehavior<DT> {
     pub open spec fn get_last(self) -> SimpleLog::State<DT> {
         match self {
@@ -461,11 +480,13 @@ impl<DT: Dispatch> SimpleLogBehavior<DT> {
 }
 
 #[is_variant]
+#[verus::trusted]
 pub enum AsynchronousSingletonBehavior<DT: Dispatch> {
     Stepped(AsynchronousSingleton::State<DT>, AsyncLabel<DT>, Box<AsynchronousSingletonBehavior<DT>>),
     Inited(AsynchronousSingleton::State<DT>),
 }
 
+#[verus::trusted]
 impl<DT: Dispatch> AsynchronousSingletonBehavior<DT> {
     pub open spec fn get_last(self) -> AsynchronousSingleton::State<DT> {
         match self {
@@ -488,7 +509,7 @@ impl<DT: Dispatch> AsynchronousSingletonBehavior<DT> {
     }
 }
 
-
+#[verus::trusted]
 pub open spec fn behavior_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, b: AsynchronousSingletonBehavior<DT>) -> bool
     decreases a, b
 {
@@ -500,39 +521,19 @@ pub open spec fn behavior_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, b: Async
     ||| (b.is_Stepped() && b.get_Stepped_1().is_Internal() && behavior_equiv(a, *b.get_Stepped_2()))
     // || (a.Stepped? && b.Stepped? && a.op == b.op && equiv(a.tail, b.tail))
     ||| (a.is_Stepped() && b.is_Stepped() && a.get_Stepped_1() == b.get_Stepped_1() && behavior_equiv(*a.get_Stepped_2(), *b.get_Stepped_2()))
-
-
-    // (a.is_Inited() && b.is_Inited())
-    // // We can either take an 'internal' step on a and do nothing on b
-    // || (match a {
-    //     SimpleLogBehavior::Stepped(state, op, tail) => op.is_Internal() && behavior_equiv(*tail, b),
-    //     _ => false
-    // })
-    // // Or an 'internal' step on b and nothing on a
-    // || (match b {
-    //     AsynchronousSingletonBehavior::Stepped(state, op, tail) => op.is_Internal() && behavior_equiv(a, *tail),
-    //     _ => false,
-    // })
-    // // Or take the same step on both
-    // || (match a {
-    //     SimpleLogBehavior::Stepped(_state1, op1, tail1) => {
-    //         match b {
-    //             AsynchronousSingletonBehavior::Stepped(_state2, op2, tail2) => op1 == op2 && behavior_equiv(*tail1, *tail2),
-    //             _ => false,
-    //         }
-    //     }
-    //     _ => false
-    // })
 }
 
+#[verus::trusted]
 trait SimpleLogRefinesAsynchronousSingleton<DT: Dispatch> {
     proof fn exists_equiv_behavior(a: SimpleLogBehavior<DT>) -> (b: AsynchronousSingletonBehavior<DT>)
         requires a.wf(),
         ensures b.wf() && behavior_equiv(a, b);
 }
 
+#[verus::trusted]
 spec fn implements_SimpleLogRefinesAsynchronousSingleton<DT: Dispatch, RP: SimpleLogRefinesAsynchronousSingleton<DT>>() -> bool { true }
 
+#[verus::trusted]
 proof fn theorem_3<DT: Dispatch + Sync>()
     ensures implements_SimpleLogRefinesAsynchronousSingleton::<DT, crate::spec::linearization::RefinementProof>(),
 { }
