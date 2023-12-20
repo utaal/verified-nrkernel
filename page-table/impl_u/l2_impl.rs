@@ -1024,7 +1024,6 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
         mem.cr3_spec() == old(mem).cr3_spec(),
     // decreases X86_NUM_LAYERS - layer
 {
-    assume(false);
     proof { lemma_interp_at_facts(mem, pt, layer as nat, ptr, base as nat); }
     let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
     proof {
@@ -1053,6 +1052,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
         assert(entry_base <= vaddr);
     }
     if entry.is_mapping() {
+        assume(false);//done
         if entry.is_dir(layer) {
             if x86_arch_exec().entry_size(layer) == pte.frame.size {
                 assert(Err(interp_at(mem, pt, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
@@ -1195,6 +1195,11 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                                 }
                             };
                             assert(directories_obey_invariant_at(mem, pt_res@, layer as nat, ptr));
+                            assert(entry_count_is_tracked(mem, pt_res@, layer as nat, ptr)) by {
+                                reveal(entry_count);
+                                assert(Set::new(|i: nat| i < 512 && !view_at(mem, pt_res@, layer as nat, ptr, i).is_Empty())
+                                       =~= Set::new(|i: nat| i < 512 && !view_at(&*old(mem), pt, layer as nat, ptr, i).is_Empty()));
+                            };
                             assert(inv_at(mem, pt_res@, layer as nat, ptr));
 
                             assert(Ok(interp_at(mem, pt_res@, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@)) by {
@@ -1266,7 +1271,10 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
             Err(())
         }
     } else {
+        proof { lemma_entry_count_set_facts(mem, pt, layer as nat, ptr); }
+        let count = get_entry_count(mem, Ghost(pt), layer, ptr);
         if x86_arch_exec().entry_size(layer) == pte.frame.size {
+            assume(false);//done
             proof {
                 assert_by_contradiction!(layer > 0, {
                     let iprime = choose|i: nat| 0 < i && i < X86_NUM_LAYERS && #[trigger] x86_arch_spec.entry_size(i) == pte.frame.size;
@@ -1306,31 +1314,38 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
             }
             let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte);
             let pwmem: Ghost<mem::PageTableMemory> = Ghost(*mem);
+
             mem.write(ptr, idx, Ghost(pt.region), new_page_entry.entry);
-            assert(mem.region_view(pt.region) === pwmem@.region_view(pt.region).update(idx as int, new_page_entry.entry));
 
-            assert forall|i: nat| i < X86_NUM_ENTRIES implies
-                #[trigger] view_at(mem, pt, layer as nat, ptr, i) == if i == idx { new_page_entry@ } else { view_at(&*old(mem), pt, layer as nat, ptr, i) } by { };
-            assert forall|i: nat| i < X86_NUM_ENTRIES && i != idx implies
-                entry_at_spec(mem, pt, layer as nat, ptr, i) == entry_at_spec(&*old(mem), pt, layer as nat, ptr, i) by { };
+            proof {
+                assert(mem.region_view(pt.region) === pwmem@.region_view(pt.region).update(idx as int, new_page_entry.entry));
 
-            assert(directories_obey_invariant_at(mem, pt, layer as nat, ptr)) by {
-                assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                    let entry = #[trigger] view_at(mem, pt, layer as nat, ptr, i);
-                    entry.is_Directory() ==> {
-                        &&& inv_at(mem, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
-                    }
-                } by {
-                    let entry = view_at(mem, pt, layer as nat, ptr, i);
-                    if i != idx {
-                        assert(directories_obey_invariant_at(&*old(mem), pt, layer as nat, ptr));
-                        if entry.is_Directory() {
-                            lemma_inv_at_different_memory(&*old(mem), mem, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr());
+                assert forall|i: nat| i < X86_NUM_ENTRIES implies
+                    #[trigger] view_at(mem, pt, layer as nat, ptr, i) == if i == idx { new_page_entry@ } else { view_at(&*old(mem), pt, layer as nat, ptr, i) } by { };
+                assert forall|i: nat| i < X86_NUM_ENTRIES && i != idx implies
+                    entry_at_spec(mem, pt, layer as nat, ptr, i) == entry_at_spec(&*old(mem), pt, layer as nat, ptr, i) by { };
+
+                assert(directories_obey_invariant_at(mem, pt, layer as nat, ptr)) by {
+                    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                        let entry = #[trigger] view_at(mem, pt, layer as nat, ptr, i);
+                        entry.is_Directory() ==> {
+                            &&& inv_at(mem, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
                         }
-                    }
+                    } by {
+                        let entry = view_at(mem, pt, layer as nat, ptr, i);
+                        if i != idx {
+                            assert(directories_obey_invariant_at(&*old(mem), pt, layer as nat, ptr));
+                            if entry.is_Directory() {
+                                lemma_inv_at_different_memory(&*old(mem), mem, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr());
+                            }
+                        }
+                    };
                 };
-            };
-            assert(inv_at(mem, pt, layer as nat, ptr));
+                assert(Set::new(|i: nat| i < 512 && !view_at(mem, pt, layer as nat, ptr, i).is_Empty())
+                       =~= Set::new(|i: nat| i < 512 && !view_at(&*old(mem), pt, layer as nat, ptr, i).is_Empty()).insert(idx as nat));
+            }
+
+            set_entry_count(mem, Ghost(pt), layer, ptr, count + 1);
 
             assert(Ok(interp_at(mem, pt, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@)) by {
                 lemma_interp_at_aux_facts(mem, pt, layer as nat, ptr, base as nat, seq![]);
@@ -1347,7 +1362,6 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                     assert(interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@).is_Ok());
                     assert(interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@).get_Ok_0().entries[i as int] === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).entries[i as int]);
                     assert(interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).entries[i as int] === interp_at_entry(&*old(mem), pt, layer as nat, ptr, base as nat, i));
-                    assert(old(mem).spec_read(i, pt.region) === mem.spec_read(i, pt.region));
                     lemma_interp_at_entry_different_memory(&*old(mem), pt, mem, pt, layer as nat, ptr, base as nat, i);
                     assert(interp_at_entry(mem, pt, layer as nat, ptr, base as nat, i) === interp_at_entry(&*old(mem), pt, layer as nat, ptr, base as nat, i));
                 };
@@ -1363,19 +1377,14 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                 assert(Ok(new_interp) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
             };
 
-
             // posts
             assert(forall|r: MemRegion| !pt.used_regions.contains(r) ==> #[trigger] mem.region_view(r) === old(mem).region_view(r));
-            proof {
-                lemma_set_union_empty_equals_set::<MemRegion>(mem.regions());
-                lemma_set_union_empty_equals_set::<MemRegion>(pt.used_regions);
-            }
-            assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] old(mem).regions().contains(r)));
-            assert(forall|r: MemRegion| set![].contains(r) ==> !(#[trigger] pt.used_regions.contains(r)));
-            assert(pt.region === pt.region);
+            assert(mem.regions().union(set![]) =~= mem.regions());
+            assert(pt.used_regions.union(set![]) =~= pt.used_regions);
 
             Ok(Ghost((pt, set![])))
         } else {
+            assume(false);
             let new_dir_region = mem.alloc_page();
             let new_dir_ptr = new_dir_region.base;
             let new_dir_ptr_u64 = new_dir_ptr as u64;
@@ -2445,11 +2454,6 @@ pub proof fn lemma_entry_count_set_facts(mem: &mem::PageTableMemory, pt: PTDir, 
 }
 
 }
-
-// TODO: should just get rid of this and use `=~=` inline
-pub proof fn lemma_set_union_empty_equals_set<T>(s: Set<T>)
-    ensures s.union(set![]) === s
-{ assert_sets_equal!(s.union(set![]), s); }
 
 // TODO: Maybe this should go into vstd. But it's much less pleasant to use than e.g. in HOL. (See
 // where it's used in `lemma_entry_count_set_facts`.)
