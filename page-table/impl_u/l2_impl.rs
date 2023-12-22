@@ -660,6 +660,7 @@ pub open spec fn entry_count(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, 
          ((e2 & bitmask_inc!(9u64,11u64)) >> 3u64) | (e3 & bitmask_inc!(9u64,11u64))) as nat
 }
 
+// TODO: should I move some of these ghost_pt things in a invariant defined on PTDir?
 pub open spec fn ghost_pt_used_regions_pairwise_disjoint(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat, j: nat, r: MemRegion|
         i != j &&
@@ -1384,308 +1385,321 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
 
             Ok(Ghost((pt, set![])))
         } else {
-            assume(false);
-            let new_dir_region = mem.alloc_page();
+            let (pt_with_empty, new_dir_region, new_dir_entry) = insert_empty_directory(mem, Ghost(pt), layer, ptr, base, count, idx);
+            // let new_dir_region = mem.alloc_page();
             let new_dir_ptr = new_dir_region.base;
             let new_dir_ptr_u64 = new_dir_ptr as u64;
-            let new_dir_pt: Ghost<PTDir> = Ghost(
-                PTDir {
-                    region: new_dir_region@,
-                    entries: new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None),
-                    used_regions: set![new_dir_region@],
-                });
-            assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64) by {
-                lemma_page_aligned_implies_mask_dir_addr_is_identity();
-            };
-            let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
-            mem.write(ptr, idx, Ghost(pt.region), new_dir_entry.entry);
-
-            // After writing the new empty directory entry we prove that the resulting state
-            // satisfies the invariant and that the interpretation remains unchanged.
-            let pt_with_empty: Ghost<PTDir> = Ghost(
-                PTDir {
-                    region:       pt.region,
-                    entries:      pt.entries.update(idx as int, Some(new_dir_pt@)),
-                    used_regions: pt.used_regions.insert(new_dir_pt@.region),
-                });
-            // For easier reference we take a snapshot of mem here. In the subsequent proofs
-            // (after the recursive call) we have old(mem), mem_with_empty and mem to refer
-            // to each relevant state.
+            let new_dir_pt = Ghost(pt_with_empty@.entries[idx as int].get_Some_0());
             let mem_with_empty: Ghost<&mem::PageTableMemory> = Ghost(mem);
-            proof {
-                assert forall|i: nat| i < X86_NUM_ENTRIES implies
-                    #[trigger] view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) == if i == idx { new_dir_entry@ } else { view_at(&*old(mem), pt, layer as nat, ptr, i) } by { };
-                assert forall|i: nat| i < X86_NUM_ENTRIES implies
-                    #[trigger] entry_at_spec(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) == if i == idx { new_dir_entry } else { entry_at_spec(&*old(mem), pt, layer as nat, ptr, i) } by { };
-                assert(pt_with_empty@.region === pt.region);
-                lemma_new_seq::<u64>(512nat, 0u64);
-                lemma_new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None);
-                assert(new_dir_pt@.entries.len() == 512);
-                assert(new_dir_region@.contains(new_dir_ptr as nat));
-                assert(mem_with_empty@.region_view(new_dir_region@) === new_seq(512nat, 0u64));
-                lemma_zeroed_page_implies_empty_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr);
-                assert(empty_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
-                assert(inv_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
+            // let new_dir_entry = entry_at_spec(mem_with_empty@, pt_with_empty@, layer as nat, ptr, idx as nat);
+            // assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64) by {
+            //     lemma_page_aligned_implies_mask_dir_addr_is_identity();
+            // };
+            // let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
+            // mem.write(ptr, idx, Ghost(pt.region), new_dir_entry.entry);
 
-                assert(forall|r: MemRegion| r !== new_dir_pt@.region && r !== pt_with_empty@.region
-                       ==> mem_with_empty@.region_view(r) === old(mem).region_view(r));
-                assert(mem_with_empty@.region_view(pt_with_empty@.region)
-                       === old(mem).region_view(pt_with_empty@.region).update(idx as int, new_dir_entry.entry));
-                assert(inv_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr)) by {
-                    assert(ghost_pt_matches_structure(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                    assert(directories_obey_invariant_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr)) by {
-                        assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                            let entry = #[trigger] view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i);
-                            entry.is_Directory()
-                                ==> inv_at(mem_with_empty@, pt_with_empty@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
-                        } by {
-                            let entry = view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i);
-                            if i == idx {
-                            } else {
-                                if entry.is_Directory() {
-                                    let pt_entry = pt.entries[i as int].get_Some_0();
-                                    assert(inv_at(&*old(mem), pt_entry, (layer + 1) as nat, entry.get_Directory_addr()));
-                                    assert(pt.entries[i as int] == pt_with_empty@.entries[i as int]);
-                                    assert(old(mem).regions().contains(pt_entry.region));
-                                    lemma_inv_at_different_memory(&*old(mem), mem_with_empty@, pt_entry, (layer + 1) as nat, entry.get_Directory_addr());
-                                    assert(inv_at(mem_with_empty@, pt_with_empty@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr()));
-                                }
-                            }
-                        };
-                    };
-                };
+            // // After writing the new empty directory entry we prove that the resulting state
+            // // satisfies the invariant and that the interpretation remains unchanged.
+            // let pt_with_empty: Ghost<PTDir> = Ghost(
+            //     PTDir {
+            //         region:       pt.region,
+            //         entries:      pt.entries.update(idx as int, Some(new_dir_pt@)),
+            //         used_regions: pt.used_regions.insert(new_dir_pt@.region),
+            //     });
+            // // For easier reference we take a snapshot of mem here. In the subsequent proofs
+            // // (after the recursive call) we have old(mem), mem_with_empty and mem to refer
+            // // to each relevant state.
+            // proof {
+            //     assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            //         #[trigger] view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) == if i == idx { new_dir_entry@ } else { view_at(&*old(mem), pt, layer as nat, ptr, i) } by { };
+            //     assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            //         #[trigger] entry_at_spec(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) == if i == idx { new_dir_entry } else { entry_at_spec(&*old(mem), pt, layer as nat, ptr, i) } by { };
+            //     assert(pt_with_empty@.region === pt.region);
+            //     lemma_new_seq::<u64>(512nat, 0u64);
+            //     lemma_new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None);
+            //     assert(new_dir_pt@.entries.len() == 512);
+            //     assert(new_dir_region@.contains(new_dir_ptr as nat));
+            //     assert(mem_with_empty@.region_view(new_dir_region@) === new_seq(512nat, 0u64));
+            //     lemma_zeroed_page_implies_empty_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr);
+            //     assert(empty_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
+            //     assert(inv_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
 
-                lemma_empty_at_interp_at_equal_l1_empty_dir(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, idx as nat);
-                interp@.lemma_new_empty_dir(idx as nat);
-                lemma_interp_at_aux_facts(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, seq![]);
+            //     assert(forall|r: MemRegion| r !== new_dir_pt@.region && r !== pt_with_empty@.region
+            //            ==> mem_with_empty@.region_view(r) === old(mem).region_view(r));
+            //     assert(mem_with_empty@.region_view(pt_with_empty@.region)
+            //            === old(mem).region_view(pt_with_empty@.region).update(idx as int, new_dir_entry.entry));
 
-            }
-            let new_dir_interp = Ghost(interp_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr, entry_base as nat));
-            proof {
-                assert(forall|i: nat| i < new_dir_interp@.entries.len() ==> new_dir_interp@.entries[i as int] === l1::NodeEntry::Empty());
-                assert(new_dir_interp@.entries =~= interp@.new_empty_dir(idx as nat).entries);
-                assert(new_dir_interp@ == interp@.new_empty_dir(idx as nat));
-            }
-            match map_frame_aux(mem, new_dir_pt, layer + 1, new_dir_ptr, entry_base, vaddr, pte) {
-                Ok(rec_res) => {
-                    let dir_pt_res: Ghost<PTDir> = Ghost(rec_res@.0);
-                    let dir_new_regions: Ghost<Set<MemRegion>> = Ghost(rec_res@.1);
-                    let pt_final: Ghost<PTDir> = Ghost(
-                        PTDir {
-                            region:       pt_with_empty@.region,
-                            entries:      pt_with_empty@.entries.update(idx as int, Some(dir_pt_res@)),
-                            used_regions: pt_with_empty@.used_regions.union(dir_new_regions@),
-                        });
-                    let new_regions: Ghost<Set<MemRegion>> = Ghost(dir_new_regions@.insert(new_dir_region@));
-                    proof {
-                        assert(idx < pt_with_empty@.entries.len());
-                        assert(!dir_new_regions@.contains(pt_final@.region));
-                        assert(!new_dir_pt@.used_regions.contains(pt_final@.region));
+            //     assert(ghost_pt_matches_structure(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //     assert(directories_obey_invariant_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr)) by {
+            //         assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+            //             let entry = #[trigger] view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i);
+            //             entry.is_Directory()
+            //                 ==> inv_at(mem_with_empty@, pt_with_empty@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
+            //         } by {
+            //             let entry = view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i);
+            //             if i == idx {
+            //             } else {
+            //                 if entry.is_Directory() {
+            //                     let pt_entry = pt.entries[i as int].get_Some_0();
+            //                     assert(inv_at(&*old(mem), pt_entry, (layer + 1) as nat, entry.get_Directory_addr()));
+            //                     assert(pt.entries[i as int] == pt_with_empty@.entries[i as int]);
+            //                     assert(old(mem).regions().contains(pt_entry.region));
+            //                     lemma_inv_at_different_memory(&*old(mem), mem_with_empty@, pt_entry, (layer + 1) as nat, entry.get_Directory_addr());
+            //                     assert(inv_at(mem_with_empty@, pt_with_empty@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr()));
+            //                 }
+            //             }
+            //         };
+            //     };
 
-                        assert forall|i: nat| i < X86_NUM_ENTRIES implies
-                            #[trigger] view_at(mem, pt_final@, layer as nat, ptr, i) == if i == idx { new_dir_entry@ } else { view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) } by { };
-                        assert forall|i: nat| i < X86_NUM_ENTRIES implies
-                            #[trigger] entry_at_spec(mem, pt_final@, layer as nat, ptr, i) == if i == idx { new_dir_entry } else { entry_at_spec(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) } by { };
-                        assert(inv_at(mem, pt_final@, layer as nat, ptr)) by {
-                            assert(ghost_pt_matches_structure(mem, pt_final@, layer as nat, ptr)) by {
-                                assert forall|i: nat|
-                                    i < X86_NUM_ENTRIES implies {
-                                        let entry = #[trigger] view_at(mem, pt_final@, layer as nat, ptr, i);
-                                        entry.is_Directory() == pt_final@.entries[i as int].is_Some()
-                                } by {
-                                    assert(directories_obey_invariant_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                                    assert(ghost_pt_matches_structure(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                                    if i == idx { } else { }
-                                };
-                            };
+            //     assert(Set::new(|i: nat| i < 512 && !view_at(mem, pt_with_empty@, layer as nat, ptr, i).is_Empty())
+            //            =~= Set::new(|i: nat| i < 512 && !view_at(&*old(mem), pt, layer as nat, ptr, i).is_Empty()).insert(idx as nat));
+            // }
 
-                            assert(directories_obey_invariant_at(mem, pt_final@, layer as nat, ptr)) by {
-                                assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                                    let entry = #[trigger] view_at(mem, pt_final@, layer as nat, ptr, i);
-                                    entry.is_Directory()
-                                        ==> inv_at(mem, pt_final@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
-                                } by {
-                                    let entry = view_at(mem, pt_final@, layer as nat, ptr, i);
-                                    assert(directories_obey_invariant_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                                    assert(ghost_pt_matches_structure(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                                    assert(ghost_pt_used_regions_rtrancl(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            // set_entry_count(mem, pt_with_empty, layer, ptr, count + 1);
+            // assume(false);
 
-                                    if i == idx {
-                                    } else {
-                                        assert(entry == view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i));
-                                        assert(pt_final@.entries[i as int] === pt_with_empty@.entries[i as int]);
-                                        if entry.is_Directory() {
-                                            assert(pt_with_empty@.entries[i as int].is_Some());
-                                            let pt_entry = pt_with_empty@.entries[i as int].get_Some_0();
-                                            assert(pt_with_empty@.entries[i as int] === pt_final@.entries[i as int]);
-                                            assert(pt_with_empty@.entries[i as int].get_Some_0() === pt_final@.entries[i as int].get_Some_0());
-                                            assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
-                                                   ==> !dir_new_regions@.contains(r) && !new_dir_pt@.used_regions.contains(r));
-                                            assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
-                                                   ==> #[trigger] mem_with_empty@.region_view(r) === mem.region_view(r));
-                                            lemma_inv_at_different_memory(mem_with_empty@, mem, pt_entry, (layer + 1) as nat, entry.get_Directory_addr());
-                                            assert(inv_at(mem, pt_final@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr()));
-                                        }
-                                    }
-                                };
-                            };
+            // proof {
+            //     lemma_empty_at_interp_at_equal_l1_empty_dir(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, idx as nat);
+            //     interp@.lemma_new_empty_dir(idx as nat);
+            //     lemma_interp_at_aux_facts(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, seq![]);
+            // }
+            // let new_dir_interp = Ghost(interp_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr, entry_base as nat));
+            // proof {
+            //     assert(forall|i: nat| i < new_dir_interp@.entries.len() ==> new_dir_interp@.entries[i as int] === l1::NodeEntry::Empty());
+            //     assert(new_dir_interp@.entries =~= interp@.new_empty_dir(idx as nat).entries);
+            //     assert(new_dir_interp@ == interp@.new_empty_dir(idx as nat));
+            // }
+            assert(directories_obey_invariant_at(mem, pt_with_empty@, layer as nat, ptr));
+            assert(view_at(mem, pt_with_empty@, layer as nat, ptr, idx as nat).is_Directory());
+            assert(inv_at(mem, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
+            assert(interp_at(mem, new_dir_pt@, (layer + 1) as nat, new_dir_ptr, entry_base as nat).inv());
+            map_frame_aux(mem, pt_with_empty, layer, ptr, base, vaddr, pte)
+            // match map_frame_aux(mem, new_dir_pt, layer + 1, new_dir_ptr, entry_base, vaddr, pte) {
+            //     Ok(rec_res) => {
+            //         let dir_pt_res: Ghost<PTDir> = Ghost(rec_res@.0);
+            //         let dir_new_regions: Ghost<Set<MemRegion>> = Ghost(rec_res@.1);
+            //         let pt_final: Ghost<PTDir> = Ghost(
+            //             PTDir {
+            //                 region:       pt_with_empty@.region,
+            //                 entries:      pt_with_empty@.entries.update(idx as int, Some(dir_pt_res@)),
+            //                 used_regions: pt_with_empty@.used_regions.union(dir_new_regions@),
+            //             });
+            //         let new_regions: Ghost<Set<MemRegion>> = Ghost(dir_new_regions@.insert(new_dir_region@));
+            //         proof {
+            //             assert(idx < pt_with_empty@.entries.len());
+            //             assert(!dir_new_regions@.contains(pt_final@.region));
+            //             assert(!new_dir_pt@.used_regions.contains(pt_final@.region));
 
-                            assert(directories_have_flags(mem, pt_final@, layer as nat, ptr));
+            //             assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            //                 #[trigger] view_at(mem, pt_final@, layer as nat, ptr, i) == if i == idx { new_dir_entry@ } else { view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) } by { };
+            //             assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            //                 #[trigger] entry_at_spec(mem, pt_final@, layer as nat, ptr, i) == if i == idx { new_dir_entry } else { entry_at_spec(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i) } by { };
+            //             assert(inv_at(mem, pt_final@, layer as nat, ptr)) by {
+            //                 assert(ghost_pt_matches_structure(mem, pt_final@, layer as nat, ptr)) by {
+            //                     assert forall|i: nat|
+            //                         i < X86_NUM_ENTRIES implies {
+            //                             let entry = #[trigger] view_at(mem, pt_final@, layer as nat, ptr, i);
+            //                             entry.is_Directory() == pt_final@.entries[i as int].is_Some()
+            //                     } by {
+            //                         assert(directories_obey_invariant_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //                         assert(ghost_pt_matches_structure(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //                         if i == idx { } else { }
+            //                     };
+            //                 };
 
-                            assert(pt_final@.entries.len() == pt_with_empty@.entries.len());
-                            assert(forall|i: nat| i != idx && i < pt_final@.entries.len() ==> pt_final@.entries[i as int] === pt_with_empty@.entries[i as int]);
-                            assert(ghost_pt_used_regions_rtrancl(mem, pt_final@, layer as nat, ptr)) by {
-                                assert forall|i: nat, r: MemRegion|
-                                    i < pt_final@.entries.len() &&
-                                    pt_final@.entries[i as int].is_Some() &&
-                                    #[trigger] pt_final@.entries[i as int].get_Some_0().used_regions.contains(r)
-                                    implies pt_final@.used_regions.contains(r)
-                                by {
-                                    if i == idx {
-                                        if dir_new_regions@.contains(r) {
-                                            assert(pt_final@.used_regions.contains(r));
-                                        } else {
-                                            assert(pt_with_empty@.entries[i as int].get_Some_0().used_regions.contains(r));
-                                            assert(pt_with_empty@.used_regions.contains(r));
-                                            assert(pt_final@.used_regions.contains(r));
-                                        }
-                                    } else { }
-                                };
-                            };
-                            assert(ghost_pt_used_regions_pairwise_disjoint(mem, pt_final@, layer as nat, ptr)) by {
-                                assert forall|i: nat, j: nat, r: MemRegion|
-                                    i != j &&
-                                    i < pt_final@.entries.len() && pt_final@.entries[i as int].is_Some() &&
-                                    #[trigger] pt_final@.entries[i as int].get_Some_0().used_regions.contains(r) &&
-                                    j < pt_final@.entries.len() && pt_final@.entries[j as int].is_Some()
-                                    implies !(#[trigger] pt_final@.entries[j as int].get_Some_0().used_regions.contains(r))
-                                by
-                                {
-                                    assert(ghost_pt_used_regions_pairwise_disjoint(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                                    if j == idx {
-                                        assert(pt_final@.entries[j as int].get_Some_0() === dir_pt_res@);
-                                        assert(pt_final@.entries[i as int] === pt.entries[i as int]);
-                                        if dir_new_regions@.contains(r) {
-                                            assert(!new_dir_pt@.used_regions.contains(r));
-                                            assert(!mem_with_empty@.regions().contains(r));
-                                            assert(!dir_pt_res@.used_regions.contains(r));
-                                        } else {
-                                            if new_dir_pt@.used_regions.contains(r) {
-                                                assert(pt.used_regions.contains(r));
-                                                assert(mem_with_empty@.regions().contains(r));
-                                                assert(!dir_pt_res@.used_regions.contains(r));
-                                            }
-                                        }
-                                    } else {
-                                        if i == idx {
-                                            assert(pt_final@.entries[i as int].get_Some_0() === dir_pt_res@);
-                                            assert(pt_final@.entries[j as int] === pt.entries[j as int]);
-                                            if dir_new_regions@.contains(r) {
-                                                assert(dir_pt_res@.used_regions.contains(r));
-                                                assert(!new_dir_pt@.used_regions.contains(r));
-                                                assert(!mem_with_empty@.regions().contains(r));
-                                                assert(!pt.entries[j as int].get_Some_0().used_regions.contains(r));
-                                            } else {
-                                                assert(new_dir_pt@.used_regions.contains(r));
-                                                assert(!pt.entries[j as int].get_Some_0().used_regions.contains(r));
-                                            }
-                                        } else {
-                                            assert(pt_final@.entries[i as int] === pt.entries[i as int]);
-                                            assert(pt_final@.entries[j as int] === pt.entries[j as int]);
-                                        }
-                                    }
+            //                 assert(directories_obey_invariant_at(mem, pt_final@, layer as nat, ptr)) by {
+            //                     assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+            //                         let entry = #[trigger] view_at(mem, pt_final@, layer as nat, ptr, i);
+            //                         entry.is_Directory()
+            //                             ==> inv_at(mem, pt_final@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
+            //                     } by {
+            //                         let entry = view_at(mem, pt_final@, layer as nat, ptr, i);
+            //                         assert(directories_obey_invariant_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //                         assert(ghost_pt_matches_structure(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //                         assert(ghost_pt_used_regions_rtrancl(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
 
-                                };
-                            };
-                            assert(ghost_pt_matches_structure(mem, pt_final@, layer as nat, ptr));
-                            assert(ghost_pt_region_notin_used_regions(mem, pt_final@, layer as nat, ptr));
-                            assert(entry_mb0_bits_are_zero(mem, pt_final@, layer as nat, ptr));
-                            assert(hp_pat_is_zero(mem, pt_final@, layer as nat, ptr));
-                        };
+            //                         if i == idx {
+            //                         } else {
+            //                             assert(entry == view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i));
+            //                             assert(pt_final@.entries[i as int] === pt_with_empty@.entries[i as int]);
+            //                             if entry.is_Directory() {
+            //                                 assert(pt_with_empty@.entries[i as int].is_Some());
+            //                                 let pt_entry = pt_with_empty@.entries[i as int].get_Some_0();
+            //                                 assert(pt_with_empty@.entries[i as int] === pt_final@.entries[i as int]);
+            //                                 assert(pt_with_empty@.entries[i as int].get_Some_0() === pt_final@.entries[i as int].get_Some_0());
+            //                                 assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+            //                                        ==> !dir_new_regions@.contains(r) && !new_dir_pt@.used_regions.contains(r));
+            //                                 assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+            //                                        ==> #[trigger] mem_with_empty@.region_view(r) === mem.region_view(r));
+            //                                 lemma_inv_at_different_memory(mem_with_empty@, mem, pt_entry, (layer + 1) as nat, entry.get_Directory_addr());
+            //                                 assert(inv_at(mem, pt_final@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr()));
+            //                             }
+            //                         }
+            //                     };
+            //                 };
 
-                        assert(Ok(interp_at(mem, pt_final@, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@)) by {
-                            lemma_interp_at_aux_facts(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, seq![]);
-                            assert(inv_at(mem, pt_final@, layer as nat, ptr));
-                            assert(inv_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
-                            lemma_interp_at_aux_facts(mem, pt_final@, layer as nat, ptr, base as nat, seq![]);
+            //                 assert(directories_have_flags(mem, pt_final@, layer as nat, ptr));
 
-                            // The original/old interp is `interp@`
-                            let final_interp = interp_at(mem, pt_final@, layer as nat, ptr, base as nat);
-                            let prev_interp = interp_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat);
+            //                 assert(pt_final@.entries.len() == pt_with_empty@.entries.len());
+            //                 assert(forall|i: nat| i != idx && i < pt_final@.entries.len() ==> pt_final@.entries[i as int] === pt_with_empty@.entries[i as int]);
+            //                 assert(ghost_pt_used_regions_rtrancl(mem, pt_final@, layer as nat, ptr)) by {
+            //                     assert forall|i: nat, r: MemRegion|
+            //                         i < pt_final@.entries.len() &&
+            //                         pt_final@.entries[i as int].is_Some() &&
+            //                         #[trigger] pt_final@.entries[i as int].get_Some_0().used_regions.contains(r)
+            //                         implies pt_final@.used_regions.contains(r)
+            //                     by {
+            //                         if i == idx {
+            //                             if dir_new_regions@.contains(r) {
+            //                                 assert(pt_final@.used_regions.contains(r));
+            //                             } else {
+            //                                 assert(pt_with_empty@.entries[i as int].get_Some_0().used_regions.contains(r));
+            //                                 assert(pt_with_empty@.used_regions.contains(r));
+            //                                 assert(pt_final@.used_regions.contains(r));
+            //                             }
+            //                         } else { }
+            //                     };
+            //                 };
+            //                 assert(ghost_pt_used_regions_pairwise_disjoint(mem, pt_final@, layer as nat, ptr)) by {
+            //                     assert forall|i: nat, j: nat, r: MemRegion|
+            //                         i != j &&
+            //                         i < pt_final@.entries.len() && pt_final@.entries[i as int].is_Some() &&
+            //                         #[trigger] pt_final@.entries[i as int].get_Some_0().used_regions.contains(r) &&
+            //                         j < pt_final@.entries.len() && pt_final@.entries[j as int].is_Some()
+            //                         implies !(#[trigger] pt_final@.entries[j as int].get_Some_0().used_regions.contains(r))
+            //                     by
+            //                     {
+            //                         assert(ghost_pt_used_regions_pairwise_disjoint(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //                         if j == idx {
+            //                             assert(pt_final@.entries[j as int].get_Some_0() === dir_pt_res@);
+            //                             assert(pt_final@.entries[i as int] === pt.entries[i as int]);
+            //                             if dir_new_regions@.contains(r) {
+            //                                 assert(!new_dir_pt@.used_regions.contains(r));
+            //                                 assert(!mem_with_empty@.regions().contains(r));
+            //                                 assert(!dir_pt_res@.used_regions.contains(r));
+            //                             } else {
+            //                                 if new_dir_pt@.used_regions.contains(r) {
+            //                                     assert(pt.used_regions.contains(r));
+            //                                     assert(mem_with_empty@.regions().contains(r));
+            //                                     assert(!dir_pt_res@.used_regions.contains(r));
+            //                                 }
+            //                             }
+            //                         } else {
+            //                             if i == idx {
+            //                                 assert(pt_final@.entries[i as int].get_Some_0() === dir_pt_res@);
+            //                                 assert(pt_final@.entries[j as int] === pt.entries[j as int]);
+            //                                 if dir_new_regions@.contains(r) {
+            //                                     assert(dir_pt_res@.used_regions.contains(r));
+            //                                     assert(!new_dir_pt@.used_regions.contains(r));
+            //                                     assert(!mem_with_empty@.regions().contains(r));
+            //                                     assert(!pt.entries[j as int].get_Some_0().used_regions.contains(r));
+            //                                 } else {
+            //                                     assert(new_dir_pt@.used_regions.contains(r));
+            //                                     assert(!pt.entries[j as int].get_Some_0().used_regions.contains(r));
+            //                                 }
+            //                             } else {
+            //                                 assert(pt_final@.entries[i as int] === pt.entries[i as int]);
+            //                                 assert(pt_final@.entries[j as int] === pt.entries[j as int]);
+            //                             }
+            //                         }
 
-                            assert forall|i: nat| i < X86_NUM_ENTRIES && i != idx
-                                implies prev_interp.entries[i as int] === #[trigger] interp@.entries[i as int]
-                            by { lemma_interp_at_entry_different_memory(&*old(mem), pt, mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, i); };
+            //                     };
+            //                 };
+            //                 assert(ghost_pt_matches_structure(mem, pt_final@, layer as nat, ptr));
+            //                 assert(ghost_pt_region_notin_used_regions(mem, pt_final@, layer as nat, ptr));
+            //                 assert(entry_mb0_bits_are_zero(mem, pt_final@, layer as nat, ptr));
+            //                 assert(hp_pat_is_zero(mem, pt_final@, layer as nat, ptr));
+            //                 assert(entry_count_is_tracked(mem, pt_final@, layer as nat, ptr)) by {
+            //                     reveal(entry_count);
+            //                     assert(Set::new(|i: nat| i < 512 && !view_at(mem, pt_final@, layer as nat, ptr, i).is_Empty())
+            //                            =~= Set::new(|i: nat| i < 512 && !view_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, i).is_Empty()));
+            //                 };
+            //             };
 
-                            assert forall|i: nat|
-                                i < X86_NUM_ENTRIES && i != idx
-                                implies final_interp.entries[i as int] === #[trigger] prev_interp.entries[i as int] by
-                            {
-                                if pt_final@.entries[i as int].is_Some() {
-                                    let pt_entry = pt_final@.entries[i as int].get_Some_0();
-                                    assert(ghost_pt_used_regions_pairwise_disjoint(mem, pt_final@, layer as nat, ptr));
-                                    assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
-                                           implies !new_regions@.contains(r) by
-                                    {
-                                        assert(pt_entry.used_regions.contains(r));
-                                        assert(mem_with_empty@.regions().contains(r));
-                                        assert(old(mem).regions().contains(r));
-                                        assert(!new_regions@.contains(r));
-                                    };
-                                    assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
-                                           ==> !dir_pt_res@.used_regions.contains(r));
-                                    assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
-                                           ==> #[trigger] old(mem).region_view(r) === mem.region_view(r));
-                                }
-                                lemma_interp_at_entry_different_memory(mem_with_empty@, pt_with_empty@, mem, pt_final@, layer as nat, ptr, base as nat, i);
-                            };
+            //             assert(Ok(interp_at(mem, pt_final@, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@)) by {
+            //                 lemma_interp_at_aux_facts(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, seq![]);
+            //                 assert(inv_at(mem, pt_final@, layer as nat, ptr));
+            //                 assert(inv_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr));
+            //                 lemma_interp_at_aux_facts(mem, pt_final@, layer as nat, ptr, base as nat, seq![]);
 
-                            assert(final_interp.entries[idx as int] === interp@.map_frame(vaddr as nat, pte@).get_Ok_0().entries[idx as int]);
-                            assert(final_interp.entries =~= interp@.map_frame(vaddr as nat, pte@).get_Ok_0().entries);
-                            assert(Ok(interp_at(mem, pt_final@, layer as nat, ptr, base as nat)) === interp@.map_frame(vaddr as nat, pte@));
-                        };
-                    }
+            //                 // The original/old interp is `interp@`
+            //                 let final_interp = interp_at(mem, pt_final@, layer as nat, ptr, base as nat);
+            //                 let prev_interp = interp_at(mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat);
 
-                    // posts
-                    proof {
-                        assert(pt_final@.region === pt.region);
-                        assert(pt_final@.used_regions =~= pt.used_regions.union(new_regions@));
-                        assert(mem.regions() =~= old(mem).regions().union(new_regions@));
-                        assert forall|r: MemRegion|
-                            !(#[trigger] pt.used_regions.contains(r))
-                            && !new_regions@.contains(r)
-                            implies mem.region_view(r) === old(mem).region_view(r) by
-                        {
-                            assert(r !== new_dir_region@);
-                            assert(!pt_with_empty@.used_regions.contains(r));
-                            assert(!new_dir_pt@.used_regions.contains(r));
-                            assert(!dir_new_regions@.contains(r));
-                            assert(mem.region_view(r) === mem_with_empty@.region_view(r));
-                        };
-                        assert forall|r: MemRegion|
-                            new_regions@.contains(r)
-                            implies !(#[trigger] old(mem).regions().contains(r)) by
-                        {
-                            if r === new_dir_region@ {
-                                assert(!old(mem).regions().contains(r));
-                            } else {
-                                assert(dir_new_regions@.contains(r));
-                                assert(!mem_with_empty@.regions().contains(r));
-                                assert(!old(mem).regions().contains(r));
-                            }
-                        };
-                        assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt.used_regions.contains(r)));
-                    }
-                    Ok(Ghost((pt_final@, new_regions@)))
-                },
-                Err(e) => {
-                    proof {
-                        indexing::lemma_index_from_base_and_addr(entry_base as nat, vaddr as nat, x86_arch_spec.entry_size((layer + 1) as nat), X86_NUM_ENTRIES as nat);
-                        assert(false); // We always successfully insert into an empty directory
-                    }
-                    Err(e)
-                },
-            }
+            //                 assert forall|i: nat| i < X86_NUM_ENTRIES && i != idx
+            //                     implies prev_interp.entries[i as int] === #[trigger] interp@.entries[i as int]
+            //                 by { lemma_interp_at_entry_different_memory(&*old(mem), pt, mem_with_empty@, pt_with_empty@, layer as nat, ptr, base as nat, i); };
+
+            //                 assert forall|i: nat|
+            //                     i < X86_NUM_ENTRIES && i != idx
+            //                     implies final_interp.entries[i as int] === #[trigger] prev_interp.entries[i as int] by
+            //                 {
+            //                     if pt_final@.entries[i as int].is_Some() {
+            //                         let pt_entry = pt_final@.entries[i as int].get_Some_0();
+            //                         assert(ghost_pt_used_regions_pairwise_disjoint(mem, pt_final@, layer as nat, ptr));
+            //                         assert forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+            //                                implies !new_regions@.contains(r) by
+            //                         {
+            //                             assert(pt_entry.used_regions.contains(r));
+            //                             assert(mem_with_empty@.regions().contains(r));
+            //                             assert(old(mem).regions().contains(r));
+            //                             assert(!new_regions@.contains(r));
+            //                         };
+            //                         assert(forall|r: MemRegion| #[trigger] pt_entry.used_regions.contains(r)
+            //                                ==> !dir_pt_res@.used_regions.contains(r));
+            //                         assert(forall|r: MemRegion| pt_entry.used_regions.contains(r)
+            //                                ==> #[trigger] old(mem).region_view(r) === mem.region_view(r));
+            //                     }
+            //                     lemma_interp_at_entry_different_memory(mem_with_empty@, pt_with_empty@, mem, pt_final@, layer as nat, ptr, base as nat, i);
+            //                 };
+
+            //                 assert(final_interp.entries[idx as int] === interp@.map_frame(vaddr as nat, pte@).get_Ok_0().entries[idx as int]);
+            //                 assert(final_interp.entries =~= interp@.map_frame(vaddr as nat, pte@).get_Ok_0().entries);
+            //                 assert(Ok(interp_at(mem, pt_final@, layer as nat, ptr, base as nat)) === interp@.map_frame(vaddr as nat, pte@));
+            //             };
+            //         assume(false);
+            //         }
+
+            //         // posts
+            //         proof {
+            //             assert(pt_final@.region === pt.region);
+            //             assert(pt_final@.used_regions =~= pt.used_regions.union(new_regions@));
+            //             assert(mem.regions() =~= old(mem).regions().union(new_regions@));
+            //             assert forall|r: MemRegion|
+            //                 !(#[trigger] pt.used_regions.contains(r))
+            //                 && !new_regions@.contains(r)
+            //                 implies mem.region_view(r) === old(mem).region_view(r) by
+            //             {
+            //                 assert(r !== new_dir_region@);
+            //                 assert(!pt_with_empty@.used_regions.contains(r));
+            //                 assert(!new_dir_pt@.used_regions.contains(r));
+            //                 assert(!dir_new_regions@.contains(r));
+            //                 assert(mem.region_view(r) === mem_with_empty@.region_view(r));
+            //             };
+            //             assert forall|r: MemRegion|
+            //                 new_regions@.contains(r)
+            //                 implies !(#[trigger] old(mem).regions().contains(r)) by
+            //             {
+            //                 if r === new_dir_region@ {
+            //                     assert(!old(mem).regions().contains(r));
+            //                 } else {
+            //                     assert(dir_new_regions@.contains(r));
+            //                     assert(!mem_with_empty@.regions().contains(r));
+            //                     assert(!old(mem).regions().contains(r));
+            //                 }
+            //             };
+            //             assert(forall|r: MemRegion| new_regions@.contains(r) ==> !(#[trigger] pt.used_regions.contains(r)));
+            //         }
+            //         Ok(Ghost((pt_final@, new_regions@)))
+            //     },
+            //     Err(e) => {
+            //         proof {
+            //             indexing::lemma_index_from_base_and_addr(entry_base as nat, vaddr as nat, x86_arch_spec.entry_size((layer + 1) as nat), X86_NUM_ENTRIES as nat);
+            //             assert(false); // We always successfully insert into an empty directory
+            //         }
+            //         Err(e)
+            //     },
+            // }
         }
     }
 }
@@ -1895,6 +1909,142 @@ fn is_directory_empty(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer
     count == 0
 }
 
+/// Allocates and inserts an empty directory at the given index. Increments the entry count by one.
+fn insert_empty_directory(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, base: usize, count: usize, idx: usize)
+    -> (res: (Ghost<PTDir> /* pt_res */, MemRegionExec /* new_dir_region */, PageDirectoryEntry /* new_dir_entry */))
+    requires
+        inv_at(&*old(mem), pt, layer as nat, ptr),
+        interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).inv(),
+        old(mem).alloc_available_pages() > 0,
+        layer < 3,
+        idx < 512,
+        view_at(&*old(mem), pt, layer as nat, ptr, idx as nat).is_Empty(),
+        count == Set::new(|i: nat| i < 512 && !view_at(&*old(mem), pt, layer as nat, ptr, i).is_Empty()).len(),
+    ensures
+        inv_at(mem, res.0@, layer as nat, ptr),
+        !old(mem).regions().contains(res.1@),
+        mem.regions() == old(mem).regions().insert(res.1@),
+        mem.alloc_available_pages() == old(mem).alloc_available_pages() - 1,
+        mem.cr3_spec() == old(mem).cr3_spec(),
+        forall|i: nat| i < 512 && i != idx ==> view_at(mem, res.0@, layer as nat, ptr, i) == view_at(&*old(mem), res.0@, layer as nat, ptr, i),
+        forall|r: MemRegion| r != res.0@.region && r != res.0@.entries[idx as int].get_Some_0().region ==> mem.region_view(r) == old(mem).region_view(r),
+        // mem.region_view(res.0@.entries[idx as int].get_Some_0().region) == new_seq(512nat, 0u64),
+        ({ let pt_res = res.0@; let new_dir_region = res.1; let new_dir_entry = res.2;
+           let new_dir_pt = pt_res.entries[idx as int].get_Some_0();
+           let entry_base = x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat);
+           let new_dir_interp = interp_at(mem, pt_res.entries[idx as int].get_Some_0(), (layer + 1) as nat, new_dir_region.base, entry_base);
+           let interp = interp_at(&*old(mem), pt, layer as nat, ptr, base as nat);
+           &&& entry_at_spec(mem, pt_res, layer as nat, ptr, idx as nat) == new_dir_entry
+           &&& view_at(mem, pt_res, layer as nat, ptr, idx as nat).is_Directory()
+           &&& view_at(mem, pt_res, layer as nat, ptr, idx as nat).get_Directory_addr() == new_dir_region.base
+           &&& new_dir_interp == interp.new_empty_dir(idx as nat)
+           &&& new_dir_interp.inv()
+           &&& pt_res.region == pt.region
+           &&& pt_res.entries == pt.entries.update(idx as int, Some(new_dir_pt))
+           &&& pt_res.used_regions == pt.used_regions.insert(new_dir_pt.region)
+        })
+{
+    let interp: Ghost<l1::Directory> = Ghost(interp_at(mem, pt, layer as nat, ptr, base as nat));
+    proof { lemma_entry_count_set_facts(mem, pt, layer as nat, ptr); }
+    let new_dir_region = mem.alloc_page();
+    let new_dir_ptr = new_dir_region.base;
+    let new_dir_ptr_u64 = new_dir_ptr as u64;
+    let new_dir_pt: Ghost<PTDir> = Ghost(
+        PTDir {
+            region: new_dir_region@,
+            entries: new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None),
+            used_regions: set![new_dir_region@],
+        });
+    assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64) by {
+        lemma_page_aligned_implies_mask_dir_addr_is_identity();
+    };
+    let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
+    mem.write(ptr, idx, Ghost(pt.region), new_dir_entry.entry);
+
+    let pt_res: Ghost<PTDir> = Ghost(
+        PTDir {
+            region:       pt.region,
+            entries:      pt.entries.update(idx as int, Some(new_dir_pt@)),
+            used_regions: pt.used_regions.insert(new_dir_pt@.region),
+        });
+    // For easier reference we take a snapshot of mem here. In the subsequent proofs
+    // (after the recursive call) we have old(mem), mem_with_empty and mem to refer
+    // to each relevant state.
+    let mem_with_empty: Ghost<&mem::PageTableMemory> = Ghost(mem);
+    proof {
+        assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            #[trigger] view_at(mem_with_empty@, pt_res@, layer as nat, ptr, i) == if i == idx { new_dir_entry@ } else { view_at(&*old(mem), pt, layer as nat, ptr, i) } by { };
+        assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            #[trigger] entry_at_spec(mem_with_empty@, pt_res@, layer as nat, ptr, i) == if i == idx { new_dir_entry } else { entry_at_spec(&*old(mem), pt, layer as nat, ptr, i) } by { };
+        lemma_new_seq::<u64>(512nat, 0u64);
+        lemma_new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None);
+        assert(new_dir_pt@.entries.len() == 512);
+        assert(new_dir_region@.contains(new_dir_ptr as nat));
+        assert(mem_with_empty@.region_view(new_dir_region@) === new_seq(512nat, 0u64));
+        lemma_zeroed_page_implies_empty_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr);
+        assert(empty_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
+        assert(inv_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr));
+
+        assert(forall|r: MemRegion| r !== new_dir_pt@.region && r !== pt_res@.region
+               ==> mem_with_empty@.region_view(r) === old(mem).region_view(r));
+        assert(mem_with_empty@.region_view(pt_res@.region)
+               === old(mem).region_view(pt_res@.region).update(idx as int, new_dir_entry.entry));
+
+        assert(ghost_pt_matches_structure(mem_with_empty@, pt_res@, layer as nat, ptr));
+        assert(directories_obey_invariant_at(mem_with_empty@, pt_res@, layer as nat, ptr)) by {
+            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+                let entry = #[trigger] view_at(mem_with_empty@, pt_res@, layer as nat, ptr, i);
+                entry.is_Directory()
+                    ==> inv_at(mem_with_empty@, pt_res@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr())
+            } by {
+                let entry = view_at(mem_with_empty@, pt_res@, layer as nat, ptr, i);
+                if i == idx {
+                } else {
+                    if entry.is_Directory() {
+                        let pt_entry = pt.entries[i as int].get_Some_0();
+                        assert(inv_at(&*old(mem), pt_entry, (layer + 1) as nat, entry.get_Directory_addr()));
+                        assert(pt.entries[i as int] == pt_res@.entries[i as int]);
+                        assert(old(mem).regions().contains(pt_entry.region));
+                        lemma_inv_at_different_memory(&*old(mem), mem_with_empty@, pt_entry, (layer + 1) as nat, entry.get_Directory_addr());
+                        assert(inv_at(mem_with_empty@, pt_res@.entries[i as int].get_Some_0(), (layer + 1) as nat, entry.get_Directory_addr()));
+                    }
+                }
+            };
+        };
+
+        assert(Set::new(|i: nat| i < 512 && !view_at(mem, pt_res@, layer as nat, ptr, i).is_Empty())
+               =~= Set::new(|i: nat| i < 512 && !view_at(&*old(mem), pt, layer as nat, ptr, i).is_Empty()).insert(idx as nat));
+    }
+
+    set_entry_count(mem, pt_res, layer, ptr, count + 1);
+
+    proof {
+        assert forall|i: nat| i < X86_NUM_ENTRIES implies
+            #[trigger] view_at(mem, new_dir_pt@, (layer + 1) as nat, new_dir_ptr, i)
+            == view_at(mem_with_empty@, new_dir_pt@, (layer + 1) as nat, new_dir_ptr, i) by { };
+        // not true:
+        // assert forall|i: nat| i < X86_NUM_ENTRIES implies
+        //     #[trigger] entry_at_spec(mem, pt_res@, layer as nat, ptr, i)
+        //     == entry_at_spec(mem_with_empty@, pt_res@, layer as nat, ptr, i) by { };
+        lemma_empty_at_interp_at_equal_l1_empty_dir(mem, pt_res@, layer as nat, ptr, base as nat, idx as nat);
+        interp@.lemma_new_empty_dir(idx as nat);
+        lemma_interp_at_aux_facts(mem, pt_res@, layer as nat, ptr, base as nat, seq![]);
+        let entry_base = x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat);
+        let new_dir_interp = interp_at(mem, new_dir_pt@, (layer + 1) as nat, new_dir_ptr, entry_base);
+        assert(new_dir_interp.entries =~= interp@.new_empty_dir(idx as nat).entries);
+        assert(new_dir_interp == interp@.new_empty_dir(idx as nat));
+    }
+
+    // TODO: shouldn't need to read the entry again here but reasoning is a bit tricky. The view
+    // remains unchanged when setting entry count but if idx is in {0,1,2,3} the concrete value
+    // does change, so it may be different from the original new_dir_entry.
+    let new_dir_entry = entry_at(mem, pt_res, layer, ptr, idx);
+    (pt_res, new_dir_region, new_dir_entry)
+}
+
+
+/// This function sets the correct entry count and re-establishes the invariant. It only touches
+/// unused bits and thus does not change the view of any entry in this directory.
 fn set_entry_count(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, count: usize)
     requires
         // We are only allowed to set the correct entry count
