@@ -2519,7 +2519,7 @@ pub proof fn lemma_entry_count_set_facts(mem: &mem::PageTableMemory, pt: PTDir, 
 
 // TODO: Maybe this should go into vstd. But it's much less pleasant to use than e.g. in HOL. (See
 // where it's used in `lemma_entry_count_set_facts`.)
-pub proof fn lemma_set_less_than_const_and_pred_facts(n: nat, P: FnSpec(nat) -> bool)
+pub proof fn lemma_set_less_than_const_and_pred_facts(n: nat, P: spec_fn(nat) -> bool)
     ensures
         Set::new(|i: nat| i < n && P(i)).finite(),
         Set::new(|i: nat| i < n && P(i)).len() <= n,
