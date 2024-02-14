@@ -536,7 +536,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                 assert(s2.hw.mem === s1.hw.mem.update(pmem_idx as int, new_value));
                                                 assert(pmem_idx < s1.hw.mem.len());
                                                 assert(pmem_idx2 < s1.hw.mem.len());
-                                                lib::mod_of_mul(vmem_idx2, WORD_SIZE as nat);
+                                                vstd::arithmetic::div_mod::lemma_mod_multiples_basic(vmem_idx2 as int, WORD_SIZE as int);
                                                 assert(aligned(paddr, 8)) by {
                                                     reveal(OSVariables::pt_entries_aligned);
                                                     assert(aligned(pte.frame.base, 8));

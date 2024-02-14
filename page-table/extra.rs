@@ -8,60 +8,31 @@ use vstd::map::*;
 
 verus! {
 
-pub proof fn mod_of_mul_integer_ring(a: int, b: int) by (integer_ring)
-    ensures (a * b) % b == 0
-{ }
-
-pub proof fn mod_of_mul(a: nat, b: nat) by (nonlinear_arith)
-    requires b > 0,
-    ensures aligned(a * b, b),
-{
-    mod_of_mul_integer_ring(a as int, b as int);
-    assert((a * b) % b == 0);
-}
-
-pub proof fn mod_of_mul_auto() 
-    ensures forall|a: nat, b: nat| b > 0 ==> aligned(#[trigger] (a * b), b),
-{
-    assert forall|a: nat, b: nat| b > 0 implies aligned(#[trigger] (a * b), b) by {
-        mod_of_mul(a, b);
-    }
-}
-
-pub proof fn mod_add_zero_integer_ring(a: int, b: int, c: int) by (integer_ring)
-    requires a % c == 0, b % c == 0
-    ensures (a + b) % c == 0
-{ }
-
 pub proof fn mod_add_zero(a: nat, b: nat, c: nat)
     requires aligned(a, c), aligned(b, c), c > 0
     ensures aligned(a + b, c)
 {
-    mod_add_zero_integer_ring(a as int, b as int, c as int);
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(a as int, b as int, c as int);
+    assert(0nat % c == (a + b) % c);
 }
-
-pub proof fn mod_mult_zero_implies_mod_zero_integer_ring(a: int, b: int, c: int) by (integer_ring)
-    requires a % (b * c) == 0
-    ensures a % b == 0
-{ }
 
 pub proof fn mod_mult_zero_implies_mod_zero(a: nat, b: nat, c: nat) by (nonlinear_arith)
     requires aligned(a, b * c), b > 0, c > 0
     ensures aligned(a, b)
 {
-    mod_mult_zero_implies_mod_zero_integer_ring(a as int, b as int, c as int);
+    vstd::arithmetic::div_mod::lemma_mod_mod_auto();
+    vstd::arithmetic::div_mod::lemma_mod_breakdown_auto();
+    assert((a % (b * c)) % b == 0);
 }
-
-pub proof fn subtract_mod_eq_zero_integer_ring(a: int, b: int, c: int) by (integer_ring)
-    requires a % c == 0, b % c == 0
-    ensures (b - a) % c == 0
-{ }
 
 pub proof fn subtract_mod_eq_zero(a: nat, b: nat, c: nat)
     requires aligned(a, c), aligned(b, c), a <= b, c > 0
     ensures aligned((b - a) as nat, c)
 {
-    subtract_mod_eq_zero_integer_ring(a as int, b as int, c as int)
+    let a = a as int; let b = b as int; let c = c as int;
+    vstd::arithmetic::div_mod::lemma_sub_mod_noop(b, a, c);
+    assert(((b % c) - (a % c)) % c == (b - a) % c);
+    assert(0int % c == (b - a) % c);
 }
 
 pub proof fn leq_add_aligned_less(a: nat, b: nat, c: nat) by (nonlinear_arith)

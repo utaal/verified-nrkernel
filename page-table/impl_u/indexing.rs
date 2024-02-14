@@ -132,7 +132,7 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
                     aligned(entry_size, n)
             {
                 assert(aligned(idx * entry_size, entry_size)) by {
-                    lib::mod_of_mul(idx, entry_size);
+                    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(idx as int, entry_size as int);
                 };
                 assert(aligned(idx * entry_size, n)) by {
                     lib::aligned_transitive(idx * entry_size, entry_size, n);
@@ -155,7 +155,7 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
                     aligned(entry_size, n)
             {
                 assert(aligned((idx + 1) * entry_size, entry_size)) by {
-                    lib::mod_of_mul(idx + 1, entry_size);
+                    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(idx as int + 1, entry_size as int);
                 };
                 assert(aligned((idx + 1) * entry_size, n)) by {
                     lib::aligned_transitive((idx + 1) * entry_size, entry_size, n);

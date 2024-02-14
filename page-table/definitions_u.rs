@@ -207,7 +207,7 @@ impl Arch {
         } else {
             assert(forall|a: int, b: int| #[trigger] (a * b) == b * a);
             self.lemma_entry_sizes_aligned(i+1,j);
-            crate::extra::mod_of_mul_auto();
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic_auto();
             crate::extra::aligned_transitive_auto();
             assert(aligned(self.entry_size(i), self.entry_size(j)));
         }
