@@ -26,6 +26,7 @@ pub struct PageTableVariables {
     pub map: Map<nat /* VAddr */, PageTableEntry>,
 }
 
+#[allow(inconsistent_fields)]
 pub enum PageTableStep {
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
     Unmap   { vaddr: nat, result: UnmapResult },

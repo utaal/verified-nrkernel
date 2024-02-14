@@ -32,6 +32,7 @@ pub struct HWVariables {
     pub tlb:    Map<nat,PageTableEntry>,
 }
 
+#[allow(inconsistent_fields)]
 #[is_variant]
 pub enum HWStep {
     ReadWrite { vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },

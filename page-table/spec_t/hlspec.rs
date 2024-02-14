@@ -34,6 +34,7 @@ pub struct AbstractVariables {
     pub mappings: Map<nat,PageTableEntry>,
 }
 
+#[allow(inconsistent_fields)]
 pub enum AbstractStep {
     ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     Map       { vaddr: nat, pte: PageTableEntry, result: MapResult },

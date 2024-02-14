@@ -179,6 +179,7 @@ pub enum StoreResult {
     Ok,
 }
 
+#[allow(inconsistent_fields)]
 #[is_variant]
 pub enum RWOp {
     Store { new_value: nat, result: StoreResult },

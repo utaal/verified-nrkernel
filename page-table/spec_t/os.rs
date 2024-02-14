@@ -140,6 +140,7 @@ pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, resul
 }
 
 
+#[allow(inconsistent_fields)]
 pub enum OSStep {
     HW      { step: hardware::HWStep },
     Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
