@@ -21,25 +21,27 @@ use super::utils::*;
 // Cyclic Buffer
 // =============
 //
-// Dafny: https://github.com/secure-foundations/iron-sync/blob/concurrency-experiments/concurrency/node-replication/CyclicBuffer.i.dfy
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
+// The cyclic buffer is a bounded log with multiple readers and writers. A writer will check whether
+// there's enough space in the log and the reserve space to place its update operations into the log.
+// Log space can be reclaimed once all readers have advanced their read pointers accordingly.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// rust_verify/tests/example.rs ignore
+verus! {
 
+/// Logical Log Index
+///
+/// In contrast to the unbounded log, the log entries can be "negative". This is used for the
+/// initialization where all entries are initialized with the range [-LOG_SIZE, 0)
 pub type LogicalLogIdx = int;
 
-type Key = int;
+/// The size of the log. XXX: can we get rid of this?
+use crate::constants::LOG_SIZE;
 
-verus! {
-    use crate::constants::LOG_SIZE;
 
-    // pub type StoredType = PointsTo<LogEntry>;
-
-///  - Dafny: glinear datatype StoredType = StoredType(CellContents<ConcreteLogEntry>, glOption<Log>)
+/// An entry in the log
+///
+///
 pub tracked struct StoredType<DT: Dispatch> {
     pub cell_perms: PointsTo<Option<ConcreteLogEntry<DT>>>,
     pub log_entry: Option<UnboundedLog::log<DT>>
@@ -774,12 +776,18 @@ proof fn map_min_value_smallest(m: Map<NodeId, nat>, idx: nat)
 
 
 
+
+
+
+
 /// converts the logical to the physical log index
 pub open spec fn log_entry_idx(logical: LogicalLogIdx, buffer_size: nat) -> LogIdx
     recommends buffer_size == LOG_SIZE
 {
     (logical % (buffer_size as int)) as nat
 }
+
+// a % b == 0 to a == b * (a / b)
 
 
 pub proof fn log_entry_idx_wrap_around(start: nat, buffer_size: nat, idx: nat)

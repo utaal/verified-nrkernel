@@ -3,33 +3,39 @@
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
+use state_machines_macros::*;
 
 use vstd::prelude::*;
 use vstd::map::Map;
 use vstd::seq::Seq;
 use vstd::set::Set;
 
-use state_machines_macros::*;
+
 
 use crate::Dispatch;
 
 use super::types::*;
 use super::utils::*;
 
-vstd::prelude::verus! {
+verus! {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Unbounded Log
 // =============
 //
-// ...
+// The UnboundedLog is the first Refinement of the SimpleLog. As its name suggests, it also uses
+// an unbounded log to represent updates to the data structure, however the log itself is represented
+// by a map instead of a sequence. Moreover, the state machine also manages the data structure
+// replicas.
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Read Only Operations
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 /// ReadonlyState: Tracking the progress of read-only queries
 ///
@@ -63,16 +69,27 @@ pub ghost enum ReadonlyState<DT: Dispatch> {
     /// ready to read
     ReadyToRead {
         op: DT::ReadOperation,
-        node_id: NodeId,
         version_upper_bound: LogIdx,
+        node_id: NodeId,
     },
     /// read request is done
     Done {
         op: DT::ReadOperation,
-        ret: DT::Response,
-        node_id: NodeId,
         version_upper_bound: LogIdx,
+        node_id: NodeId,
+        ret: DT::Response,
     },
+}
+
+impl<DT: Dispatch> ReadonlyState<DT> {
+    pub open spec fn op(self) -> DT::ReadOperation {
+        match self {
+            ReadonlyState::Init { op, .. } => op,
+            ReadonlyState::VersionUpperBound { op, .. } => op,
+            ReadonlyState::ReadyToRead { op, .. } => op,
+            ReadonlyState::Done { op, .. } => op,
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -909,9 +926,7 @@ UnboundedLog<DT: Dispatch> {
         get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         match input {
             crate::InputOperation::Read(op) => {
-                assert(post.inv_request_ids_finite());
-                assert(post.inv_local_combiner_complete());
-                assert(post.invariant());
+                assert(post.inv_readonly_requests_wf());
             }
             crate::InputOperation::Write(op) => {
                 assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
@@ -965,7 +980,9 @@ UnboundedLog<DT: Dispatch> {
         ensures post.invariant(),
     {
         match output {
-            crate::OutputOperation::Read(op) => { }
+            crate::OutputOperation::Read(op) => {
+                assert(post.inv_readonly_requests_wf());
+            }
             crate::OutputOperation::Write(op) => {
                 assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
                     match post.combiner[node_id] {
@@ -1410,34 +1427,34 @@ pub open spec fn LogRangeMatchesQueue<DT: Dispatch>(queue: Seq<ReqId>, log: Map<
 }
 
 
-pub open spec fn LogRangeMatchesQueue2<DT: Dispatch>(queue: Seq<ReqId>, log: Map<LogIdx, LogEntry<DT>>, queueIndex: nat,
-    logIndexLower: LogIdx, logIndexUpper: LogIdx, nodeId: NodeId,
-    updates: Map<ReqId, UpdateState<DT>>) -> bool
-{
-    recommends([ 0 <= queueIndex <= queue.len(), LogContainsEntriesUpToHere(log, logIndexUpper) ]);
-    decreases_when(logIndexLower <= logIndexUpper);
-    decreases(logIndexUpper - logIndexLower);
+// pub open spec fn LogRangeMatchesQueue2<DT: Dispatch>(queue: Seq<ReqId>, log: Map<LogIdx, LogEntry<DT>>, queueIndex: nat,
+//     logIndexLower: LogIdx, logIndexUpper: LogIdx, nodeId: NodeId,
+//     updates: Map<ReqId, UpdateState<DT>>) -> bool
+// {
+//     recommends([ 0 <= queueIndex <= queue.len(), LogContainsEntriesUpToHere(log, logIndexUpper) ]);
+//     decreases_when(logIndexLower <= logIndexUpper);
+//     decreases(logIndexUpper - logIndexLower);
 
-    // if we hit the end of the log range, we should be at the end of the queue
-    &&& (logIndexLower == logIndexUpper ==> queueIndex == queue.len())
-    // otherwise, we check the log
-    &&& (logIndexLower < logIndexUpper ==> {
-        &&& log.contains_key(logIndexLower)
-        // local case: the entry has been written by the local node
-        &&& (log.index(logIndexLower).node_id == nodeId ==> {
-            // there must be an entry in the queue that matches the log entry
-            &&& queueIndex < queue.len()
-            // &&& updates.contains_key(queue.index(queueIndex as int))
-            // &&& updates.index(queue.index(queueIndex as int)).is_Placed()
-            // &&& updates.index(queue.index(queueIndex as int)).get_Placed_idx() == logIndexLower
-            &&& LogRangeMatchesQueue2(queue, log, queueIndex + 1, logIndexLower + 1, logIndexUpper, nodeId, updates)
-        })
-        // remote case: the entry has been written by the local node, there is nothing to match, recourse
-        &&& (log.index(logIndexLower).node_id != nodeId ==>
-            LogRangeMatchesQueue2(queue, log, queueIndex, logIndexLower + 1, logIndexUpper, nodeId, updates)
-        )
-    })
-}
+//     // if we hit the end of the log range, we should be at the end of the queue
+//     &&& (logIndexLower == logIndexUpper ==> queueIndex == queue.len())
+//     // otherwise, we check the log
+//     &&& (logIndexLower < logIndexUpper ==> {
+//         &&& log.contains_key(logIndexLower)
+//         // local case: the entry has been written by the local node
+//         &&& (log.index(logIndexLower).node_id == nodeId ==> {
+//             // there must be an entry in the queue that matches the log entry
+//             &&& queueIndex < queue.len()
+//             // &&& updates.contains_key(queue.index(queueIndex as int))
+//             // &&& updates.index(queue.index(queueIndex as int)).is_Placed()
+//             // &&& updates.index(queue.index(queueIndex as int)).get_Placed_idx() == logIndexLower
+//             &&& LogRangeMatchesQueue2(queue, log, queueIndex + 1, logIndexLower + 1, logIndexUpper, nodeId, updates)
+//         })
+//         // remote case: the entry has been written by the local node, there is nothing to match, recourse
+//         &&& (log.index(logIndexLower).node_id != nodeId ==>
+//             LogRangeMatchesQueue2(queue, log, queueIndex, logIndexLower + 1, logIndexUpper, nodeId, updates)
+//         )
+//     })
+// }
 
 proof fn LogRangeMatchesQueue_update_change<DT: Dispatch>(queue: Seq<nat>, log: Map<nat, LogEntry<DT>>,
     queueIndex: nat, logIndexLower: nat, logIndexUpper: nat, nodeId: nat,
@@ -1558,11 +1575,7 @@ proof fn LogRangeMatchesQueue_append_other<DT: Dispatch>(
 
     decreases(logIndexUpper - logIndexLower),
 {
-  if logIndexLower == logIndexUpper {
-     //assert( new_log.contains_key(logIndexLower) );
-     //assert(new_log.index(logIndexLower).node_id != node_id);
-     //assert(LogRangeMatchesQueue(queue, new_log, queueIndex, logIndexLower+1, logIndexUpper+1, node_id, new_updates));
-  } else {
+  if logIndexLower != logIndexUpper {
     assert(new_log.index(logIndexLower) === log.index(logIndexLower));
     if new_log.index(logIndexLower).node_id == node_id {
         LogRangeMatchesQueue_append_other(queue, log, new_log, queueIndex + 1,
@@ -1631,8 +1644,8 @@ proof fn LogRangeNoNodeId_append_other<DT: Dispatch>(
 {
   if logIndexLower == logIndexUpper + 1 {
   } else if logIndexLower == logIndexUpper {
-     assert( new_log.contains_key(logIndexLower) );
-     assert(new_log.index(logIndexLower).node_id != node_id);
+     assert(new_log.contains_key(logIndexLower) );
+     assert(new_log[logIndexLower].node_id != node_id);
      assert(LogRangeNoNodeId(new_log, logIndexLower+1, logIndexUpper+1, node_id));
   } else {
     assert(new_log.index(logIndexLower) === log.index(logIndexLower));
@@ -1657,8 +1670,8 @@ pub open spec fn QueueRidsUpdateDone<DT: Dispatch>(queued_ops: Seq<ReqId>, local
     // model being overly permissive.)
     forall |j| 0 <= j < bound ==>
         localUpdates.contains_key(#[trigger] queued_ops[j]) ==> {
-            ||| localUpdates.index(queued_ops[j]).is_Applied()
-            ||| localUpdates.index(queued_ops[j]).is_Done()
+            ||| localUpdates[queued_ops[j]].is_Applied()
+            ||| localUpdates[queued_ops[j]].is_Done()
         }
 }
 
@@ -1668,7 +1681,7 @@ pub open spec fn QueueRidsUpdatePlaced<DT: Dispatch>(queued_ops: Seq<ReqId>, loc
 {
     forall |j| bound <= j < queued_ops.len() ==> {
         &&& localUpdates.contains_key(#[trigger] queued_ops[j])
-        &&& localUpdates.index(queued_ops[j]).is_Placed()
+        &&& localUpdates[queued_ops[j]].is_Placed()
     }
 }
 
@@ -1686,8 +1699,7 @@ proof fn concat_LogRangeNoNodeId_LogRangeMatchesQueue<DT: Dispatch>(
     ensures LogRangeMatchesQueue(queue, log, queueIndex, a, c, nodeId, updates)
 decreases b - a
 {
-  if a == b {
-  } else {
+  if a != b {
     concat_LogRangeNoNodeId_LogRangeMatchesQueue(queue, log, queueIndex, a+1, b, c, nodeId, updates);
   }
 }
@@ -1696,12 +1708,11 @@ decreases b - a
 /// constructs the state of the data structure at a specific version given the log
 ///
 /// This function recursively applies the update operations to the initial state of the
-/// data structure and returns the state of the data structure at the given  version.
+/// data structure and returns the state of the data structure at the given version.
 pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, version: LogIdx) -> DT::View
     recommends forall |i| 0 <= i < version ==> log.contains_key(i)
     decreases version
 {
-    // decreases_when(version >= 0);
     if version == 0 {
         DT::init_spec()
     } else {
@@ -1709,6 +1720,7 @@ pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Map<LogIdx, LogEn
         DT::dispatch_mut_spec(compute_nrstate_at_version(log, ver), log[ver].op).0
     }
 }
+
 
 
 pub proof fn compute_nrstate_at_version_preserves<DT: Dispatch>(a: Map<LogIdx, LogEntry<DT>>, b: Map<LogIdx, LogEntry<DT>>, version: LogIdx)

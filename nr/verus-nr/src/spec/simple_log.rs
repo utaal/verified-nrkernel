@@ -1,5 +1,3 @@
-// #[allow(unused_imports)]
-
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;
@@ -141,12 +139,6 @@ state_machine! {
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Read Operation Transitions
     ////////////////////////////////////////////////////////////////////////////////////////////
-
-
-    // Readonly operations are carried out in three steps:
-    //  0. Add the request to the system (readonly requests)
-    //  1. When a 'readonly' request begins record the version of the log.
-    //  2. When it ends, we must return the answer at some version >= the recorded value.
 
 
     /// Read Request: Enter the read request operation into the system
