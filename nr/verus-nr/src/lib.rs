@@ -4,8 +4,6 @@
 
 #[allow(unused_imports)]
 use builtin::*;
-use vstd::*;
-// use vstd::seq::*;
 use vstd::prelude::*;
 use state_machines_macros::state_machine;
 

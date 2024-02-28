@@ -133,7 +133,7 @@ impl<T> RwLock<T> {
     }
 
     #[verifier(spinoff_prover)]
-    pub fn new(rc_width: usize, t: T, inv: Ghost<FnSpec(T) -> bool>) -> (s: Self)
+    pub fn new(rc_width: usize, t: T, inv: Ghost<spec_fn(T) -> bool>) -> (s: Self)
         requires
             0 < rc_width && inv@(t)
         ensures
