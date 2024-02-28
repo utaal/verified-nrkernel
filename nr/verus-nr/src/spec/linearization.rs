@@ -130,8 +130,8 @@ proof fn exists_equiv_behavior_rec<DT: Dispatch>(a: SimpleLogBehavior<DT>, r_poi
 /// checks whether the version of the request with the given ID is OK           (Dafny: FutureRidOk)
 spec fn future_rid_ok<DT: Dispatch>(s: SState<DT>, rid: ReqId, version: LogIdx) -> bool {
     &&& s.readonly_reqs.contains_key(rid)
-    &&& s.readonly_reqs[rid].is_Init() ==> s.version <= version
-    &&& s.readonly_reqs[rid].is_Req()  ==> s.readonly_reqs[rid].get_Req_version() <= version
+    &&& s.readonly_reqs[rid] is Init ==> s.version <= version
+    &&& s.readonly_reqs[rid] is Req  ==> s.readonly_reqs[rid]->version <= version
 }
 
 /// checks whether the versions of the requests are ok                       (Dafny: FuturePointsOk)
@@ -153,27 +153,27 @@ spec fn readonly_requests_valid<DT: Dispatch>(s:SState<DT>, t: AState<DT>, r_poi
 /// checks whether the readonly request is valid                            (Dafny: readonly_is_req)
 spec fn readonly_request_is_valid<DT: Dispatch>(s:SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId) -> bool {
     &&& s.readonly_reqs.contains_key(rid)
-    &&& (s.readonly_reqs[rid].is_Req() ==> s.readonly_reqs[rid].get_Req_version() <= s.version)
+    &&& (s.readonly_reqs[rid] is Req ==> s.readonly_reqs[rid]->version <= s.version)
 
     &&& t.reqs.contains_key(rid)
     &&& t.reqs[rid] == InputOperation::<DT>::Read(s.readonly_reqs[rid].op())
 
     &&& (r_points.contains_key(rid) ==> {
         &&& s.version <= r_points[rid]
-        &&& (s.readonly_reqs[rid].is_Req() ==> s.version < r_points[rid])
+        &&& (s.readonly_reqs[rid] is Req ==> s.version < r_points[rid])
     })
 }
 
 /// checks whether the readonly response is valid                          (Dafny: readonly_is_resp)
 spec fn readonly_response_is_valid<DT: Dispatch>(s:SState<DT>, t: AState<DT>, r_points: Map<ReqId, LogIdx>, rid: ReqId) -> bool {
     &&& s.readonly_reqs.contains_key(rid)
-    &&& s.readonly_reqs[rid].is_Req()
-    &&& s.readonly_reqs[rid].get_Req_version() <= s.version
+    &&& s.readonly_reqs[rid] is Req
+    &&& s.readonly_reqs[rid]->version <= s.version
 
     &&& t.resps.contains_key(rid)
 
     &&& (r_points.contains_key(rid) ==> {
-        &&& s.readonly_reqs[rid].get_Req_version() <= r_points[rid] && r_points[rid] <= s.version
+        &&& s.readonly_reqs[rid]->version <= r_points[rid] && r_points[rid] <= s.version
         &&& 0 <= r_points[rid] && r_points[rid] <= s.log.len()
         &&& t.resps[rid] == OutputOperation::<DT>::Read(DT::dispatch_spec(s.nrstate_at_version(r_points[rid]), s.readonly_reqs[rid].op()))
     })
@@ -312,7 +312,7 @@ proof fn readonly_read_version_refines<DT: Dispatch>(s: SState<DT>, s2: SState<D
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
     if r_points.contains_key(rid) && r_points[rid] == s.version {
-        let op =  s.readonly_reqs[rid].get_Init_op();
+        let op = s.readonly_reqs[rid].op();
 
         // remind verus that the request id is known!
         assert(t.reqs.contains_key(rid) || t.resps.contains_key(rid));
@@ -578,7 +578,7 @@ spec fn recursion_invariant<DT: Dispatch>(s: SState<DT>, s2: SState<DT>, t2: ASt
         &&& r_points.contains_key(rid)
         &&& r_points[rid] == s.version + 1
         &&& s.readonly_reqs.contains_key(rid)
-        &&& s.readonly_reqs[rid].is_Req()
+        &&& s.readonly_reqs[rid] is Req
     })
     &&& (forall |rid| #[trigger]s.readonly_reqs.contains_key(rid) && t2.reqs.contains_key(rid) ==> {
         !the_reads.contains(rid) ==> readonly_request_is_valid(s2, t2, r_points, rid)
@@ -684,7 +684,7 @@ proof fn trick_equiv<DT: Dispatch>(a: SimpleLogBehavior<DT>, a2: SimpleLogBehavi
 spec fn all_reads_for<DT: Dispatch>(readonly_reqs: Map<ReqId, ReadReq<DT::ReadOperation>>, r_points: Map<ReqId, LogIdx>, version: LogIdx) -> Set<ReqId>
     recommends r_points.dom().finite()
 {
-    r_points.dom().filter(|rid| r_points[rid] == version && readonly_reqs.contains_key(rid) && readonly_reqs[rid].is_Req())
+    r_points.dom().filter(|rid| r_points[rid] == version && readonly_reqs.contains_key(rid) && readonly_reqs[rid] is Req)
 }
 
 

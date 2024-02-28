@@ -34,7 +34,11 @@ verus! {
 ///
 /// Read requests enter the system and during the read the version of the data structure is
 /// being read. That version defines the state the data structure is queried against.
-#[is_variant]
+///
+/// Readonly operations are carried out in two steps:
+///  1. When a 'ReadReq' request begins record the version of the log.
+///  2. When it ends, we must return the answer at some version >= the recorded value.
+///
 pub ghost enum ReadReq<R> {
     /// a new read request that has entered the system
     Init { op: R },
@@ -98,8 +102,8 @@ state_machine! {
     /// all readonly requests must have a version that is less or equal to the log version
     #[invariant]
     pub fn inv_readonly_req_version(&self) -> bool {
-        forall |rid: ReqId| #[trigger] self.readonly_reqs.contains_key(rid) && self.readonly_reqs[rid].is_Req()
-            ==> self.readonly_reqs[rid].get_Req_version() <= self.version
+        forall |rid: ReqId| #[trigger] self.readonly_reqs.contains_key(rid) && self.readonly_reqs[rid] is Req
+            ==> self.readonly_reqs[rid]->version <= self.version
     }
 
 
