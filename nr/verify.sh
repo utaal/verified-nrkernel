@@ -19,7 +19,7 @@ fi
 
 # now verify the main osmosis model
 pushd ${VERUS_ROOT}/source > /dev/null
-echo "Verifying '${OSMOSIS_ROOT}/src/main.rs' ... "
+echo "Verifying '${NR_ROOT}/src/main.rs' ... "
  ./target-verus/release/verus --crate-type=lib $@ ${NR_ROOT}/src/lib.rs
 #./target-verus/release/verus --crate-type=lib $@ ${REPOSITORY_ROOT}/nr/test.rs
 popd > /dev/null
