@@ -606,17 +606,6 @@ UnboundedLog<DT: Dispatch> {
     // Readonly Transitions
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    /*/// Read Request: Enter the read request operation into the system
-    transition!{
-        readonly_start(op: DT::ReadOperation) {
-            //birds_eye let rid_fn = |rid| !pre.local_reads.contains_key(rid);
-            birds_eye let rid = get_fresh_nat(pre.local_reads.dom(), pre.combiner);
-            add local_reads += [ rid => ReadonlyState::Init {op} ] by {
-                get_fresh_nat_not_in(pre.local_reads.dom(), pre.combiner);
-            };
-        }
-    }*/
-
     /// Read Request: Read the version of the log
     ///
     /// The algorithm waits while local_version < read_version
@@ -655,90 +644,9 @@ UnboundedLog<DT: Dispatch> {
         }
     }
 
-    /*/// Read Request: remove the read request from the request from the state machine
-    transition!{
-        readonly_finish(rid: ReqId, rop: DT::ReadOperation, result: DT::Response) {
-            remove local_reads -= [ rid => let ReadonlyState::Done { op, ret, version_upper_bound, node_id } ];
-
-            require(op == rop);
-            require(ret == result);
-        }
-    }*/
-
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Update Transitions
     ////////////////////////////////////////////////////////////////////////////////////////////
-
-    /*/// Update: A new update request enters the system
-    transition!{
-        update_start(op: DT::WriteOperation) {
-
-            birds_eye let combiner = pre.combiner;
-            birds_eye let rid_fn = |rid| !pre.local_updates.contains_key(rid)
-                            && combiner_request_id_fresh(combiner, rid);
-            birds_eye let rid = get_fresh_nat(pre.local_updates.dom(), combiner);
-            add local_updates += [ rid => UpdateState::Init { op } ] by {
-                get_fresh_nat_not_in(pre.local_updates.dom(), combiner);
-            };
-
-            assert(combiner_request_id_fresh(combiner, rid)) by {
-                get_fresh_nat_not_in(pre.local_updates.dom(), combiner);
-            };
-        }
-    }*/
-
-    /*pub open spec fn request_id_fresh(&self, rid: ReqId) -> bool {
-        &&& !self.local_reads.contains_key(rid)
-        &&& !self.local_updates.contains_key(rid)
-        &&& combiner_request_id_fresh(self.combiner, rid)
-    }*/
-
-    /*
-    /// Combiner: Collect the operations and place them into the log
-    transition!{
-        update_place_ops_in_log(node_id: NodeId, request_ids: Seq<ReqId>,
-            //old_updates: Map<nat, UpdateState>,
-        ) {
-
-            let old_updates = Map::<ReqId, UpdateState>::new(
-                |rid| request_ids.contains(rid),
-                |rid| pre.local_updates[rid]
-            );
-
-            remove local_updates -= (old_updates);
-
-             require(forall(|rid|
-                 old_updates.contains_key(rid) >>=
-                     old_updates[rid].is_Init() && request_ids.contains(rid)));
-             require(forall(|i|
-                 0 <= i && i < request_ids.len() >>=
-                     old_updates.contains_key(request_ids.index(i))));
-
-             remove updates -= (old_updates);
-             remove combiner -= [node_id => Combiner::Ready];
-
-             let new_log = Map::<nat, LogEntry>::new(
-                 |n| pre.tail <= n && n < pre.tail + request_ids.len(),
-                 |n| LogEntry{
-                     op: old_updates.index(request_ids.index(n)).get_Init_op(),
-                     node_id: node_id,
-                 },
-             );
-             let new_updates = Map::<nat, UpdateState>::new(
-                 |rid| old_updates.contains_key(rid),
-                 |rid| UpdateState::Placed{
-                     op: old_updates[rid].get_Init_op(),
-                     idx: idx_of(request_ids, rid),
-                 }
-             );
-
-             add log += (new_log);
-             add local_updates += (new_updates);
-             add combiner += [node_id => Combiner::Placed{queued_ops: request_ids}];
-             update tail = pre.tail + request_ids.len();
-        }
-    }
-    */
 
     /// Combiner: Collect the operations and place them into the log
     transition!{
@@ -959,8 +867,6 @@ UnboundedLog<DT: Dispatch> {
         // assert_maps_equal!(post.combiner, cmap);
     }
 
-    /*#[inductive(readonly_start)]
-    fn readonly_start_inductive(pre: Self, post: Self, op: DT::ReadOperation) { }*/
 
     #[inductive(readonly_version_upper_bound)]
     fn readonly_version_upper_bound_inductive(pre: Self, post: Self, rid: ReqId) { }
@@ -988,9 +894,6 @@ UnboundedLog<DT: Dispatch> {
         let v = post.local_versions[nid];
         assert(rangeincl(vup, v, post.version_upper_bound));
     }
-
-    //#[inductive(readonly_finish)]
-    //fn readonly_finish_inductive(pre: Self, post: Self, rid: ReqId, rop: DT::ReadOperation, result: DT::Response) { }
 
     pub proof fn add_ticket_inductive(
         pre: UnboundedLog::State<DT>,
@@ -1032,31 +935,6 @@ UnboundedLog<DT: Dispatch> {
             }
         }
     }
-
-    /*#[inductive(update_start)]
-    fn update_start_inductive(pre: Self, post: Self, op: DT::WriteOperation) {
-        // get the rid that has been added
-        let rid = choose|rid: nat| ! #[trigger] pre.local_updates.contains_key(rid)
-                && post.local_updates == pre.local_updates.insert(rid, UpdateState::Init { op })
-                && combiner_request_id_fresh(pre.combiner, rid);
-
-        assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
-            assert(post.combiner[node_id] == pre.combiner[node_id]);
-            match post.combiner[node_id] {
-                CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
-                }
-                CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
-                }
-                CombinerState::Loop{ queued_ops, idx, lversion, tail } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
-                }
-                _ => {
-
-                }
-            }
-    }*/
 
     #[inductive(update_done)]
     fn update_done_inductive(pre: Self, post: Self, rid: ReqId) {
@@ -1107,24 +985,6 @@ UnboundedLog<DT: Dispatch> {
         }
     }
 
-    /*#[inductive(update_finish)]
-    fn update_finish_inductive(pre: Self, post: Self, rid: ReqId) {
-        assert forall |node_id| #[trigger] post.combiner.contains_key(node_id) implies post.wf_combiner_for_node_id(node_id) by {
-            match post.combiner[node_id] {
-                CombinerState::Placed { queued_ops } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, post.local_versions[node_id], post.tail, node_id, pre.local_updates, post.local_updates);
-                }
-                CombinerState::LoadedLocalVersion{ queued_ops, lversion } => {
-                    LogRangeMatchesQueue_update_change_2(queued_ops, post.log, 0, lversion, post.tail, node_id, pre.local_updates, post.local_updates);
-                }
-                CombinerState::Loop { queued_ops, idx, lversion, tail } => {
-                    LogRangeMatchesQueue_update_change(queued_ops, post.log, idx, lversion, tail, node_id, pre.local_updates, post.local_updates);
-                }
-                _ => {}
-            }
-        }
-    }*/
-
     #[inductive(exec_trivial_start)]
     fn exec_trivial_start_inductive(pre: Self, post: Self, node_id: NodeId) {
         concat_LogRangeNoNodeId_LogRangeMatchesQueue(
@@ -1137,9 +997,6 @@ UnboundedLog<DT: Dispatch> {
 
         assert(post.wf_combiner_for_node_id(node_id));
     }
-
-    // #[inductive(update_place_ops_in_log)]
-    // fn update_place_ops_in_log_inductive(pre: Self, post: Self, node_id: NodeId, request_ids: Seq<ReqId>) { }
 
     #[inductive(update_place_ops_in_log_one)]
     fn update_place_ops_in_log_one_inductive(pre: Self, post: Self, node_id: NodeId, rid: ReqId) {
