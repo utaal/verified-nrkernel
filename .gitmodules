@@ -3,7 +3,7 @@
 	url = https://github.com/vmware/node-replication.git
 [submodule "verus"]
 	path = verus
-	url = git@github.com:verus-lang/verus.git
+	url = https://github.com/verus-lang/verus.git
 [submodule "nr/ironsync-osdi2023"]
 	path = nr/ironsync-osdi2023
-	url = git@github.com:secure-foundations/ironsync-osdi2023.git
+	url = https://github.com/secure-foundations/ironsync-osdi2023.git
