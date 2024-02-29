@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Set up Verus
-        run: ./tools/setup-verus.shg
+        run: ./tools/setup-verus.sh
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
