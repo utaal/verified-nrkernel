@@ -1,21 +1,12 @@
-#![allow(unused_imports)]
 use vstd::prelude::*;
-use builtin::*;
-use builtin_macros::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::seq_lib::*;
-use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
 use crate::definitions_t::{new_seq};
 use crate::definitions_u::{lemma_new_seq};
-use crate::extra as lib;
+use crate::extra;
 use crate::impl_u::indexing;
 
 use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
 use crate::definitions_u::{ permissive_flags };
-use crate::impl_u::l0::{ self, ambient_arith, ambient_lemmas1 };
+use crate::impl_u::l0::{ self, ambient_lemmas1 };
 
 verus! {
 
@@ -464,7 +455,7 @@ impl Directory {
             let rem = self.interp_aux(i + 1);
             let entry_i = self.interp_of_entry(i);
             self.lemma_empty_implies_interp_aux_empty(i + 1);
-            assert_maps_equal!(rem.map.union_prefer_right(entry_i.map), Map::empty());
+            assert(rem.map.union_prefer_right(entry_i.map) =~= Map::empty());
         }
     }
 
@@ -967,9 +958,9 @@ impl Directory {
         self.arch.lemma_entry_sizes_aligned_auto();
         assert(aligned(self.entry_size(), pte.frame.size));
 
-        lib::aligned_transitive_auto();
+        extra::aligned_transitive_auto();
         assert(aligned(self.next_entry_base(entry), pte.frame.size));
-        lib::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
+        extra::leq_add_aligned_less(base, pte.frame.size, self.entry_base(entry+1));
         assert(base + pte.frame.size <= self.entry_base(entry+1));
         assert(base + pte.frame.size <= self.entry_base(entry) + self.entry_size());
         assert(base + pte.frame.size <= d.base_vaddr + self.entry_size());
@@ -1293,7 +1284,7 @@ impl Directory {
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         assert(aligned(self.base_vaddr, self.entry_size())) by {
-            lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+            extra::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
         };
 
         let res = self.map_frame(base, pte).get_Ok_0();
@@ -1375,7 +1366,7 @@ impl Directory {
                             assert(self.entries.index(entry as int) === NodeEntry::Directory(e));
                             let res = self.update(entry, NodeEntry::Directory(e)).entries;
                             assert(res.index(entry as int) === self.entries.index(entry as int));
-                            assert_seqs_equal!(res, self.entries);
+                            assert(res =~= self.entries);
                         },
                     }
                     // d.lemma_map_frame_preserves_inv(base, pte);
@@ -1406,9 +1397,9 @@ impl Directory {
                     assert(equal(new_dir_mapped.interp(), new_dir.interp().map_frame(base, pte).get_Ok_0()));
 
                     new_dir.lemma_empty_implies_interp_empty();
-                    assert_maps_equal!(new_dir.interp().map, map![]);
-                    assert_maps_equal!(new_dir.interp().map_frame(base, pte).get_Ok_0().map, map![base => pte]);
-                    assert_maps_equal!(self.interp_of_entry(entry).map, map![]);
+                    assert(new_dir.interp().map =~= map![]);
+                    assert(new_dir.interp().map_frame(base, pte).get_Ok_0().map =~= map![base => pte]);
+                    assert(self.interp_of_entry(entry).map =~= map![]);
                     assert(equal(self.interp_of_entry(entry).map, map![]));
                     assert(equal(map![].insert(base, pte), new_dir_mapped.interp().map));
                     assert(equal(self.interp_of_entry(entry).map.insert(base, pte), new_dir_mapped.interp().map));
@@ -1544,7 +1535,7 @@ impl Directory {
         indexing::lemma_entry_base_from_index(self.base_vaddr, idx, self.entry_size());
         indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         assert(aligned(self.base_vaddr, self.entry_size())) by {
-            lib::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
+            extra::mod_mult_zero_implies_mod_zero(self.base_vaddr, self.entry_size(), self.num_entries());
         };
 
         match self.entries.index(self.index_for_vaddr(base) as int) {
@@ -1597,7 +1588,7 @@ impl Directory {
         match self.entries.index(entry as int) {
             NodeEntry::Page(p) => {
                 if aligned(base, self.entry_size()) {
-                    assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                    assert(self.interp_of_entry(entry).map.remove(base) =~= map![]);
                     assert(self.update(entry, NodeEntry::Empty()).inv());
                     self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                 } else {
@@ -1624,11 +1615,11 @@ impl Directory {
                             assert(new_d.interp().map.dom().len() == 0);
                             assert(d.interp().map.dom().len() == 1);
                             assert(d.interp().map.dom().contains(base));
-                            assert_sets_equal!(d.interp().map.dom(), set![base]);
+                            assert(d.interp().map.dom() =~= set![base]);
                             assert(nself_res.is_Ok());
                             assert(equal(self.interp_of_entry(entry).map, d.interp().map));
                             assert(equal(d.interp().unmap(base).get_Ok_0().map, d.interp().map.remove(base)));
-                            assert_maps_equal!(self.interp_of_entry(entry).map.remove(base), map![]);
+                            assert(self.interp_of_entry(entry).map.remove(base) =~= map![]);
                             assert(self.update(entry, NodeEntry::Empty()).inv());
                             self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
                             assert(equal(nself.interp(), i_nself));
@@ -1642,8 +1633,7 @@ impl Directory {
                         assert(self.entries.index(entry as int) === NodeEntry::Directory(e));
                         let res = self.update(entry, NodeEntry::Directory(e)).entries;
                         assert(res.index(entry as int) === self.entries.index(entry as int));
-                        assert_seqs_equal!(res, self.entries);
-                        assert(res === self.entries);
+                        assert(res =~= self.entries);
                     }
                 }
             },
@@ -1671,7 +1661,7 @@ impl Directory {
             let entry_i1 = self.interp_of_entry(i);
             let entry_i2 = other.interp_of_entry(i);
             self.lemma_entries_equal_implies_interp_aux_equal(other, i + 1);
-            assert_maps_equal!(rem1.map.union_prefer_right(entry_i1.map), rem2.map.union_prefer_right(entry_i2.map));
+            assert(rem1.map.union_prefer_right(entry_i1.map) =~= rem2.map.union_prefer_right(entry_i2.map));
         }
     }
 

@@ -1,23 +1,13 @@
-#![allow(unused_imports)] 
-
 #![verus::trusted]
 // trusted:
 // this defines the page table structure as interpreted by the hardware
 // and the hardware state machine
 
-use builtin::*;
-use builtin_macros::*;
-use state_machines_macros::*;
 use vstd::prelude::*;
-use vstd::map::*;
-use vstd::seq::*;
-use vstd::set::*;
-use vstd::assert_by_contradiction;
-use crate::definitions_t::{ PageTableEntry, RWOp, LoadResult, StoreResult, between, aligned, MemRegion, x86_arch_spec, Flags };
-use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, axiom_max_phyaddr_width_facts };
-use crate::definitions_t::{ bit, bitmask_inc };
-use crate::spec_t::mem;
-use crate::spec_t::mem::{ word_index_spec };
+use crate::definitions_t::{ PageTableEntry, RWOp, between, aligned, MemRegion, Flags, MAX_BASE,
+PAGE_SIZE, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
+axiom_max_phyaddr_width_facts, bit, bitmask_inc };
+use crate::spec_t::mem::{ self, word_index_spec };
 
 
 verus! {

@@ -1,15 +1,7 @@
-#![allow(unused_imports)]
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::option::{*, Option::*};
 use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
-use crate::extra as lib;
-use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry, Flags };
+use crate::extra;
+use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry };
 
 verus! {
 
@@ -22,7 +14,7 @@ pub proof fn ambient_arith()
         forall|a: int, b: int| #[trigger] (a * b) == (b * a),
         forall|a:nat| a != 0 ==> aligned(0, a)
 {
-    lib::aligned_zero();
+    extra::aligned_zero();
 }
 
 pub proof fn ambient_lemmas1()
@@ -338,7 +330,7 @@ pub proof fn lemma_finite_map_union<S,T>()
         assert(forall|s: S| union_dom.contains(s) ==> dom_union.contains(s));
         assert(forall|s: S| dom_union.contains(s) ==> union_dom.contains(s));
 
-        assert_sets_equal!(union_dom, dom_union);
+        assert(union_dom =~= dom_union);
     });
 }
 

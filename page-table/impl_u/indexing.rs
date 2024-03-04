@@ -1,16 +1,5 @@
-#![allow(unused_imports)]
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::option::{*, Option::*};
-use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
-use vstd::vec::*;
-use vstd::result::{*, Result::*};
-use crate::extra as lib;
+use crate::extra;
 use crate::definitions_t::{ aligned, between, index_from_offset, index_from_base_and_addr, entry_base_from_index, next_entry_base_from_index };
 
 verus! {
@@ -51,7 +40,7 @@ pub proof fn lemma_entry_base_from_index_support(base: nat, idx: nat, entry_size
         implies
         aligned(base, entry_size) by
     {
-        lib::mod_mult_zero_implies_mod_zero(base, entry_size, a);
+        extra::mod_mult_zero_implies_mod_zero(base, entry_size, a);
     };
 }
 
@@ -102,7 +91,7 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
                     0 < entry_size,
                     idx < idx2,
             {
-                lib::mult_less_mono_both1(idx, entry_size, idx2, entry_size);
+                extra::mult_less_mono_both1(idx, entry_size, idx2, entry_size);
             };
         };
         assert forall|idx2: nat|
@@ -135,10 +124,10 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
                     vstd::arithmetic::div_mod::lemma_mod_multiples_basic(idx as int, entry_size as int);
                 };
                 assert(aligned(idx * entry_size, n)) by {
-                    lib::aligned_transitive(idx * entry_size, entry_size, n);
+                    extra::aligned_transitive(idx * entry_size, entry_size, n);
                 };
                 assert(aligned(base + idx * entry_size, n)) by {
-                    lib::mod_add_zero(base, idx * entry_size, n);
+                    extra::mod_add_zero(base, idx * entry_size, n);
                 };
             };
         };
@@ -158,10 +147,10 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
                     vstd::arithmetic::div_mod::lemma_mod_multiples_basic(idx as int + 1, entry_size as int);
                 };
                 assert(aligned((idx + 1) * entry_size, n)) by {
-                    lib::aligned_transitive((idx + 1) * entry_size, entry_size, n);
+                    extra::aligned_transitive((idx + 1) * entry_size, entry_size, n);
                 };
                 assert(aligned(base + (idx + 1) * entry_size, n)) by {
-                    lib::mod_add_zero(base, (idx + 1) * entry_size, n);
+                    extra::mod_add_zero(base, (idx + 1) * entry_size, n);
                 };
             };
         };
@@ -204,8 +193,8 @@ pub proof fn lemma_index_from_base_and_addr(base: nat, addr: nat, entry_size: na
             idx == index_from_offset(sub(addr, base), entry_size),
     {
         if aligned(base, entry_size) && aligned(addr, entry_size) {
-            lib::subtract_mod_eq_zero(base, addr, entry_size);
-            lib::div_mul_cancel(sub(addr, base), entry_size);
+            extra::subtract_mod_eq_zero(base, addr, entry_size);
+            extra::div_mul_cancel(sub(addr, base), entry_size);
         }
     };
 }

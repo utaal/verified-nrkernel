@@ -1,18 +1,12 @@
-#![allow(unused_imports)]
-
 #![verus::trusted]
 // trusted:
 // these are the interface specifications, they are part of the theorem
 
-use builtin_macros::*;
-use builtin::*;
 use vstd::prelude::*;
-use crate::spec_t::hlspec;
-use crate::definitions_t::{ PageTableEntryExec, ResolveResult, ResolveResultExec, PageTableEntry };
+use crate::definitions_t::{ PageTableEntryExec, ResolveResultExec };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
 use crate::spec_t::mem;
-use vstd::set::*;
 
 verus! {
 

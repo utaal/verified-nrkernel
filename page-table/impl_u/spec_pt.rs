@@ -1,13 +1,9 @@
-#![allow(unused_imports)]
-use vstd::*;
 use vstd::prelude::*;
-use builtin::*;
-use builtin_macros::*;
 
-use seq::*;
-use map::*;
-use crate::definitions_t::{ PageTableEntry, ResolveResult, Arch, overlap, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
-use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_BASE };
+use crate::definitions_t::{ PageTableEntry, ResolveResult, aligned, between,
+candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
+candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
+L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_PHYADDR, MAX_BASE };
 
 
 // trusted: not trusted

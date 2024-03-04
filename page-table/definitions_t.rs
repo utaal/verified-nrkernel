@@ -1,22 +1,10 @@
-#![allow(unused_imports)]
 #![verus::trusted]
 
 // trusted: these are used in trusted definitions
 // 
 // `overlap_sanity_check` hardens a spec, so we don't count it as trusted
 
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::seq_lib::*;
-use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
-use vstd::view::View;
-use crate::extra as lib; // THIS HAS TO GO AWAY
-use crate::impl_u::indexing;
 
 verus! {
 
@@ -405,7 +393,7 @@ pub exec fn x86_arch_exec() -> (res: ArchExec)
         layers: v,
     };
     proof {
-        assert_seqs_equal!(res@.layers, x86_arch_spec.layers);
+        assert(res@.layers =~= x86_arch_spec.layers);
         // This is an axiom to establish the equivalence with x86_arch_exec_spec; See comments
         // further up for explanation why this workaround is necessary.
         assume(res === x86_arch_exec_spec());

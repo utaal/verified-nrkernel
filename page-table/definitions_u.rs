@@ -1,14 +1,4 @@
-#![allow(unused_imports)]
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::seq_lib::*;
-use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
-use vstd::view::View;
 
 use crate::definitions_t::{MAX_PHYADDR, axiom_max_phyaddr_width_facts, aligned, new_seq, Flags, ArchExec, ArchLayerExec};
 

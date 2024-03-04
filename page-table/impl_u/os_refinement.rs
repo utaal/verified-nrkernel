@@ -1,19 +1,12 @@
-#![allow(unused_imports)]
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::map::*;
-use vstd::seq::*;
-use vstd::set::*;
-use vstd::set_lib::*;
 
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, ResolveResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
-use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
+use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, ResolveResult,
+aligned, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem,
+L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
 use crate::spec_t::mem::{ word_index_spec };
-use crate::impl_u::indexing;
-use crate::extra as lib;
+use crate::extra;
 use crate::spec_t::os::*;
 
 verus! {
@@ -141,7 +134,7 @@ pub proof fn lemma_effective_mappings_equal_interp_pt_mem(this: OSVariables)
         assert(eff.contains_pair(base, pte));
         assert(pt.contains_pair(base, pte));
     };
-    lib::assert_maps_equal_contains_pair::<nat,PageTableEntry>(eff, pt);
+    extra::assert_maps_equal_contains_pair::<nat,PageTableEntry>(eff, pt);
 }
 
 pub proof fn lemma_effective_mappings_other(this: OSVariables, other: OSVariables)
@@ -196,7 +189,7 @@ pub proof fn lemma_effective_mappings_other(this: OSVariables, other: OSVariable
         }
         assert(eff1.contains_pair(base, pte));
     };
-    lib::assert_maps_equal_contains_pair::<nat,PageTableEntry>(eff1, eff2);
+    extra::assert_maps_equal_contains_pair::<nat,PageTableEntry>(eff1, eff2);
 }
 
 proof fn lemma_interp(this: OSVariables)
@@ -368,20 +361,20 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                             assert(aligned(vaddr, pte.frame.size));
                             assert(aligned(pte.frame.base, pte.frame.size));
                             if pte.frame.size == L3_ENTRY_SIZE as nat {
-                                lib::aligned_transitive(pte.frame.base, L3_ENTRY_SIZE as nat, 8);
-                                lib::aligned_transitive(vaddr, L3_ENTRY_SIZE as nat, 8);
+                                extra::aligned_transitive(pte.frame.base, L3_ENTRY_SIZE as nat, 8);
+                                extra::aligned_transitive(vaddr, L3_ENTRY_SIZE as nat, 8);
                                 assert(aligned(vaddr, 8));
                                 assert(aligned(pte.frame.base, 8));
                             } else if pte.frame.size == L2_ENTRY_SIZE as nat {
-                                lib::aligned_transitive(pte.frame.base, L2_ENTRY_SIZE as nat, 8);
-                                lib::aligned_transitive(vaddr, L2_ENTRY_SIZE as nat, 8);
+                                extra::aligned_transitive(pte.frame.base, L2_ENTRY_SIZE as nat, 8);
+                                extra::aligned_transitive(vaddr, L2_ENTRY_SIZE as nat, 8);
                                 assert(aligned(vaddr, 8));
                                 assert(aligned(pte.frame.base, 8));
                             } else {
                                 assert(pte.frame.size == L1_ENTRY_SIZE as nat);
                                 assert(aligned(L1_ENTRY_SIZE as nat, 8));
-                                lib::aligned_transitive(pte.frame.base, L1_ENTRY_SIZE as nat, 8);
-                                lib::aligned_transitive(vaddr, L1_ENTRY_SIZE as nat, 8);
+                                extra::aligned_transitive(pte.frame.base, L1_ENTRY_SIZE as nat, 8);
+                                extra::aligned_transitive(vaddr, L1_ENTRY_SIZE as nat, 8);
                                 assert(aligned(vaddr, 8));
                                 assert(aligned(pte.frame.base, 8));
                             }
@@ -451,7 +444,7 @@ proof fn init_refines_hl_init(s: OSVariables)
         hlspec::init(s.interp())
 {
     lemma_effective_mappings_equal_interp_pt_mem(s);
-    assert_maps_equal!(s.interp().mem, Map::empty());
+    assert(s.interp().mem =~= Map::empty());
 }
 
 proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: OSStep)
@@ -506,7 +499,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
 
                                         assert(abs_s1.mem.dom().contains(vmem_idx));
                                         assert(abs_s1.mem.insert(vmem_idx, new_value).dom() === abs_s1.mem.dom().insert(vmem_idx));
-                                        assert_sets_equal!(abs_s1.mem.dom(), abs_s1.mem.dom().insert(vmem_idx));
+                                        assert(abs_s1.mem.dom() =~= abs_s1.mem.dom().insert(vmem_idx));
                                         assert(abs_s1.mem.insert(vmem_idx, new_value).dom() === abs_s2.mem.dom());
                                         assert forall|vmem_idx2: nat|
                                             abs_s2.mem.dom().contains(vmem_idx2) &&
@@ -542,16 +535,16 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                     assert(aligned(pte.frame.base, 8));
                                                     assert(aligned(base, 8));
                                                     assert(aligned(vaddr, 8));
-                                                    lib::subtract_mod_eq_zero(base, vaddr, 8);
-                                                    lib::mod_add_zero(pte.frame.base, sub(vaddr, base), 8);
+                                                    extra::subtract_mod_eq_zero(base, vaddr, 8);
+                                                    extra::mod_add_zero(pte.frame.base, sub(vaddr, base), 8);
                                                 };
                                                 assert(aligned(paddr2, 8)) by {
                                                     reveal(OSVariables::pt_entries_aligned);
                                                     assert(aligned(pte2.frame.base, 8));
                                                     assert(aligned(base2, 8));
                                                     assert(aligned(vaddr2, 8));
-                                                    lib::subtract_mod_eq_zero(base2, vaddr2, 8);
-                                                    lib::mod_add_zero(pte2.frame.base, sub(vaddr2, base2), 8);
+                                                    extra::subtract_mod_eq_zero(base2, vaddr2, 8);
+                                                    extra::mod_add_zero(pte2.frame.base, sub(vaddr2, base2), 8);
                                                 };
                                                 if pmem_idx == pmem_idx2 {
                                                     assert(vaddr != vaddr2);
@@ -567,7 +560,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                                 assert(abs_s2.mem[vmem_idx2] == abs_s1.mem[vmem_idx2]);
                                             }
                                         };
-                                        assert_maps_equal!(abs_s2.mem, abs_s1.mem.insert(vmem_idx, new_value));
+                                        assert(abs_s2.mem =~= abs_s1.mem.insert(vmem_idx, new_value));
                                         assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                         // Generalizing from the previous assert to the
                                         // postcondition seems unstable. Simply assuming the

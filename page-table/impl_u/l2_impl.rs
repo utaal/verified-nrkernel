@@ -1,29 +1,20 @@
-#![allow(unused_imports)]
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
-use vstd::seq_lib::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, axiom_max_phyaddr_width_facts, Arch, ArchExec, };
-use crate::definitions_u::{ lemma_maxphyaddr_facts, lemma_new_seq, aligned_exec, permissive_flags};
-use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
+use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags,
+between, aligned, new_seq, x86_arch_exec, x86_arch_spec, axiom_max_phyaddr_width_facts, MAX_BASE,
+WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
+X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
+use crate::definitions_u::{ lemma_new_seq, aligned_exec, permissive_flags};
 use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
-use crate::spec_t::mem;
-use crate::spec_t::mem::{ word_index_spec };
 use crate::impl_u::indexing;
-use crate::extra as lib;
-use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry};
-use crate::spec_t::hardware::{MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD,
-MASK_FLAG_A, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_D, MASK_PG_FLAG_G, MASK_PG_FLAG_PAT,
-MASK_L1_PG_FLAG_PS, MASK_L2_PG_FLAG_PS, MASK_L3_PG_FLAG_PAT, MASK_DIR_ADDR, MASK_L1_PG_ADDR,
-MASK_L2_PG_ADDR, MASK_L3_PG_ADDR};
+use crate::spec_t::mem;
+use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry, MASK_FLAG_P,
+MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR,
+MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS, MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR,
+MASK_L3_PG_ADDR};
+use crate::extra;
 
 
 verus! {
@@ -78,21 +69,21 @@ proof fn lemma_aligned_addr_mask_facts(addr: u64)
     assert(addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
         if addr <= MAX_PHYADDR && aligned(addr as nat, L1_ENTRY_SIZE as nat) {
             assert(aligned(L1_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
-            lib::aligned_transitive(addr as nat, L1_ENTRY_SIZE as nat, PAGE_SIZE as nat);
+            extra::aligned_transitive(addr as nat, L1_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
     assert(addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
         if addr <= MAX_PHYADDR && aligned(addr as nat, L2_ENTRY_SIZE as nat) {
             assert(aligned(L2_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
-            lib::aligned_transitive(addr as nat, L2_ENTRY_SIZE as nat, PAGE_SIZE as nat);
+            extra::aligned_transitive(addr as nat, L2_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
     assert(addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) ==> (addr & MASK_ADDR == addr)) by {
         if addr <= MAX_PHYADDR && aligned(addr as nat, L3_ENTRY_SIZE as nat) {
             assert(aligned(L3_ENTRY_SIZE as nat, PAGE_SIZE as nat)) by(nonlinear_arith);
-            lib::aligned_transitive(addr as nat, L3_ENTRY_SIZE as nat, PAGE_SIZE as nat);
+            extra::aligned_transitive(addr as nat, L3_ENTRY_SIZE as nat, PAGE_SIZE as nat);
             lemma_page_aligned_implies_mask_dir_addr_is_identity();
         }
     };
@@ -1007,7 +998,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
         {
             let es = x86_arch_spec.entry_size(layer as nat);
             assert(aligned(base as nat, es)) by {
-                lib::mod_mult_zero_implies_mod_zero(base as nat, es, X86_NUM_ENTRIES as nat);
+                extra::mod_mult_zero_implies_mod_zero(base as nat, es, X86_NUM_ENTRIES as nat);
             };
             indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, es, X86_NUM_ENTRIES as nat);
         };
@@ -1211,8 +1202,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                                 };
 
                                 assert(interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries[idx as int] === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@).get_Ok_0().entries[idx as int]);
-                                assert_seqs_equal!(interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries, interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@).get_Ok_0().entries);
-                                assert(interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@).get_Ok_0().entries);
+                                assert(interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries =~= interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@).get_Ok_0().entries);
                                 assert(Ok(interp_at(mem, pt_res@, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
                             };
                         };
@@ -2015,8 +2005,8 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                                     }
                                 }
 
-                                assert_seqs_equal!(
-                                    interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries,
+                                assert(
+                                    interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries =~=
                                     interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).unmap(vaddr as nat).get_Ok_0().entries);
                             };
                         }
@@ -2090,8 +2080,8 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                                     }
                                 }
 
-                                assert_seqs_equal!(
-                                    interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries,
+                                assert(
+                                    interp_at(mem, pt_res@, layer as nat, ptr, base as nat).entries =~=
                                     interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).unmap(vaddr as nat).get_Ok_0().entries);
                             };
                         }
@@ -2139,8 +2129,8 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                     assert(inv_at(mem, pt, layer as nat, ptr));
 
                     // postconditions
-                    assert_sets_equal!(old(mem).regions(), mem.regions().union(removed_regions@));
-                    assert_sets_equal!(pt.used_regions, pt.used_regions.union(removed_regions@));
+                    assert(old(mem).regions() =~= mem.regions().union(removed_regions@));
+                    assert(pt.used_regions =~= pt.used_regions.union(removed_regions@));
 
                     // Refinement
                     assert(Ok(interp_at(mem, pt, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).unmap(vaddr as nat)) by {
@@ -2162,8 +2152,8 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                             }
                         }
 
-                        assert_seqs_equal!(
-                            interp_at(mem, pt, layer as nat, ptr, base as nat).entries,
+                        assert(
+                            interp_at(mem, pt, layer as nat, ptr, base as nat).entries =~=
                             interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).unmap(vaddr as nat).get_Ok_0().entries);
                     };
                 }

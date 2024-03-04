@@ -1,23 +1,13 @@
-#![allow(unused_imports)]
-
 #![verus::trusted]
 // trusted:
 // this is the process-level specification of the kernel's behaviour
 
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use crate::*;
-use state_machines_macros::*;
-use vstd::seq::*;
-use vstd::set::*;
-use vstd::map::*;
-use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
-use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
-use crate::spec_t::mem::{ word_index_spec };
-
-// TODO:
-// - should Unmap be able to unmap when is_supervisor is set?
+use crate::definitions_t::{ between, PageTableEntry, RWOp, ResolveResult, aligned,
+candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
+candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
+L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
+use crate::spec_t::mem;
 
 verus! {
 
@@ -52,7 +42,7 @@ pub open spec fn mem_domain_from_mappings_contains(phys_mem_size: nat, word_idx:
     let vaddr = word_idx * WORD_SIZE as nat;
     exists|base: nat, pte: PageTableEntry| {
         let paddr = (pte.frame.base + (vaddr - base)) as nat;
-        let pmem_idx = word_index_spec(paddr);
+        let pmem_idx = mem::word_index_spec(paddr);
         &&& #[trigger] mappings.contains_pair(base, pte)
         &&& between(vaddr, base, base + pte.frame.size)
         &&& pmem_idx < phys_mem_size
@@ -82,7 +72,7 @@ pub proof fn lemma_mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<na
         let vaddr = word_idx * WORD_SIZE as nat;
         let (base2, pte2) = choose|base: nat, pte: PageTableEntry| {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = word_index_spec(paddr);
+            let pmem_idx = mem::word_index_spec(paddr);
             &&& #[trigger] mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
             &&& pmem_idx < phys_mem_size
@@ -97,7 +87,7 @@ pub proof fn lemma_mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<na
         let vaddr = word_idx * WORD_SIZE as nat;
         let (base2, pte2) = choose|base2: nat, pte2: PageTableEntry| {
             let paddr = (pte2.frame.base + (vaddr - base2)) as nat;
-            let pmem_idx = word_index_spec(paddr);
+            let pmem_idx = mem::word_index_spec(paddr);
             &&& #[trigger] mappings.insert(base, pte).contains_pair(base2, pte2)
             &&& between(vaddr, base2, base2 + pte2.frame.size)
             &&& pmem_idx < phys_mem_size
@@ -117,13 +107,13 @@ pub proof fn lemma_mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<na
 }
 
 pub open spec fn step_ReadWrite(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>) -> bool {
-    let vmem_idx = word_index_spec(vaddr);
+    let vmem_idx = mem::word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings
     &&& match pte {
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = word_index_spec(paddr);
+            let pmem_idx = mem::word_index_spec(paddr);
             // If pte is Some, it's an existing mapping that contains vaddr..
             &&& s1.mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
@@ -225,7 +215,7 @@ pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: A
             &&& between(vaddr, base, base + pte.frame.size)
         },
         ResolveResult::ErrUnmapped => {
-            let vmem_idx = word_index_spec(vaddr);
+            let vmem_idx = mem::word_index_spec(vaddr);
             // If result is ErrUnmapped, no mapping containing vaddr exists..
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
         },

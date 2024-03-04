@@ -1,8 +1,5 @@
-#![allow(unused_imports)]
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use crate::definitions_t::{aligned, bit, bitmask_inc};
+use crate::definitions_t::aligned;
 use vstd::map::*;
 
 

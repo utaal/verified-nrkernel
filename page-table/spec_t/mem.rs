@@ -1,5 +1,3 @@
-#![allow(unused_imports)]
-
 #![verus::trusted]
 // trusted:
 // these are wrappers for the interface with the memory
@@ -7,17 +5,10 @@
 // trusted-ness of this file, but not in a quantifiable fashion; for this reason we deem
 // it appropriate to exclude it from P:C accounting
 
-use builtin::*;
-use builtin_macros::*;
 use vstd::prelude::*;
-use vstd::modes::*;
-use vstd::seq::*;
-use vstd::map::*;
-use vstd::set::*;
-use vstd::set_lib::*;
 
-use crate::definitions_t::{ Arch, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry };
-use crate::definitions_t::{ WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
+use crate::definitions_t::{ MemRegion, MemRegionExec, overlap, aligned, new_seq, PageTableEntry,
+WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
 
 verus! {
 
