@@ -7,7 +7,7 @@ Install Verus as described [in the official documentation](https://github.com/ve
 ```bash
 # Replace $verus with the path to the verus binary
 git clone git@github.com:utaal/verified-nrkernel.git
-$verus ./verified-nrkernel/page-table/main.rs --rlimit 30
+$verus ./verified-nrkernel/page-table/main.rs --cfg feature=\"impl\" --rlimit 30
 ```
 
 Verification may take around a minute. You should see output similar to this:
@@ -16,6 +16,9 @@ Verification may take around a minute. You should see output similar to this:
 [...]
 verification results:: 288 verified, 0 errors
 ```
+
+The `impl` feature flag can be omitted to check only the state machine modeling, not the
+implementation.
 
 ## Structure
 

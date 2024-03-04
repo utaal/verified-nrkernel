@@ -1,6 +1,10 @@
+#[cfg(feature = "impl")]
 pub mod l0;
+#[cfg(feature = "impl")]
 pub mod l1;
+#[cfg(feature = "impl")]
 pub mod l2_impl;
+#[cfg(feature = "impl")]
 pub mod l2_refinement;
 pub mod spec_pt;
 pub mod indexing;

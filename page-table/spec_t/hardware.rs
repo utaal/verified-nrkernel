@@ -18,9 +18,6 @@ use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHY
 use crate::definitions_t::{ bit, bitmask_inc };
 use crate::spec_t::mem;
 use crate::spec_t::mem::{ word_index_spec };
-use crate::impl_u::l0;
-use crate::impl_u::l2_impl;
-use crate::impl_u::l1;
 
 
 verus! {

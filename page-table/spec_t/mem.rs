@@ -18,9 +18,6 @@ use vstd::set_lib::*;
 
 use crate::definitions_t::{ Arch, MemRegion, MemRegionExec, overlap, between, aligned, new_seq, PageTableEntry };
 use crate::definitions_t::{ WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
-use crate::impl_u::l1;
-use crate::impl_u::l0::{ambient_arith};
-use crate::impl_u::indexing;
 
 verus! {
 

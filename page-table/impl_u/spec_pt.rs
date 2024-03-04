@@ -4,6 +4,12 @@ use vstd::prelude::*;
 use builtin::*;
 use builtin_macros::*;
 
+use seq::*;
+use map::*;
+use crate::definitions_t::{ PageTableEntry, ResolveResult, Arch, overlap, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_BASE };
+
+
 // trusted: not trusted
 // the interface spec is written in such a way that it guarantees that the impl behaves according
 // to the state machine, and then in the OS state machine we use these definitions, but the actual
@@ -13,13 +19,6 @@ use builtin_macros::*;
 // refinement
 //
 // if we split impl <-> system state machines, this becomes trusted for the impl
-
-use seq::*;
-use map::*;
-use crate::impl_u::l0;
-use crate::definitions_t::{ PageTableEntry, ResolveResult, Arch, overlap, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
-use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_BASE };
-
 verus! {
 
 pub struct PageTableVariables {
