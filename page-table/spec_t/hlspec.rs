@@ -6,7 +6,7 @@ use vstd::prelude::*;
 use crate::definitions_t::{ between, PageTableEntry, RWOp, aligned,
 candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
 candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
-L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
+L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE, MAX_PHYADDR };
 use crate::spec_t::mem;
 
 verus! {
@@ -155,6 +155,7 @@ pub open spec fn step_ReadWrite(c: AbstractConstants, s1: AbstractVariables, s2:
 pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
+    &&& pte.frame.base <= MAX_PHYADDR
     &&& candidate_mapping_in_bounds(vaddr, pte)
     &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE
