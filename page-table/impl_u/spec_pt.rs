@@ -17,7 +17,7 @@ use builtin_macros::*;
 use seq::*;
 use map::*;
 use crate::impl_u::l0;
-use crate::definitions_t::{ PageTableEntry, MapResult, UnmapResult, ResolveResult, Arch, overlap, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ PageTableEntry, ResolveResult, Arch, overlap, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_BASE };
 
 verus! {
@@ -28,8 +28,8 @@ pub struct PageTableVariables {
 
 #[allow(inconsistent_fields)]
 pub enum PageTableStep {
-    Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
-    Unmap   { vaddr: nat, result: UnmapResult },
+    Map     { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    Unmap   { vaddr: nat, result: Result<(),()> },
     Resolve { vaddr: nat, result: ResolveResult },
     Stutter,
 }
@@ -47,10 +47,10 @@ pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte:
     &&& !candidate_mapping_overlaps_existing_pmem(map, vaddr, pte)
 }
 
-pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: MapResult) -> bool {
+pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
     &&& step_Map_enabled(s1.map, vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.map, vaddr, pte) {
-        &&& result.is_ErrOverlap()
+        &&& result.is_Err()
         &&& s2.map === s1.map
     } else {
         &&& result.is_Ok()
@@ -67,13 +67,13 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     }
 }
 
-pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: UnmapResult) -> bool {
+pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(),()>) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& if s1.map.dom().contains(vaddr) {
         &&& result.is_Ok()
         &&& s2.map === s1.map.remove(vaddr)
     } else {
-        &&& result.is_ErrNoSuchMapping()
+        &&& result.is_Err()
         &&& s2.map === s1.map
     }
 }

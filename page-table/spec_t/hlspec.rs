@@ -12,7 +12,7 @@ use state_machines_macros::*;
 use vstd::seq::*;
 use vstd::set::*;
 use vstd::map::*;
-use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, MapResult, UnmapResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ between, overlap, MemRegion, PageTableEntry, Flags, RWOp, LoadResult, StoreResult, ResolveResult, aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::spec_t::mem::{ word_index_spec };
 
@@ -37,8 +37,8 @@ pub struct AbstractVariables {
 #[allow(inconsistent_fields)]
 pub enum AbstractStep {
     ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
-    Map       { vaddr: nat, pte: PageTableEntry, result: MapResult },
-    Unmap     { vaddr: nat, result: UnmapResult },
+    Map       { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    Unmap     { vaddr: nat, result: Result<(),()> },
     Resolve   { vaddr: nat, result: ResolveResult },
     Stutter,
 }
@@ -174,10 +174,10 @@ pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte:
     &&& !candidate_mapping_overlaps_existing_pmem(map, vaddr, pte)
 }
 
-pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: PageTableEntry, result: MapResult) -> bool {
+pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
     &&& step_Map_enabled(s1.mappings, vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
-        &&& result.is_ErrOverlap()
+        &&& result.is_Err()
         &&& s2.mappings === s1.mappings
         &&& s2.mem === s1.mem
     } else {
@@ -197,7 +197,7 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     }
 }
 
-pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: UnmapResult) -> bool {
+pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: Result<(),()>) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& if s1.mappings.dom().contains(vaddr) {
         &&& result.is_Ok()
@@ -205,7 +205,7 @@ pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: Abs
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
         &&& (forall|idx:nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
     } else {
-        &&& result.is_ErrNoSuchMapping()
+        &&& result.is_Err()
         &&& s2.mappings === s1.mappings
         &&& s2.mem === s1.mem
     }

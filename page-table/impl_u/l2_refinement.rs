@@ -19,7 +19,7 @@ use crate::spec_t::impl_spec;
 use crate::impl_u::l2_impl::{ PTDir };
 use crate::impl_u::l2_impl::PT;
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MapResult, UnmapResult, ResolveResultExec, MemRegion};
+use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, ResolveResultExec, MemRegion};
 use crate::spec_t::hardware::{interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GhostPageDirectoryEntry, nat_to_u64};
 
 verus! {
@@ -35,7 +35,7 @@ pub proof fn lemma_page_table_walk_interp()
 
 pub proof fn lemma_page_table_walk_interp_aux(mem: mem::PageTableMemory, pt: PTDir)
     requires PT::inv(&mem, pt) && PT::interp(&mem, pt).inv()
-    ensures PT::interp(&mem, pt).interp().map === interp_pt_mem(mem)
+    ensures PT::interp(&mem, pt).interp().map == interp_pt_mem(mem)
 {
     let m1 = interp_pt_mem(mem);
     let m2 = PT::interp(&mem, pt).interp().map;
@@ -242,10 +242,9 @@ pub proof fn lemma_page_table_walk_interp_aux(mem: mem::PageTableMemory, pt: PTD
             if addr >= MAX_BASE {
             } else {
                 assert(addr < MAX_BASE);
+                // assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte));
                 let addr: u64 = addr as u64;
-                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte)) by {
-                    assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr as nat), pte));
-                };
+                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte)); // unstable
                 let l0_idx_u64:  u64 = l0_bits!(addr);
                 let l0_idx:      nat = l0_idx_u64 as nat;
                 let l1_idx_u64:  u64 = l1_bits!(addr);
@@ -544,9 +543,18 @@ impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
             PT::lemma_zeroed_page_implies_empty_at(mem, pt, 0, mem.cr3_spec().base);
         };
         lemma_no_entries_implies_interp_at_aux_no_entries(*mem, pt, 0, mem.cr3_spec().base, 0, seq![]);
+        assert(aligned(PT::interp(mem, pt).base_vaddr, PT::interp(mem, pt).entry_size() * PT::interp(mem, pt).num_entries())) by {
+            assert(PT::interp(mem, pt).base_vaddr == 0);
+            assert(forall|x: nat| x != 0 ==> #[trigger] aligned(0, x));
+            assert(forall|x: nat| x != 0 ==> aligned(PT::interp(mem, pt).base_vaddr, x));
+            let x = PT::interp(mem, pt).entry_size() * PT::interp(mem, pt).num_entries();
+            assert(x != 0);
+            assert(aligned(PT::interp(mem, pt).base_vaddr, x));
+        };
+        assert(PT::interp(mem, pt).inv());
     }
 
-    fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult) {
+    fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>) {
         let mut pt: Ghost<PTDir> = Ghost(choose|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv());
         proof {
             PT::lemma_interp_at_facts(mem, pt@, 0, mem.cr3_spec().base, 0);
@@ -557,7 +565,7 @@ impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
         PT::map_frame(mem, &mut pt, vaddr, pte)
     }
 
-    fn ispec_unmap(&self, mem: &mut mem::PageTableMemory, vaddr: usize) -> (res: UnmapResult) {
+    fn ispec_unmap(&self, mem: &mut mem::PageTableMemory, vaddr: usize) -> (res: Result<(),()>) {
         let mut pt: Ghost<PTDir> = Ghost(choose|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv());
         proof {
             PT::lemma_interp_at_facts(mem, pt@, 0, mem.cr3_spec().base, 0);

@@ -17,7 +17,7 @@ use set_lib::*;
 
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, MapResult, UnmapResult, ResolveResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
+use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, ResolveResult, Arch, aligned, new_seq, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem };
 use crate::definitions_t::{ PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, PAGE_SIZE, WORD_SIZE };
 use crate::spec_t::mem::{ word_index_spec };
 
@@ -121,12 +121,12 @@ pub open spec fn step_HW(s1: OSVariables, s2: OSVariables, system_step: hardware
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }
 
-pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: MapResult) -> bool {
+pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
     &&& hardware::step_PTMemOp(s1.hw, s2.hw)
     &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
 
-pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: UnmapResult) -> bool {
+pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: Result<(),()>) -> bool {
     // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
     &&& !s2.hw.tlb.dom().contains(base)
@@ -143,8 +143,8 @@ pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, resul
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW      { step: hardware::HWStep },
-    Map     { vaddr: nat, pte: PageTableEntry, result: MapResult },
-    Unmap   { vaddr: nat, result: UnmapResult },
+    Map     { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    Unmap   { vaddr: nat, result: Result<(),()> },
     Resolve { vaddr: nat, result: ResolveResult },
 }
 

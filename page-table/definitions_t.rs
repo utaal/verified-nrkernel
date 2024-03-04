@@ -135,18 +135,6 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
 }
 
 #[is_variant]
-pub enum MapResult {
-    ErrOverlap,
-    Ok,
-}
-
-#[is_variant]
-pub enum UnmapResult {
-    ErrNoSuchMapping,
-    Ok,
-}
-
-#[is_variant]
 pub enum ResolveResultExec {
     ErrUnmapped,
     Ok(usize, PageTableEntryExec),

@@ -10,7 +10,7 @@ use vstd::set_lib::*;
 use vstd::seq_lib::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, MapResult, UnmapResult, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, axiom_max_phyaddr_width_facts, Arch, ArchExec, };
+use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags, overlap, between, aligned, new_seq, candidate_mapping_in_bounds, x86_arch_exec, x86_arch_spec, x86_arch_exec_spec, axiom_max_phyaddr_width_facts, Arch, ArchExec, };
 use crate::definitions_u::{ lemma_maxphyaddr_facts, lemma_new_seq, aligned_exec, permissive_flags};
 use crate::definitions_t::{ MAX_BASE, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 use crate::impl_u::l1;
@@ -1690,7 +1690,7 @@ proof fn lemma_not_empty_at_implies_interp_at_not_empty(mem: &mem::PageTableMemo
     lemma_not_empty_at_implies_interp_at_aux_not_empty(mem, pt, layer, ptr, base, seq![], i);
 }
 
-pub fn map_frame(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
+pub fn map_frame(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
     requires
         inv(&*old(mem), old(pt)@),
         interp(&*old(mem), old(pt)@).inv(),
@@ -1704,11 +1704,8 @@ pub fn map_frame(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: u
         interp(mem, pt@).inv(),
         // Refinement of l0
         match res {
-            MapResult::Ok => {
-                Ok(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().map_frame(vaddr as nat, pte@)
-            },
-            MapResult::ErrOverlap =>
-                Err(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().map_frame(vaddr as nat, pte@),
+            Ok(_) => Ok(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().map_frame(vaddr as nat, pte@),
+            Err(_) => Err(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().map_frame(vaddr as nat, pte@),
         },
 {
     proof { interp(mem, pt@).lemma_map_frame_refines_map_frame(vaddr as nat, pte@); }
@@ -1716,9 +1713,9 @@ pub fn map_frame(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: u
         Ok(res) => {
             proof { interp(&*old(mem), pt@).lemma_map_frame_preserves_inv(vaddr as nat, pte@); }
             *pt = Ghost(res@.0);
-            MapResult::Ok
+            Ok(())
         },
-        Err(e) => MapResult::ErrOverlap,
+        Err(e) => Err(()),
     }
 }
 
@@ -2185,7 +2182,7 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
     }
 }
 
-pub fn unmap(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize) -> (res: UnmapResult)
+pub fn unmap(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize) -> (res: Result<(),()>)
     requires
         inv(&*old(mem), old(pt)@),
         interp(&*old(mem), old(pt)@).inv(),
@@ -2197,8 +2194,8 @@ pub fn unmap(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize
         interp(mem, pt@).inv(),
         // Refinement of l0
         match res {
-            UnmapResult::Ok               => Ok(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().unmap(vaddr as nat),
-            UnmapResult::ErrNoSuchMapping => Err(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().unmap(vaddr as nat),
+            Ok(_)  => Ok(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().unmap(vaddr as nat),
+            Err(_) => Err(interp(mem, pt@).interp()) === interp(&*old(mem), old(pt)@).interp().unmap(vaddr as nat),
         },
 {
     proof { interp(mem, pt@).lemma_unmap_refines_unmap(vaddr as nat); }
@@ -2206,9 +2203,9 @@ pub fn unmap(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize
         Ok(res) => {
             proof { interp(&*old(mem), pt@).lemma_unmap_preserves_inv(vaddr as nat); }
             *pt = Ghost(res@.0);
-            UnmapResult::Ok
+            Ok(())
         },
-        Err(e) => UnmapResult::ErrNoSuchMapping,
+        Err(e) => Err(()),
     }
 }
 

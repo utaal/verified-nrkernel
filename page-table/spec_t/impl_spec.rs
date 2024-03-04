@@ -8,7 +8,7 @@ use builtin_macros::*;
 use builtin::*;
 use vstd::prelude::*;
 use crate::spec_t::hlspec;
-use crate::definitions_t::{ PageTableEntryExec, MapResult, UnmapResult, ResolveResult, ResolveResultExec, PageTableEntry };
+use crate::definitions_t::{ PageTableEntryExec, ResolveResult, ResolveResultExec, PageTableEntry };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
 use crate::spec_t::mem;
@@ -28,7 +28,7 @@ pub trait InterfaceSpec {
         ensures
             self.ispec_inv(mem);
 
-    fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: MapResult)
+    fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
         requires
             old(mem).alloc_available_pages() >= 3,
             spec_pt::step_Map_enabled(interp_pt_mem(*old(mem)), vaddr as nat, pte@),
@@ -37,7 +37,7 @@ pub trait InterfaceSpec {
             self.ispec_inv(mem),
             spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(*old(mem)) }, spec_pt::PageTableVariables { map: interp_pt_mem(*mem) }, vaddr as nat, pte@, res);
 
-    fn ispec_unmap(&self, mem: &mut mem::PageTableMemory, vaddr: usize) -> (res: UnmapResult)
+    fn ispec_unmap(&self, mem: &mut mem::PageTableMemory, vaddr: usize) -> (res: Result<(),()>)
         requires
             spec_pt::step_Unmap_enabled(vaddr as nat),
             self.ispec_inv(&*old(mem)),
