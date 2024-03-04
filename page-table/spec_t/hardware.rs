@@ -20,7 +20,6 @@ pub struct HWVariables {
 }
 
 #[allow(inconsistent_fields)]
-#[is_variant]
 pub enum HWStep {
     ReadWrite { vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     PTMemOp,
@@ -28,7 +27,9 @@ pub enum HWStep {
     TLBEvict { vaddr: nat},
 }
 
-#[is_variant]
+// FIXME: Including is_variant conditionally to avoid the warning when not building impl. But this
+// should disappear completely when I find the time to migrate to the new syntax.
+#[cfg_attr(feature = "impl", is_variant)]
 pub ghost enum GhostPageDirectoryEntry {
     Directory {
         addr: usize,
@@ -437,20 +438,20 @@ pub open spec fn step_ReadWrite(s1: HWVariables, s2: HWVariables, vaddr: nat, pa
             &&& match op {
                 RWOp::Store { new_value, result } => {
                     if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
-                        &&& result.is_Ok()
+                        &&& result is Ok
                         &&& s2.mem === s1.mem.update(pmem_idx as int, new_value)
                     } else {
-                        &&& result.is_Pagefault()
+                        &&& result is Pagefault
                         &&& s2.mem === s1.mem
                     }
                 },
                 RWOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
                     &&& if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                        &&& result.is_Value()
-                        &&& result.get_Value_0() == s1.mem[pmem_idx as int]
+                        &&& result is Value
+                        &&& result->0 == s1.mem[pmem_idx as int]
                     } else {
-                        &&& result.is_Pagefault()
+                        &&& result is Pagefault
                     }
                 },
             }
@@ -464,8 +465,8 @@ pub open spec fn step_ReadWrite(s1: HWVariables, s2: HWVariables, vaddr: nat, pa
             // .. and the result is always a pagefault and an unchanged memory.
             &&& s2.mem === s1.mem
             &&& match op {
-                RWOp::Store { new_value, result } => result.is_Pagefault(),
-                RWOp::Load  { is_exec, result }   => result.is_Pagefault(),
+                RWOp::Store { new_value, result } => result is Pagefault,
+                RWOp::Load  { is_exec, result }   => result is Pagefault,
             }
         },
     }

@@ -490,7 +490,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                             match op {
                                 RWOp::Store { new_value, result } => {
                                     if pmem_idx < sys_s1.mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
-                                        assert(result.is_Ok());
+                                        assert(result is Ok);
                                         assert(sys_s2.mem === sys_s1.mem.update(pmem_idx as int, new_value));
                                         assert(hlspec::mem_domain_from_mappings_contains(abs_c.phys_mem_size, vmem_idx, s1.interp_pt_mem()));
                                         assert(abs_s1.mem.dom() === abs_s2.mem.dom());
@@ -568,7 +568,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                         // increasing the rlimit to 50, luckily.)
                                         // assume(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     } else {
-                                        assert(result.is_Pagefault());
+                                        assert(result is Pagefault);
                                         assert(sys_s2.mem === sys_s1.mem);
                                         assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     }
@@ -576,13 +576,13 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                                 RWOp::Load { is_exec, result } => {
                                     assert(sys_s2.mem === sys_s1.mem);
                                     if pmem_idx < sys_s1.mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                                        assert(result.is_Value());
-                                        assert(result.get_Value_0() == sys_s1.mem[pmem_idx as int]);
+                                        assert(result is Value);
+                                        assert(result->0 == sys_s1.mem[pmem_idx as int]);
                                         assert(hlspec::mem_domain_from_mappings_contains(abs_c.phys_mem_size, vmem_idx, s1.interp_pt_mem()));
                                         assert(sys_s1.mem[pmem_idx as int] == abs_s1.mem[vmem_idx]);
                                         assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     } else {
-                                        assert(result.is_Pagefault());
+                                        assert(result is Pagefault);
                                         assert(hlspec::step_ReadWrite(abs_c, abs_s1, abs_s2, vaddr, op, Some((base, pte))));
                                     }
                                 },

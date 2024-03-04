@@ -107,7 +107,7 @@ impl OSVariables {
 }
 
 pub open spec fn step_HW(s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
-    &&& !system_step.is_PTMemOp()
+    &&& !(system_step is PTMemOp)
     &&& hardware::next_step(s1.hw, s2.hw, system_step)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }

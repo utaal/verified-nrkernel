@@ -122,20 +122,17 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     }
 }
 
-#[is_variant]
 pub enum LoadResult {
     Pagefault,
     Value(nat), // word-sized load
 }
 
-#[is_variant]
 pub enum StoreResult {
     Pagefault,
     Ok,
 }
 
 #[allow(inconsistent_fields)]
-#[is_variant]
 pub enum RWOp {
     Store { new_value: nat, result: StoreResult },
     Load { is_exec: bool, result: LoadResult },
