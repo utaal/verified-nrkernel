@@ -45,10 +45,10 @@ pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte:
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
     &&& step_Map_enabled(s1.map, vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.map, vaddr, pte) {
-        &&& result.is_Err()
+        &&& result is Err
         &&& s2.map === s1.map
     } else {
-        &&& result.is_Ok()
+        &&& result is Ok
         &&& s2.map === s1.map.insert(vaddr, pte)
     }
 }
@@ -65,10 +65,10 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
 pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(),()>) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& if s1.map.dom().contains(vaddr) {
-        &&& result.is_Ok()
+        &&& result is Ok
         &&& s2.map === s1.map.remove(vaddr)
     } else {
-        &&& result.is_Err()
+        &&& result is Err
         &&& s2.map === s1.map
     }
 }

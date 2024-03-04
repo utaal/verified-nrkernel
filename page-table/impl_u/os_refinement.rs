@@ -392,7 +392,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
             assert(step_Unmap(s1, s2, vaddr, result));
             assert(spec_pt::step_Unmap(pt_s1, pt_s2, vaddr, result));
             if pt_s1.map.dom().contains(vaddr) {
-                assert(result.is_Ok());
+                assert(result is Ok);
                 assert(pt_s2.map === pt_s1.map.remove(vaddr));
                 // assert(s2.pt_mappings_dont_overlap_in_vmem());
                 assert forall|base2, pte2|
@@ -624,7 +624,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                 assert(s1.interp().mappings === s1.interp_pt_mem());
                 assert(s2.interp().mappings === s2.interp_pt_mem());
                 lemma_interp_other(s1, s2);
-                assert(result.is_Ok());
+                assert(result is Ok);
                 assert(abs_s2.mappings === abs_s1.mappings.insert(vaddr, pte));
                 assert forall|word_idx|
                     #[trigger] abs_s1.mem.dom().contains(word_idx)
@@ -649,7 +649,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(hlspec::step_Unmap_enabled(vaddr));
             if pt_s1.map.dom().contains(vaddr) {
                 assert(abs_s1.mappings.dom().contains(vaddr));
-                assert(result.is_Ok());
+                assert(result is Ok);
                 assert(pt_s2.map === pt_s1.map.remove(vaddr));
                 assert(abs_s2.mappings === abs_s1.mappings.remove(vaddr));
 

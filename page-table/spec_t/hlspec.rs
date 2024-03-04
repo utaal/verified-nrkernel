@@ -167,11 +167,11 @@ pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte:
 pub open spec fn step_Map(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
     &&& step_Map_enabled(s1.mappings, vaddr, pte)
     &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
-        &&& result.is_Err()
+        &&& result is Err
         &&& s2.mappings === s1.mappings
         &&& s2.mem === s1.mem
     } else {
-        &&& result.is_Ok()
+        &&& result is Ok
         &&& s2.mappings === s1.mappings.insert(vaddr, pte)
         &&& (forall|idx:nat| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
@@ -190,12 +190,12 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
 pub open spec fn step_Unmap(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: Result<(),()>) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& if s1.mappings.dom().contains(vaddr) {
-        &&& result.is_Ok()
+        &&& result is Ok
         &&& s2.mappings === s1.mappings.remove(vaddr)
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
         &&& (forall|idx:nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
     } else {
-        &&& result.is_Err()
+        &&& result is Err
         &&& s2.mappings === s1.mappings
         &&& s2.mem === s1.mem
     }
