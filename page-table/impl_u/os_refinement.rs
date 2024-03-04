@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp, ResolveResult,
+use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp,
 aligned, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem,
 L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
 use crate::spec_t::mem::{ word_index_spec };
@@ -678,10 +678,10 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(step_Resolve(s1, s2, vaddr, result));
             assert(spec_pt::step_Resolve(pt_s1, pt_s2, vaddr, result));
             match result {
-                ResolveResult::Ok(base, pte) => {
-                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, ResolveResult::Ok(base, pte)));
+                Ok((base, pte)) => {
+                    assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, Ok((base, pte))));
                 },
-                ResolveResult::ErrUnmapped => {
+                Err(_) => {
                     let vmem_idx = word_index_spec(vaddr);
                     assert(vmem_idx * WORD_SIZE == vaddr);
                     if hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s1.mappings).contains(vmem_idx) {

@@ -14,7 +14,7 @@ use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry, MASK_F
 MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR,
 MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS, MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR,
 MASK_L3_PG_ADDR};
-use crate::extra;
+use crate::extra::{ self, result_map_ok };
 
 
 verus! {
@@ -856,9 +856,9 @@ fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize
         base <= vaddr < MAX_BASE,
     ensures
         // Refinement of l1
-        l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).resolve(vaddr as nat),
+        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).resolve(vaddr as nat),
         // Refinement of l0
-        l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).interp().resolve(vaddr as nat),
+        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).interp().resolve(vaddr as nat),
     // decreases X86_NUM_LAYERS - layer
 {
     proof { lemma_interp_at_facts(mem, pt, layer as nat, ptr, base as nat); }
@@ -891,7 +891,7 @@ fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize
                 assert(inv_at(mem, dir_pt@, (layer + 1) as nat, dir_addr));
             }
             let res = resolve_aux(mem, dir_pt, layer + 1, dir_addr, entry_base, vaddr);
-            assert(l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
             res
         } else {
             assert(entry@.is_Page());
@@ -907,16 +907,16 @@ fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize
                 assert(interp@.entries[idx as int] === interp_at_entry(mem, pt, layer as nat, ptr, base as nat, idx as nat));
             }
             }
-            assert(l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === l1::result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.0));
-            assert(l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === l1::result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.1.frame));
-            assert(l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === l1::result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.1.flags));
-            assert(l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.0));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.1.frame));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.1.flags));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
             res
         }
     } else {
         assert(entry@.is_Empty());
         assert(interp@.entries[idx as int].is_Empty());
-        assert(l1::result_map_ok(Err(()), |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
+        assert(result_map_ok(Err(()), |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
         Err(())
     }
 }
@@ -929,9 +929,9 @@ pub fn resolve(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, vaddr: usize
         vaddr < MAX_BASE,
     ensures
         // Refinement of l1
-        l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).resolve(vaddr as nat),
+        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).resolve(vaddr as nat),
         // Refinement of l0
-        l1::result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).interp().resolve(vaddr as nat),
+        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).interp().resolve(vaddr as nat),
 {
     proof { ambient_arith(); }
     let res = resolve_aux(mem, Ghost(pt), 0, mem.cr3().base, 0, vaddr);

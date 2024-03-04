@@ -123,27 +123,6 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
 }
 
 #[is_variant]
-pub enum ResolveResultExec {
-    ErrUnmapped,
-    Ok(usize, PageTableEntryExec),
-}
-
-impl ResolveResultExec {
-    pub open spec fn view(self) -> ResolveResult {
-        match self {
-            ResolveResultExec::ErrUnmapped => ResolveResult::ErrUnmapped,
-            ResolveResultExec::Ok(base, pte) => ResolveResult::Ok(base as nat, pte@),
-        }
-    }
-}
-
-#[is_variant]
-pub enum ResolveResult {
-    ErrUnmapped,
-    Ok(nat, PageTableEntry),
-}
-
-#[is_variant]
 pub enum LoadResult {
     Pagefault,
     Value(nat), // word-sized load

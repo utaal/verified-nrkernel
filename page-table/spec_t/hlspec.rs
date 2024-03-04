@@ -3,7 +3,7 @@
 // this is the process-level specification of the kernel's behaviour
 
 use vstd::prelude::*;
-use crate::definitions_t::{ between, PageTableEntry, RWOp, ResolveResult, aligned,
+use crate::definitions_t::{ between, PageTableEntry, RWOp, aligned,
 candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
 candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
 L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
@@ -29,7 +29,7 @@ pub enum AbstractStep {
     ReadWrite { vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     Map       { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
     Unmap     { vaddr: nat, result: Result<(),()> },
-    Resolve   { vaddr: nat, result: ResolveResult },
+    Resolve   { vaddr: nat, result: Result<(nat,PageTableEntry),()> },
     Stutter,
 }
 
@@ -205,16 +205,16 @@ pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
 }
 
-pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: ResolveResult) -> bool {
+pub open spec fn step_Resolve(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables, vaddr: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
     &&& step_Resolve_enabled(vaddr)
     &&& s2 === s1
     &&& match result {
-        ResolveResult::Ok(base, pte) => {
+        Ok((base, pte)) => {
             // If result is Ok, it's an existing mapping that contains vaddr..
             &&& s1.mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
         },
-        ResolveResult::ErrUnmapped => {
+        Err(_) => {
             let vmem_idx = mem::word_index_spec(vaddr);
             // If result is ErrUnmapped, no mapping containing vaddr exists..
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)

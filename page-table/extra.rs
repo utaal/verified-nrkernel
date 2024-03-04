@@ -181,4 +181,20 @@ pub proof fn assert_maps_equal_contains_pair<K,V>(m1: Map<K,V>, m2: Map<K,V>)
     assert_maps_equal!(m1, m2);
 }
 
+// FIXME: Something like these functions should probably be added to vstd. One problem with that:
+// May want exec versions of the functions but can't give them the same name.
+pub open spec(checked) fn result_map_ok<A,B,C>(res: Result<A,B>, f: spec_fn(A) -> C) -> Result<C,B> {
+    match res {
+        Ok(a)  => Ok(f(a)),
+        Err(b) => Err(b),
+    }
+}
+
+pub open spec(checked) fn result_map<A,B>(res: Result<A,A>, f: spec_fn(A) -> B) -> Result<B,B> {
+    match res {
+        Ok(a)  => Ok(f(a)),
+        Err(a) => Err(f(a)),
+    }
+}
+
 }

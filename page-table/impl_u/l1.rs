@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 use crate::definitions_t::{new_seq};
 use crate::definitions_u::{lemma_new_seq};
-use crate::extra;
+use crate::extra::{ self, result_map };
 use crate::impl_u::indexing;
 
 use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
@@ -1750,22 +1750,6 @@ impl Directory {
             equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map),
     {
         self.lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(j, 0, vaddr, n);
-    }
-}
-
-// FIXME: Something like these functions should probably be added to vstd. One problem with that:
-// May want exec versions of the functions but can't give them the same name.
-pub open spec(checked) fn result_map_ok<A,B,C>(res: Result<A,B>, f: spec_fn(A) -> C) -> Result<C,B> {
-    match res {
-        Ok(a)  => Ok(f(a)),
-        Err(b) => Err(b),
-    }
-}
-
-pub open spec(checked) fn result_map<A,B>(res: Result<A,A>, f: spec_fn(A) -> B) -> Result<B,B> {
-    match res {
-        Ok(a)  => Ok(f(a)),
-        Err(a) => Err(f(a)),
     }
 }
 

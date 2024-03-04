@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
 use crate::definitions_t::{ Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_BASE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, aligned, new_seq, bitmask_inc };
-use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, ResolveResultExec, MemRegion};
+use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MemRegion};
 use crate::spec_t::impl_spec;
 use crate::spec_t::mem;
 use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GhostPageDirectoryEntry, nat_to_u64 };
@@ -565,7 +565,7 @@ impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
         PT::unmap(mem, &mut pt, vaddr)
     }
 
-    fn ispec_resolve(&self, mem: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec) {
+    fn ispec_resolve(&self, mem: &mem::PageTableMemory, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec),()>) {
         let pt: Ghost<PTDir> = Ghost(choose|pt: PTDir| #[trigger] PT::inv(mem, pt) && PT::interp(mem, pt).inv());
         proof {
             PT::lemma_interp_at_facts(mem, pt@, 0, mem.cr3_spec().base, 0);
@@ -574,8 +574,8 @@ impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
             lemma_page_table_walk_interp();
         }
         match PT::resolve(mem, pt, vaddr) {
-            Ok((v,pte)) => ResolveResultExec::Ok(v,pte),
-            Err(e)      => ResolveResultExec::ErrUnmapped,
+            Ok((v,pte)) => Ok((v,pte)),
+            Err(e)      => Err(e),
         }
     }
 }

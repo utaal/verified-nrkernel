@@ -3,10 +3,11 @@
 // these are the interface specifications, they are part of the theorem
 
 use vstd::prelude::*;
-use crate::definitions_t::{ PageTableEntryExec, ResolveResultExec };
+use crate::definitions_t::{ PageTableEntryExec };
 use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::interp_pt_mem;
 use crate::spec_t::mem;
+use crate::extra::result_map_ok;
 
 verus! {
 
@@ -39,7 +40,7 @@ pub trait InterfaceSpec {
             self.ispec_inv(mem),
             spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(*old(mem)) }, spec_pt::PageTableVariables { map: interp_pt_mem(*mem) }, vaddr as nat, res);
 
-    fn ispec_resolve(&self, mem: &mem::PageTableMemory, vaddr: usize) -> (res: ResolveResultExec)
+    fn ispec_resolve(&self, mem: &mem::PageTableMemory, vaddr: usize) -> (res: Result<(usize,PageTableEntryExec),()>)
         requires
             spec_pt::step_Resolve_enabled(vaddr as nat),
             self.ispec_inv(mem),
@@ -48,7 +49,7 @@ pub trait InterfaceSpec {
                 spec_pt::PageTableVariables { map: interp_pt_mem(*mem) },
                 spec_pt::PageTableVariables { map: interp_pt_mem(*mem) },
                 vaddr as nat,
-                res@
+                result_map_ok(res, |t: (usize, PageTableEntryExec)| (t.0 as nat, t.1@))
             );
 }
 

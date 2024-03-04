@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 
-use crate::definitions_t::{ PageTableEntry, ResolveResult, aligned, between,
+use crate::definitions_t::{ PageTableEntry, aligned, between,
 candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
 candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
 L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_PHYADDR, MAX_BASE };
@@ -25,7 +25,7 @@ pub struct PageTableVariables {
 pub enum PageTableStep {
     Map     { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
     Unmap   { vaddr: nat, result: Result<(),()> },
-    Resolve { vaddr: nat, result: ResolveResult },
+    Resolve { vaddr: nat, result: Result<(nat,PageTableEntry),()> },
     Stutter,
 }
 
@@ -78,17 +78,17 @@ pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& vaddr < MAX_BASE
 }
 
-pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: ResolveResult) -> bool {
+pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
     &&& step_Resolve_enabled(vaddr)
     &&& s2 === s1
     &&& match result {
-        ResolveResult::Ok(base, pte) => {
+        Ok((base, pte)) => {
             // If result is Ok, it's an existing mapping that contains vaddr..
             &&& s1.map.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
         },
-        ResolveResult::ErrUnmapped => {
-            // If result is ErrUnmapped, no mapping containing vaddr exists..
+        Err(_) => {
+            // If result is Err, no mapping containing vaddr exists..
             &&& (!exists|base: nat, pte: PageTableEntry| s1.map.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size))
         },
     }

@@ -9,7 +9,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::{ hardware, hlspec, mem };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, ResolveResult, aligned,
+use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, aligned,
 L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
 
 verus! {
@@ -125,7 +125,7 @@ pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result:
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: ResolveResult) -> bool {
+pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
     &&& hardware::step_PTMemOp(s1.hw, s2.hw)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
@@ -136,7 +136,7 @@ pub enum OSStep {
     HW      { step: hardware::HWStep },
     Map     { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
     Unmap   { vaddr: nat, result: Result<(),()> },
-    Resolve { vaddr: nat, result: ResolveResult },
+    Resolve { vaddr: nat, result: Result<(nat,PageTableEntry),()> },
 }
 
 impl OSStep {
