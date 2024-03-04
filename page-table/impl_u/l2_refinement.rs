@@ -52,6 +52,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
     assert forall|addr: nat, pte: PageTableEntry|
         m1.contains_pair(addr, pte) implies #[trigger] m2.contains_pair(addr, pte)
     by {
+        assert(addr == addr as u64);
         let addr: u64 = addr as u64;
         assert(addr < MAX_BASE);
         let pte = choose|pte: PageTableEntry| valid_pt_walk(mem, addr, pte);
@@ -120,7 +121,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                             requires l0_idx_u64 < 512 && l1_idx_u64 < 512;
                         // Previous assert proves: l0_idx * L0_ENTRY_SIZE + l1_idx * L1_ENTRY_SIZE == (l0_idx as u64) << 39u64 | (l1_idx as u64) << 30u64
 
-                        assert(interp_l1_dir.interp_of_entry(l1_idx).map.contains_pair(addr as nat, pte));
+                        assert(interp_l1_dir.interp_of_entry(l1_idx).map.contains_pair(addr as nat, pte)); // unstable
                         assert(interp_l1_dir.interp().map.contains_pair(addr as nat, pte));
                         assert(interp_l0_dir.interp().map.contains_pair(addr as nat, pte));
                         assert(m2.contains_pair(addr as nat, pte));
@@ -262,9 +263,13 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
             if addr >= MAX_BASE {
             } else {
                 assert(addr < MAX_BASE);
-                // assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte));
+                // Not all of these assertions may be necessary but the assertion after the `let
+                // addr` was unstable and seems okay now, so I'm not touching these.
+                assert(addr == addr as u64);
+                assert(nat_to_u64(addr) == addr);
+                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte));
                 let addr: u64 = addr as u64;
-                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte)); // unstable
+                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte));
                 let l0_idx_u64:  u64 = l0_bits!(addr);
                 let l0_idx:      nat = l0_idx_u64 as nat;
                 let l1_idx_u64:  u64 = l1_bits!(addr);

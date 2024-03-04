@@ -23,7 +23,6 @@ pub trait InterfaceSpec {
 
     fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
         requires
-            old(mem).alloc_available_pages() >= 3,
             spec_pt::step_Map_enabled(pt_vars(*old(mem)), vaddr as nat, pte@),
             self.ispec_inv(&*old(mem)),
         ensures

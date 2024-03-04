@@ -49,6 +49,7 @@ pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTa
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
     &&& !candidate_mapping_overlaps_existing_pmem(s.interp(), vaddr, pte)
+    &&& s.pt_mem.alloc_available_pages() >= 3
 }
 
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
