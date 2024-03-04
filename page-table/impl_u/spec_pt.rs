@@ -1,5 +1,7 @@
 use vstd::prelude::*;
 
+use crate::spec_t::mem;
+use crate::spec_t::hardware;
 use crate::definitions_t::{ PageTableEntry, aligned, between,
 candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
 candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
@@ -18,7 +20,14 @@ L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_PHYADDR, MAX_BASE };
 verus! {
 
 pub struct PageTableVariables {
-    pub map: Map<nat /* VAddr */, PageTableEntry>,
+    pub pt_mem: mem::PageTableMemory,
+}
+
+impl PageTableVariables {
+    /// Interpretation of the memory according to the MMU's semantics.
+    pub open spec fn interp(self) -> Map<nat, PageTableEntry> {
+        hardware::interp_pt_mem(self.pt_mem)
+    }
 }
 
 #[allow(inconsistent_fields)]
@@ -29,7 +38,7 @@ pub enum PageTableStep {
     Stutter,
 }
 
-pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte: PageTableEntry) -> bool {
+pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& pte.frame.base <= MAX_PHYADDR
@@ -39,17 +48,17 @@ pub open spec fn step_Map_enabled(map: Map<nat,PageTableEntry>, vaddr: nat, pte:
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
-    &&& !candidate_mapping_overlaps_existing_pmem(map, vaddr, pte)
+    &&& !candidate_mapping_overlaps_existing_pmem(s.interp(), vaddr, pte)
 }
 
 pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
-    &&& step_Map_enabled(s1.map, vaddr, pte)
-    &&& if candidate_mapping_overlaps_existing_vmem(s1.map, vaddr, pte) {
+    &&& step_Map_enabled(s1, vaddr, pte)
+    &&& if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
         &&& result is Err
-        &&& s2.map === s1.map
+        &&& s2.interp() == s1.interp()
     } else {
         &&& result is Ok
-        &&& s2.map === s1.map.insert(vaddr, pte)
+        &&& s2.interp() == s1.interp().insert(vaddr, pte)
     }
 }
 
@@ -64,12 +73,12 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
 
 pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(),()>) -> bool {
     &&& step_Unmap_enabled(vaddr)
-    &&& if s1.map.dom().contains(vaddr) {
+    &&& if s1.interp().dom().contains(vaddr) {
         &&& result is Ok
-        &&& s2.map === s1.map.remove(vaddr)
+        &&& s2.interp() == s1.interp().remove(vaddr)
     } else {
         &&& result is Err
-        &&& s2.map === s1.map
+        &&& s2.interp() == s1.interp()
     }
 }
 
@@ -80,27 +89,30 @@ pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
 
 pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
     &&& step_Resolve_enabled(vaddr)
-    &&& s2 === s1
+    &&& s2 == s1
     &&& match result {
         Ok((base, pte)) => {
             // If result is Ok, it's an existing mapping that contains vaddr..
-            &&& s1.map.contains_pair(base, pte)
+            &&& s1.interp().contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
         },
         Err(_) => {
             // If result is Err, no mapping containing vaddr exists..
-            &&& (!exists|base: nat, pte: PageTableEntry| s1.map.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size))
+            &&& (!exists|base: nat, pte: PageTableEntry| s1.interp().contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size))
         },
     }
 }
 
 
 pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
-    s1 === s2
+    s1 == s2
 }
 
 pub open spec fn init(s: PageTableVariables) -> bool {
-    s.map === Map::empty()
+    &&& s.pt_mem.inv()
+    &&& s.pt_mem.regions() === set![s.pt_mem.cr3_spec()@]
+    &&& s.pt_mem.region_view(s.pt_mem.cr3_spec()@).len() == 512
+    &&& (forall|i: nat| i < 512 ==> s.pt_mem.region_view(s.pt_mem.cr3_spec()@)[i as int] == 0)
 }
 
 pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {

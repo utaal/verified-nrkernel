@@ -312,14 +312,16 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
     match step {
         OSStep::HW { step: system_step } => {
             assert(step_HW(s1, s2, system_step));
+            assert(s2.interp_pt_mem() == s1.interp_pt_mem());
+            assert(s2.inv());
         },
         OSStep::Map { vaddr, pte, result } => {
             let pt_s1 = s1.pt_variables();
             let pt_s2 = s2.pt_variables();
             assert(step_Map(s1, s2, vaddr, pte, result));
             assert(spec_pt::step_Map(pt_s1, pt_s2, vaddr, pte, result));
-            assert(!candidate_mapping_overlaps_existing_pmem(pt_s1.map, vaddr, pte));
-            if candidate_mapping_overlaps_existing_vmem(pt_s1.map, vaddr, pte) {
+            assert(!candidate_mapping_overlaps_existing_pmem(pt_s1.interp(), vaddr, pte));
+            if candidate_mapping_overlaps_existing_vmem(pt_s1.interp(), vaddr, pte) {
                 assert(s2.inv());
             } else {
                 assert(forall|base, pte| s1.interp_pt_mem().contains_pair(base, pte) ==> s2.interp_pt_mem().contains_pair(base, pte));
@@ -327,8 +329,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                     ||| pteprime.frame.size == L3_ENTRY_SIZE
                     ||| pteprime.frame.size == L2_ENTRY_SIZE
                     ||| pteprime.frame.size == L1_ENTRY_SIZE
-                } by
-                {
+                } by {
                     if vaddr == base {
                         assert({
                             ||| pteprime.frame.size == L3_ENTRY_SIZE
@@ -391,9 +392,9 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
             let pt_s2 = s2.pt_variables();
             assert(step_Unmap(s1, s2, vaddr, result));
             assert(spec_pt::step_Unmap(pt_s1, pt_s2, vaddr, result));
-            if pt_s1.map.dom().contains(vaddr) {
+            if pt_s1.interp().dom().contains(vaddr) {
                 assert(result is Ok);
-                assert(pt_s2.map === pt_s1.map.remove(vaddr));
+                assert(pt_s2.interp() === pt_s1.interp().remove(vaddr));
                 // assert(s2.pt_mappings_dont_overlap_in_vmem());
                 assert forall|base2, pte2|
                     s2.hw.tlb.contains_pair(base2, pte2)
@@ -408,8 +409,7 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                     ||| pteprime.frame.size == L3_ENTRY_SIZE
                     ||| pteprime.frame.size == L2_ENTRY_SIZE
                     ||| pteprime.frame.size == L1_ENTRY_SIZE
-                } by
-                {
+                } by {
                     assert(s1.pt_entry_sizes_are_valid());
                     assert(s1.interp_pt_mem().dom().contains(baseprime));
                     assert(s1.interp_pt_mem().contains_pair(baseprime, pteprime));
@@ -430,10 +430,15 @@ proof fn next_step_preserves_inv(s1: OSVariables, s2: OSVariables, step: OSStep)
                 };
                 assert(s2.inv());
             } else {
+                assert(result is Err);
+                assert(s2.interp_pt_mem() == s1.interp_pt_mem());
                 assert(s2.inv());
             }
         },
-        OSStep::Resolve { vaddr, result } => (),
+        OSStep::Resolve { vaddr, result } => {
+            assert(s2.interp_pt_mem() == s1.interp_pt_mem());
+            assert(s2.inv());
+        },
     }
 }
 
@@ -614,7 +619,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(step_Map(s1, s2, vaddr, pte, result));
             assert(spec_pt::step_Map(pt_s1, pt_s2, vaddr, pte, result));
             assert(hlspec::step_Map_enabled(abs_s1.mappings, vaddr, pte));
-            if candidate_mapping_overlaps_existing_vmem(pt_s1.map, vaddr, pte) {
+            if candidate_mapping_overlaps_existing_vmem(pt_s1.interp(), vaddr, pte) {
                 assert(candidate_mapping_overlaps_existing_vmem(abs_s1.mappings, vaddr, pte));
                 assert(hlspec::step_Map(abs_c, abs_s1, abs_s2, vaddr, pte, result));
             } else {
@@ -647,10 +652,10 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
             assert(step_Unmap(s1, s2, vaddr, result));
             assert(spec_pt::step_Unmap(pt_s1, pt_s2, vaddr, result));
             assert(hlspec::step_Unmap_enabled(vaddr));
-            if pt_s1.map.dom().contains(vaddr) {
+            if pt_s1.interp().dom().contains(vaddr) {
                 assert(abs_s1.mappings.dom().contains(vaddr));
                 assert(result is Ok);
-                assert(pt_s2.map === pt_s1.map.remove(vaddr));
+                assert(pt_s2.interp() === pt_s1.interp().remove(vaddr));
                 assert(abs_s2.mappings === abs_s1.mappings.remove(vaddr));
 
                 assert(abs_s2.mem.dom() === hlspec::mem_domain_from_mappings(abs_c.phys_mem_size, abs_s2.mappings));
@@ -693,7 +698,7 @@ proof fn next_step_refines_hl_next_step(s1: OSVariables, s2: OSVariables, step: 
                             &&& between(vaddr, base, base + pte.frame.size)
                             &&& pmem_idx < abs_c.phys_mem_size
                         };
-                        assert(pt_s1.map.contains_pair(base, pte));
+                        assert(pt_s1.interp().contains_pair(base, pte));
                         assert(false);
                     }
                     assert(hlspec::step_Resolve(abs_c, abs_s1, abs_s2, vaddr, result));

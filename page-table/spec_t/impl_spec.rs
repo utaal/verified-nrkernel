@@ -5,32 +5,30 @@
 use vstd::prelude::*;
 use crate::definitions_t::{ PageTableEntryExec };
 use crate::impl_u::spec_pt;
-use crate::spec_t::hardware::interp_pt_mem;
 use crate::spec_t::mem;
 use crate::extra::result_map_ok;
 
 verus! {
 
+pub open spec fn pt_vars(mem: mem::PageTableMemory) -> spec_pt::PageTableVariables {
+    spec_pt::PageTableVariables { pt_mem: mem }
+}
+
 pub trait InterfaceSpec {
     spec fn ispec_inv(&self, mem: &mem::PageTableMemory) -> bool;
 
     proof fn ispec_init_implies_inv(&self, mem: &mem::PageTableMemory)
-        requires
-            mem.inv(),
-            mem.regions() === set![mem.cr3_spec()@],
-            mem.region_view(mem.cr3_spec()@).len() == 512,
-            (forall|i: nat| i < 512 ==> mem.region_view(mem.cr3_spec()@)[i as int] == 0),
-        ensures
-            self.ispec_inv(mem);
+        requires spec_pt::init(pt_vars(*mem))
+        ensures self.ispec_inv(mem);
 
     fn ispec_map_frame(&self, mem: &mut mem::PageTableMemory, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
         requires
             old(mem).alloc_available_pages() >= 3,
-            spec_pt::step_Map_enabled(interp_pt_mem(*old(mem)), vaddr as nat, pte@),
+            spec_pt::step_Map_enabled(pt_vars(*old(mem)), vaddr as nat, pte@),
             self.ispec_inv(&*old(mem)),
         ensures
             self.ispec_inv(mem),
-            spec_pt::step_Map(spec_pt::PageTableVariables { map: interp_pt_mem(*old(mem)) }, spec_pt::PageTableVariables { map: interp_pt_mem(*mem) }, vaddr as nat, pte@, res);
+            spec_pt::step_Map(pt_vars(*old(mem)), pt_vars(*mem), vaddr as nat, pte@, res);
 
     fn ispec_unmap(&self, mem: &mut mem::PageTableMemory, vaddr: usize) -> (res: Result<(),()>)
         requires
@@ -38,7 +36,7 @@ pub trait InterfaceSpec {
             self.ispec_inv(&*old(mem)),
         ensures
             self.ispec_inv(mem),
-            spec_pt::step_Unmap(spec_pt::PageTableVariables { map: interp_pt_mem(*old(mem)) }, spec_pt::PageTableVariables { map: interp_pt_mem(*mem) }, vaddr as nat, res);
+            spec_pt::step_Unmap(pt_vars(*old(mem)), pt_vars(*mem), vaddr as nat, res);
 
     fn ispec_resolve(&self, mem: &mem::PageTableMemory, vaddr: usize) -> (res: Result<(usize,PageTableEntryExec),()>)
         requires
@@ -46,8 +44,8 @@ pub trait InterfaceSpec {
             self.ispec_inv(mem),
         ensures
             spec_pt::step_Resolve(
-                spec_pt::PageTableVariables { map: interp_pt_mem(*mem) },
-                spec_pt::PageTableVariables { map: interp_pt_mem(*mem) },
+                pt_vars(*mem),
+                pt_vars(*mem),
                 vaddr as nat,
                 result_map_ok(res, |t: (usize, PageTableEntryExec)| (t.0 as nat, t.1@))
             );

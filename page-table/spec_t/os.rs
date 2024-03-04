@@ -61,7 +61,7 @@ impl OSVariables {
 
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables {
-            map: self.interp_pt_mem(),
+            pt_mem: self.hw.pt_mem,
         }
     }
 
@@ -170,7 +170,8 @@ pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
 }
 
 pub open spec fn init(s: OSVariables) -> bool {
-    hardware::init(s.hw)
+    &&& spec_pt::init(s.pt_variables())
+    &&& hardware::init(s.hw)
 }
 
 }

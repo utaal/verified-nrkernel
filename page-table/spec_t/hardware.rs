@@ -314,7 +314,7 @@ pub open spec fn read_entry(pt_mem: mem::PageTableMemory, dir_addr: nat, layer: 
 
 
 /// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics,
-/// it's mb0 otherwise)
+/// it's must-be-zero otherwise)
 ///
 /// The intended semantics for valid_pt_walk is this:
 /// Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the

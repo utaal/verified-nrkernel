@@ -19,12 +19,31 @@ pub proof fn lemma_page_table_walk_interp()
 {
     assert forall|mem: mem::PageTableMemory, pt: PTDir| #![auto]
         PT::inv(&mem, pt) && PT::interp(&mem, pt).inv() implies PT::interp(&mem, pt).interp().map === interp_pt_mem(mem)
-    by { lemma_page_table_walk_interp_aux(mem, pt); }
+    by {
+        let m1 = interp_pt_mem(mem);
+        let m2 = PT::interp(&mem, pt).interp().map;
+        PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
+        assert(PT::interp(&mem, pt).interp().inv());
+        lemma_page_table_walk_interp_aux_1(mem, pt);
+        lemma_page_table_walk_interp_aux_2(mem, pt);
+        assert(m1 =~= m2) by {
+            assert forall|addr: nat| m1.dom().contains(addr) <==> m2.dom().contains(addr) by {
+                assert(m1.dom().contains(addr) ==> m2.contains_pair(addr, m1[addr]));
+                assert(m2.dom().contains(addr) ==> m1.contains_pair(addr, m2[addr]));
+            };
+            assert forall|addr: nat| #[trigger] m1.contains_key(addr) && m2.contains_key(addr) implies m1[addr] == m2[addr] by {
+                assert(m1.contains_pair(addr, m1[addr]));
+                assert(m2.contains_pair(addr, m1[addr]));
+            };
+        };
+    };
 }
 
-pub proof fn lemma_page_table_walk_interp_aux(mem: mem::PageTableMemory, pt: PTDir)
+pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: PTDir)
     requires PT::inv(&mem, pt) && PT::interp(&mem, pt).inv()
-    ensures PT::interp(&mem, pt).interp().map == interp_pt_mem(mem)
+    ensures
+        forall|k, v| interp_pt_mem(mem).contains_pair(k, v)
+            ==> #[trigger] PT::interp(&mem, pt).interp().map.contains_pair(k, v)
 {
     let m1 = interp_pt_mem(mem);
     let m2 = PT::interp(&mem, pt).interp().map;
@@ -223,6 +242,18 @@ pub proof fn lemma_page_table_walk_interp_aux(mem: mem::PageTableMemory, pt: PTD
             _ => assert(false),
         };
     };
+}
+
+pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: PTDir)
+    requires PT::inv(&mem, pt) && PT::interp(&mem, pt).inv()
+    ensures
+        forall|k| !interp_pt_mem(mem).contains_key(k)
+            ==> !(#[trigger] PT::interp(&mem, pt).interp().map.contains_key(k))
+{
+    let m1 = interp_pt_mem(mem);
+    let m2 = PT::interp(&mem, pt).interp().map;
+    PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
+    assert(PT::interp(&mem, pt).interp().inv());
     assert forall|addr: nat| !m1.contains_key(addr) ==> !m2.contains_key(addr) by {
         PT::lemma_interp_at_facts(&mem, pt, 0, mem.cr3_spec().base, 0);
         PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
@@ -471,16 +502,6 @@ pub proof fn lemma_page_table_walk_interp_aux(mem: mem::PageTableMemory, pt: PTD
                 };
             }
         }
-    };
-    assert(m1 =~= m2) by {
-        assert forall|addr: nat| m1.dom().contains(addr) <==> m2.dom().contains(addr) by {
-            assert(m1.dom().contains(addr) ==> m2.contains_pair(addr, m1[addr]));
-            assert(m2.dom().contains(addr) ==> m1.contains_pair(addr, m2[addr]));
-        };
-        assert forall|addr: nat| #[trigger] m1.contains_key(addr) && m2.contains_key(addr) implies m1[addr] == m2[addr] by {
-            assert(m1.contains_pair(addr, m1[addr]));
-            assert(m2.contains_pair(addr, m1[addr]));
-        };
     };
 }
 
