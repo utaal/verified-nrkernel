@@ -4,7 +4,6 @@ use builtin_macros::*;
 use vstd::prelude::*;
 use vstd::modes::*;
 use vstd::seq::*;
-use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;

@@ -4,12 +4,9 @@ use builtin_macros::*;
 use vstd::prelude::*;
 use vstd::modes::*;
 use vstd::seq::*;
-use vstd::option::{*, Option::*};
 use vstd::map::*;
 use vstd::set::*;
 use vstd::set_lib::*;
-use vstd::vec::*;
-use vstd::result::{*, Result::*};
 use crate::extra as lib;
 use crate::definitions_t::{ aligned, between, index_from_offset, index_from_base_and_addr, entry_base_from_index, next_entry_base_from_index };
 
