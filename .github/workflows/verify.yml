@@ -36,5 +36,5 @@ jobs:
         run: ./tools/build-verus.sh
       - name: Verify node-replication
         run: |
-          cd nr/verus-nr
+          cd nr/verified-node-replication
           verus --crate-type=dylib --expand-errors --time --no-report-long-running src/lib.rs

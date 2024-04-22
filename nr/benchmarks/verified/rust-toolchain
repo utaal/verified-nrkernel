@@ -1,4 +1,0 @@
-[toolchain]
-channel = "1.73"
-components = [ "rustfmt", "rustc-dev", "rust-src", "cargo", "clippy" ]
-profile = "default"
