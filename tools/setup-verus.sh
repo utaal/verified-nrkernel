@@ -1,5 +1,11 @@
 #!/bin/bash
 
+####################################################################################################
+#
+# Script to initialize the Verus git submodule and Rust toolchain.
+#
+####################################################################################################
+
 set -eu
 
 REPOSITORY_ROOT=$(git rev-parse --show-toplevel)
