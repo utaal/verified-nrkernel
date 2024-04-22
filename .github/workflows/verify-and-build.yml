@@ -1,0 +1,56 @@
+name: Verify Node-Replication
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Verus
+        run: ./tools/setup-verus.sh
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ${{ github.workspace }}/verus/source -> target
+            ${{ github.workspace }}/verus/tools/vargo -> target
+          cache-directories: ${{ github.workspace }}/verus/source/target-verus
+      - name: Verus cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/verus
+          key: ${{ runner.os }}-verus-${{ hashFiles('.git/modules/verus/refs/heads/main') }}
+      - name: Build Verus
+        run: ./tools/build-verus.sh
+      - name: Verify node-replication
+        run: |
+          cd verified-node-replication
+          verus --crate-type=dylib --expand-errors --time --no-report-long-running src/lib.rs
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: [verify]
+    strategy:
+      fail-fast: false
+    steps:
+      - name: build (debug)
+        run: |
+          cd verified-node-replication
+          cargo build
+      - name: build (release)
+        run: |
+          cd verified-node-replication
+          cargo build --release
