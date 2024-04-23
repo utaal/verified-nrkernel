@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y liburcu-dev liburcu8
+        run: sudo apt-get update && sudo apt-get install -y libhwloc-dev liburcu-dev liburcu8
       - uses: actions/checkout@v3
       - name: Set up Verus
         run: ./tools/setup-verus.sh
@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y liburcu-dev liburcu8
+        run: sudo apt-get update && sudo apt-get install -y libhwloc-dev  liburcu-dev liburcu8
       - uses: actions/checkout@v3
       - name: Set up Verus
         run: ./tools/setup-verus.sh
