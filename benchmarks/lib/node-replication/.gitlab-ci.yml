@@ -1,0 +1,34 @@
+stages:
+  - build
+  - bench
+
+build:
+  stage: build
+  script:
+    # Dependency for node-replication
+    - sudo apt install libhwloc-dev gnuplot libfuse-dev liburcu-dev liburcu6 pkg-config --yes
+    - cd benches; cargo build; cd ..
+    - cd cnr; cargo build; cd ..
+    - cd nr; cargo build; cd ..
+
+benchmark:skylake2x:
+  stage: bench
+  script:
+    - bash scripts/ci.bash
+  dependencies:
+    - build
+  variables:
+    GIT_STRATEGY: fetch
+  tags:
+    - skylake2x
+
+benchmark:skylake4x:
+  stage: bench
+  script:
+    - bash scripts/ci.bash
+  dependencies:
+    - build
+  variables:
+    GIT_STRATEGY: fetch
+  tags:
+    - skylake4x

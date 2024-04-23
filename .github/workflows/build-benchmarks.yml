@@ -1,0 +1,64 @@
+name: Build Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  upstream:
+    name: Upstream Node-Replication Benchmark
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Verus
+        run: ./tools/setup-verus.sh
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ${{ github.workspace }}/verus/source -> target
+            ${{ github.workspace }}/verus/tools/vargo -> target
+          cache-directories: ${{ github.workspace }}/verus/source/target-verus
+      - name: Verus cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/verus
+          key: ${{ runner.os }}-verus-${{ hashFiles('.git/modules/verus/refs/heads/main') }}
+      - name: Build Bechmarks
+        run: |
+          cd benchmarks/upstream
+          cargo bench --no-run
+  verified:
+    name: Verified Node-Replication Benchmark
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Verus
+        run: ./tools/setup-verus.sh
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ${{ github.workspace }}/verus/source -> target
+            ${{ github.workspace }}/verus/tools/vargo -> target
+          cache-directories: ${{ github.workspace }}/verus/source/target-verus
+      - name: Verus cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/verus
+          key: ${{ runner.os }}-verus-${{ hashFiles('.git/modules/verus/refs/heads/main') }}
+      - name: Build Bechmarks
+        run: |
+          cd benchmarks/verified
+          cargo bench --no-run
+

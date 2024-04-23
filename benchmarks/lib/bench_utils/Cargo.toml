@@ -1,0 +1,43 @@
+[package]
+name = "bench_utils"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = [
+  "Chinmay Kulkarni <chinmayk@cs.utah.edu>",
+  "Gerd Zellweger <mail@gerdzellweger.com>",
+  "Ankit Bhardwaj <bhrdwj.ankit@gmail.com>",
+  "Irina Calciu <icalciu@vmware.com>",
+]
+
+[profile.bench]
+debug = true
+
+[dependencies]
+arr_macro = "0.1.2"
+core_affinity = "0.5.10"
+crossbeam-utils = { version = "0.8", default-features = false }
+csv = "1.1.3"
+hwloc2 = "2.2"
+lazy_static = "1.4"
+log = "0.4"
+num_cpus = "1.12"
+parking_lot = "0.12"
+rand = { version = "0.8", features = ["small_rng"] }
+rand_chacha = "0.3.1"
+serde = { version = "1", features = ["derive"] }
+static_assertions = "1.1.0"
+urcu-sys = "=0.0.5"
+nix = { version = "0.24", features = ["sched"] }
+tokio = { version = "1.11.0", features = ["full"] }
+async-trait = "0.1.51"
+node-replication = { version = "0.1.1", optional = true }
+verified-node-replication = { path = "../../../verified-node-replication", optional = true }
+
+[features]
+smokebench = []
+# Very exhaustive parameter sweep (may take a day to run on a big machine)
+exhaustive = []
+# verified and unverified features
+verified = ["dep:verified-node-replication"]
+unverified = ["dep:node-replication"]
