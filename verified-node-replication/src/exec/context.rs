@@ -1,3 +1,6 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
@@ -12,7 +15,7 @@ use vstd::{
 use crate::Dispatch;
 
 // constants
-use crate::constants::{MAX_THREADS_PER_REPLICA};
+use crate::constants::MAX_THREADS_PER_REPLICA;
 
 // spec import
 use crate::spec::unbounded_log::UnboundedLog;

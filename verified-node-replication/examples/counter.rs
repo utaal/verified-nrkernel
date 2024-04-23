@@ -1,40 +1,66 @@
-// the verus dependencies
+// Replicated Counter Example with Verified NR
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 
 // trustedness: ignore this file
 
+// stdlib dependencies
+use  std::sync::Arc;
+
+// the verus dependencies
 use builtin::Tracked;
 
-use verus_nr::{Dispatch, NR, NodeReplicated, ThreadToken};
-use verus_nr::constants::NUM_REPLICAS;
+// the traits and types we need from the verified-node-replicaton crate
+use verified_node_replication::{AffinityFn, Dispatch, NodeReplicated, NodeReplicatedT, ThreadToken};
+
+/// the number of replicas we want to create
+const NUM_REPLICAS: usize = 2;
+
+/// number of operations each trhead executes
+const NUM_OPS_PER_THREAD: usize = 1_000_000;
+
+/// number of threads per replica
+const NUM_THREADS_PER_REPLICA: usize = 4;
+
+/// total number of threads being created
+const NUM_THREADS: usize = NUM_THREADS_PER_REPLICA*NUM_REPLICAS;
 
 
-/// represents a update operation on the replica, in NR this is handled by `dispatch_mut`
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Data Structure Definition with the Operations
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// represents a update operation on the data structure
 #[derive(Clone, Copy)]
 pub enum UpdateOp {
+    /// reset the counter to 0
     Reset,
+    /// increment the counter
     Inc,
 }
 
-/// Represents a read-only operation on the replica, in NR this is handled by `dispatch`
+/// represents a read-only operation on the data structure
 pub enum ReadonlyOp {
+    /// get the current counter value
     Get,
 }
 
-/// the operations enum
-pub enum Request {
+/// represents an operation request for either a read-only or update operation
+pub enum OpRequest {
+    /// this operation is mutating the data structure
     Update(UpdateOp),
+    /// this operation is read-only
     Readonly(ReadonlyOp),
 }
 
-/// Represents the return type of the read-only operation
+/// represents the result of the operation request
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub enum ReturnType {
+pub enum OpResult {
     Value(u64),
     Ok,
 }
 
 
-
+/// a simple counter data structure to be wrapped with node-replication
 pub struct DataStructureType {
     pub val: u64,
 }
@@ -45,27 +71,29 @@ impl DataStructureType {
         DataStructureType { val: 0 }
     }
 
-    pub fn update(&mut self, op: UpdateOp) -> ReturnType
+    pub fn update(&mut self, op: UpdateOp) -> OpResult
     {
         match op {
             UpdateOp::Reset => self.val = 0,
             UpdateOp::Inc => self.val = if self.val < 0xffff_ffff_ffff_ffff { self.val + 1 } else { 0 }
         }
-        ReturnType::Ok
+        OpResult::Ok
     }
 
-    pub fn read(&self, op: ReadonlyOp) -> ReturnType
+    pub fn read(&self, op: ReadonlyOp) -> OpResult
     {
-        ReturnType::Value(self.val)
+        OpResult::Value(self.val)
     }
 }
 
+
+/// implementation of Disatch for the Data Structure
 impl Dispatch for DataStructureType {
     type ReadOperation = ReadonlyOp;
 
     type WriteOperation = UpdateOp;
 
-    type Response = ReturnType;
+    type Response = OpResult;
 
     type View = DataStructureType;
 
@@ -90,7 +118,7 @@ impl Dispatch for DataStructureType {
     fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
         match op {
             ReadonlyOp::Get => {
-                ReturnType::Value(self.val)
+                OpResult::Value(self.val)
             }
         }
     }
@@ -102,26 +130,29 @@ impl Dispatch for DataStructureType {
             UpdateOp::Reset => self.val = 0,
             UpdateOp::Inc => self.val = if self.val < 0xffff_ffff_ffff_ffff { self.val + 1 } else { 0 }
         }
-        ReturnType::Ok
+        OpResult::Ok
     }
 }
 
 
 
 
-use  std::sync::Arc;
 
 struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructureType>);
 
-const NUM_OPS_PER_THREAD: usize = 1_000_000;
-const NUM_THREADS_PER_REPLICA: usize = 4;
-const NUM_THREADS: usize = NUM_THREADS_PER_REPLICA*NUM_REPLICAS;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Data Structure Definition with the Operations
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
 pub fn main() {
 
     println!("Creating Replicated Data Structure...");
 
-    let mut nr_counter = NodeReplicated::new(NUM_REPLICAS);
+    let affinity_fn = AffinityFn::new(|f| {});
+
+    let mut nr_counter = NodeReplicated::new(NUM_REPLICAS, affinity_fn);
 
     println!("Obtaining Thread tokens for {NUM_THREADS} threads...");
 
@@ -180,7 +211,7 @@ pub fn main() {
                     tkn = t;
                 }
             }
-        }-- stay healthy!
+        }
 
         // make sure to make progress on all replicas
         for _ in 0..NUM_OPS_PER_THREAD*2  {
@@ -223,10 +254,10 @@ pub fn main() {
         match nr_counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
             Result::Ok((ret, t, _)) => {
                 match ret {
-                    ReturnType::Value(v) => {
+                    OpResult::Value(v) => {
                         println!("Replica {idx} - Final Result: {v} expected {}", NUM_THREADS * (NUM_OPS_PER_THREAD)/ 2);
                     }
-                    ReturnType::Ok => {
+                    OpResult::Ok => {
                         println!("Replica {idx} - Final Result: OK? expected {}", NUM_THREADS * (NUM_OPS_PER_THREAD)/ 2);
                     }
                 }

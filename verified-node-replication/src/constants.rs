@@ -1,3 +1,10 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+//! Defines constants that are being used by the library, both in the execution and the
+//! verification. The constants mostly define the size of the log, and certain thresholds
+//! when warnings are being printed etc.
+
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
@@ -7,9 +14,6 @@ verus! {
 
 /// the maximum number of replicas
 pub open const MAX_REPLICAS_PER_LOG: usize = 16;
-
-/// the number of replicas we have
-// pub open const NUM_REPLICAS: usize = 4;
 
 #[verus::trusted]
 pub open const MAX_REPLICAS: usize = 16;
@@ -48,7 +52,7 @@ pub open const GC_FROM_HEAD: usize = MAX_PENDING_OPS * MAX_THREADS_PER_REPLICA;
 /// Should be a power of two to avoid divisions.
 pub open const WARN_THRESHOLD: usize = 0x10000000;
 
-
+/// the maximum number of identifiers that can be used
 pub open const MAX_IDX : u64 = 0xffff_ffff_f000_0000;
 
 } // verus!

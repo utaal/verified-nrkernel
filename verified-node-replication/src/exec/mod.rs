@@ -77,7 +77,7 @@ impl<DT: Dispatch> crate::ThreadTokenT<DT, Replica<DT>> for ThreadToken<DT> {
     }
 }
 
-impl<DT: Dispatch + Sync> crate::NR<DT> for NodeReplicated<DT> {
+impl<DT: Dispatch + Sync> crate::NodeReplicatedT<DT> for NodeReplicated<DT> {
     type Replica = Replica<DT>;
     type ReplicaId = ReplicaId;
     type TT = ThreadToken<DT>;

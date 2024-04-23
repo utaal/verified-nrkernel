@@ -14,9 +14,20 @@ You can also run verification with the `tools/verify-node-replication.sh` script
 directory of this repository.
 
 
-## Builiding
+## Building
+
+You can build the crate using standard `cargo` commands.
+
+```
+$ cargo build [--release]
+```
 
 
 ## Examples
 
-cargo build --examples
+The crate provides a few examples that demonstrate how we can use the verified node-replication
+implementation. To build them, simply run:
+
+```
+$ cargo build --examples
+```

@@ -1,6 +1,10 @@
-// TODO fix?
-// #![feature(register_tool)]
-// #![register_tool(verifier)]
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
+//! This library is a verified version of the [node-replicatin library](https://github.com/vmware/node-replication/)
+//! that allows for the construction of replicated, concurrent data structures.
+//!
+//! This top-level module contains the trusted traits and the top-level lemmas.
 
 #[allow(unused_imports)]
 use builtin::*;
@@ -14,92 +18,259 @@ pub mod constants;
 use crate::spec::unbounded_log::UnboundedLog;
 use crate::spec::simple_log::SimpleLog;
 
-
 pub use crate::exec::NodeReplicated;
 pub use crate::exec::context::ThreadToken;
 
+use crate::constants::MAX_REPLICAS;
 
-#[cfg(feature = "counter_dispatch_example")]
-mod counter_dispatch_example;
 
 verus! {
 
-pub type ReplicaId = usize; // $line_count$Trusted$
-
+// tell the verifier that the size of usize is 8.
 global size_of usize == 8;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Nr State and its operations
+// GLobal Types
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// the following types are currently arbitrary, the depend on the the actual data structure that
-// each replica wraps. The NR crate has this basically as a trait that the data structure must
-// implement.
+/// the type of a replica identifier
+pub type ReplicaId = usize; // $line_count$Trusted$
 
-/// type of the node / replica id
+/// the identifier of a node / replica
 pub type NodeId = nat; // $line_count$Trusted$
 
-/// the log index
+/// the index into the log
 pub type LogIdx = nat; // $line_count$Trusted$
 
-/// the request id
+/// the identifier of a update or read request
 pub type ReqId = nat; // $line_count$Trusted$
 
-/// the id of a thread on a replica node
+/// the identifier of a thread on a given replica
 pub type ThreadId = nat; // $line_count$Trusted$
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Top-level Theorem
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// the following theorems establish the correctness of the execution adhering to the specification.
+// See the corresponding refinement proofs etc.
+// We leverage traits that establish the required pre- and post-conditions (trusted), then we use
+// the trait constraints to show that the actual types implement the trait correctly.
+
+/// Theorem 1: The SimpleLog atomic state machine refines the trusted specification of the data
+///            structure expressed as an asynchronous singleton.
+///
+/// This theorem shows the linearizability of the SimpleLog atomic state machine.
+#[verus::trusted]
+proof fn theorem_1<DT: Dispatch + Sync>()
+    ensures implements_SimpleLogRefinesAsynchronousSingleton::<DT, crate::spec::linearization::RefinementProof>(),
+{ }
+
+/// Theorem 2: The UnboundedLog Global State Machine refines the SimpleLog atomic state machine.
+///
+/// This shows that the replicas are evolving correctly with respect to the SimpleLog atomic state machine.
+#[verus::trusted]
+proof fn theorem_2<DT: Dispatch + Sync>()
+    ensures implements_UnboundedLogRefinesSimpleLog::<DT, crate::spec::unbounded_log_refines_simplelog::RefinementProof<DT>>(),
+{ }
+
+/// Theorem 3: The Node Replication implementation refines the Unbounded Log and establishes
+///            local/global transition system relationship.
+#[verus::trusted]
+proof fn theorem_3<DT: Dispatch + Sync>()
+    ensures implements_NodeReplicated::<DT, NodeReplicated<DT>>(),
+{ }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Thread Token
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Trusted interface of a thread token used in the proofs.
+///
+/// TODO: change this to pub(trait)
+#[verus::trusted]
+pub trait ThreadTokenT<DT: Dispatch, Replica> {
+    /// returns true if the thread token is well-formed
+    spec fn wf(&self, replica: &Replica) -> bool;
+
+    /// obtains the replica identifier this thread is registered with
+    spec fn replica_id_spec(&self) -> nat;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Dispatch Trait
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// The dispatch trait defines the update/readonly operations applied to the replicate data structure
+/// and the return types. For a data structure to be used with the node-replication library, it must
+/// implement this trait.
+///
+/// Read-only Operations: These operations do not modify the state of the data structure.
+/// The node-replication library will execute [`Dispatch::dispatch`] method on the data structure
+/// with the provided `ReadOperation` argument and return a `Response` value.
+///
+/// Write Operations: These operations modify the state of the data structure. The node-replication
+/// library will execute [`Dispatch::dispatch_mut`] method on the data structure with the provided
+/// `WriteOperation` argument and return a `Response` value.
+///
+/// The dispatch trait interface is trusted by the verifier as it is the high-level interface that
+/// the data structure is verified against.
+///
 #[verus::trusted]
 pub trait Dispatch: Sized {
-    /// A read-only operation. When executed against the data structure, an
-    /// operation of this type must not mutate the data structure in any way.
-    /// Otherwise, the assumptions made by NR no longer hold.
+    /// Type of a read-only operation. Operations of this type do not mutate the data structure.
     type ReadOperation: Sized;
 
-    /// A write operation. When executed against the data structure, an
-    /// operation of this type is allowed to mutate state. The library ensures
-    /// that this is done so in a thread-safe manner.
+    /// Type of a write operation. Operations of this type may mutate the data structure.
+    /// Write operations are sent between replicas.
     type WriteOperation: Sized + Send;
 
-    /// The type on the value returned by the data structure when a
-    /// `ReadOperation` or a `WriteOperation` successfully executes against it.
+    /// Type of the response of either a read or write operation.
     type Response: Sized;
 
-    // Self is the concrete type
-
-    ///
+    /// Type of the view of the data structure for specs and proofs.
     type View;
 
+    /// Constructs the view of the data structure.
+    ///
+    /// This lifts the concrete, executable representation of the data structure into a
+    /// view that can be reasoned about in specs and proofs.
+    /// This provides support for the `@` operator on the data structure
     spec fn view(&self) -> Self::View;
 
+    /// Initializes the data structure.
     fn init() -> (res: Self)
         ensures res@ == Self::init_spec();
 
-    // partial eq also add an exec operation
+    /// Clones a write operation to be copied to and read from the shared log.
     fn clone_write_op(op: &Self::WriteOperation) -> (res: Self::WriteOperation)
         ensures op == res;
 
+    /// Clones a response value such that it can be returned to the waiting thread
     fn clone_response(op: &Self::Response) -> (res: Self::Response)
         ensures op == res;
 
-    /// Method on the data structure that allows a read-only operation to be
-    /// executed against it.
+    /// Executes a read-only operation against the data structure and returns the result.
     fn dispatch(&self, op: Self::ReadOperation) -> (result: Self::Response)
-        ensures Self::dispatch_spec(self@, op) == result
-        ;
+        ensures Self::dispatch_spec(self@, op) == result;
 
-    /// Method on the data structure that allows a write operation to be
-    /// executed against it.
+    /// Executes a write operation against the data structure and returns the result.
     fn dispatch_mut(&mut self, op: Self::WriteOperation) -> (result: Self::Response)
         ensures Self::dispatch_mut_spec(old(self)@, op) == (self@, result);
 
+    /// specification of the [`Dispatch::init`] function.
     spec fn init_spec() -> Self::View;
 
+    /// specification of the [`Dispatch::dispatch`] function.
     spec fn dispatch_spec(ds: Self::View, op: Self::ReadOperation) -> Self::Response;
 
+    /// specification of the [`Dispatch::dispatch_mut`] function.
     spec fn dispatch_mut_spec(ds: Self::View, op: Self::WriteOperation) -> (Self::View, Self::Response);
 }
 
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Node Replicated Trait
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+/// Affinity Function
+///
+/// This structure is a wrapper around a function that changes the memory affinity
+/// when allocating/initializing replicas during the initialization of the data structure.
+///
+#[verifier(external_body)] /* vattr */
+#[verus::trusted]
+pub struct AffinityFn {
+    f: Box<dyn Fn(ReplicaId)>
+}
+
+#[verus::trusted]
+impl AffinityFn {
+    /// creates a new AffinityFn object that points to the given affinity function.
+    #[verifier(external_body)] /* vattr */
+    pub fn new(f: impl Fn(ReplicaId) + 'static) -> Self {
+        Self{ f: Box::new(f)}
+    }
+    /// calls the affinity function with the given replica id.
+    #[verifier(external_body)] /* vattr */
+    pub fn call(&self, rid: ReplicaId) {
+        (self.f)(rid)
+    }
+}
+
+
+/// Node Replicated Trait
+///
+/// This is the top-level interface that users will interact with.
+///
+#[verus::trusted]
+pub trait NodeReplicatedT<DT: Dispatch + Sync>: Sized {
+    /// The type of a replica
+    type Replica;
+    /// The type of the replica id
+    type ReplicaId;
+    /// the type of the thread token
+    type TT: ThreadTokenT<DT, Self::Replica>;
+
+    /// defines the well-formedness condition on the replicated data structure
+    spec fn wf(&self) -> bool;
+
+    /// obtains a vector of replicas
+    spec fn replicas(&self) -> Vec<Box<Self::Replica>>;
+
+    /// obtainst the instance to the unbounded log
+    spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT>;
+
+    /// creates a new instance of the replicated data structure with the given number of replicas.
+    ///
+    /// The number of replicas must be at least 1 and not exceed the pre-defined maximum.
+    /// It ensures that the data structure is well-formed and has the correct number of replicas.
+    fn new(num_replicas: usize, chg_mem_affinity: AffinityFn) -> (res: Self)
+        requires 0 < num_replicas && num_replicas <= MAX_REPLICAS
+        ensures res.wf() && res.replicas().len() == num_replicas;
+
+    /// registers a thread with the given replica id.
+    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<Self::TT>)
+        requires old(self).wf(),
+        ensures
+            self.wf(),
+            result.is_Some() ==> result.get_Some_0().wf(&self.replicas()[replica_id as int]);
+
+    /// executes an update operation against the data structure.
+    fn execute_mut(&self, op: DT::WriteOperation, tkn: Self::TT, ticket: Tracked<UnboundedLog::local_updates<DT>>)
+        -> (result: Result<(DT::Response, Self::TT, Tracked<UnboundedLog::local_updates<DT>>),
+                           (Self::TT, Tracked<UnboundedLog::local_updates<DT>>) > )
+        requires
+            self.wf(), // wf global node
+            tkn.wf(&self.replicas().spec_index(tkn.replica_id_spec() as int)),
+            is_update_ticket(ticket@, op, self.unbounded_log_instance())
+        ensures
+            result.is_Ok() ==> is_update_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.unbounded_log_instance()) && result.get_Ok_0().1.wf(&self.replicas().spec_index(tkn.replica_id_spec() as int)),
+            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
+
+    /// executes a read-only operation against the data structure.
+    fn execute(&self, op: DT::ReadOperation, tkn: Self::TT,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
+            -> (result: Result<(DT::Response, Self::TT, Tracked<UnboundedLog::local_reads<DT>>), (Self::TT, Tracked<UnboundedLog::local_reads<DT>>)>)
+        requires
+            self.wf(), // wf global node
+            tkn.wf(&self.replicas()[tkn.replica_id_spec() as int]),
+            is_readonly_ticket(ticket@, op, self.unbounded_log_instance())
+        ensures
+            result.is_Ok() ==> is_readonly_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.unbounded_log_instance()) && result.get_Ok_0().1.wf(&self.replicas()[tkn.replica_id_spec() as int]),
+            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
+}
+
+/// Spec function that checks whether the struct implements the trait properly.
+#[verus::trusted]
+spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NodeReplicatedT<DT>>() -> bool { true }
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Proof Functions for Node Replicated -> Unbounded Log Refinement Proof
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 #[verus::trusted]
@@ -156,87 +327,12 @@ pub open spec fn is_update_stub<DT: Dispatch>(
     &&& stub@.value.get_Done_ret() == result
 }
 
-#[verus::trusted]
-pub trait ThreadTokenT<DT: Dispatch, Replica> {
-    spec fn wf(&self, replica: &Replica) -> bool;
 
-    spec fn replica_id_spec(&self) -> nat;
-}
 
-#[verifier(external_body)] /* vattr */
-#[verus::trusted]
-pub struct AffinityFn {
-    f: Box<dyn Fn(ReplicaId)>
-}
 
-#[verus::trusted]
-impl AffinityFn {
-    #[verifier(external_body)] /* vattr */
-    pub fn new(f: impl Fn(ReplicaId) + 'static) -> Self {
-        Self{ f: Box::new(f)}
-    }
-    #[verifier(external_body)] /* vattr */
-    pub fn call(&self, rid: ReplicaId) {
-        (self.f)(rid)
-    }
-}
-
-#[verus::trusted]
-pub trait NR<DT: Dispatch + Sync>: Sized {
-    type Replica;
-    type ReplicaId;
-    type TT: ThreadTokenT<DT, Self::Replica>;
-
-    spec fn wf(&self) -> bool;
-
-    spec fn replicas(&self) -> Vec<Box<Self::Replica>>;
-
-    spec fn unbounded_log_instance(&self) -> UnboundedLog::Instance<DT>;
-
-    // TODO this does not properly ensures initialization I think
-    // I think it needs to return the correct initialization token
-    fn new(num_replicas: usize, chg_mem_affinity: AffinityFn) -> (res: Self)
-        requires
-            0 < num_replicas && num_replicas <= crate::constants::MAX_REPLICAS
-        ensures
-            res.wf(),
-            res.replicas().len() == num_replicas;
-
-    fn register(&mut self, replica_id: ReplicaId) -> (result: Option<Self::TT>)
-        requires old(self).wf(),
-        ensures
-            self.wf(),
-            result.is_Some() ==> result.get_Some_0().wf(&self.replicas()[replica_id as int]);
-
-    fn execute_mut(&self, op: DT::WriteOperation, tkn: Self::TT, ticket: Tracked<UnboundedLog::local_updates<DT>>)
-        -> (result: Result<(DT::Response, Self::TT, Tracked<UnboundedLog::local_updates<DT>>),
-                           (Self::TT, Tracked<UnboundedLog::local_updates<DT>>) > )
-        requires
-            self.wf(), // wf global node
-            tkn.wf(&self.replicas().spec_index(tkn.replica_id_spec() as int)),
-            is_update_ticket(ticket@, op, self.unbounded_log_instance())
-        ensures
-            result.is_Ok() ==> is_update_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.unbounded_log_instance()) && result.get_Ok_0().1.wf(&self.replicas().spec_index(tkn.replica_id_spec() as int)),
-            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
-
-    fn execute(&self, op: DT::ReadOperation, tkn: Self::TT,  ticket: Tracked<UnboundedLog::local_reads<DT>>)
-            -> (result: Result<(DT::Response, Self::TT, Tracked<UnboundedLog::local_reads<DT>>), (Self::TT, Tracked<UnboundedLog::local_reads<DT>>)>)
-        requires
-            self.wf(), // wf global node
-            tkn.wf(&self.replicas()[tkn.replica_id_spec() as int]),
-            is_readonly_ticket(ticket@, op, self.unbounded_log_instance())
-        ensures
-            result.is_Ok() ==> is_readonly_stub(result.get_Ok_0().2@, ticket@@.key, result.get_Ok_0().0, self.unbounded_log_instance()) && result.get_Ok_0().1.wf(&self.replicas()[tkn.replica_id_spec() as int]),
-            result.is_Err() ==> result.get_Err_0().1 == ticket && result.get_Err_0().0 == tkn;
-}
-
-#[verus::trusted]
-spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NR<DT>>() -> bool { true }
-
-#[verus::trusted]
-proof fn theorem_1<DT: Dispatch + Sync>()
-    ensures implements_NodeReplicated::<DT, NodeReplicated<DT>>(),
-{ }
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// UnboundedLog -> SimpleLog Refinement Proof
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 #[verus::trusted]
@@ -354,11 +450,11 @@ trait UnboundedLogRefinesSimpleLog<DT: Dispatch> {
 #[verus::trusted]
 spec fn implements_UnboundedLogRefinesSimpleLog<DT: Dispatch, RP: UnboundedLogRefinesSimpleLog<DT>>() -> bool { true }
 
-#[verus::trusted]
-proof fn theorem_2<DT: Dispatch + Sync>()
-    ensures implements_UnboundedLogRefinesSimpleLog::<DT, crate::spec::unbounded_log_refines_simplelog::RefinementProof<DT>>(),
-{ }
 
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+/// SimpleLog -> Linearization Refinement
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
 #[is_variant]
@@ -530,11 +626,6 @@ trait SimpleLogRefinesAsynchronousSingleton<DT: Dispatch> {
 
 #[verus::trusted]
 spec fn implements_SimpleLogRefinesAsynchronousSingleton<DT: Dispatch, RP: SimpleLogRefinesAsynchronousSingleton<DT>>() -> bool { true }
-
-#[verus::trusted]
-proof fn theorem_3<DT: Dispatch + Sync>()
-    ensures implements_SimpleLogRefinesAsynchronousSingleton::<DT, crate::spec::linearization::RefinementProof>(),
-{ }
 
 
 } // verus!

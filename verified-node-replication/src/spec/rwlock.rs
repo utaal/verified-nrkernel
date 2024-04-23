@@ -9,7 +9,7 @@ use state_machines_macros::tokenized_state_machine;
 verus!{
 
 tokenized_state_machine!{
-    #[verifier::reject_recursive_types(T)]
+    #[cfg_attr(verus_keep_ghost, verifier::reject_recursive_types(T))]
     RwLockSpec<T> {
         fields {
             #[sharding(constant)]
