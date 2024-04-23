@@ -68,6 +68,7 @@ directory for some examples on how to use NR.
 ## Benchmarks
 
 We implemented a few benchmarks that compare the verified implementation with upstream (unverified)
-node replication, and IronSync's Dafny-based node replication.
+node replication, and IronSync's Dafny-based node replication. See the [benchmarks](benchmarks)
+directory for more information.
 
 
