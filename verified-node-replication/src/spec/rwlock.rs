@@ -1,12 +1,10 @@
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-use vstd::{
-    prelude::*,
-    multiset::*,};
 use state_machines_macros::tokenized_state_machine;
+use vstd::{multiset::*, prelude::*};
 
-verus!{
+verus! {
 
 tokenized_state_machine!{
     #[cfg_attr(verus_keep_ghost, verifier::reject_recursive_types(T))]
@@ -302,6 +300,5 @@ tokenized_state_machine!{
         }
     }
 }
-
 
 } // verus!

@@ -1,14 +1,11 @@
 // Verified Node Replication Library
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-
 //! Defines constants that are being used by the library, both in the execution and the
 //! verification. The constants mostly define the size of the log, and certain thresholds
 //! when warnings are being printed etc.
-
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
-
 
 verus! {
 
@@ -22,8 +19,8 @@ pub open const MAX_REPLICAS: usize = 16;
 pub open const DEFAULT_LOG_BYTES: usize = 2 * 1024 * 1024;
 
 // making the assumption here that the write operation is about 12-16 bytes..
-pub open const LOG_SIZE: usize = 512 * 1024; // 4 * 1024 * 1024;
-
+pub open const LOG_SIZE: usize = 512 * 1024;
+  // 4 * 1024 * 1024;
 /// maximum number of threads per replica
 pub open const MAX_THREADS_PER_REPLICA: usize = 64;
 
@@ -33,7 +30,7 @@ pub open const MAX_PENDING_OPS: usize = 1;
 pub open const MAX_REQUESTS: usize = MAX_THREADS_PER_REPLICA * MAX_PENDING_OPS;
 
 /// interval when we do a try_combine when checking for responses
-pub open const RESPONSE_CHECK_INTERVAL : usize = 0x2000_0000;
+pub open const RESPONSE_CHECK_INTERVAL: usize = 0x2000_0000;
 
 /// Constant required for garbage collection. When the tail and the head are these many
 /// entries apart on the circular buffer, garbage collection will be performed by one of
@@ -45,7 +42,6 @@ pub open const RESPONSE_CHECK_INTERVAL : usize = 0x2000_0000;
 /// log.
 pub open const GC_FROM_HEAD: usize = MAX_PENDING_OPS * MAX_THREADS_PER_REPLICA;
 
-
 /// Threshold after how many iterations we abort and report the replica we're waiting for
 /// as stuck for busy spinning loops.
 ///
@@ -53,6 +49,6 @@ pub open const GC_FROM_HEAD: usize = MAX_PENDING_OPS * MAX_THREADS_PER_REPLICA;
 pub open const WARN_THRESHOLD: usize = 0x10000000;
 
 /// the maximum number of identifiers that can be used
-pub open const MAX_IDX : u64 = 0xffff_ffff_f000_0000;
+pub open const MAX_IDX: u64 = 0xffff_ffff_f000_0000;
 
 } // verus!

@@ -1,28 +1,30 @@
 // rust_verify/tests/example.rs ignore
-
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
 
 use vstd::prelude::*;
 
-#[cfg(verus_keep_ghost)] use vstd::pervasive::arbitrary;
 use vstd::map::*;
+#[cfg(verus_keep_ghost)]
+use vstd::pervasive::arbitrary;
 use vstd::seq::Seq;
 use vstd::seq_lib::*;
 
-#[cfg(verus_keep_ghost)] use state_machines_macros::*;
+#[cfg(verus_keep_ghost)]
+use state_machines_macros::*;
 
 use crate::{Dispatch, InputOperation, OutputOperation, ReqId};
 
-#[cfg(verus_keep_ghost)] use super::simple_log::{
+#[cfg(verus_keep_ghost)]
+use super::simple_log::{
     compute_nrstate_at_version as s_nrstate_at_version, ReadReq as SReadReq, SimpleLog,
     UpdateResp as SUpdateResp,
 };
 use super::types::*;
-#[cfg(verus_keep_ghost)] use super::unbounded_log::{
-    compute_nrstate_at_version as i_nrstate_at_version,
-    ReadonlyState, UnboundedLog, UpdateState,
+#[cfg(verus_keep_ghost)]
+use super::unbounded_log::{
+    compute_nrstate_at_version as i_nrstate_at_version, ReadonlyState, UnboundedLog, UpdateState,
 };
 use super::utils::*;
 
@@ -39,31 +41,52 @@ verus! {
 
 #[verifier::external_body]
 #[verifier::reject_recursive_types(DT)]
-pub tracked  struct RefinementProof<DT: Dispatch> {
+pub tracked struct RefinementProof<DT: Dispatch> {
     _p: std::marker::PhantomData<DT>,
 }
 
 impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<DT> {
-    closed spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT> { interp(s) }
-    proof fn refinement_inv(vars: UnboundedLog::State<DT>) { refinement_inv(vars); }
-    proof fn refinement_init(post: UnboundedLog::State<DT>) { refinement_init(post); }
+    closed spec fn interp(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT> {
+        interp(s)
+    }
+
+    proof fn refinement_inv(vars: UnboundedLog::State<DT>) {
+        refinement_inv(vars);
+    }
+
+    proof fn refinement_init(post: UnboundedLog::State<DT>) {
+        refinement_init(post);
+    }
+
     proof fn refinement_next(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>) {
         refinement_next(pre, post);
     }
 
     open spec fn get_fresh_rid(pre: UnboundedLog::State<DT>) -> ReqId {
-        crate::spec::unbounded_log::get_fresh_nat(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner)
+        crate::spec::unbounded_log::get_fresh_nat(
+            pre.local_updates.dom() + pre.local_reads.dom(),
+            pre.combiner,
+        )
     }
 
-    proof fn fresh_rid_is_ok(pre: UnboundedLog::State<DT>)
-    {
-        crate::spec::unbounded_log::get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
+    proof fn fresh_rid_is_ok(pre: UnboundedLog::State<DT>) {
+        crate::spec::unbounded_log::get_fresh_nat_not_in(
+            pre.local_updates.dom() + pre.local_reads.dom(),
+            pre.combiner,
+        );
     }
 
-    proof fn refinement_add_ticket(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, input: InputOperation<DT>) {
+    proof fn refinement_add_ticket(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        input: InputOperation<DT>,
+    ) {
         let rid = Self::get_fresh_rid(pre);
         let aop = crate::AsyncLabel::Start(rid, input);
-        crate::spec::unbounded_log::get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
+        crate::spec::unbounded_log::get_fresh_nat_not_in(
+            pre.local_updates.dom() + pre.local_reads.dom(),
+            pre.combiner,
+        );
         UnboundedLog::State::add_ticket_inductive(pre, post, input, rid);
         match input {
             InputOperation::Read(read_op) => {
@@ -76,7 +99,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     interp(post).readonly_reqs
                 );
                 SimpleLog::show::readonly_start(interp(pre), interp(post), aop, rid, read_op);
-            }
+            },
             InputOperation::Write(write_op) => {
                 assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
                 assert_maps_equal!(
@@ -84,46 +107,58 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     interp(post).update_reqs
                 );
                 SimpleLog::show::update_start(interp(pre), interp(post), aop, rid, write_op);
-            }
+            },
         }
     }
 
-    proof fn refinement_consume_stub(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>, output: OutputOperation<DT>, rid: ReqId) {
+    proof fn refinement_consume_stub(
+        pre: UnboundedLog::State<DT>,
+        post: UnboundedLog::State<DT>,
+        output: OutputOperation<DT>,
+        rid: ReqId,
+    ) {
         let aop = crate::AsyncLabel::End(rid, output);
         UnboundedLog::State::consume_stub_inductive(pre, post, output, rid);
         match output {
             OutputOperation::Read(response) => {
                 let op = pre.local_reads.index(rid).get_Done_op();
                 let version_upper_bound = pre.local_reads.index(rid).get_Done_version_upper_bound();
-
-                assert(exists |version: nat| #[trigger]rangeincl(version_upper_bound, version, pre.version_upper_bound) && result_match(pre.log, response, version, op)) ;
-
-                let version : nat = choose |version| {
-                    version_upper_bound <= version <= pre.version_upper_bound
-                    && #[trigger] result_match(pre.log, response, version, op)
-                };
-
-                assert(response == DT::dispatch_spec(interp(pre).nrstate_at_version(version), op)) by {
+                assert(exists|version: nat| #[trigger]
+                    rangeincl(version_upper_bound, version, pre.version_upper_bound)
+                        && result_match(pre.log, response, version, op));
+                let version: nat = choose|version|
+                    {
+                        version_upper_bound <= version <= pre.version_upper_bound
+                            && #[trigger] result_match(pre.log, response, version, op)
+                    };
+                assert(response == DT::dispatch_spec(interp(pre).nrstate_at_version(version), op))
+                    by {
                     state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
                 }
-
                 assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
                 assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
                 assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
-
-                SimpleLog::show::readonly_finish(interp(pre), interp(post), aop, rid, version, response);
-
-            }
+                SimpleLog::show::readonly_finish(
+                    interp(pre),
+                    interp(post),
+                    aop,
+                    rid,
+                    version,
+                    response,
+                );
+            },
             OutputOperation::Write(response) => {
                 assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
                 assert_maps_equal!(interp(pre).update_resps.remove(rid), interp(post).update_resps);
                 let version = pre.local_updates[rid].get_Done_idx();
-                assert(response == DT::dispatch_mut_spec(interp(pre).nrstate_at_version(version), interp(pre).log[version as int]).1) by {
+                assert(response == DT::dispatch_mut_spec(
+                    interp(pre).nrstate_at_version(version),
+                    interp(pre).log[version as int],
+                ).1) by {
                     state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
                 }
-
                 SimpleLog::show::update_finish(interp(pre), interp(post), aop, rid, response);
-            }
+            },
         }
     }
 }
@@ -131,43 +166,64 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Interpretation Function
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-spec fn interp_log<DT: Dispatch>(global_tail: nat, log: Map<nat, LogEntry<DT>>) -> Seq<DT::WriteOperation> {
+spec fn interp_log<DT: Dispatch>(global_tail: nat, log: Map<nat, LogEntry<DT>>) -> Seq<
+    DT::WriteOperation,
+> {
     Seq::new(global_tail, |i| log.index(i as nat).op)
 }
 
-spec fn interp_readonly_reqs<DT: Dispatch>(local_reads: Map<nat, ReadonlyState<DT>>) -> Map<ReqId, SReadReq<DT::ReadOperation>> {
+spec fn interp_readonly_reqs<DT: Dispatch>(local_reads: Map<nat, ReadonlyState<DT>>) -> Map<
+    ReqId,
+    SReadReq<DT::ReadOperation>,
+> {
     Map::new(
         |rid| local_reads.contains_key(rid),
-        |rid| match local_reads.index(rid) {
-            ReadonlyState::Init { op } => SReadReq::Init { op },
-            ReadonlyState::VersionUpperBound { version_upper_bound: idx, op } => SReadReq::Req { op, version: idx },
-            ReadonlyState::ReadyToRead { version_upper_bound: idx, op, .. } => SReadReq::Req { op, version: idx },
-            ReadonlyState::Done { version_upper_bound: idx, op, .. } => SReadReq::Req { op, version: idx },
-        },
+        |rid|
+            match local_reads.index(rid) {
+                ReadonlyState::Init { op } => SReadReq::Init { op },
+                ReadonlyState::VersionUpperBound { version_upper_bound: idx, op } => SReadReq::Req {
+                    op,
+                    version: idx,
+                },
+                ReadonlyState::ReadyToRead { version_upper_bound: idx, op, .. } => SReadReq::Req {
+                    op,
+                    version: idx,
+                },
+                ReadonlyState::Done { version_upper_bound: idx, op, .. } => SReadReq::Req {
+                    op,
+                    version: idx,
+                },
+            },
     )
 }
 
-spec fn interp_update_reqs<DT: Dispatch>(local_updates: Map<LogIdx, UpdateState<DT>>) -> Map<LogIdx, DT::WriteOperation> {
+spec fn interp_update_reqs<DT: Dispatch>(local_updates: Map<LogIdx, UpdateState<DT>>) -> Map<
+    LogIdx,
+    DT::WriteOperation,
+> {
     Map::new(
         |rid| local_updates.contains_key(rid) && local_updates.index(rid).is_Init(),
-        |rid| match local_updates.index(rid) {
-            UpdateState::Init{op} => op,
-            _ => arbitrary(),
-        }
+        |rid|
+            match local_updates.index(rid) {
+                UpdateState::Init { op } => op,
+                _ => arbitrary(),
+            },
     )
 }
 
-spec fn interp_update_resps<DT: Dispatch>(local_updates: Map<nat, UpdateState<DT>>) -> Map<ReqId, SUpdateResp> {
+spec fn interp_update_resps<DT: Dispatch>(local_updates: Map<nat, UpdateState<DT>>) -> Map<
+    ReqId,
+    SUpdateResp,
+> {
     Map::new(
         |rid| local_updates.contains_key(rid) && !local_updates.index(rid).is_Init(),
-        |rid| match local_updates.index(rid) {
-            UpdateState::Init{op} => arbitrary(),
-            UpdateState::Placed{op, idx} => SUpdateResp(idx),
-            UpdateState::Applied{ret, idx} => SUpdateResp(idx),
-            UpdateState::Done{ret, idx} => SUpdateResp(idx),
-        },
+        |rid|
+            match local_updates.index(rid) {
+                UpdateState::Init { op } => arbitrary(),
+                UpdateState::Placed { op, idx } => SUpdateResp(idx),
+                UpdateState::Applied { ret, idx } => SUpdateResp(idx),
+                UpdateState::Done { ret, idx } => SUpdateResp(idx),
+            },
     )
 }
 
@@ -181,21 +237,21 @@ spec fn interp<DT: Dispatch>(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT>
     }
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Refinement Proof
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 proof fn refinement_inv<DT: Dispatch>(vars: UnboundedLog::State<DT>)
-    requires vars.invariant()
-    ensures interp(vars).invariant()
+    requires
+        vars.invariant(),
+    ensures
+        interp(vars).invariant(),
 {
 }
 
 proof fn refinement_init<DT: Dispatch>(post: UnboundedLog::State<DT>)
     requires
         post.invariant(),
-        UnboundedLog::State::init(post)
+        UnboundedLog::State::init(post),
     ensures
         SimpleLog::State::init(interp(post)),
 {
@@ -209,7 +265,6 @@ proof fn refinement_init<DT: Dispatch>(post: UnboundedLog::State<DT>)
         }
     }}
 }
-
 
 proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: UnboundedLog::State<DT>)
     requires
@@ -401,45 +456,58 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
     }
 }
 
-pub open spec fn dummy(lower:nat, mid: nat, upper: nat) -> bool
-    recommends lower <= upper
+pub open spec fn dummy(lower: nat, mid: nat, upper: nat) -> bool
+    recommends
+        lower <= upper,
 {
     lower <= mid <= upper
 }
 
-pub open spec fn dummy2(lower:nat, mid: nat, upper: nat) -> bool
-    recommends lower < upper
+pub open spec fn dummy2(lower: nat, mid: nat, upper: nat) -> bool
+    recommends
+        lower < upper,
 {
     lower <= mid < upper
 }
 
-
-pub open spec fn version_in_log<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, version: LogIdx) -> bool
-{
-    forall |i| 0 <= i < version ==> log.contains_key(i)
+pub open spec fn version_in_log<DT: Dispatch>(
+    log: Map<LogIdx, LogEntry<DT>>,
+    version: LogIdx,
+) -> bool {
+    forall|i| 0 <= i < version ==> log.contains_key(i)
 }
 
-pub open spec fn result_match<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>,  output: DT::Response, version: LogIdx, op: DT::ReadOperation) -> bool
-    recommends version_in_log(log, version)
+pub open spec fn result_match<DT: Dispatch>(
+    log: Map<LogIdx, LogEntry<DT>>,
+    output: DT::Response,
+    version: LogIdx,
+    op: DT::ReadOperation,
+) -> bool
+    recommends
+        version_in_log(log, version),
 {
-
     output == DT::dispatch_spec(i_nrstate_at_version(log, version), op)
 }
 
-
-proof fn state_at_version_refines<DT: Dispatch>(s_log: Seq<DT::WriteOperation>, i_log: Map<LogIdx, LogEntry<DT>>, gtail: nat, idx:nat)
+proof fn state_at_version_refines<DT: Dispatch>(
+    s_log: Seq<DT::WriteOperation>,
+    i_log: Map<LogIdx, LogEntry<DT>>,
+    gtail: nat,
+    idx: nat,
+)
     requires
-      forall |i| 0 <= i < gtail ==> i_log.contains_key(i),
-      0 <= idx <= s_log.len(),
-      idx <= gtail,
-      s_log == interp_log(gtail, i_log),
+        forall|i| 0 <= i < gtail ==> i_log.contains_key(i),
+        0 <= idx <= s_log.len(),
+        idx <= gtail,
+        s_log == interp_log(gtail, i_log),
     ensures
-      s_nrstate_at_version::<DT>(s_log, idx) == i_nrstate_at_version::<DT>(i_log, idx)
-    decreases idx
+        s_nrstate_at_version::<DT>(s_log, idx) == i_nrstate_at_version::<DT>(i_log, idx),
+    decreases idx,
 {
     if idx > 0 {
         state_at_version_refines(s_log, i_log, gtail, (idx - 1) as nat);
     }
 }
 
-} // end verus!
+} // verus!
+// end verus!

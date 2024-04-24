@@ -1,15 +1,14 @@
 // Verified Node Replication Library
 // SPDX-License-Identifier: Apache-2.0 OR MIT
-
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
 
 use vstd::{
-    prelude::*,
-    cell::{PCell, PointsTo, CellId},
     atomic_ghost::AtomicU64,
     atomic_with_ghost,
+    cell::{CellId, PCell, PointsTo},
+    prelude::*,
 };
 
 use crate::Dispatch;
@@ -18,35 +17,33 @@ use crate::Dispatch;
 use crate::constants::MAX_THREADS_PER_REPLICA;
 
 // spec import
-use crate::spec::unbounded_log::UnboundedLog;
 use crate::spec::flat_combiner::FlatCombiner;
+use crate::spec::unbounded_log::UnboundedLog;
 
 // exec imports
+use crate::exec::replica::{ReplicaId, ReplicaToken};
 use crate::exec::CachePadded;
 use crate::exec::Replica;
-use crate::exec::replica::{ReplicaToken, ReplicaId};
 
 verus! {
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Thread Token
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
 /// A (monotoically increasing) number that uniquely identifies a thread that's
 /// registered with the replica.
 pub type ThreadId = u32;
-
 
 /// the thread token identifies a thread of a given replica
 ///
 ///  - Dafny: linear datatype ThreadOwnedContext
 pub struct ThreadToken<DT: Dispatch> {
     /// the replica id this thread uses
-    pub /* REVIEW: (crate) */ rid: ReplicaToken,
+    pub  /* REVIEW: (crate) */
+     rid: ReplicaToken,
     /// identifies the thread within the replica
-    pub /* REVIEW: (crate) */ tid: ThreadId,
+    pub  /* REVIEW: (crate) */
+     tid: ThreadId,
     /// the flat combiner client of the thread
     pub fc_client: Tracked<FlatCombiner::clients>,
     /// the permission to access the thread's operation batch
@@ -54,25 +51,28 @@ pub struct ThreadToken<DT: Dispatch> {
 }
 
 impl<DT: Dispatch> ThreadToken<DT> {
-    pub open spec fn wf2(&self, num_replicas: nat) -> bool
-    {
+    pub open spec fn wf2(&self, num_replicas: nat) -> bool {
         &&& self.rid.wf(num_replicas)
         &&& self.fc_client@@.value.is_Idle()
-        &&& (self.tid as nat) < MAX_THREADS_PER_REPLICA
+        &&& (self.tid as nat)
+            < MAX_THREADS_PER_REPLICA
         // &&& self.fc_client@@.instance == fc_inst
+
         &&& self.batch_perm@@.value.is_None()
         &&& self.fc_client@@.key == self.tid as nat
     }
 
-    pub open spec fn wf(&self,  replica: &Replica<DT>) -> bool {
-        &&& self.wf2(replica.spec_id() + 1) // +1 here because ids got < replicas
+    pub open spec fn wf(&self, replica: &Replica<DT>) -> bool {
+        &&& self.wf2(replica.spec_id() + 1)  // +1 here because ids got < replicas
+
         &&& self.rid@ == replica.spec_id()
         &&& self.fc_client@@.instance == replica.flat_combiner_instance
         &&& self.batch_perm@@.pcell == replica.contexts[self.thread_id_spec() as int].batch.0.id()
     }
 
     pub fn thread_id(&self) -> (result: ThreadId)
-        ensures result as nat == self.thread_id_spec()
+        ensures
+            result as nat == self.thread_id_spec(),
     {
         self.tid
     }
@@ -82,7 +82,8 @@ impl<DT: Dispatch> ThreadToken<DT> {
     }
 
     pub const fn replica_id(&self) -> (result: ReplicaId)
-        ensures result as nat == self.replica_id_spec()
+        ensures
+            result as nat == self.replica_id_spec(),
     {
         self.rid.id()
     }
@@ -96,11 +97,9 @@ impl<DT: Dispatch> ThreadToken<DT> {
     }
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Pending Operation
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 /// Data for a pending operation.
 ///
 ///  - Dafny: datatype OpResponse
@@ -109,37 +108,33 @@ impl<DT: Dispatch> ThreadToken<DT> {
 /// In Dafny those data types are not options, but in Rust they are
 pub struct PendingOperation<DT: Dispatch> {
     /// the operation that is being executed
-    pub/*REVIEW: (crate)*/ op: DT::WriteOperation,
+    pub  /*REVIEW: (crate)*/
+     op: DT::WriteOperation,
     /// the response of the operation
-    pub/*REVIEW: (crate)*/ resp: Option<DT::Response>,
+    pub  /*REVIEW: (crate)*/
+     resp: Option<DT::Response>,
 }
 
 impl<DT: Dispatch> PendingOperation<DT> {
     pub fn new(op: DT::WriteOperation) -> (res: Self)
-        ensures res.op == op
+        ensures
+            res.op == op,
     {
-        PendingOperation {
-            op,
-            resp: None,
-        }
+        PendingOperation { op, resp: None }
     }
 
     pub fn set_result(&mut self, resp: DT::Response) {
         self.resp = Some(resp);
     }
-
     // pub fn to_result(self) -> DT::Response {
     //     self.resp.get_Some_0()
     // }
-}
 
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Thread Context
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
 struct_with_invariants!{
 /// Contains state of a particular thread context within NR w.r.g. to outstanding operations.
 ///
@@ -178,36 +173,58 @@ pub open spec fn wf(&self, thread_idx: nat) -> bool {
     invariant on atomic with (flat_combiner_instance, unbounded_log_instance, batch, thread_id_g) specifically (self.atomic.0) is (v: u64, g: ContextGhost<DT>) {
         &&& g.inv(v, thread_id_g@, batch.0, flat_combiner_instance@, unbounded_log_instance@)
     }
-}} // struct_with_invariants!
+}}  // struct_with_invariants!
+
 
 impl<DT: Dispatch> Context<DT> {
-
-    pub fn new(thread_id: usize, slot: Tracked<FlatCombiner::slots>, flat_combiner_instance: Tracked<FlatCombiner::Instance>, unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>)
-        -> (res: (Context<DT>, Tracked<PointsTo<PendingOperation<DT>>>))
+    pub fn new(
+        thread_id: usize,
+        slot: Tracked<FlatCombiner::slots>,
+        flat_combiner_instance: Tracked<FlatCombiner::Instance>,
+        unbounded_log_instance: Tracked<UnboundedLog::Instance<DT>>,
+    ) -> (res: (Context<DT>, Tracked<PointsTo<PendingOperation<DT>>>))
         requires
             slot@@.value.is_Empty(),
             slot@@.instance == flat_combiner_instance,
-            slot@@.key == thread_id as nat
+            slot@@.key == thread_id as nat,
         ensures
             res.0.wf(thread_id as nat),
             res.0.batch.0.id() == res.1@@.pcell,
             res.0.flat_combiner_instance == flat_combiner_instance,
             res.0.unbounded_log_instance == unbounded_log_instance,
-            res.1@@.value.is_None()
-        {
+            res.1@@.value.is_None(),
+    {
         let ghost mut thread_id_g;
-        proof { thread_id_g = thread_id as nat; }
-
+        proof {
+            thread_id_g = thread_id as nat;
+        }
         // create the storage for storing the update operation
         let (batch, batch_perms) = PCell::empty();
         let batch = CachePadded(batch);
-
         // create the atomic with the ghost context
-        let tracked context_ghost = ContextGhost { batch_perms: None, slots: slot.get(), update: Option::None };
-        let atomic = CachePadded(AtomicU64::new(Ghost((flat_combiner_instance, unbounded_log_instance, batch, Ghost(thread_id_g))), 0, Tracked(context_ghost)));
-
+        let tracked context_ghost = ContextGhost {
+            batch_perms: None,
+            slots: slot.get(),
+            update: Option::None,
+        };
+        let atomic = CachePadded(
+            AtomicU64::new(
+                Ghost((flat_combiner_instance, unbounded_log_instance, batch, Ghost(thread_id_g))),
+                0,
+                Tracked(context_ghost),
+            ),
+        );
         // Assemble the context, return with the permissions
-        (Context { batch, atomic, thread_id_g: Ghost(thread_id_g), flat_combiner_instance, unbounded_log_instance }, batch_perms)
+        (
+            Context {
+                batch,
+                atomic,
+                thread_id_g: Ghost(thread_id_g),
+                flat_combiner_instance,
+                unbounded_log_instance,
+            },
+            batch_perms,
+        )
     }
 
     /// Enqueues an operation onto this context's batch of pending operations.
@@ -215,26 +232,38 @@ impl<DT: Dispatch> Context<DT> {
     /// This is invoked by the thread that want's to execute an operation
     ///
     /// Note, enqueue is a bit a misnomer. We just have one operation per thread
-    pub fn enqueue_op(&self, op: DT::WriteOperation, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
-        -> (res: (bool, Tracked<FCClientRequestResponseGhost<DT>>))
+    pub fn enqueue_op(
+        &self,
+        op: DT::WriteOperation,
+        context_ghost: Tracked<FCClientRequestResponseGhost<DT>>,
+    ) -> (res: (bool, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
-            context_ghost@.enqueue_op_pre(self.thread_id_g@, op, self.batch.0.id(), self.flat_combiner_instance@, self.unbounded_log_instance@),
+            context_ghost@.enqueue_op_pre(
+                self.thread_id_g@,
+                op,
+                self.batch.0.id(),
+                self.flat_combiner_instance@,
+                self.unbounded_log_instance@,
+            ),
             self.wf(self.thread_id_g@),
         ensures
             res.1@.enqueue_op_post(context_ghost@),
             res.1@.cell_id == self.batch.0.id(),
             self.wf(self.thread_id_g@),
     {
-        let tracked FCClientRequestResponseGhost { batch_perms: batch_perms, cell_id, local_updates: local_updates, fc_clients: mut fc_clients } = context_ghost.get();
-
+        let tracked FCClientRequestResponseGhost {
+            batch_perms: batch_perms,
+            cell_id,
+            local_updates: local_updates,
+            fc_clients: mut fc_clients,
+        } = context_ghost.get();
         let tracked mut batch_perms = batch_perms.tracked_unwrap();
         let tracked local_updates = local_updates.tracked_unwrap();
-
         // put the operation there, updates the permissions so we can store them in the GhostContext
         self.batch.0.put(Tracked(&mut batch_perms), PendingOperation::new(op));
-
         let tracked send_request_result;
-        let res = atomic_with_ghost!(
+        let res =
+            atomic_with_ghost!(
             &self.atomic.0 => store(1);
             update prev->next;
             ghost g => {
@@ -252,28 +281,42 @@ impl<DT: Dispatch> Context<DT> {
                 assert(g.inv(1, tid, self.batch.0, self.flat_combiner_instance.view(), self.unbounded_log_instance.view()))
             }
         );
-
-        let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: None, cell_id, local_updates: None, fc_clients };
+        let tracked new_context_ghost = FCClientRequestResponseGhost {
+            batch_perms: None,
+            cell_id,
+            local_updates: None,
+            fc_clients,
+        };
         (true, Tracked(new_context_ghost))
     }
-
 
     /// Returns a single response if available. Otherwise, returns None.
     ///
     /// this is invoked by the thread that has enqueued the operation before
-    pub fn dequeue_response(&self, context_ghost: Tracked<FCClientRequestResponseGhost<DT>>)
-        -> (res: (Option<DT::Response>, Tracked<FCClientRequestResponseGhost<DT>>))
+    pub fn dequeue_response(
+        &self,
+        context_ghost: Tracked<FCClientRequestResponseGhost<DT>>,
+    ) -> (res: (Option<DT::Response>, Tracked<FCClientRequestResponseGhost<DT>>))
         requires
-            context_ghost@.dequeue_resp_pre(self.batch.0.id(), self.thread_id_g@, self.flat_combiner_instance@),
+            context_ghost@.dequeue_resp_pre(
+                self.batch.0.id(),
+                self.thread_id_g@,
+                self.flat_combiner_instance@,
+            ),
             self.wf(self.thread_id_g@),
         ensures
             res.1@.dequeue_resp_post(context_ghost@, res.0, self.unbounded_log_instance@),
             self.wf(self.thread_id_g@),
     {
-        let tracked FCClientRequestResponseGhost { batch_perms: mut batch_perms, cell_id, local_updates: mut local_updates, fc_clients: mut fc_clients } = context_ghost.get();
-
+        let tracked FCClientRequestResponseGhost {
+            batch_perms: mut batch_perms,
+            cell_id,
+            local_updates: mut local_updates,
+            fc_clients: mut fc_clients,
+        } = context_ghost.get();
         let tracked recv_response_result;
-        let res = atomic_with_ghost!(
+        let res =
+            atomic_with_ghost!(
             &self.atomic.0 => load();
             returning res;
             ghost g => {
@@ -293,19 +336,27 @@ impl<DT: Dispatch> Context<DT> {
                 }
             }
         );
-
         if res == 0 {
             let tracked mut batch_perms = batch_perms.tracked_unwrap();
             let op = self.batch.0.take(Tracked(&mut batch_perms));
             let resp = op.resp.unwrap();
-            let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms: Some(batch_perms), cell_id, local_updates, fc_clients };
+            let tracked new_context_ghost = FCClientRequestResponseGhost {
+                batch_perms: Some(batch_perms),
+                cell_id,
+                local_updates,
+                fc_clients,
+            };
             (Some(resp), Tracked(new_context_ghost))
         } else {
-            let tracked new_context_ghost = FCClientRequestResponseGhost { batch_perms, cell_id, local_updates, fc_clients };
+            let tracked new_context_ghost = FCClientRequestResponseGhost {
+                batch_perms,
+                cell_id,
+                local_updates,
+                fc_clients,
+            };
             (None, Tracked(new_context_ghost))
         }
     }
-
 
     // /// Enqueues a response onto this context. This is invoked by the combiner
     // /// after it has executed operations (obtained through a call to ops()) against the
@@ -328,7 +379,6 @@ impl<DT: Dispatch> Context<DT> {
     //     //         }
     //     //     }
     //     // );
-
     //     // if res != 0 {
     //     //     let tracked token = token.get_Some_0();
     //     //     // take the operation from the cell
@@ -337,37 +387,30 @@ impl<DT: Dispatch> Context<DT> {
     //     //     // prev.set_result(resp);
     //     //     // store the operation in the cell again
     //     //     // self.batch.0.put(&mut token, prev);
-
     //     //     true
     //     // } else {
     //     //     false
     //     // }
-
     //     false
     // }
-
-
     /// Returns the maximum number of operations that will go pending on this context.
     #[inline(always)]
     pub(crate) fn batch_size() -> usize {
         // MAX_PENDING_OPS
         1
-    }
-
-    // /// Given a logical address, returns an index into the batch at which it falls.
+    }// /
+    // Given a logical address, returns an index into the batch at which it falls.
     // #[inline(always)]
     // pub(crate) fn index(&self, logical: usize) -> usize {
     //     // logical & (MAX_PENDING_OPS - 1)
     //     0
     // }
+
 }
-
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Ghost Context
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 struct_with_invariants!{
 /// The ghost context for a thread carying permissions and tracking the state of the update operation
 ///
@@ -435,71 +478,82 @@ pub open spec fn inv(&self, v: u64, tid: nat, cell: PCell<PendingOperation<DT>>,
         })
     }
 }
-} // struct_with_invariants! ContextGhost
-
-
+}  // struct_with_invariants! ContextGhost
 /// Request Enqueue/Dequeue ghost state
+
+
 pub tracked struct FCClientRequestResponseGhost<DT: Dispatch> {
     pub tracked batch_perms: Option<PointsTo<PendingOperation<DT>>>,
     pub tracked cell_id: Ghost<CellId>,
     pub tracked local_updates: Option<UnboundedLog::local_updates<DT>>,
-    pub tracked fc_clients: FlatCombiner::clients
+    pub tracked fc_clients: FlatCombiner::clients,
 }
 
 impl<DT: Dispatch> FCClientRequestResponseGhost<DT> {
-    pub open spec fn enqueue_op_pre(&self, tid: nat, op: DT::WriteOperation, batch_cell: CellId, fc_inst: FlatCombiner::Instance, inst: UnboundedLog::Instance<DT>) -> bool {
+    pub open spec fn enqueue_op_pre(
+        &self,
+        tid: nat,
+        op: DT::WriteOperation,
+        batch_cell: CellId,
+        fc_inst: FlatCombiner::Instance,
+        inst: UnboundedLog::Instance<DT>,
+    ) -> bool {
         &&& self.local_updates.is_Some()
         &&& self.local_updates.get_Some_0()@.instance == inst
         &&& self.local_updates.get_Some_0()@.value.is_Init()
         &&& self.local_updates.get_Some_0()@.value.get_Init_op() == op
-
         &&& self.batch_perms.is_Some()
         &&& self.batch_perms.get_Some_0()@.pcell == self.cell_id
         &&& self.cell_id == batch_cell
         &&& self.batch_perms.get_Some_0()@.value.is_None()
-
         &&& self.fc_clients@.instance == fc_inst
         &&& self.fc_clients@.key == tid
         &&& self.fc_clients@.value.is_Idle()
     }
 
     pub open spec fn enqueue_op_post(&self, pre: FCClientRequestResponseGhost<DT>) -> bool
-        recommends pre.local_updates.is_Some()
+        recommends
+            pre.local_updates.is_Some(),
     {
         &&& self.fc_clients@.value.is_Waiting()
         &&& self.fc_clients@.value.get_Waiting_0() == pre.local_updates.get_Some_0()@.key
         &&& self.fc_clients@.instance == pre.fc_clients@.instance
         &&& self.fc_clients@.key == pre.fc_clients@.key
-
         &&& self.cell_id == pre.cell_id
         &&& self.batch_perms.is_None()
         &&& self.local_updates.is_None()
     }
 
-    pub open spec fn dequeue_resp_pre(&self, batch_cell: CellId, tid: nat, fc_inst: FlatCombiner::Instance) -> bool {
+    pub open spec fn dequeue_resp_pre(
+        &self,
+        batch_cell: CellId,
+        tid: nat,
+        fc_inst: FlatCombiner::Instance,
+    ) -> bool {
         &&& self.fc_clients@.key == tid
         &&& self.fc_clients@.instance == fc_inst
         &&& self.fc_clients@.value.is_Waiting()
-
         &&& self.batch_perms.is_None()
         &&& self.local_updates.is_None()
         &&& self.cell_id == batch_cell
     }
 
-    pub open spec fn dequeue_resp_post(&self, pre: FCClientRequestResponseGhost<DT>, ret: Option<DT::Response>, inst: UnboundedLog::Instance<DT>) -> bool {
+    pub open spec fn dequeue_resp_post(
+        &self,
+        pre: FCClientRequestResponseGhost<DT>,
+        ret: Option<DT::Response>,
+        inst: UnboundedLog::Instance<DT>,
+    ) -> bool {
         &&& ret.is_Some() ==> {
-
             &&& self.cell_id == pre.cell_id
             &&& self.batch_perms.is_Some()
             &&& self.batch_perms.get_Some_0()@.value.is_None()
             &&& self.batch_perms.get_Some_0()@.pcell == self.cell_id
-
             &&& self.local_updates.is_Some()
             &&& self.local_updates.get_Some_0()@.instance == inst
             &&& self.local_updates.get_Some_0()@.value.is_Done()
             &&& self.local_updates.get_Some_0()@.key == pre.fc_clients@.value.get_Waiting_0()
             &&& self.local_updates.get_Some_0()@.value.get_Done_ret() == ret.get_Some_0()
-
             &&& self.fc_clients@.instance == pre.fc_clients@.instance
             &&& self.fc_clients@.key == pre.fc_clients@.key
             &&& self.fc_clients@.value.is_Idle()

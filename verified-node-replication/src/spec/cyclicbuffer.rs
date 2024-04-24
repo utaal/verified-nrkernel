@@ -1,3 +1,5 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
 #[allow(unused_imports)]
 use builtin::*;
 use builtin_macros::*;
@@ -14,7 +16,8 @@ use super::types::*;
 use super::unbounded_log::UnboundedLog;
 use super::utils::*;
 
-#[cfg(verus_keep_ghost)] use vstd::prelude::OptionAdditionalFns;
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::OptionAdditionalFns;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
@@ -38,16 +41,20 @@ pub type LogicalLogIdx = int;
 /// The size of the log. XXX: can we get rid of this?
 use crate::constants::LOG_SIZE;
 
-
 /// An entry in the log
 ///
 ///
 pub tracked struct StoredType<DT: Dispatch> {
     pub cell_perms: PointsTo<Option<ConcreteLogEntry<DT>>>,
-    pub log_entry: Option<UnboundedLog::log<DT>>
+    pub log_entry: Option<UnboundedLog::log<DT>>,
 }
 
-pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cell_id: CellId, unbounded_log_instance: UnboundedLog::Instance<DT>) -> bool {
+pub open spec fn stored_type_inv<DT: Dispatch>(
+    st: StoredType<DT>,
+    idx: int,
+    cell_id: CellId,
+    unbounded_log_instance: UnboundedLog::Instance<DT>,
+) -> bool {
     // also match the cell id
     &&& st.cell_perms@.value.is_Some()
     &&& st.cell_perms@.pcell == cell_id
@@ -56,7 +63,8 @@ pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cel
         &&& st.log_entry.get_Some_0()@.key == idx
         &&& st.log_entry.get_Some_0()@.instance == unbounded_log_instance
         &&& st.cell_perms@.value.get_Some_0().is_Some()
-        &&& st.cell_perms@.value.get_Some_0().get_Some_0().node_id as NodeId == st.log_entry.get_Some_0()@.value.node_id
+        &&& st.cell_perms@.value.get_Some_0().get_Some_0().node_id as NodeId
+            == st.log_entry.get_Some_0()@.value.node_id
         &&& st.cell_perms@.value.get_Some_0().get_Some_0().op == st.log_entry.get_Some_0()@.value.op
     }
     &&& idx < 0 ==> {
@@ -64,11 +72,9 @@ pub open spec fn stored_type_inv<DT: Dispatch>(st: StoredType<DT>, idx: int, cel
     }
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Read Only Operations
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 ///
 #[is_variant]
 pub tracked enum ReaderState<DT: Dispatch> {
@@ -78,24 +84,14 @@ pub tracked enum ReaderState<DT: Dispatch> {
         start: LogIdx,
     },
     /// reader in the range
-    Range {
-        start: LogIdx,
-        end: LogIdx,
-        cur: LogIdx,
-    },
+    Range { start: LogIdx, end: LogIdx, cur: LogIdx },
     /// Guard
-    Guard {
-        start: LogIdx,
-        end: LogIdx,
-        cur: LogIdx,
-        val: StoredType<DT>,
-    },
+    Guard { start: LogIdx, end: LogIdx, cur: LogIdx, val: StoredType<DT> },
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Combiner
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-
 /// represents the combiner
 #[is_variant]
 pub tracked enum CombinerState<DT: Dispatch> {
@@ -106,24 +102,25 @@ pub tracked enum CombinerState<DT: Dispatch> {
     Appending { cur_idx: LogIdx, tail: LogIdx },
 }
 
-
 impl<DT: Dispatch> CombinerState<DT> {
     pub open spec fn no_overlap_with(self, other: Self) -> bool {
         match self {
-            CombinerState::Appending{cur_idx, tail} => {
+            CombinerState::Appending { cur_idx, tail } => {
                 match other {
-                    CombinerState::Reading(ReaderState::Guard{start, end, cur, val}) => {
-                        (cur_idx > cur)     // self is after the other
-                          || (tail <= cur)  // self is before the other
-                    }
-                    CombinerState::Appending{cur_idx: cur_idx2, tail: tail2} => {
-                        (cur_idx >= tail2)       // self is after the other
-                          || (tail <= cur_idx2)  // self is before the other
-                    }
-                    _ => { true }
+                    CombinerState::Reading(ReaderState::Guard { start, end, cur, val }) => {
+                        (cur_idx > cur)  // self is after the other
+                         || (tail <= cur)  // self is before the other
+
+                    },
+                    CombinerState::Appending { cur_idx: cur_idx2, tail: tail2 } => {
+                        (cur_idx >= tail2)  // self is after the other
+                         || (tail <= cur_idx2)  // self is before the other
+
+                    },
+                    _ => { true },
                 }
-            }
-            _ => { true }
+            },
+            _ => { true },
         }
     }
 }
@@ -739,28 +736,30 @@ tokenized_state_machine! { CyclicBuffer<DT: Dispatch> {
 }}
 
 pub open spec fn min(x: nat, y: nat) -> nat {
-    if x < y { x } else { y }
+    if x < y {
+        x
+    } else {
+        y
+    }
 }
 
 pub open spec fn map_min_value(m: Map<NodeId, nat>, idx: nat) -> nat
-  decreases idx
+    decreases idx,
 {
     if idx === 0 {
         m.index(0)
     } else {
-        min(
-            map_min_value(m, (idx - 1) as nat),
-            m.index(idx),
-        )
+        min(map_min_value(m, (idx - 1) as nat), m.index(idx))
     }
 }
 
 proof fn map_min_value_smallest(m: Map<NodeId, nat>, idx: nat)
-    requires forall |i| 0 <= i <= idx ==> m.contains_key(i)
+    requires
+        forall|i| 0 <= i <= idx ==> m.contains_key(i),
     ensures
-       forall |n| 0 <= n <= idx as nat ==> map_min_value(m, idx) <= m.index(n),
-       map_contains_value(m, map_min_value(m, idx))
-    decreases idx
+        forall|n| 0 <= n <= idx as nat ==> map_min_value(m, idx) <= m.index(n),
+        map_contains_value(m, map_min_value(m, idx)),
+    decreases idx,
 {
     if idx == 0 {
         assert(m.contains_key(0));
@@ -772,36 +771,34 @@ proof fn map_min_value_smallest(m: Map<NodeId, nat>, idx: nat)
     }
 }
 
-
-
-
-
-
-
 /// converts the logical to the physical log index
 pub open spec fn log_entry_idx(logical: LogicalLogIdx, buffer_size: nat) -> LogIdx
-    recommends buffer_size == LOG_SIZE
+    recommends
+        buffer_size == LOG_SIZE,
 {
     (logical % (buffer_size as int)) as nat
 }
 
 // a % b == 0 to a == b * (a / b)
-
-
 pub proof fn log_entry_idx_wrap_around(start: nat, buffer_size: nat, idx: nat)
-  requires
-    buffer_size == LOG_SIZE,
-    start <= idx < start + buffer_size
-  ensures
-    forall |i| start <= i < start + buffer_size && i != idx ==>
-            log_entry_idx(i, buffer_size) != log_entry_idx(idx as int, buffer_size)
-{ }
-
-
+    requires
+        buffer_size == LOG_SIZE,
+        start <= idx < start + buffer_size,
+    ensures
+        forall|i|
+            start <= i < start + buffer_size && i != idx ==> log_entry_idx(i, buffer_size)
+                != log_entry_idx(idx as int, buffer_size),
+{
+}
 
 /// predicate to check whether a log entry is alive
-pub open spec fn log_entry_is_alive(alive_bits: Map<LogIdx, bool>, logical: LogicalLogIdx, buffer_size: nat) -> bool
-    recommends buffer_size == LOG_SIZE
+pub open spec fn log_entry_is_alive(
+    alive_bits: Map<LogIdx, bool>,
+    logical: LogicalLogIdx,
+    buffer_size: nat,
+) -> bool
+    recommends
+        buffer_size == LOG_SIZE,
 {
     let phys_id = log_entry_idx(logical, buffer_size);
     alive_bits[phys_id as nat] == log_entry_alive_value(logical, buffer_size)
@@ -809,7 +806,8 @@ pub open spec fn log_entry_is_alive(alive_bits: Map<LogIdx, bool>, logical: Logi
 
 /// the value the alive but must have for the entry to be alive, this flips on wrap around
 pub open spec fn log_entry_alive_value(logical: LogicalLogIdx, buffer_size: nat) -> bool
-    recommends buffer_size == LOG_SIZE
+    recommends
+        buffer_size == LOG_SIZE,
 {
     ((logical / buffer_size as int) % 2) == 0
 }
@@ -818,27 +816,57 @@ spec fn add_buffersize(i: int, buffer_size: nat) -> int {
     i + buffer_size
 }
 
-proof fn log_entry_alive_wrap_around(alive_bits: Map<LogIdx, bool>,  buffer_size: nat,  low: nat, high: nat)
+proof fn log_entry_alive_wrap_around(
+    alive_bits: Map<LogIdx, bool>,
+    buffer_size: nat,
+    low: nat,
+    high: nat,
+)
     requires
         buffer_size == LOG_SIZE,
-        forall |i:nat| i < buffer_size <==> alive_bits.contains_key(i),
+        forall|i: nat| i < buffer_size <==> alive_bits.contains_key(i),
         low <= high <= low + buffer_size,
     ensures
-        forall |i:int| low <= i < high ==>  log_entry_is_alive(alive_bits, i, buffer_size) == ! #[trigger] log_entry_is_alive(alive_bits,  add_buffersize(i, buffer_size), buffer_size)
+        forall|i: int|
+            low <= i < high ==> log_entry_is_alive(alive_bits, i, buffer_size)
+                == !#[trigger] log_entry_is_alive(
+                alive_bits,
+                add_buffersize(i, buffer_size),
+                buffer_size,
+            ),
 {
-
 }
 
-
-proof fn log_entry_alive_wrap_around_helper(alive_bits: Map<LogIdx, bool>, buffer_size: nat,  low: nat, high: nat)
+proof fn log_entry_alive_wrap_around_helper(
+    alive_bits: Map<LogIdx, bool>,
+    buffer_size: nat,
+    low: nat,
+    high: nat,
+)
     requires
         buffer_size == LOG_SIZE,
-        forall |i:nat| i < buffer_size <==> alive_bits.contains_key(i),
+        forall|i: nat| i < buffer_size <==> alive_bits.contains_key(i),
         low <= high <= low + buffer_size,
-        forall |i:int| low <= i < high ==> ! #[trigger] log_entry_is_alive(alive_bits, add_buffersize(i, buffer_size), buffer_size)
-    ensures forall |i:int| low + buffer_size <= i < high  + buffer_size ==> ! #[trigger] log_entry_is_alive(alive_bits, i, buffer_size)
+        forall|i: int|
+            low <= i < high ==> !#[trigger] log_entry_is_alive(
+                alive_bits,
+                add_buffersize(i, buffer_size),
+                buffer_size,
+            ),
+    ensures
+        forall|i: int|
+            low + buffer_size <= i < high + buffer_size ==> !#[trigger] log_entry_is_alive(
+                alive_bits,
+                i,
+                buffer_size,
+            ),
 {
-    assert forall |i:int| low + buffer_size <= i < high + buffer_size implies ! #[trigger] log_entry_is_alive(alive_bits, i, buffer_size) by {
+    assert forall|i: int|
+        low + buffer_size <= i < high + buffer_size implies !#[trigger] log_entry_is_alive(
+        alive_bits,
+        i,
+        buffer_size,
+    ) by {
         let j = i - buffer_size;
         assert(low <= j < high);
         assert(!log_entry_is_alive(alive_bits, add_buffersize(j, buffer_size), buffer_size));
@@ -847,8 +875,13 @@ proof fn log_entry_alive_wrap_around_helper(alive_bits: Map<LogIdx, bool>, buffe
 
 #[verifier(nonlinear)]
 pub proof fn log_entry_alive_value_wrap_around(i: LogicalLogIdx, buffer_size: nat)
-    requires buffer_size > 0
-    ensures log_entry_alive_value(i, buffer_size) != log_entry_alive_value(i + (buffer_size as int), buffer_size)
+    requires
+        buffer_size > 0,
+    ensures
+        log_entry_alive_value(i, buffer_size) != log_entry_alive_value(
+            i + (buffer_size as int),
+            buffer_size,
+        ),
 {
     assert(((i + (buffer_size as int)) / buffer_size as int) == ((i / buffer_size as int) + 1));
 }

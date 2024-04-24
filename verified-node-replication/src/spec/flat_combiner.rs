@@ -54,7 +54,8 @@ impl CombinerState {
     }
 
     pub open spec fn req_is_none(self, tid: nat) -> bool
-        recommends 0 <= tid < self.req_len()
+        recommends
+            0 <= tid < self.req_len(),
     {
         match self {
             CombinerState::Collecting(reqs) => reqs[tid as int].is_None(),
@@ -63,7 +64,8 @@ impl CombinerState {
     }
 
     pub open spec fn req_is_some(self, tid: nat) -> bool
-        recommends 0 <= tid < self.req_len()
+        recommends
+            0 <= tid < self.req_len(),
     {
         match self {
             CombinerState::Collecting(reqs) => reqs[tid as int].is_Some(),
@@ -71,7 +73,6 @@ impl CombinerState {
         }
     }
 }
-
 
 // The flat combiner state machine
 tokenized_state_machine! {
@@ -398,6 +399,7 @@ FlatCombiner {
             ==> #[trigger] Self::slot_in_progress(post.slots, i) == Self::slot_in_progress(pre.slots, i));
     }
 
-}} // tokenized_state_machine! { FlatCombiner { ...
+}}  // tokenized_state_machine! { FlatCombiner { ...
+
 
 } // verus!

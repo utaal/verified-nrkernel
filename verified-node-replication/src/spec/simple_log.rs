@@ -7,7 +7,6 @@ use vstd::prelude::*;
 use crate::spec::types::*;
 use crate::{AsyncLabel, Dispatch, InputOperation, OutputOperation};
 
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Simple Log
@@ -49,17 +48,15 @@ impl<R> ReadReq<R> {
     pub open spec fn op(self) -> R {
         match self {
             ReadReq::Init { op } => op,
-            ReadReq::Req { op, ..} => op
+            ReadReq::Req { op, .. } => op,
         }
     }
 }
-
 
 /// Tracks the progress of an update query on the data structure.
 ///
 /// Update requests are placed into the log. The
 pub ghost struct UpdateResp(pub LogIdx);
-
 
 state_machine! {
     SimpleLog<DT: Dispatch> {
@@ -312,22 +309,29 @@ state_machine! {
     #[inductive(no_op)]
     fn no_op_inductive(pre: Self, post: Self, label: Label<DT>) { }
 
-}} // state_machine! SimpleLog
-
-
+}}  // state_machine! SimpleLog
 /// constructs the state of the data structure at a specific version given the log
 ///
 /// This function recursively applies the update operations to the initial state of the
 /// data structure and returns the state of the data structure at the given version. The
 /// version must be within the log's range.
-pub open spec fn compute_nrstate_at_version<DT: Dispatch>(log: Seq<DT::WriteOperation>, version: LogIdx) -> DT::View
-    recommends 0 <= version <= log.len()
-    decreases version
+
+
+pub open spec fn compute_nrstate_at_version<DT: Dispatch>(
+    log: Seq<DT::WriteOperation>,
+    version: LogIdx,
+) -> DT::View
+    recommends
+        0 <= version <= log.len(),
+    decreases version,
 {
     if version == 0 {
         DT::init_spec()
     } else {
-        DT::dispatch_mut_spec(compute_nrstate_at_version::<DT>(log, (version - 1) as nat), log[version - 1]).0
+        DT::dispatch_mut_spec(
+            compute_nrstate_at_version::<DT>(log, (version - 1) as nat),
+            log[version - 1],
+        ).0
     }
 }
 
