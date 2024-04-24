@@ -640,9 +640,10 @@ pub open spec fn step_ReadWrite(
 //need some more explanation on this one
 pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables, NUMA_id: nat, core_id: nat) -> bool {
     &&& s2.mem === s1.mem
+    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
     // s2.tlb is a submap of s1.tlb
-    //&&& forall|base: nat, pte: PageTableEntry| s2.tlb.contains_pair(base, pte) ==> s1.tlb.contains_pair(base, pte)
-    // pt_mem may change arbitrarily
+    &&& forall|base: nat, pte: PageTableEntry| s2.NUMAs[NUMA_id].cores[core_id].tlb.contains_pair(base, pte) ==> s1.NUMAs[NUMA_id].cores[core_id].tlb.contains_pair(base, pte)
+    // pt_mem may change arbitrarily but only for one NUMA nodes?
 
 }
 
