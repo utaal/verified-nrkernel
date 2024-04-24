@@ -398,7 +398,7 @@ impl<DT: Dispatch> Context<DT> {
     pub(crate) fn batch_size() -> usize {
         // MAX_PENDING_OPS
         1
-    }// /
+    }  // /
     // Given a logical address, returns an index into the batch at which it falls.
     // #[inline(always)]
     // pub(crate) fn index(&self, logical: usize) -> usize {

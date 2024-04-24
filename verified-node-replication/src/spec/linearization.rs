@@ -3,7 +3,6 @@
 use builtin::*;
 // use vstd::*;
 use vstd::prelude::*;
-use vstd::seq::*;
 
 #[cfg(verus_keep_ghost)]
 use crate::spec::simple_log::{compute_nrstate_at_version, ReadReq, SimpleLog, UpdateResp};
@@ -398,7 +397,6 @@ proof fn readonly_start_refines<DT: Dispatch>(
             t2,
             aop,
         ),  // one.Next(Is, Is', AI.Start(rid, nrifc.ROp(rop)))
-
 {
     // Is' := Is.(reqs := Is.reqs[rid := nrifc.ROp(rop)]);
     let res = AsynchronousSingleton::State {
@@ -439,7 +437,6 @@ proof fn readonly_read_version_refines<DT: Dispatch>(
             t2,
             aop,
         ),  // one.Next(Is, Is', AI.InternalOp)
-
 {
     reveal(AsynchronousSingleton::State::next_by);
     reveal(AsynchronousSingleton::State::next);
@@ -501,7 +498,6 @@ proof fn readonly_finish_refines<DT: Dispatch>(
             t2,
             aop,
         ),  // one.Next(Is, Is', AI.End(rid, return_value))
-
 {
     // Is' := Is.(resps := Is.resps - {rid});
     let res = AsynchronousSingleton::State {
@@ -550,7 +546,6 @@ proof fn update_start_refines<DT: Dispatch>(
             t2,
             aop,
         ),  //  one.Next(Is, Is', AI.Start(rid, nrifc.UOp(uop)))
-
 {
     //  Is' := Is.(reqs := Is.reqs[rid := nrifc.UOp(uop)]);
     let res = AsynchronousSingleton::State {
@@ -590,7 +585,6 @@ proof fn update_add_update_to_log_refines<DT: Dispatch>(
             t2,
             aop,
         ),  //  one.Next(Is, Is', AI.InternalOp)
-
 {
     state_at_version_preserves::<DT>(s.log, s2.log, s.update_reqs[rid], s.version);
     assert forall|r| #[trigger]
@@ -658,7 +652,6 @@ proof fn update_finish_refines<DT: Dispatch>(
             t2,
             aop,
         ),  //  one.Next(Is, Is', AI.End(rid, return_value))
-
 {
     // Is' := Is.(resps := Is.resps - {rid});
     let res = AsynchronousSingleton::State {

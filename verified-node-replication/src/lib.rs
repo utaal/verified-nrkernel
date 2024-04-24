@@ -31,19 +31,24 @@ global size_of usize == 8;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /// the type of a replica identifier
 pub type ReplicaId = usize;
-  // $line_count$Trusted$
+
+// $line_count$Trusted$
 /// the identifier of a node / replica
 pub type NodeId = nat;
-  // $line_count$Trusted$
+
+// $line_count$Trusted$
 /// the index into the log
 pub type LogIdx = nat;
-  // $line_count$Trusted$
+
+// $line_count$Trusted$
 /// the identifier of a update or read request
 pub type ReqId = nat;
-  // $line_count$Trusted$
+
+// $line_count$Trusted$
 /// the identifier of a thread on a given replica
 pub type ThreadId = nat;
-  // $line_count$Trusted$
+
+// $line_count$Trusted$
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Top-level Theorem
 ////////////////////////////////////////////////////////////////////////////////////////////////////

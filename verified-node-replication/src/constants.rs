@@ -20,7 +20,8 @@ pub open const DEFAULT_LOG_BYTES: usize = 2 * 1024 * 1024;
 
 // making the assumption here that the write operation is about 12-16 bytes..
 pub open const LOG_SIZE: usize = 512 * 1024;
-  // 4 * 1024 * 1024;
+
+// 4 * 1024 * 1024;
 /// maximum number of threads per replica
 pub open const MAX_THREADS_PER_REPLICA: usize = 64;
 
