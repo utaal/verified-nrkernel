@@ -13,22 +13,21 @@ use vstd::prelude::*;
 
 verus! {
 
-/*
-pub struct AbstractConstants {
+
+pub struct HWConstants {
     pub NUMA_no: nat,
     pub core_no: nat,
+    //optionally: core_nos: Map<nat, nat>,
 }
-*/
+
 pub struct HWVariables {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
-    pub NUMA_no: nat,
     pub NUMAs: Map<nat, NUMAVariables>,
 }
 
 pub struct NUMAVariables {
     pub pt_mem: mem::PageTableMemory,
-    pub core_no: nat,
     pub cores: Map<nat, CoreVariables>,
 }
 
@@ -46,7 +45,7 @@ pub enum HWStep {
         NUMA_id: nat,
         core_id: nat,
     },
-    PTMemOp,
+    PTMemOp { NUMA_id: nat, core_id: nat },
     TLBFill { vaddr: nat, pte: PageTableEntry, NUMA_id: nat, core_id: nat },
     TLBEvict { vaddr: nat, NUMA_id: nat, core_id: nat },
 }
@@ -553,17 +552,17 @@ pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTab
     )
 }
 
-pub open spec fn init(s: HWVariables) -> bool {
-    &&& s.NUMA_no >= 1
-    &&& forall|id: nat| (id < s.NUMA_no) == s.NUMAs.contains_key(id)
-    &&& forall|id: nat| (id < s.NUMA_no) ==> #[trigger] NUMA_init(s.NUMAs[id])
+pub open spec fn init(c: HWConstants, s: HWVariables) -> bool {
+    &&& c.NUMA_no >= 1
+    &&& forall|id: nat| (id < c.NUMA_no) == s.NUMAs.contains_key(id)
+    &&& forall|id: nat| (id < c.NUMA_no) ==> #[trigger] NUMA_init(c, s.NUMAs[id])
 }
 
-pub open spec fn NUMA_init(n: NUMAVariables) -> bool {
+pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
     &&& interp_pt_mem(n.pt_mem) === Map::empty()
-    &&& n.core_no >= 1
-    &&& forall|id: nat| (id < n.core_no) == n.cores.contains_key(id)
-    &&& forall|id: nat| (id < n.core_no) ==> #[trigger] core_init(n.cores[id])
+    &&& c.core_no >= 1
+    &&& forall|id: nat| (id < c.core_no) == n.cores.contains_key(id)
+    &&& forall|id: nat| (id < c.core_no) ==> #[trigger] core_init(n.cores[id])
 }
 
 //might be issue later on
@@ -574,6 +573,7 @@ pub open spec fn core_init(c: CoreVariables) -> bool {
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
 pub open spec fn step_ReadWrite(
+    c : HWConstants,
     s1: HWVariables,
     s2: HWVariables,
     vaddr: nat,
@@ -584,9 +584,7 @@ pub open spec fn step_ReadWrite(
     core_id: nat,
 ) -> bool {
     &&& aligned(vaddr, 8)
-    &&& s2.NUMA_no === s1.NUMA_no
     //page tables and TLBs stay the same
-
     &&& s2.NUMAs === s1.NUMAs
     &&& match pte {
         Some((base, pte)) => {
@@ -640,9 +638,8 @@ pub open spec fn step_ReadWrite(
 }
 
 //need some more explanation on this one
-pub open spec fn step_PTMemOp(s1: HWVariables, s2: HWVariables, NUMA_id) -> bool {
+pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables, NUMA_id: nat, core_id: nat) -> bool {
     &&& s2.mem === s1.mem
-    &&& s2.NUMA_no === s1.NUMA_no
     // s2.tlb is a submap of s1.tlb
     //&&& forall|base: nat, pte: PageTableEntry| s2.tlb.contains_pair(base, pte) ==> s1.tlb.contains_pair(base, pte)
     // pt_mem may change arbitrarily
@@ -650,6 +647,7 @@ pub open spec fn step_PTMemOp(s1: HWVariables, s2: HWVariables, NUMA_id) -> bool
 }
 
 pub open spec fn other_NUMAs_and_cores_unchanged(
+    c: HWConstants,  
     s1: HWVariables,
     s2: HWVariables,
     NUMA_id: nat,
@@ -658,15 +656,10 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     //Memory stays the same
     &&& s2.mem === s1.mem
     //Number of Numa nodes stays the same
-
-    &&& s2.NUMA_no
-        === s1.NUMA_no
     //all NUMA states are the same besides the one of NUMA_id
 
     &&& s2.NUMAs.dom() === s1.NUMAs.dom()
     &&& s2.NUMAs.remove(NUMA_id) === s1.NUMAs.remove(NUMA_id)
-    &&& s2.NUMAs[NUMA_id].core_no
-        === s1.NUMAs[NUMA_id].core_no
     //all cores_states of NUMA_id stay the same besides core_id
 
     &&& s2.NUMAs[NUMA_id].cores.dom() === s1.NUMAs[NUMA_id].cores.dom()
@@ -674,6 +667,7 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
 }
 
 pub open spec fn step_TLBFill(
+    c: HWConstants,
     s1: HWVariables,
     s2: HWVariables,
     vaddr: nat,
@@ -681,33 +675,35 @@ pub open spec fn step_TLBFill(
     NUMA_id: nat,
     core_id: nat,
 ) -> bool {
-    &&& NUMA_id <= s1.NUMA_no
-    &&& core_id <= s1.NUMAs[NUMA_id].core_no
+    &&& NUMA_id <= c.NUMA_no
+    &&& core_id <= c.core_no
     &&& interp_pt_mem(s1.NUMAs[NUMA_id].pt_mem).contains_pair(vaddr, pte)
     &&& s2.NUMAs[NUMA_id].cores[core_id].tlb === s1.NUMAs[NUMA_id].cores[core_id].tlb.insert(
         vaddr,
         pte,
     )
-    &&& other_NUMAs_and_cores_unchanged(s1, s2, NUMA_id, core_id)
+    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
 }
 
 pub open spec fn step_TLBEvict(
+    c: HWConstants,
     s1: HWVariables,
     s2: HWVariables,
     vaddr: nat,
     NUMA_id: nat,
     core_id: nat,
 ) -> bool {
-    &&& NUMA_id <= s1.NUMA_no
-    &&& core_id <= s1.NUMAs[NUMA_id].core_no
+    &&& NUMA_id <= c.NUMA_no
+    &&& core_id <= c.core_no
     &&& s1.NUMAs[NUMA_id].cores[core_id].tlb.dom().contains(vaddr)
     &&& s2.NUMAs[NUMA_id].cores[core_id].tlb === s1.NUMAs[NUMA_id].cores[core_id].tlb.remove(vaddr)
-    &&& other_NUMAs_and_cores_unchanged(s1, s2, NUMA_id, core_id)
+    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
 }
 
-pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
+pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
         HWStep::ReadWrite { vaddr, paddr, op, pte, NUMA_id, core_id } => step_ReadWrite(
+            c,            
             s1,
             s2,
             vaddr,
@@ -717,8 +713,9 @@ pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bo
             NUMA_id,
             core_id,
         ),
-        HWStep::PTMemOp => step_PTMemOp(s1, s2),
+        HWStep::PTMemOp { NUMA_id, core_id } => step_PTMemOp(c, s1, s2, NUMA_id, core_id),
         HWStep::TLBFill { vaddr, pte, NUMA_id, core_id } => step_TLBFill(
+            c,            
             s1,
             s2,
             vaddr,
@@ -727,6 +724,7 @@ pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bo
             core_id,
         ),
         HWStep::TLBEvict { vaddr, NUMA_id, core_id } => step_TLBEvict(
+            c,            
             s1,
             s2,
             vaddr,
@@ -736,8 +734,8 @@ pub open spec fn next_step(s1: HWVariables, s2: HWVariables, step: HWStep) -> bo
     }
 }
 
-pub open spec fn next(s1: HWVariables, s2: HWVariables) -> bool {
-    exists|step: HWStep| next_step(s1, s2, step)
+pub open spec fn next(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
+    exists|step: HWStep| next_step(c, s1, s2, step)
 }
 
 // pub closed spec fn inv(s: HWVariables) -> bool {
