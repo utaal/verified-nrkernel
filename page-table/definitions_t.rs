@@ -8,7 +8,7 @@ use vstd::prelude::*;
 
 verus! {
 
-/*
+
 macro_rules! bitmask_inc {
     ($low:expr,$high:expr) => {
         (!(!0u64 << (($high+1u64)-$low))) << $low
@@ -22,7 +22,7 @@ macro_rules! bit {
     }
 }
 pub(crate) use bit;
-*/
+
 pub const X86_NUM_LAYERS:  usize = 4;
 pub const X86_NUM_ENTRIES: usize = 512;
 
