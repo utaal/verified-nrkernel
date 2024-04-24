@@ -1,3 +1,6 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
 // The Linearization Proof
 #[allow(unused_imports)]
 use builtin::*;

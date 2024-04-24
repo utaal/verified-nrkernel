@@ -1,5 +1,6 @@
 // Verified Node Replication Library
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+//
 //! Defines constants that are being used by the library, both in the execution and the
 //! verification. The constants mostly define the size of the log, and certain thresholds
 //! when warnings are being printed etc.

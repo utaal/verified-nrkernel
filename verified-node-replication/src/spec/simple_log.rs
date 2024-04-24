@@ -1,3 +1,6 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
 use builtin::*;
 use builtin_macros::*;
 use state_machines_macros::*;

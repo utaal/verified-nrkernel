@@ -1,5 +1,8 @@
 // Verified Node Replication Library
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+//
+//! # Verified Node Replication Library
+//!
 //! This library is a verified version of the [node-replicatin library](https://github.com/vmware/node-replication/)
 //! that allows for the construction of replicated, concurrent data structures.
 //!

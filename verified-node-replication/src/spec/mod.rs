@@ -1,3 +1,6 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
 // some types and utilities
 pub mod types;
 pub mod utils;

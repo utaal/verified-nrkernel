@@ -1,3 +1,6 @@
+// Verified Node Replication Library
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+//
 // rust_verify/tests/example.rs ignore
 #[allow(unused_imports)]
 use builtin::*;
