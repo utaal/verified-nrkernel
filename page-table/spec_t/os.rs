@@ -13,6 +13,12 @@ use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, aligned
 L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
 
 verus! {
+	
+//INFO: OSConstants smth smth IronFleet
+pub struct OSConstants {
+    pub hw: hardware::HWConstants,
+}
+	
 
 pub struct OSVariables {
     pub hw: hardware::HWVariables,
@@ -106,37 +112,41 @@ impl OSVariables {
     }
 }
 
-pub open spec fn step_HW(s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
+//INFO: added OSConstant
+pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
     &&& !(system_step is PTMemOp)
-    &&& hardware::next_step(s1.hw, s2.hw, system_step)
+    &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
 }
 
-pub open spec fn step_Map(s1: OSVariables, s2: OSVariables, base: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
-    &&& hardware::step_PTMemOp(s1.hw, s2.hw)
+//INFO: added OSConstants, NUMA_id and core_id
+pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
-
-pub open spec fn step_Unmap(s1: OSVariables, s2: OSVariables, base: nat, result: Result<(),()>) -> bool {
+	
+//INFO: added OSConstants, NUMA_id and core_id
+pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, result: Result<(),()>) -> bool {
     // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
     &&& !s2.hw.tlb.dom().contains(base)
-    &&& hardware::step_PTMemOp(s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-pub open spec fn step_Resolve(s1: OSVariables, s2: OSVariables, base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
-    &&& hardware::step_PTMemOp(s1.hw, s2.hw)
+//INFO: added OSConstants, NUMA_id and core_id
+pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat , base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-
+//INFO: added NUMA_id and core_id
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW      { step: hardware::HWStep },
-    Map     { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
-    Unmap   { vaddr: nat, result: Result<(),()> },
-    Resolve { vaddr: nat, result: Result<(nat,PageTableEntry),()> },
+    Map     { NUMA_id:nat , core_id:nat, vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    Unmap   { NUMA_id:nat , core_id:nat, vaddr: nat, result: Result<(),()> },
+    Resolve { NUMA_id:nat , core_id:nat, vaddr: nat, result: Result<(nat,PageTableEntry),()> },
 }
 
 impl OSStep {
@@ -144,34 +154,41 @@ impl OSStep {
         match self {
             OSStep::HW { step } =>
                 match step {
-                    hardware::HWStep::ReadWrite { vaddr, paddr, op, pte } => hlspec::AbstractStep::ReadWrite { vaddr, op, pte },
-                    hardware::HWStep::PTMemOp                             => arbitrary(),
-                    hardware::HWStep::TLBFill { vaddr, pte }              => hlspec::AbstractStep::Stutter,
-                    hardware::HWStep::TLBEvict { vaddr }                  => hlspec::AbstractStep::Stutter,
+					//INFO: looses information on who is doing the readwrite
+                    hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, NUMA_id, core_id } => hlspec::AbstractStep::ReadWrite { vaddr, op, pte },
+                    hardware::HWStep::PTMemOp { NUMA_id, core_id}                       => arbitrary(),
+                    hardware::HWStep::TLBFill { vaddr, pte, NUMA_id, core_id }              => hlspec::AbstractStep::Stutter,
+                    hardware::HWStep::TLBEvict { vaddr, NUMA_id, core_id }                  => hlspec::AbstractStep::Stutter,
                 },
-            OSStep::Map     { vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
-            OSStep::Unmap   { vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
-            OSStep::Resolve { vaddr, result }      => hlspec::AbstractStep::Resolve { vaddr, result },
+			//INFO: added Core_id and NUMA_id
+            OSStep::Map     { NUMA_id, core_id, vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
+            OSStep::Unmap   { NUMA_id, core_id, vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
+            OSStep::Resolve { NUMA_id, core_id, vaddr, result }      => hlspec::AbstractStep::Resolve { vaddr, result },
         }
     }
 }
 
-pub open spec fn next_step(s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
+// INFO: added NUMA_id and core_id
+// INFO: added OSConstants
+pub open spec fn next_step(c: OSConstants, s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
-        OSStep::HW      { step }               => step_HW(s1, s2, step),
-        OSStep::Map     { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
-        OSStep::Unmap   { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
-        OSStep::Resolve { vaddr, result }      => step_Resolve(s1, s2, vaddr, result),
+        OSStep::HW      { step }               => step_HW(c, s1, s2, step),
+        OSStep::Map     { NUMA_id, core_id, vaddr, pte, result } => step_Map(c, s1, s2, NUMA_id, core_id, vaddr, pte, result),
+        OSStep::Unmap   { NUMA_id, core_id, vaddr, result }      => step_Unmap(c, s1, s2, NUMA_id, core_id, vaddr, result),
+        OSStep::Resolve { NUMA_id, core_id, vaddr, result }      => step_Resolve(c, s1, s2, NUMA_id, core_id, vaddr, result),
     }
 }
 
-pub open spec fn next(s1: OSVariables, s2: OSVariables) -> bool {
-    exists|step: OSStep| next_step(s1, s2, step)
+//INFO: exist wegbekommen?
+//INFO: added OSConstants
+pub open spec fn next(c: OSConstants, s1: OSVariables, s2: OSVariables) -> bool {
+    exists|step: OSStep| next_step(c, s1, s2, step)
 }
 
-pub open spec fn init(s: OSVariables) -> bool {
+//INFO: added OSConstants
+pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     &&& spec_pt::init(s.pt_variables())
-    &&& hardware::init(s.hw)
+    &&& hardware::init(c.hw, s.hw)
 }
 
 }
