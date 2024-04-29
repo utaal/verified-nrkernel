@@ -22,10 +22,15 @@ pub struct OSConstants {
 
 pub struct OSVariables {
     pub hw: hardware::HWVariables,
+	pub log_pt: mem::PageTableMemory,
+	pub pf: Map<(nat, nat), nat>,			
 }
 
 impl OSVariables {
-    pub open spec fn pt_mappings_dont_overlap_in_vmem(self) -> bool {
+	
+	/*
+	
+    pub open spec fn NUMA_pt_mappings_dont_overlap_in_vmem(self) -> bool {
         forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
             self.interp_pt_mem().contains_pair(b1, pte1) && self.interp_pt_mem().contains_pair(b2, pte2) ==>
             ((b1 == b2) || !overlap(
@@ -64,21 +69,25 @@ impl OSVariables {
         &&& self.pt_entries_aligned()
         &&& self.tlb_is_submap_of_pt()
     }
+	*/
 
+	
+	//INFO is now referring to nr-log pt. however it is questionable if this is what we want
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables {
-            pt_mem: self.hw.pt_mem,
+            pt_mem: self.log_pt,
         }
     }
-
+	
+	//INFO is now referring to nr-log pt. however it is questionable if this is what we want
     pub open spec fn interp_pt_mem(self) -> Map<nat,PageTableEntry> {
-        hardware::interp_pt_mem(self.hw.pt_mem)
+        hardware::interp_pt_mem(self.log_pt)
     }
 
     pub open spec fn effective_mappings(self) -> Map<nat,PageTableEntry> {
         Map::new(
-            |base: nat| self.hw.tlb.dom().contains(base) || self.interp_pt_mem().dom().contains(base),
-            |base: nat| if self.hw.tlb.dom().contains(base) { self.hw.tlb.index(base) } else { self.interp_pt_mem().index(base) },
+            |base: nat| /* self.hw.tlb.dom().contains(base) || */ self.interp_pt_mem().dom().contains(base),
+            |base: nat| /* if self.hw.tlb.dom().contains(base) { self.hw.tlb.index(base) } else { */ self.interp_pt_mem().index(base) ,
             )
     }
 
@@ -94,7 +103,9 @@ impl OSVariables {
                 let pmem_idx = mem::word_index_spec(paddr);
                 self.hw.mem[pmem_idx as int]
             })
+			
     }
+	
 
     pub open spec fn interp(self) -> hlspec::AbstractVariables {
         let mappings: Map<nat,PageTableEntry> = self.effective_mappings();
