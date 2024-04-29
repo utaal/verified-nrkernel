@@ -125,6 +125,8 @@ impl OSVariables {
 
 //INFO: added OSConstant
 pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
+	&&& s1.log_pt == s2.log_pt
+    &&& s1.pf == s2.pf
     &&& !(system_step is PTMemOp)
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
@@ -132,6 +134,12 @@ pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, syste
 
 //INFO: added OSConstants, NUMA_id and core_id
 pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
+	
+	//PROPOSAL: put entry in log_pt if valid and set NUMA_id_pt to log_pt 
+	//(this should simulate the NUMA_Node syncing the pagetable and adding a new entry to it. )
+	//(however it is incorrect as putting entry into log_pt could return a log_pt that has more entries after new entry)
+	&&& s1.log_pt == s2.log_pt
+    &&& s1.pf == s2.pf
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
 }
@@ -140,17 +148,21 @@ pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA
 pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, result: Result<(),()>) -> bool {
     // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
-	//INFO this is not necessary as it is already in step_PTMemOp
-	//&&& hardware::valid_core_id(c.hw, NUMA_id, core_id)
+	//INFO this is not necessary as it is already in step_PT
+	&&& s1.log_pt == s2.log_pt
+    &&& s1.pf == s2.pf
+	&&& hardware::valid_core_id(c.hw, NUMA_id, core_id)
   	&&& s1.pf[(NUMA_id, core_id)] == 0
-	
-    &&& !s2.hw.tlb.dom().contains(base)
+	//PROPOSAL: this for either one NUMA node or all
+    &&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> !s2.hw.NUMAs[NUMA_id].cores[core_id].tlb.dom().contains(base)
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
 //INFO: added OSConstants, NUMA_id and core_id
 pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat , base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
+	&&& s1.log_pt == s2.log_pt
+    &&& s1.pf == s2.pf
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
@@ -202,8 +214,12 @@ pub open spec fn next(c: OSConstants, s1: OSVariables, s2: OSVariables) -> bool 
 
 //INFO: added OSConstants
 pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
+	&&& hardware::interp_pt_mem(s.log_pt) === Map::empty()
     &&& spec_pt::init(s.pt_variables())
     &&& hardware::init(c.hw, s.hw)
+	&&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf.contains_key((NUMA_id, core_id))
+    &&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf[(NUMA_id, core_id)] == 0
+	
 }
 
 }
