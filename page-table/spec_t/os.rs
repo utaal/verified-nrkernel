@@ -140,6 +140,10 @@ pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA
 pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, result: Result<(),()>) -> bool {
     // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
+	//INFO this is not necessary as it is already in step_PTMemOp
+	//&&& hardware::valid_core_id(c.hw, NUMA_id, core_id)
+  	&&& s1.pf[(NUMA_id, core_id)] == 0
+	
     &&& !s2.hw.tlb.dom().contains(base)
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)

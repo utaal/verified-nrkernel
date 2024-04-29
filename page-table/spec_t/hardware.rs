@@ -586,6 +586,7 @@ pub open spec fn step_ReadWrite(
     &&& aligned(vaddr, 8)
     //page tables and TLBs stay the same
     &&& s2.NUMAs === s1.NUMAs
+	&&& valid_core_id(c, NUMA_id, core_id)
     &&& match pte {
         Some((base, pte)) => {
             let pmem_idx = word_index_spec(paddr);
@@ -639,6 +640,7 @@ pub open spec fn step_ReadWrite(
 
 //need some more explanation on this one
 pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables, NUMA_id: nat, core_id: nat) -> bool {
+	&&& valid_core_id(c, NUMA_id, core_id)
     &&& s2.mem === s1.mem
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
     // s2.tlb is a submap of s1.tlb
@@ -667,6 +669,11 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     &&& s2.NUMAs[NUMA_id].cores.remove(core_id) === s1.NUMAs[NUMA_id].cores.remove(core_id)
 }
 
+pub open spec fn valid_core_id (c: HWConstants, NUMA_id:nat, core_id:nat) -> bool {
+	&&& NUMA_id <= c.NUMA_no
+    &&& core_id <= c.core_no
+}
+
 pub open spec fn step_TLBFill(
     c: HWConstants,
     s1: HWVariables,
@@ -676,8 +683,7 @@ pub open spec fn step_TLBFill(
     NUMA_id: nat,
     core_id: nat,
 ) -> bool {
-    &&& NUMA_id <= c.NUMA_no
-    &&& core_id <= c.core_no
+    &&& valid_core_id(c, NUMA_id, core_id)
     &&& interp_pt_mem(s1.NUMAs[NUMA_id].pt_mem).contains_pair(vaddr, pte)
     &&& s2.NUMAs[NUMA_id].cores[core_id].tlb === s1.NUMAs[NUMA_id].cores[core_id].tlb.insert(
         vaddr,
@@ -694,8 +700,7 @@ pub open spec fn step_TLBEvict(
     NUMA_id: nat,
     core_id: nat,
 ) -> bool {
-    &&& NUMA_id <= c.NUMA_no
-    &&& core_id <= c.core_no
+    &&& valid_core_id(c, NUMA_id, core_id)
     &&& s1.NUMAs[NUMA_id].cores[core_id].tlb.dom().contains(vaddr)
     &&& s2.NUMAs[NUMA_id].cores[core_id].tlb === s1.NUMAs[NUMA_id].cores[core_id].tlb.remove(vaddr)
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
