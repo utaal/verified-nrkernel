@@ -7,8 +7,8 @@ use crate::definitions_t::{
     candidate_mapping_overlaps_existing_vmem, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
     L3_ENTRY_SIZE, MAX_PHYADDR, PT_BOUND_HIGH, PT_BOUND_LOW, WORD_SIZE,
 };
+//use crate::spec_t::hlspec::AbstractArguments::{Empty};
 use crate::spec_t::mem;
-use crate::spec_t::hlspec::AbstractArguments::{Empty};
 use vstd::prelude::*;
 
 verus! {
@@ -33,15 +33,16 @@ pub struct AbstractVariables {
 pub enum AbstractStep {
     ReadWrite          { thread_id: nat, vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
     MapStart           { thread_id: nat, vaddr: nat, pte: PageTableEntry },
-    MapEnd             { thread_id: nat, vaddr: nat, pte: PageTableEntry, result: Result<(), ()> },
+    MapEnd             { thread_id: nat, result: Result<(), ()> },
     UnmapStart         { thread_id: nat, vaddr: nat },
-    UnmapEnd           { thread_id: nat, vaddr: nat, result: Result<(), ()> },
+    UnmapEnd           { thread_id: nat, result: Result<(), ()> },
     ResolveStart       { thread_id: nat, vaddr: nat },
-    ResolveEnd         { thread_id: nat, vaddr: nat, result: Result<(nat, PageTableEntry), ()> },
+    ResolveEnd         { thread_id: nat, result: Result<(nat, PageTableEntry), ()> },
     Stutter,
 }
 
 //To allow two-step transitions that preserve arguments
+#[allow(inconsistent_fields)]
 pub enum AbstractArguments {
     Map           { vaddr: nat, pte: PageTableEntry },
     Unmap         { vaddr: nat },
@@ -57,7 +58,7 @@ pub open spec fn wf(c: AbstractConstants, s:AbstractVariables) -> bool {
 pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
     &&& s.mem === Map::empty()
     &&& s.mappings === Map::empty()
-    &&& forall |id: nat| id <= c.thread_no ==> s.thread_state[id] is Empty
+    &&& forall |id: nat| id <= c.thread_no ==> (s.thread_state[id] === AbstractArguments::Empty)
     &&& wf(c, s)
 }
 
@@ -188,7 +189,7 @@ pub open spec fn step_ReadWrite(
     &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings  
     &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] is Empty
+    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
     &&& s2.thread_state === s1.thread_state
     &&& match pte {
         Some((base, pte)) => {
@@ -267,9 +268,11 @@ pub open spec fn step_Map_start(
     vaddr: nat,
     pte: PageTableEntry,
 ) -> bool {
+    &&& step_Map_enabled(s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] is Empty
-    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, Empty)
+    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
+    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Map{vaddr,pte})
+
 }
 
 pub open spec fn step_Map_end(
@@ -277,22 +280,24 @@ pub open spec fn step_Map_end(
     s1: AbstractVariables,
     s2: AbstractVariables,
     thread_id: nat,
-    vaddr: nat,
-    pte: PageTableEntry,
     result: Result<(), ()>,
 ) -> bool {
-    &&& step_Map_enabled(s1.mappings, vaddr, pte)
-    &&& valid_thread(c, thread_id) //instert right state here
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, Empty)
-    &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
-        &&& result is Err
-        &&& s2.mappings === s1.mappings
-        &&& s2.mem === s1.mem
-    } else {
-        &&& result is Ok
-        &&& s2.mappings === s1.mappings.insert(vaddr, pte)
-        &&& (forall|idx: nat| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
-        &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
+    &&& valid_thread(c, thread_id)
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
+    &&& match s1.thread_state[thread_id] {
+        AbstractArguments::Map{vaddr,pte} => {
+            &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
+                &&& result is Err
+                &&& s2.mappings === s1.mappings
+                &&& s2.mem === s1.mem
+            } else {
+                &&& result is Ok
+                &&& s2.mappings === s1.mappings.insert(vaddr, pte)
+                &&& (forall|idx: nat| #![auto] s1.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+                &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
+            }
+        },
+        _ => { false }
     }
 }
 
@@ -314,10 +319,8 @@ pub open spec fn step_Unmap_start(
 ) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
-    
-
-    &&& s1.thread_state[thread_id] is Empty
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, Empty)
+    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{vaddr})
     //effect from unmap not visible yet (?) at least we cant make guarantees    
     //mem stays the same if vaddr is not valid
     //deleted from mem as we cant make guarantees about it anymore from accesses ????
@@ -330,22 +333,24 @@ pub open spec fn step_Unmap_end(
     s1: AbstractVariables,
     s2: AbstractVariables,
     thread_id: nat,
-    vaddr: nat,
     result: Result<(), ()>,
 ) -> bool {
-    &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
-
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, Empty)
-    &&& if s1.mappings.dom().contains(vaddr) {
-        &&& result is Ok
-        &&& s2.mappings === s1.mappings.remove(vaddr)
-        &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
-        &&& (forall|idx: nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
-    } else {
-        &&& result is Err
-        &&& s2.mappings === s1.mappings
-        &&& s2.mem === s1.mem
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
+    &&& match s1.thread_state[thread_id] {
+        AbstractArguments::Unmap{vaddr} => {
+            &&& if s1.mappings.dom().contains(vaddr) {
+                &&& result is Ok
+                &&& s2.mappings === s1.mappings.remove(vaddr)
+                &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
+                &&& (forall|idx: nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+            } else {
+                &&& result is Err
+                &&& s2.mappings === s1.mappings
+                &&& s2.mem === s1.mem
+            }
+        },
+        _ => { false }
     }
 }
 
@@ -363,9 +368,9 @@ pub open spec fn step_Resolve_start(
     &&& step_Resolve_enabled(vaddr)
     //thread is valid and ready
     &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id]  is Empty
+    &&& s1.thread_state[thread_id]  === AbstractArguments::Empty
     //thread gets resolve-started state
-    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, Empty)
+    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Resolve{vaddr},)
 }
 
 pub open spec fn step_Resolve_end(
@@ -373,23 +378,26 @@ pub open spec fn step_Resolve_end(
     s1: AbstractVariables,
     s2: AbstractVariables,
     thread_id: nat,
-    vaddr: nat,
     result: Result<(nat, PageTableEntry), ()>,
 ) -> bool {
     &&& valid_thread(c, thread_id)
-
-    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, Empty)
-    &&& match result {
-        Ok((base, pte)) => {
-            // If result is Ok, it's an existing mapping that contains vaddr..
-            &&& s1.mappings.contains_pair(base, pte)
-            &&& between(vaddr, base, base + pte.frame.size)
+    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Empty)
+    &&& match s1.thread_state[thread_id] {
+        AbstractArguments::Resolve{vaddr} => {
+            &&& match result {
+                Ok((base, pte)) => {
+                // If result is Ok, it's an existing mapping that contains vaddr..
+                    &&& s1.mappings.contains_pair(base, pte)
+                    &&& between(vaddr, base, base + pte.frame.size)
+                },
+                Err(_) => {
+                    let vmem_idx = mem::word_index_spec(vaddr);
+                    // If result is Err, no mapping containing vaddr exists..
+                    &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
+                },
+             }
         },
-        Err(_) => {
-            let vmem_idx = mem::word_index_spec(vaddr);
-            // If result is Err, no mapping containing vaddr exists..
-            &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
-        },
+        _ => { false }
     }
 }
 
@@ -408,14 +416,14 @@ pub open spec fn next_step(
     step: AbstractStep,
 ) -> bool {
     match step {
-        AbstractStep::ReadWrite     { vaddr, thread_id, op, pte }     => step_ReadWrite       ( c, s1, s2, thread_id, vaddr,  op, pte, ),
-        AbstractStep::MapStart       { vaddr, thread_id, pte }         => step_Map_start       ( c, s1, s2, thread_id, vaddr, pte, ),
-        AbstractStep::MapEnd         { vaddr, thread_id, pte, result } => step_Map_end         ( c, s1, s2, thread_id, vaddr, pte, result, ),
-        AbstractStep::UnmapStart     { vaddr, thread_id }              => step_Unmap_start     ( c, s1, s2, thread_id, vaddr, ),
-        AbstractStep::UnmapEnd       { vaddr, thread_id, result }      => step_Unmap_end       ( c, s1, s2, thread_id, vaddr,  result,),
-        AbstractStep::ResolveStart   { vaddr, thread_id }              => step_Resolve_start   ( c, s1, s2, thread_id, vaddr,),
-        AbstractStep::ResolveEnd     { vaddr, thread_id, result }      => step_Resolve_end     ( c, s1, s2, thread_id, vaddr, result,),
-        AbstractStep::Stutter                                          => step_Stutter         ( c, s1, s2),
+        AbstractStep::ReadWrite      { thread_id, vaddr, op, pte }      => step_ReadWrite       ( c, s1, s2, thread_id, vaddr,  op, pte, ),
+        AbstractStep::MapStart       { thread_id, vaddr, pte }          => step_Map_start       ( c, s1, s2, thread_id, vaddr, pte, ),
+        AbstractStep::MapEnd         { thread_id, result }              => step_Map_end         ( c, s1, s2, thread_id, result, ),
+        AbstractStep::UnmapStart     { thread_id, vaddr, }              => step_Unmap_start     ( c, s1, s2, thread_id, vaddr, ),
+        AbstractStep::UnmapEnd       { thread_id, result }              => step_Unmap_end       ( c, s1, s2, thread_id, result,),
+        AbstractStep::ResolveStart   { thread_id, vaddr, }              => step_Resolve_start   ( c, s1, s2, thread_id, vaddr, ),
+        AbstractStep::ResolveEnd     { thread_id, result }              => step_Resolve_end     ( c, s1, s2, thread_id, result,),
+        AbstractStep::Stutter                                           => step_Stutter         ( c, s1, s2),
     }
 }
 
