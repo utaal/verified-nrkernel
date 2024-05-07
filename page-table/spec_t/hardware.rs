@@ -604,7 +604,7 @@ pub open spec fn step_ReadWrite(
                         &&& result is Ok
                         &&& s2.mem === s1.mem.update(pmem_idx as int, new_value)
                     } else {
-                        &&& result is Pagefault
+                        &&& result is Undefined
                         &&& s2.mem === s1.mem
                     }
                 },
@@ -615,7 +615,7 @@ pub open spec fn step_ReadWrite(
                         &&& result is Value
                         &&& result->0 == s1.mem[pmem_idx as int]
                     } else {
-                        &&& result is Pagefault
+                        &&& result is Undefined
                     }
                 },
             }
@@ -627,12 +627,12 @@ pub open spec fn step_ReadWrite(
                     &&& interp_pt_mem(s1.NUMAs[NUMA_id].pt_mem).contains_pair(base, pte)
                     &&& between(vaddr, base, base + pte.frame.size)
                 })
-            // .. and the result is always a pagefault and an unchanged memory.
+            // .. and the result is always a Undefined and an unchanged memory.
 
             &&& s2.mem === s1.mem
             &&& match op {
-                RWOp::Store { new_value, result } => result is Pagefault,
-                RWOp::Load { is_exec, result } => result is Pagefault,
+                RWOp::Store { new_value, result } => result is Undefined,
+                RWOp::Load { is_exec, result } => result is Undefined,
             }
         },
     }

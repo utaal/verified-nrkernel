@@ -124,12 +124,12 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
 }
 
 pub enum LoadResult {
-    Pagefault,
+    Undefined,
     Value(nat), // word-sized load
 }
 
 pub enum StoreResult {
-    Pagefault,
+    Undefined,
     Ok,
 }
 

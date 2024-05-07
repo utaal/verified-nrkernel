@@ -48,9 +48,11 @@ pub enum AbstractStep {
     Stutter,
 }
 
-pub open spec fn init(s: AbstractVariables) -> bool {
+pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
     &&& s.mem === Map::empty()
     &&& s.mappings === Map::empty()
+    &&& forall |id: nat| id <= c.thread_no <==> s.thread_state.contains_key(id)
+    &&& forall |id: nat| id <= c.thread_no ==> s.thread_state[id] == 0
 }
 
 pub open spec fn mem_domain_from_mappings_contains(
@@ -204,7 +206,6 @@ pub open spec fn step_ReadWrite_end(
                 base + pte.frame.size,
             )
             // .. and the result depends on the flags.
-
             &&& match op {
                 RWOp::Store { new_value, result } => {
                     if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor
@@ -212,7 +213,7 @@ pub open spec fn step_ReadWrite_end(
                         &&& result is Ok
                         &&& s2.mem === s1.mem.insert(vmem_idx, new_value)
                     } else {
-                        &&& result is Pagefault
+                        &&& result is Undefined
                         &&& s2.mem === s1.mem
                     }
                 },
@@ -223,7 +224,7 @@ pub open spec fn step_ReadWrite_end(
                         &&& result is Value
                         &&& result->0 == s1.mem.index(vmem_idx)
                     } else {
-                        &&& result is Pagefault
+                        &&& result is Undefined
                     }
                 },
             }
@@ -233,12 +234,12 @@ pub open spec fn step_ReadWrite_end(
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(
                 vmem_idx,
             )
-            // .. and the result is always a pagefault and an unchanged memory.
+            // .. and the result is always a Undefined and an unchanged memory.
 
             &&& s2.mem === s1.mem
             &&& match op {
-                RWOp::Store { new_value, result } => result is Pagefault,
-                RWOp::Load { is_exec, result } => result is Pagefault,
+                RWOp::Store { new_value, result } => result is Undefined,
+                RWOp::Load { is_exec, result } => result is Undefined,
             }
         },
     }
@@ -261,6 +262,7 @@ pub open spec fn step_Map_enabled(
     &&& !candidate_mapping_overlaps_existing_pmem(map, vaddr, pte)
 }
 
+//think about weather or not map start is valid if it overlaps with existing vmem
 pub open spec fn step_Map_start(
     c: AbstractConstants,
     s1: AbstractVariables,
@@ -319,7 +321,12 @@ pub open spec fn step_Unmap_start(
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] == 0
-    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, 3)
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, 3)
+    //effect from unmap not visible yet (?) at least we cant make guarantees    
+    //mem stays the same if vaddr is not valid
+    //deleted from mem as we cant make guarantees about it anymore from accesses ????
+    &&& s2.mappings === s1.mappings
+    &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
 }
 
 pub open spec fn step_Unmap_end(
@@ -414,7 +421,7 @@ pub open spec fn next_step(
         AbstractStep::UnmapEnd       { vaddr, thread_id, result }      => step_Unmap_end       ( c, s1, s2, thread_id, vaddr,  result,),
         AbstractStep::ResolveStart   { vaddr, thread_id }              => step_Resolve_start   ( c, s1, s2, thread_id, vaddr,),
         AbstractStep::ResolveEnd     { vaddr, thread_id, result }      => step_Resolve_end     ( c, s1, s2, thread_id, vaddr, result,),
-        AbstractStep::Stutter                                           => step_Stutter         ( c, s1, s2),
+        AbstractStep::Stutter                                          => step_Stutter         ( c, s1, s2),
     }
 }
 
