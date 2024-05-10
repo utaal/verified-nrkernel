@@ -4,10 +4,9 @@
 
 use crate::definitions_t::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    candidate_mapping_overlaps_existing_vmem, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
+    candidate_mapping_overlaps_existing_vmem, overlap, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
     L3_ENTRY_SIZE, MAX_PHYADDR, PT_BOUND_HIGH, PT_BOUND_LOW, WORD_SIZE,
-};
-//use crate::spec_t::hlspec::AbstractArguments::{Empty};
+};<s
 use crate::spec_t::mem;
 use vstd::prelude::*;
 
@@ -216,7 +215,7 @@ pub open spec fn step_ReadWrite(
                 },
                 RWOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
-                    &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec
+                    &&& if ( pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec
                         ==> !pte.flags.disable_execute) {
                         &&& result is Value
                         &&& result->0 == s1.mem.index(vmem_idx)
@@ -242,7 +241,36 @@ pub open spec fn step_ReadWrite(
     }
 }
 
+//call with candidate_mapping_overlaps_inflight_pmem(threadstate.values(), pte)
+pub open spec fn candidate_mapping_overlaps_inflight_pmem1(inflightargs: Set<AbstractArguments>, pte: PageTableEntry) -> bool {
+    &&& exists|b: AbstractArguments| #![auto] {
+        &&& inflightargs.contains(b)
+        &&& match b {
+            Map{_, inflight_pte} => { overlap(pte.frame, inflight_pte.frame)}
+            _ => {false}
+            }
+    }
+}
+
+//call with candidate_mapping_overlaps_inflight_pmem2(threadstate, pte)
+pub open spec fn candidate_mapping_overlaps_inflight_pmem2(threadstate : Map<nat,AbstractArguments>, pte: PageTableEntry) -> bool {
+    &&& exists|b: nat| #![auto] {
+        &&& threadstate.dom().contains(b)
+        &&& match threadstat[b]  match b {
+            Map{_, inflight_pte} => { overlap(pte.frame, inflight_pte.frame)}
+            _ => {false}
+            }
+    }
+}
+
+//you might not like this but this is how peak specs look like
+//pub open spec fn candidate_mapping_overlaps_inflight_pmem3(threadstate : Map<nat,AbstractArguments>, unused_base:nat, pte: PageTableEntry) -> bool {
+//let map = threadstate.values().filter(|x| x is Map(_,_)).mk_map(|x| match x {map{vaddr, if_pte} => {vaddr}, _ => arbitary()}).invert().map_values(|x| match x )
+//candidate_mapping_overlaps_existing_pmem(map, unused_base, pte)
+//}
+
 pub open spec fn step_Map_enabled(
+    inflight: Set<AbstractArguments>
     map: Map<nat, PageTableEntry>,
     vaddr: nat,
     pte: PageTableEntry,
@@ -257,6 +285,7 @@ pub open spec fn step_Map_enabled(
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
     &&& !candidate_mapping_overlaps_existing_pmem(map, vaddr, pte)
+    &&& !candidate_mapping_overlaps_inflight_pmem(inflight, pte)
 }
 
 //think about weather or not map start is valid if it overlaps with existing vmem
@@ -268,7 +297,7 @@ pub open spec fn step_Map_start(
     vaddr: nat,
     pte: PageTableEntry,
 ) -> bool {
-    &&& step_Map_enabled(s1.mappings, vaddr, pte)
+    &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
     &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Map{vaddr,pte})
@@ -321,11 +350,12 @@ pub open spec fn step_Unmap_start(
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
     &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{vaddr})
-    //effect from unmap not visible yet (?) at least we cant make guarantees    
+    //effect from unmap not visible yet
     //mem stays the same if vaddr is not valid
-    //deleted from mem as we cant make guarantees about it anymore from accesses ????
+    //deleted from mem as we cant make guarantees about it anymore from accesses    
     &&& s2.mappings === s1.mappings
     &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
+
 }
 
 pub open spec fn step_Unmap_end(
