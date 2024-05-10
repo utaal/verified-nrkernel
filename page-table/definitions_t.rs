@@ -97,7 +97,7 @@ pub open spec fn candidate_mapping_overlaps_existing_vmem(mappings: Map<nat, Pag
     }
 }
 
-pub open spec fn candidate_mapping_overlaps_existing_pmem(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn candidate_mapping_overlaps_existing_pmem(mappings: Map<nat, PageTableEntry>, pte: PageTableEntry) -> bool {
     exists|b: nat| #![auto] {
         &&& mappings.dom().contains(b)
         &&& overlap(pte.frame, mappings.index(b).frame)

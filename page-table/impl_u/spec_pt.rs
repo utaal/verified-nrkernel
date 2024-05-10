@@ -48,7 +48,7 @@ pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTa
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
-    &&& !candidate_mapping_overlaps_existing_pmem(s.interp(), vaddr, pte)
+    &&& !candidate_mapping_overlaps_existing_pmem(s.interp(), pte)
     &&& s.pt_mem.alloc_available_pages() >= 3
 }
 
