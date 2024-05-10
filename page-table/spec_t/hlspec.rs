@@ -4,7 +4,7 @@
 
 use crate::definitions_t::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    candidate_mapping_overlaps_existing_vmem, overlap, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
+    candidate_mapping_overlaps_existing_vmem, MemRegion, overlap, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
     L3_ENTRY_SIZE, MAX_PHYADDR, PT_BOUND_HIGH, PT_BOUND_LOW, WORD_SIZE,
 };
 use crate::spec_t::mem;
@@ -242,12 +242,25 @@ pub open spec fn step_ReadWrite(
 }
 
 //call with candidate_mapping_overlaps_inflight_pmem(threadstate.values(), pte)
+pub open spec fn candidate_mapping_overlaps_inflight_vmem(inflightargs: Set<AbstractArguments>, base: nat, candidate: PageTableEntry) -> bool {
+    &&& exists|b: AbstractArguments| #![auto] {
+        &&& inflightargs.contains(b)
+        &&& match b {
+            AbstractArguments::Map {vaddr, pte} => { overlap( MemRegion { base: vaddr, size: pte.frame.size },
+                                                              MemRegion { base: base,    size: candidate.frame.size }) }
+            AbstractArguments::Unmap{vaddr, pte} =>  { overlap( MemRegion { base: vaddr, size: pte.frame.size },
+                                                                MemRegion { base: base,    size: candidate.frame.size }) }
+            _ => {false}
+            }
+    }
+}
+
 pub open spec fn candidate_mapping_overlaps_inflight_pmem(inflightargs: Set<AbstractArguments>, candidate: PageTableEntry) -> bool {
     &&& exists|b: AbstractArguments| #![auto] {
         &&& inflightargs.contains(b)
         &&& match b {
             AbstractArguments::Map {vaddr, pte} => { overlap(candidate.frame, pte.frame)}
-            //Unap{inflight_vaddr, inflight_pte} => { overlap(candidate.frame, inflight_pte.frame)}
+            AbstractArguments::Unmap{vaddr, pte} => { overlap(candidate.frame, pte.frame)}
             _ => {false}
             }
     }
@@ -345,7 +358,7 @@ pub open spec fn step_Unmap_start(
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    //&&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{vaddr, s1.mappings[vaddr]}),
+    //&&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, s1.mappings.index(vaddr)})
     //effect from unmap not visible yet
     //mem stays the same if vaddr is not valid
     //deleted from mem as we cant make guarantees about it anymore from accesses    
