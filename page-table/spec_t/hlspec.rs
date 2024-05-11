@@ -51,7 +51,7 @@ pub enum AbstractArguments {
 
 pub open spec fn wf(c: AbstractConstants, s:AbstractVariables) -> bool {
     &&& forall |id: nat| id <= c.thread_no <==> s.thread_state.contains_key(id)
-    &&& s.mem.dom().finite()
+    //&&& s.mem.dom().finite()
 }
 
 pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
@@ -354,14 +354,11 @@ pub open spec fn step_Unmap_start(
     thread_id: nat,
     vaddr: nat,
 ) -> bool {
-    //let smth smth be smth smth 
+    let pte =  s1.mappings.index(vaddr);
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    //&&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, s1.mappings.index(vaddr)})
-    //effect from unmap not visible yet
-    //mem stays the same if vaddr is not valid
-    //deleted from mem as we cant make guarantees about it anymore from accesses    
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte})
     &&& s2.mappings === s1.mappings
     &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
 
@@ -469,5 +466,32 @@ pub open spec fn next_step(
 pub open spec fn next(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables) -> bool {
     exists|step: AbstractStep| next_step(c, s1, s2, step)
 }
+
+proof fn init_implies_wf( c: AbstractConstants, s: AbstractVariables,)
+    requires init(c, s),
+    ensures wf(c, s),
+{}
+
+proof fn next_step_preserves_wf(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables,)
+    requires
+        next(c, s1, s2),
+        wf(c, s1),
+    ensures
+        wf(c, s2),
+
+{
+    let p = choose|step: AbstractStep| next_step(c, s1, s2, step);
+    match p {
+         AbstractStep::ReadWrite     { thread_id, vaddr, op, pte }      => {assert(wf(c,s2));},
+        AbstractStep::MapStart       { thread_id, vaddr, pte }          => {assert(wf(c,s2));},
+        AbstractStep::MapEnd         { thread_id, result }              => {assert(wf(c,s2));},
+        AbstractStep::UnmapStart     { thread_id, vaddr  }              => {assert(wf(c,s2));},
+        AbstractStep::UnmapEnd       { thread_id, result }              => {assert(wf(c,s2));},
+        AbstractStep::ResolveStart   { thread_id, vaddr, }              => {assert(wf(c,s2));},
+        AbstractStep::ResolveEnd     { thread_id, result }              => {assert(wf(c,s2));},
+        AbstractStep::Stutter                                           => {assert(wf(c,s2));},
+    }
+}
+
 
 } // verus!
