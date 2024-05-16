@@ -1,4 +1,4 @@
 #! /bin/bash 
 
-~/Dokumente/Studium/Thesis/verus/source/target-verus/release/verus ~/Dokumente/Studium/Thesis//verified-nrkernel/page-table/main.rs --cfg feature=\"impl\" --rlimit 30
+~/Dokumente/Studium/Thesis/verus/source/target-verus/release/verus ~/Dokumente/Studium/Thesis//verified-nrkernel/page-table/main.rs "$@"
 

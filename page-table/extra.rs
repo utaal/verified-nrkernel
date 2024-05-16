@@ -48,6 +48,39 @@ pub proof fn aligned_transitive_auto()
     }
 }
 
+pub proof fn lemma_subset_is_finite<A>(
+    a: Set<A>,
+    b: Set<A>,
+)
+    requires 
+        a.finite(),
+        b.subset_of(a),
+    ensures
+        b.finite(),
+{   let c = a.difference(b);   
+    assert (a.difference(c).finite());
+    assert (a.difference(c) === b);
+}
+
+pub proof fn lemma_set_of_first_n_nat_is_finite( n: nat, )
+    requires
+    ensures
+         Set::new(|i: nat| i < n + 1 ).finite()
+    decreases n
+{   
+    let b = Set::new(|i: nat| i < n + 1);
+    let c = Set::new(|i: nat| i < n ).insert(n);
+    if ( n > 0) {    
+        lemma_set_of_first_n_nat_is_finite((n - 1) as nat);
+    } else {
+        assert( Set::new(|i: nat| i < 0 ) === Set::empty());
+        assert( Set::new(|i: nat| i < 0 ).finite());
+    }
+    assert (c.finite());
+    assert (c === b);
+    assert (b.finite());
+}
+
 pub proof fn lemma_aligned_iff_eq_mul_div(a: nat, b: nat)
     requires b > 0
     ensures aligned(a, b) <==> a == b * (a / b)
