@@ -51,6 +51,7 @@ pub enum AbstractArguments {
 
 pub open spec fn wf(c: AbstractConstants, s:AbstractVariables) -> bool {
     &&& forall |id: nat| id <= c.thread_no <==> s.thread_state.contains_key(id)
+    &&& s.mappings.dom().finite()
     //&&& s.mem.dom().finite()
 }
 
@@ -77,6 +78,7 @@ pub open spec fn mem_domain_from_mappings_contains(
         }
 }
 
+
 pub open spec fn mem_domain_from_mappings(
     phys_mem_size: nat,
     mappings: Map<nat, PageTableEntry>,
@@ -84,6 +86,25 @@ pub open spec fn mem_domain_from_mappings(
     Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings))
 }
 
+pub proof fn lemma_mem_domain_from_mappings_finite(
+    phys_mem_size: nat,
+    mappings: Map<nat, PageTableEntry>,
+)
+    requires
+         mappings.dom().finite(),
+    ensures
+        mem_domain_from_mappings(phys_mem_size, mappings).finite(),
+         
+{
+    let mapdom = Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings));
+    assert(forall|word_idx: nat| mapdom.contains(va) ==>  mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings);
+    assert(forall|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings) ==>  (exists|base: nat, pte: PageTableEntry| (word_idx * WORD_SIZE as nat) < base + pte.frame.size) );
+    //assert(there is a max base + frame.size)    
+    //assert(exists|va: nat| forall|va2: nat| mappings.contains_key(va2) ==> va2 <= va);
+    //use Lemma Here
+}
+
+//ensures that if a new mapping is added the old ones are still in there and no new other mappings appear
 pub proof fn lemma_mem_domain_from_mappings(
     phys_mem_size: nat,
     mappings: Map<nat, PageTableEntry>,
@@ -484,8 +505,10 @@ proof fn next_step_preserves_wf(c: AbstractConstants, s1: AbstractVariables, s2:
     match p {
          AbstractStep::ReadWrite     { thread_id, vaddr, op, pte }      => {assert(wf(c,s2));},
         AbstractStep::MapStart       { thread_id, vaddr, pte }          => {assert(wf(c,s2));},
-        AbstractStep::MapEnd         { thread_id, result }              => {assert(wf(c,s2));},
-        AbstractStep::UnmapStart     { thread_id, vaddr  }              => {assert(wf(c,s2));},
+        AbstractStep::MapEnd         { thread_id, result }              => {
+                                                                            assert(wf(c,s2));},
+        AbstractStep::UnmapStart     { thread_id, vaddr  }              => { 
+                                                                            assert(wf(c,s2));},
         AbstractStep::UnmapEnd       { thread_id, result }              => {assert(wf(c,s2));},
         AbstractStep::ResolveStart   { thread_id, vaddr, }              => {assert(wf(c,s2));},
         AbstractStep::ResolveEnd     { thread_id, result }              => {assert(wf(c,s2));},
