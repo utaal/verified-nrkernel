@@ -197,8 +197,20 @@ impl Arch {
         } else {
             assert(forall|a: int, b: int| #[trigger] (a * b) == b * a);
             self.lemma_entry_sizes_aligned(i+1,j);
-            vstd::arithmetic::div_mod::lemma_mod_multiples_basic_auto();
-            crate::extra::aligned_transitive_auto();
+            assert(aligned(self.entry_size(i+1), self.entry_size(j)));
+            assert(self.entry_size(i) % self.entry_size(i + 1) == 0) by {
+                // assert(self.inv());
+                // assert(self.entry_size_is_next_layer_size(i));
+                // assert(self.entry_size_is_next_layer_size(i + 1));
+                // assert(self.entry_size(i) == self.entry_size((i + 1) as nat) * self.num_entries((i + 1) as nat));
+                assert(self.entry_size(i) % self.entry_size(i + 1) == 0) by (nonlinear_arith)
+                    requires i != j, self.entry_size(i) > 0, self.entry_size(i + 1) > 0,
+                    self.entry_size(i) == self.entry_size((i + 1) as nat) * self.num_entries((i + 1) as nat),
+                { };
+
+            };
+            assert(aligned(self.entry_size(i), self.entry_size(i+1)));
+            crate::extra::aligned_transitive(self.entry_size(i), self.entry_size(i+1), self.entry_size(j));
             assert(aligned(self.entry_size(i), self.entry_size(j)));
         }
     }
