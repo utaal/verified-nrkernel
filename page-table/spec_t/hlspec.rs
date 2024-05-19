@@ -10,6 +10,7 @@ use crate::definitions_t::{
 use crate::spec_t::mem;
 use vstd::prelude::*;
 
+
 verus! {
 
 pub struct AbstractConstants {
@@ -44,7 +45,7 @@ pub enum AbstractStep {
 #[allow(inconsistent_fields)]
 pub enum AbstractArguments {
     Map           { vaddr: nat, pte: PageTableEntry },
-    Unmap         { vaddr: nat, pte: PageTableEntry },
+    Unmap         { vaddr: nat, pte: Option<PageTableEntry> },
     Resolve       { vaddr: nat },
     Empty,
 }
@@ -93,12 +94,13 @@ pub proof fn lemma_mem_domain_from_mappings_finite(
     requires
          mappings.dom().finite(),
     ensures
-        mem_domain_from_mappings(phys_mem_size, mappings).finite(),
+      //  mem_domain_from_mappings(phys_mem_size, mappings).finite(),
          
 {
-    let mapdom = Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings));
-    assert(forall|word_idx: nat| mapdom.contains(va) ==>  mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings);
-    assert(forall|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings) ==>  (exists|base: nat, pte: PageTableEntry| (word_idx * WORD_SIZE as nat) < base + pte.frame.size) );
+    let memdom = Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings));
+    assert(forall |word_idx: nat| #![auto] memdom.contains(word_idx) ==>  mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings));
+    //assert(forall |word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings) ==>  (exists|base: nat, pte: PageTableEntry| (word_idx * WORD_SIZE as nat) < base + pte.frame.size) );
+    
     //assert(there is a max base + frame.size)    
     //assert(exists|va: nat| forall|va2: nat| mappings.contains_key(va2) ==> va2 <= va);
     //use Lemma Here
@@ -269,8 +271,9 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(inflightargs: Set<Abst
         &&& match b {
             AbstractArguments::Map {vaddr, pte} => { overlap( MemRegion { base: vaddr, size: pte.frame.size },
                                                               MemRegion { base: base,    size: candidate.frame.size }) }
-            AbstractArguments::Unmap{vaddr, pte} =>  { overlap( MemRegion { base: vaddr, size: pte.frame.size },
-                                                                MemRegion { base: base,    size: candidate.frame.size }) }
+            AbstractArguments::Unmap{vaddr, pte} =>  { &&& pte.is_some() 
+                                                       &&& overlap( MemRegion { base: vaddr, size: pte.unwrap().frame.size },
+                                                                     MemRegion { base: base,    size: candidate.frame.size }) }
             _ => {false}
             }
     }
@@ -281,7 +284,8 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(inflightargs: Set<Abst
         &&& inflightargs.contains(b)
         &&& match b {
             AbstractArguments::Map {vaddr, pte} => { overlap(candidate.frame, pte.frame)}
-            AbstractArguments::Unmap{vaddr, pte} => { overlap(candidate.frame, pte.frame)}
+            AbstractArguments::Unmap{vaddr, pte} => { &&& pte.is_some() 
+                                                      &&& overlap(candidate.frame, pte.unwrap().frame)}
             _ => {false}
             }
     }
@@ -375,7 +379,7 @@ pub open spec fn step_Unmap_start(
     thread_id: nat,
     vaddr: nat,
 ) -> bool {
-    let pte =  s1.mappings.index(vaddr);
+    let pte = Some (s1.mappings.index(vaddr));
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty

@@ -80,6 +80,7 @@ pub proof fn lemma_set_of_first_n_nat_is_finite( n: nat, )
     assert (b.finite());
 }
 
+/**
 pub proof fn lemma_bounded_implies_finite(s: Set<nat>)
     requires
         exists | bound: nat| forall |element: nat|  s.contains(element) ==> element < bound,
@@ -92,6 +93,7 @@ pub proof fn lemma_bounded_implies_finite(s: Set<nat>)
     lemma_subset_is_finite(Set::new(|i: nat| i < (bound + 1 as nat)) , s);
     assert(s.finite());
 }
+**/
 
 pub proof fn lemma_aligned_iff_eq_mul_div(a: nat, b: nat)
     requires b > 0
