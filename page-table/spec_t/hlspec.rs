@@ -10,6 +10,8 @@ use crate::definitions_t::{
 use crate::spec_t::mem;
 use vstd::prelude::*;
 
+use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
+
 
 verus! {
 
@@ -53,7 +55,7 @@ pub enum AbstractArguments {
 pub open spec fn wf(c: AbstractConstants, s:AbstractVariables) -> bool {
     &&& forall |id: nat| id <= c.thread_no <==> s.thread_state.contains_key(id)
     &&& s.mappings.dom().finite()
-    //&&& s.mem.dom().finite()
+    &&& s.mem.dom().finite()
 }
 
 pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
@@ -69,16 +71,21 @@ pub open spec fn mem_domain_from_mappings_contains(
     mappings: Map<nat, PageTableEntry>,
 ) -> bool {
     let vaddr = word_idx * WORD_SIZE as nat;
-    exists|base: nat, pte: PageTableEntry|
-        {
-            let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = mem::word_index_spec(paddr);
-            &&& #[trigger] mappings.contains_pair(base, pte)
-            &&& between(vaddr, base, base + pte.frame.size)
-            &&& pmem_idx < phys_mem_size
-        }
+    exists|base: nat, pte: PageTableEntry|  {&&& #[trigger] mappings.contains_pair(base, pte) 
+                                             &&& mem_domain_from_entry_contains( phys_mem_size, vaddr, base, pte,)} 
 }
 
+pub open spec fn mem_domain_from_entry_contains(
+    phys_mem_size: nat,
+    vaddr: nat,
+    base: nat, 
+    pte: PageTableEntry,
+) -> bool {
+    let paddr = (pte.frame.base + (vaddr - base)) as nat;
+    let pmem_idx = mem::word_index_spec(paddr);
+    &&& between(vaddr, base, base + pte.frame.size)
+    &&& pmem_idx < phys_mem_size
+}
 
 pub open spec fn mem_domain_from_mappings(
     phys_mem_size: nat,
@@ -87,24 +94,160 @@ pub open spec fn mem_domain_from_mappings(
     Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings))
 }
 
-pub proof fn lemma_mem_domain_from_mappings_finite(
+pub open spec fn mem_domain_from_entry(
+    phys_mem_size: nat,
+    base: nat,
+    pte: PageTableEntry,
+) -> Set<nat> {
+    Set::new(|word_idx: nat| mem_domain_from_entry_contains( phys_mem_size, (word_idx * WORD_SIZE as nat), base, pte,) )
+}
+
+pub proof fn lemma_mem_domain_from_entry_finite(
+    phys_mem_size: nat,
+    base: nat,
+    pte: PageTableEntry,
+)
+    requires
+    ensures mem_domain_from_entry(phys_mem_size, base, pte).finite(),
+{
+    let bound = base + pte.frame.size;
+    let vaddrs = mem_domain_from_entry(phys_mem_size, base, pte);
+    let n_nats =  Set::new(|i: nat| i < (bound + 1 as nat));
+    assert(vaddrs.subset_of(n_nats));
+    lemma_set_of_first_n_nat_is_finite(bound);
+    lemma_subset_is_finite(n_nats, vaddrs);
+    assert(vaddrs.finite());
+}
+    
+
+pub proof fn lemma_mem_domain_from_empty_mappings_finite(
     phys_mem_size: nat,
     mappings: Map<nat, PageTableEntry>,
 )
     requires
-         mappings.dom().finite(),
+         mappings.dom() === Set::empty(),
     ensures
-      //  mem_domain_from_mappings(phys_mem_size, mappings).finite(),
-         
+         mem_domain_from_mappings(phys_mem_size, mappings).finite(),
 {
-    let memdom = Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings));
-    assert(forall |word_idx: nat| #![auto] memdom.contains(word_idx) ==>  mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings));
-    //assert(forall |word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings) ==>  (exists|base: nat, pte: PageTableEntry| (word_idx * WORD_SIZE as nat) < base + pte.frame.size) );
-    
-    //assert(there is a max base + frame.size)    
-    //assert(exists|va: nat| forall|va2: nat| mappings.contains_key(va2) ==> va2 <= va);
-    //use Lemma Here
+    assert(mem_domain_from_mappings(phys_mem_size, mappings) === Set::empty())
 }
+
+
+
+pub proof fn lemma_mem_domain_from_mapping_finite (
+    phys_mem_size: nat,
+    mappings: Map<nat, PageTableEntry>,
+)
+    requires mappings.dom().finite(),
+    ensures  mem_domain_from_mappings(phys_mem_size, mappings).finite(),
+{
+if (exists |bs: nat| mappings.dom().contains(bs)) {
+        let  bs  = choose |bs: nat | mappings.dom().contains(bs);
+        let pt = mappings[bs];
+        let mappings_reduc = mappings.remove(bs);
+        assert(!mappings_reduc.dom().contains(bs));
+        assert(mappings_reduc.insert(bs,pt) == mappings);
+        assert(mappings_reduc.dom().subset_of( mappings.dom() ));
+        lemma_subset_is_finite(mappings.dom(), mappings_reduc.dom());
+        lemma_mem_domain_from_mappings_finite_induction(
+            phys_mem_size,
+            mappings_reduc,
+            bs,
+            pt,
+        );
+    } else {
+        assert(mappings.dom() === Set::empty());
+        lemma_mem_domain_from_empty_mappings_finite(phys_mem_size, mappings);
+    }
+}
+
+
+
+pub proof fn lemma_mem_domain_from_mappings_finite_induction (
+    phys_mem_size: nat,
+    mappings: Map<nat, PageTableEntry>,
+    base: nat,
+    pte: PageTableEntry, 
+)
+    requires mappings.dom().finite(),
+            !mappings.dom().contains(base),
+    ensures  mem_domain_from_mappings(phys_mem_size, mappings.insert(base, pte)).finite(),
+    decreases mappings.dom().len(),
+{
+if (exists |bs: nat| mappings.dom().contains(bs)) {
+        let  bs  = choose |bs: nat | mappings.dom().contains(bs);
+        let pt = mappings[bs];
+        let mappings_reduc = mappings.remove(bs);
+        assert(!mappings_reduc.dom().contains(bs));
+        assert(mappings_reduc.insert(bs,pt) == mappings);
+        assert(mappings_reduc.dom().subset_of( mappings.dom() ));
+        lemma_subset_is_finite(mappings.dom(), mappings_reduc.dom());
+        lemma_mem_domain_from_mappings_finite_induction(
+            phys_mem_size,
+            mappings_reduc,
+            bs,
+            pt,
+        );
+    } else {
+        assert(mappings.dom() === Set::empty());
+        lemma_mem_domain_from_empty_mappings_finite(phys_mem_size, mappings);
+    }
+    lemma_finite_step(phys_mem_size, mappings, base, pte);
+}
+
+
+pub proof fn lemma_finite_step(
+    phys_mem_size: nat,
+    mappings: Map<nat, PageTableEntry>,
+    base: nat,
+    pte: PageTableEntry, 
+)
+    requires mem_domain_from_mappings(phys_mem_size, mappings).finite(),
+             mappings.dom().finite(),
+            !mappings.dom().contains(base),
+    ensures  mem_domain_from_mappings(phys_mem_size, mappings.insert(base, pte)).finite(),
+{
+    let mem_dom_ext = mem_domain_from_mappings(phys_mem_size, mappings.insert(base,pte));
+    let mem_dom_union = mem_domain_from_mappings(phys_mem_size, mappings).union(mem_domain_from_entry(phys_mem_size, base, pte));
+    assert forall |wrd : nat| mem_dom_ext.contains(wrd) implies mem_dom_union.contains(wrd) by {
+    lemma_mem_domain_from_new_mappings_subset(phys_mem_size, mappings, base, pte, wrd);
+    }
+    assert(mem_dom_ext.subset_of(mem_dom_union));
+    lemma_mem_domain_from_entry_finite(phys_mem_size, base, pte);
+    assert(mem_dom_union.finite());
+    lemma_subset_is_finite(mem_dom_union, mem_dom_ext);
+}
+
+
+pub proof fn lemma_mem_domain_from_new_mappings_subset(
+    phys_mem_size: nat,
+    mappings: Map<nat, PageTableEntry>,
+    bs: nat,
+    pt: PageTableEntry,
+    word_idx: nat,
+)
+    requires
+       mem_domain_from_mappings(phys_mem_size, mappings.insert(bs, pt)).contains(word_idx),
+    ensures
+       mem_domain_from_mappings(phys_mem_size, mappings).union(mem_domain_from_entry(phys_mem_size, bs, pt)).contains(word_idx)
+        
+{   
+    let mappings_ext = mappings.insert(bs, pt);
+    let vaddr = word_idx * WORD_SIZE as nat;
+    let (base, pte) : (nat, PageTableEntry) = choose |base: nat, pte: PageTableEntry| {&&& #[trigger] mappings_ext.contains_pair(base, pte) 
+                                                                                       &&& mem_domain_from_entry_contains( phys_mem_size, vaddr, base, pte,)};
+    if (base === bs && pte === pt){
+  
+    assert(mem_domain_from_entry(phys_mem_size, bs, pt).contains(word_idx));
+    
+    } else {
+    assert (mappings.contains_pair(base, pte));
+    assert (mem_domain_from_mappings(phys_mem_size, mappings).contains(word_idx));
+
+    }
+        
+}
+
 
 //ensures that if a new mapping is added the old ones are still in there and no new other mappings appear
 pub proof fn lemma_mem_domain_from_mappings(
@@ -371,7 +514,9 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
         ||| aligned(vaddr, L1_ENTRY_SIZE as nat)
     }
 }
-
+//shouldnt need to check for overlapping pmem bc:
+// if its being mapped rn then itll cause Err anyways
+// if its being unmapped rn then vmem is the way to go. 
 pub open spec fn step_Unmap_start(
     c: AbstractConstants,
     s1: AbstractVariables,
@@ -379,11 +524,11 @@ pub open spec fn step_Unmap_start(
     thread_id: nat,
     vaddr: nat,
 ) -> bool {
-    let pte = Some (s1.mappings.index(vaddr));
+    let pte = if (s1.mappings.dom().contains(vaddr)){Some (s1.mappings.index(vaddr))} else {Option::None};
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte })
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte})
     &&& s2.mappings === s1.mappings
     &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
 
@@ -400,7 +545,7 @@ pub open spec fn step_Unmap_end(
     &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
     &&& match s1.thread_state[thread_id] {
         AbstractArguments::Unmap{vaddr, pte} => {
-            &&& if s1.mappings.dom().contains(vaddr) {
+            &&& if pte is Some {
                 &&& result is Ok
                 &&& s2.mappings === s1.mappings.remove(vaddr)
                 &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
@@ -509,11 +654,12 @@ proof fn next_step_preserves_wf(c: AbstractConstants, s1: AbstractVariables, s2:
     match p {
          AbstractStep::ReadWrite     { thread_id, vaddr, op, pte }      => {assert(wf(c,s2));},
         AbstractStep::MapStart       { thread_id, vaddr, pte }          => {assert(wf(c,s2));},
-        AbstractStep::MapEnd         { thread_id, result }              => {
+        AbstractStep::MapEnd         { thread_id, result }              => {lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
                                                                             assert(wf(c,s2));},
-        AbstractStep::UnmapStart     { thread_id, vaddr  }              => { 
+        AbstractStep::UnmapStart     { thread_id, vaddr  }              => {lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
                                                                             assert(wf(c,s2));},
-        AbstractStep::UnmapEnd       { thread_id, result }              => {assert(wf(c,s2));},
+        AbstractStep::UnmapEnd       { thread_id, result }              => { lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
+                                                                            assert(wf(c,s2));},
         AbstractStep::ResolveStart   { thread_id, vaddr, }              => {assert(wf(c,s2));},
         AbstractStep::ResolveEnd     { thread_id, result }              => {assert(wf(c,s2));},
         AbstractStep::Stutter                                           => {assert(wf(c,s2));},
