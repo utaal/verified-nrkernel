@@ -460,6 +460,7 @@ pub open spec fn step_Map_enabled(
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
+    // TODO: remove the following an enabling condition, turn it into unspecified behavior
     &&& !candidate_mapping_overlaps_existing_pmem(map, pte)
     &&& !candidate_mapping_overlaps_inflight_pmem(inflight, pte)
 }
@@ -676,5 +677,20 @@ proof fn next_step_preserves_wf(c: AbstractConstants, s1: AbstractVariables, s2:
     }
 }
 
+spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool
+{
+    &&& wf(c, s)
+    &&& true // TODO: there is no aliased physical memory
+}
+
+proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables,)
+    requires
+        next(c, s1, s2),
+        inv(c, s1),
+    ensures
+        inv(c, s2),
+{
+    next_step_preserves_wf(c, s1, s2);
+}
 
 } // verus!
