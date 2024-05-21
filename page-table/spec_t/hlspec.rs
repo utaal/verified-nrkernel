@@ -340,7 +340,7 @@ pub open spec fn state_unchanged_besides_thread_state(
     &&& s2.mappings === s1.mappings
 }
 
-
+//since unmap deleted pte inflight pte == pagefault
 pub open spec fn step_ReadWrite(
     c: AbstractConstants,
     s1: AbstractVariables,
@@ -407,7 +407,7 @@ pub open spec fn step_ReadWrite(
     }
 }
 
-//call with candidate_mapping_overlaps_inflight_pmem(threadstate.values(), pte)
+//call with candidate_mapping_overlaps_inflight_vmem(threadstate.values(), pte)
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(inflightargs: Set<AbstractArguments>, base: nat, candidate: PageTableEntry) -> bool {
     &&& exists|b: AbstractArguments| #![auto] {
         &&& inflightargs.contains(b)
@@ -476,7 +476,11 @@ pub open spec fn step_Map_start(
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Map{vaddr,pte})
+    &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, pte)) {
+        &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Map{vaddr,pte})
+    } else {
+        &&& s2 === s1
+    }
 
 }
 
@@ -524,13 +528,19 @@ pub open spec fn step_Unmap_start(
     thread_id: nat,
     vaddr: nat,
 ) -> bool {
-    let pte = if (s1.mappings.dom().contains(vaddr)){Some (s1.mappings.index(vaddr))} else {Option::None};
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte })
-    &&& step_Unmap_enabled(vaddr)
-    &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& s2.mappings === s1.mappings
-    &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
+     let pte = if (s1.mappings.dom().contains(vaddr)){Some (s1.mappings.index(vaddr))} else {Option::None};
+     &&& step_Unmap_enabled(vaddr)
+     &&& valid_thread(c, thread_id)
+     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
+     &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, (s1.mappings.index(vaddr))) || pte is None) {
+        &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte })
+        &&& if (pte is None ){s2.mappings === s1.mappings}
+            else {s2.mappings === s1.mappings.remove(vaddr)}
+        &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
+    } else {
+        s2 === s1
+    }
+
 
 }
 
