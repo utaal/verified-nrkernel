@@ -114,7 +114,7 @@ pub proof fn lemma_mem_domain_from_entry_finite(
     let vaddrs = mem_domain_from_entry(phys_mem_size, base, pte);
     let n_nats =  Set::new(|i: nat| i < (bound + 1 as nat));
     assert(vaddrs.subset_of(n_nats));
-    lemma_set_of_first_n_nat_is_finite(bound);
+    lemma_set_of_first_n_nat_is_finite(bound + 1);
     lemma_subset_is_finite(n_nats, vaddrs);
     assert(vaddrs.finite());
 }
