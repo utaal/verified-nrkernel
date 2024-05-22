@@ -16,6 +16,8 @@ pub mod constants;
 mod exec;
 mod spec;
 
+mod counter;
+
 use crate::spec::simple_log::SimpleLog;
 use crate::spec::unbounded_log::UnboundedLog;
 
