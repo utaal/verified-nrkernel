@@ -156,6 +156,7 @@ pub trait Dispatch: Sized {
     fn init() -> (res: Self)
         ensures
             res@ == Self::init_spec(),
+            res.inv(),
     ;
 
     /// Clones a write operation to be copied to and read from the shared log.
@@ -172,13 +173,18 @@ pub trait Dispatch: Sized {
 
     /// Executes a read-only operation against the data structure and returns the result.
     fn dispatch(&self, op: Self::ReadOperation) -> (result: Self::Response)
+        requires
+            self.inv(),
         ensures
             Self::dispatch_spec(self@, op) == result,
     ;
 
     /// Executes a write operation against the data structure and returns the result.
     fn dispatch_mut(&mut self, op: Self::WriteOperation) -> (result: Self::Response)
+        requires
+            old(self).inv(),
         ensures
+            self.inv(),
             Self::dispatch_mut_spec(old(self)@, op) == (self@, result),
     ;
 
@@ -193,6 +199,9 @@ pub trait Dispatch: Sized {
         Self::View,
         Self::Response,
     );
+
+    /// An invariant that is preserved by [`Dispatch::dispatch_mut`]
+    spec fn inv(&self) -> bool;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

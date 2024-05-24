@@ -706,6 +706,7 @@ impl<DT: Dispatch> NrLog<DT> {
     ) -> (result: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
+            old(actual_replica).inv(),
             replica_token@ < self.local_versions.len(),
             old(responses).len() == 0,
             ghost_data@.append_pre(
@@ -717,6 +718,7 @@ impl<DT: Dispatch> NrLog<DT> {
             ),
             operations.len() <= MAX_REQUESTS,
         ensures
+            actual_replica.inv(),
             result@.append_post(
                 ghost_data@,
                 replica_token@,
@@ -735,6 +737,7 @@ impl<DT: Dispatch> NrLog<DT> {
         loop
             invariant
                 self.wf(),
+                actual_replica.inv(),
                 0 <= waitgc <= WARN_THRESHOLD,
                 0 <= iteration <= WARN_THRESHOLD,
                 responses.len() == 0,
@@ -1072,6 +1075,7 @@ impl<DT: Dispatch> NrLog<DT> {
     ) -> (res: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
             self.wf(),
+            old(actual_replica).inv(),
             replica_token.wf(self.num_replicas@),
             ghost_data@.advance_head_pre(
                 replica_token.id_spec(),
@@ -1081,6 +1085,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 self.cyclic_buffer_instance@,
             ),
         ensures
+            actual_replica.inv(),
             res@.advance_head_post(
                 ghost_data@,
                 replica_token.id_spec(),
@@ -1095,6 +1100,7 @@ impl<DT: Dispatch> NrLog<DT> {
         loop
             invariant
                 self.wf(),
+                actual_replica.inv(),
                 replica_token.wf(self.num_replicas@),
                 ghost_data_new@.cb_combiner@@.value.is_Idle(),
                 ghost_data_new@.combiner@@.value.is_Placed() ==> ghost_data_new@.pre_exec(
@@ -1264,6 +1270,7 @@ impl<DT: Dispatch> NrLog<DT> {
         ghost_data: Tracked<NrLogAppendExecDataGhost<DT>>,
     ) -> (result: Tracked<NrLogAppendExecDataGhost<DT>>)
         requires
+            old(actual_replica).inv(),
             self.wf(),
             replica_token@ < self.local_versions.len(),
             ghost_data@.execute_pre(
@@ -1274,6 +1281,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 self.cyclic_buffer_instance@,
             ),
         ensures
+            actual_replica.inv(),
             result@.execute_post(
                 ghost_data@,
                 replica_token@,
@@ -1370,6 +1378,7 @@ impl<DT: Dispatch> NrLog<DT> {
         while local_version < global_tail
             invariant
                 self.wf(),
+                actual_replica.inv(),
                 ghost_data.combiner@@.value.is_Placed() ==> {
                     &&& ghost_data.combiner@@.value.get_Placed_queued_ops() == request_ids
                     &&& combiner@.value.get_Loop_queued_ops() == request_ids
@@ -1428,6 +1437,7 @@ impl<DT: Dispatch> NrLog<DT> {
             while !is_alive
                 invariant
                     self.wf(),
+                    actual_replica.inv(),
                     local_version < global_tail,
                     phys_log_idx < self.slog.len(),
                     phys_log_idx as nat == self.index_spec(local_version as nat),

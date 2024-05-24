@@ -225,7 +225,7 @@ pub open spec fn wf(&self) -> bool {
         &&& self.data.0.max_threads() == self.contexts.len()
         &&& 0 <= self.spec_id() < MAX_REPLICAS
         &&& self.data.0.wf()
-        &&& (forall |v: ReplicatedDataStructure<DT>| (#[trigger] self.data.0.inv(v)) == v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@))
+        &&& (forall |v: ReplicatedDataStructure<DT>| (#[trigger] self.data.0.inv(v)) == (v.wf(self.spec_id(), self.unbounded_log_instance@, self.cyclic_buffer_instance@) && v.data.inv()))
 
         &&& self.flat_combiner_instance@.num_threads() == MAX_THREADS_PER_REPLICA
         &&& (forall |i| #![trigger self.thread_tokens[i]] 0 <= i < self.thread_tokens.len() ==> {
@@ -316,7 +316,7 @@ impl<DT: Dispatch> Replica<DT> {
         ));
         // TODO: get the right spec function in there!
         let ghost data_structure_inv = |s: ReplicatedDataStructure<DT>|
-            { s.wf(replica_token.id_spec(), unbounded_log_instance, cyclic_buffer_instance) };
+            { s.wf(replica_token.id_spec(), unbounded_log_instance, cyclic_buffer_instance) && s.data.inv() };
         let data = CachePadded(
             RwLock::new(
                 MAX_THREADS_PER_REPLICA,

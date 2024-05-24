@@ -316,6 +316,10 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
+        readonly_read_oob(rid, op) => {
+            SimpleLog::show::no_op(interp(pre), interp(post), aop);
+        }
+
         /*readonly_finish(rid, op, ret) => {
             // corresponds toConsumeStub_Refines_End
             // let version = 0;

@@ -4,13 +4,13 @@
 // trustedness: ignore this file
 
 // stdlib dependencies
-use  std::sync::Arc;
+//use  std::sync::Arc;
 
 // the verus dependencies
-use builtin::Tracked;
+//use builtin::Tracked;
 
 // the traits and types we need from the verified-node-replicaton crate
-use crate::{AffinityFn, Dispatch, NodeReplicated, NodeReplicatedT, ThreadToken};
+use crate::{/*AffinityFn,*/ Dispatch, /*NodeReplicated,*/ /*NodeReplicatedT, ThreadToken, SimpleLog*/};
 
 use vstd::prelude::*;
 
@@ -34,26 +34,20 @@ verus! {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /// represents a update operation on the data structure
+/// the only possible operation is to increment a counter by two
 #[derive(Clone, Copy)]
-pub enum UpdateOp {
-    /// reset the counter to 0
-    Reset,
-    /// increment the counter
-    IncEven,
-}
+pub struct IncTwo(pub usize);
 
 /// represents a read-only operation on the data structure
-pub enum ReadonlyOp {
-    /// get the current counter value
-    Get,
-}
+/// the only possible operation is to read a counter's value
+pub struct Read(pub usize);
 
 /// represents an operation request for either a read-only or update operation
 pub enum OpRequest {
     /// this operation is mutating the data structure
-    Update(UpdateOp),
+    Update(IncTwo),
     /// this operation is read-only
-    Readonly(ReadonlyOp),
+    Readonly(Read),
 }
 
 /// represents the result of the operation request
@@ -61,80 +55,175 @@ pub enum OpRequest {
 pub enum OpResult {
     Value(u64),
     Ok,
+    Err,
+}
+
+#[verifier(external_body)]
+pub struct Counter { }
+
+impl Counter {
+    pub spec fn view(self) -> Seq<u64>;
+
+    #[verifier(external_body)]
+    pub fn new(i: usize) -> (res: Self)
+        ensures
+            res@.len() == i,
+            forall|j: usize| j < i ==> res@[j as int] == 0
+    {
+        unimplemented!()
+    }
+
+    #[verifier(external_body)]
+    pub fn read(&self, i: usize) -> (res: u64)
+        requires i < self@.len()
+        ensures res == self@[i as int]
+    {
+        unimplemented!()
+    }
+
+    #[verifier(external_body)]
+    pub fn increment(&mut self, i: usize)
+        requires i < old(self)@.len()
+        ensures
+            self@ == old(self)@.update(i as int, if old(self)@[i as int] < 0xffff_ffff_ffff_ffff {
+                add(old(self)@[i as int], 1)
+            } else { 0 })
+    {
+        unimplemented!()
+    }
 }
 
 
 /// a simple counter data structure to be wrapped with node-replication
 pub struct DataStructureType {
-    pub val: u64,
+    pub num_counters: usize,
+    pub counter: Counter,
 }
 
 impl DataStructureType {
-    pub fn init() -> Self
-    {
-        DataStructureType { val: 0 }
+    pub open spec fn view(self) -> Seq<u64> {
+        self.counter@
     }
 
-    pub fn update(&mut self, op: UpdateOp) -> OpResult
+    pub open spec fn inv(&self) -> bool {
+        self.num_counters == self@.len()
+    }
+
+    pub fn init(i: usize) -> (res: Self)
+        ensures
+            res@.len() == i,
+            res.num_counters == i,
+            forall|j: usize| j < i ==> res@[j as int] == 0,
+            res.inv(),
     {
-        match op {
-            UpdateOp::Reset => self.val = 0,
-            UpdateOp::IncEven => self.val = if self.val < 0xffff_ffff_ffff_fffe { self.val + 2 } else { 0 }
+        DataStructureType {
+            num_counters: i,
+            counter: Counter::new(i),
         }
-        OpResult::Ok
     }
 
-    pub fn read(&self, op: ReadonlyOp) -> OpResult
+    pub fn update(&mut self, op: IncTwo) -> (res: OpResult)
+        requires old(self).inv()
+        ensures
+            self.inv(),
+            self.num_counters == old(self).num_counters,
+            if op.0 < self.num_counters {
+                &&& self@ == old(self)@.update(op.0 as int,
+                    if old(self)@[op.0 as int] == 0xffff_ffff_ffff_fffe { 0 }
+                    else if old(self)@[op.0 as int] == 0xffff_ffff_ffff_ffff { 1 }
+                    else { add(old(self)@[op.0 as int], 2) })
+                    &&& res == OpResult::Ok
+            } else {
+                &&& self@ == old(self)@
+                &&& res == OpResult::Err
+            },
     {
-        OpResult::Value(self.val)
+        assert(self.num_counters == old(self)@.len());
+        if op.0 < self.num_counters {
+            self.counter.increment(op.0);
+            self.counter.increment(op.0);
+            assert(self@ == old(self)@.update(op.0 as int,
+                    if old(self)@[op.0 as int] == 0xffff_ffff_ffff_fffe { 0 }
+                    else if old(self)@[op.0 as int] == 0xffff_ffff_ffff_ffff { 1 }
+                    else { add(old(self)@[op.0 as int], 2) }));
+            OpResult::Ok
+        } else {
+            OpResult::Err
+        }
+    }
+
+    pub fn read(&self, op: Read) -> (res: OpResult)
+        requires self.inv()
+        ensures
+            if op.0 < self.num_counters {
+                res == OpResult::Value(self@[op.0 as int])
+            } else {
+                res == OpResult::Err
+            }
+    {
+        if op.0 < self.num_counters {
+            OpResult::Value(self.counter.read(op.0))
+        } else {
+            OpResult::Err
+        }
     }
 }
 
 
 /// implementation of Disatch for the Data Structure
 impl Dispatch for DataStructureType {
-    type ReadOperation = ReadonlyOp;
+    type ReadOperation = Read;
 
-    type WriteOperation = UpdateOp;
+    type WriteOperation = IncTwo;
 
     type Response = OpResult;
 
-    type View = DataStructureType;
+    type View = Seq<u64>;
 
     open spec fn view(&self) -> Self::View {
-        DataStructureType { val: self.val }
+        self.counter@
+    }
+
+    open spec fn inv(&self) -> bool {
+        self.inv()
     }
 
     open spec fn init_spec() -> Self::View {
-        DataStructureType { val: 0 }
+        seq![0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }
 
     open spec fn dispatch_spec(ds: Self::View, op: Self::ReadOperation) -> Self::Response {
-        match op {
-            ReadonlyOp::Get => {
-                OpResult::Value(ds.val)
-            }
+        let i = op.0 as int;
+        if i < ds.len() {
+            OpResult::Value(ds[i])
+        } else {
+            OpResult::Err
         }
     }
 
     open spec fn dispatch_mut_spec(ds: Self::View, op: Self::WriteOperation) -> (
         Self::View,
-        Self::Response,
-    ) {
-        match op {
-            UpdateOp::Reset => (DataStructureType { val: 0 }, OpResult::Ok),
-            UpdateOp::IncEven => (DataStructureType { val: if ds.val < 0xffff_ffff_ffff_fffe { add(ds.val, 2) } else { 0 } }, OpResult::Ok),
+        Self::Response)
+    {
+        let i = op.0 as int;
+        if i < ds.len() {
+            (ds.update(i,
+                       if ds[i] == 0xffff_ffff_ffff_fffe { 0 }
+                       else if ds[i] == 0xffff_ffff_ffff_ffff { 1 }
+                       else { add(ds[i], 2) }),
+             OpResult::Ok)
+        } else {
+            (ds, OpResult::Err)
         }
     }
 
-    // type View = DataStructureSpec;
-
-    fn init() ->  Self
-    {
-        DataStructureType { val: 0 }
+    fn init() -> Self {
+        // TODO(MB): Can i not have an argument in this init function?
+        let s = DataStructureType::init(10);
+        assert(s@ =~= DataStructureType::init_spec());
+        s
     }
 
-    // partial eq also add an exec operation
     #[verifier::external_body]
     fn clone_write_op(op: &Self::WriteOperation) -> Self::WriteOperation {
         op.clone()
@@ -148,29 +237,30 @@ impl Dispatch for DataStructureType {
     /// Method on the data structure that allows a read-only operation to be
     /// executed against it.
     fn dispatch(&self, op: Self::ReadOperation) -> Self::Response {
-        match op {
-            ReadonlyOp::Get => {
-                OpResult::Value(self.val)
-            }
-        }
+        self.read(op)
     }
 
     /// Method on the data structure that allows a write operation to be
     /// executed against it.
     fn dispatch_mut(&mut self, op: Self::WriteOperation) -> Self::Response {
-        match op {
-            UpdateOp::Reset => self.val = 0,
-            UpdateOp::IncEven => self.val = if self.val < 0xffff_ffff_ffff_fffe { self.val + 2 } else { 0 }
+        let res = self.update(op);
+        proof {
+            if (op.0 as int) < old(self)@.len() { } else { }
         }
-        OpResult::Ok
+        res
     }
 }
 
 
+//proof fn foo() {
+//    //SimpleLog::State<DataStructureType>.log;
+//    //let init = SimpleLog::initalize();
+//    let x = SimpleLog::Step::<DataStructureType>::readonly_start(arbitrary(), arbitrary());
+//    let s: bool = SimpleLog::State::<DataStructureType>::initialize(arbitrary());
+//    //s.nrstate_at_version(0)
+//}
 
-
-
-struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructureType>);
+//struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructureType>);
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -212,7 +302,7 @@ struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructu
 //                0 => {
 //                    // println!(" - Thread #{tid:?}  executing Update operation {i}");
 //                    num_updates += 1;
-//                    match counter.execute_mut(UpdateOp::IncEven, tkn, Tracked::assume_new()) {
+//                    match counter.execute_mut(IncTwo::IncEven, tkn, Tracked::assume_new()) {
 //                        Result::Ok((ret, t, _)) => {
 //                            tkn = t;
 //                        },
@@ -223,7 +313,7 @@ struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructu
 //                }
 //                _ => {
 //                    // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
-//                    match  counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+//                    match  counter.execute(Read::Get, tkn, Tracked::assume_new()) {
 //                        Result::Ok((ret, t, _)) => {
 //                            tkn = t;
 //                        },
@@ -235,7 +325,7 @@ struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructu
 //            };
 //
 //            // println!(" - Thread #{tid:?}  executing ReadOnly operation {i}");
-//            match  counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+//            match  counter.execute(Read::Get, tkn, Tracked::assume_new()) {
 //                Result::Ok((ret, t, _)) => {
 //                    tkn = t;
 //                },
@@ -248,7 +338,7 @@ struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructu
 //        // make sure to make progress on all replicas
 //        for _ in 0..NUM_OPS_PER_THREAD*2  {
 //            std::thread::yield_now();
-//            match counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+//            match counter.execute(Read::Get, tkn, Tracked::assume_new()) {
 //                Result::Ok((ret, t, _)) => {
 //                    tkn = t;
 //                },
@@ -283,7 +373,7 @@ struct NrCounter(Arc<NodeReplicated<DataStructureType>>, ThreadToken<DataStructu
 //
 //    for idx in 0..NUM_REPLICAS {
 //        let tkn = thread_tokens.pop().unwrap();
-//        match nr_counter.execute(ReadonlyOp::Get, tkn, Tracked::assume_new()) {
+//        match nr_counter.execute(Read::Get, tkn, Tracked::assume_new()) {
 //            Result::Ok((ret, t, _)) => {
 //                match ret {
 //                    OpResult::Value(v) => {

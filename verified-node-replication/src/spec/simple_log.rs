@@ -104,6 +104,11 @@ state_machine! {
             ==> self.readonly_reqs[rid]->version <= self.version
     }
 
+    //#[invariant]
+    //pub fn inv_quiescent_implies_read_is_view(&self) -> bool {
+    //    self.update_reqs
+    //}
+
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // State Machine Initialization
@@ -161,7 +166,7 @@ state_machine! {
     /// This records the current version of the log the read-only request was submitted
     transition!{
         readonly_read_version(label: Label<DT>, rid: ReqId) {
-            require label.is_Internal();
+            require label is Internal;
 
             require pre.readonly_reqs.contains_key(rid);
             require let ReadReq::<DT::ReadOperation>::Init { op } = pre.readonly_reqs[rid];
@@ -224,7 +229,7 @@ state_machine! {
     /// The update moves from the requests to the responses and the log grows by one element.
     transition!{
         update_add_op_to_log(label: Label<DT>, rid: ReqId) {
-            require label.is_Internal();
+            require label is Internal;
 
             require pre.update_reqs.contains_key(rid);
 
@@ -240,7 +245,7 @@ state_machine! {
     /// length of the log.
     transition!{
         update_incr_version(label: Label<DT>, new_version: LogIdx) {
-            require label.is_Internal();
+            require label is Internal;
 
             require pre.version <= new_version <= pre.log.len();
 
@@ -275,7 +280,7 @@ state_machine! {
     /// No-Op transition
     transition!{
         no_op(label: Label<DT>, ) {
-            require label.is_Internal();
+            require label is Internal;
         }
     }
 

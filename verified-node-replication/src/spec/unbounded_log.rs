@@ -634,6 +634,13 @@ UnboundedLog<DT: Dispatch> {
         }
     }
 
+    /// Out-of-band read (e.g. by the MMU)
+    transition!{
+        readonly_read_oob(rid: ReqId, op: DT::ReadOperation) {
+            let ret = DT::dispatch_spec(state, op);
+        }
+    }
+
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Update Transitions
     ////////////////////////////////////////////////////////////////////////////////////////////
@@ -883,6 +890,10 @@ UnboundedLog<DT: Dispatch> {
         let vup = post.local_reads[rid].get_Done_version_upper_bound();
         let v = post.local_versions[nid];
         assert(rangeincl(vup, v, post.version_upper_bound));
+    }
+
+    #[inductive(readonly_read_oob)]
+    fn readonly_read_oob_inductive(pre: Self, post: Self, rid: ReqId, op: DT::ReadOperation) {
     }
 
     pub proof fn add_ticket_inductive(
