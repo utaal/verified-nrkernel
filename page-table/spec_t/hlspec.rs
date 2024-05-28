@@ -119,6 +119,7 @@ pub open spec fn state_unchanged_besides_thread_state(
     &&& s2.thread_state === s1.thread_state.insert(thread_id, thread_arguments)
     &&& s2.mem === s1.mem
     &&& s2.mappings === s1.mappings
+    &&& s2.sound == s1.sound
 }
 
 pub open spec fn unsound_state(
@@ -142,6 +143,7 @@ pub open spec fn step_ReadWrite(
     pte: Option<(nat, PageTableEntry)>,
 ) -> bool {
     let vmem_idx = mem::word_index_spec(vaddr);
+    &&& s2.sound == s1.sound
     &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings  
     &&& valid_thread(c, thread_id)
@@ -241,8 +243,6 @@ pub open spec fn step_Map_enabled(
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
     // TODO: remove the following an enabling condition, turn it into unspecified behavior
-    &&& !candidate_mapping_overlaps_existing_pmem(map, pte)
-    &&& !candidate_mapping_overlaps_inflight_pmem(inflight, pte)
 }
 
 //think about weather or not map start is valid if it overlaps with existing vmem
@@ -257,8 +257,12 @@ pub open spec fn step_Map_start(
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, pte)) {
+    &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, pte)
+            && !candidate_mapping_overlaps_existing_pmem(s1.mappings, pte)
+            && !candidate_mapping_overlaps_inflight_pmem(s1.thread_state.values(), pte)) 
+    {
         &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Map{vaddr,pte})
+
     } else {
         unsound_state(s1, s2)
     }
@@ -272,11 +276,12 @@ pub open spec fn step_Map_end(
     thread_id: nat,
     result: Result<(), ()>,
 ) -> bool {
+    &&& s2.sound == s1.sound
     &&& valid_thread(c, thread_id)
     &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
     &&& match s1.thread_state[thread_id] {
         AbstractArguments::Map{vaddr,pte} => {
-            &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
+            &&& if (candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte)) {
                 &&& result is Err
                 &&& s2.mappings === s1.mappings
                 &&& s2.mem === s1.mem
@@ -318,6 +323,7 @@ pub open spec fn step_Unmap_start(
         &&& if (pte is None ){s2.mappings === s1.mappings}
             else {s2.mappings === s1.mappings.remove(vaddr)}
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
+        &&& s2.sound == s1.sound
     } else {
         unsound_state(s1, s2)
     }
@@ -334,6 +340,7 @@ pub open spec fn step_Unmap_end(
 ) -> bool {
     &&& valid_thread(c, thread_id)
     &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
+    &&& s2.sound == s1.sound
     &&& match s1.thread_state[thread_id] {
         AbstractArguments::Unmap{vaddr, pte} => {
             &&& if pte is Some {
@@ -428,6 +435,13 @@ pub open spec fn next(c: AbstractConstants, s1: AbstractVariables, s2: AbstractV
     exists|step: AbstractStep| next_step(c, s1, s2, step)
 }
 
+
+spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool
+{
+    &&& wf(c, s)
+    &&& forall | bs1 : nat, bs2: nat | s.mappings.contains_key(bs1) && s.mappings.contains_key(bs2) && overlap(s.mappings[bs1].frame, s.mappings[bs2].frame) ==> equal(bs1, bs2)
+}
+
 proof fn init_implies_inv( c: AbstractConstants, s: AbstractVariables,)
     requires init(c, s),
     ensures inv(c, s),
@@ -436,31 +450,15 @@ proof fn init_implies_inv( c: AbstractConstants, s: AbstractVariables,)
 proof fn next_step_preserves_wf(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables,)
     requires
         next(c, s1, s2),
-        inv(c, s1),
+        wf(c, s1),
     ensures
-        inv(c, s2),
-
+        wf(c, s2),
 {
     let p = choose|step: AbstractStep| next_step(c, s1, s2, step);
     match p {
-         AbstractStep::ReadWrite     { thread_id, vaddr, op, pte }      => {assert(inv(c,s2));},
-        AbstractStep::MapStart       { thread_id, vaddr, pte }          => {assert(inv(c,s2));},
-        AbstractStep::MapEnd         { thread_id, result }              => {lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings); assume(false);
-                                                                            assert(inv(c,s2));},
-        AbstractStep::UnmapStart     { thread_id, vaddr  }              => {lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
-                                                                            assert(inv(c,s2));},
-        AbstractStep::UnmapEnd       { thread_id, result }              => { lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
-                                                                            assert(inv(c,s2));},
-        AbstractStep::ResolveStart   { thread_id, vaddr, }              => {assert(inv(c,s2));},
-        AbstractStep::ResolveEnd     { thread_id, result }              => {assert(inv(c,s2));},
-        AbstractStep::Stutter                                           => {assert(inv(c,s2));},
+        AbstractStep::UnmapStart     { thread_id, vaddr  }              => { lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));},
+         _                                                              => { lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);},
     }
-}
-
-spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool
-{
-    &&& wf(c, s)
-    &&& forall | bs1 : nat, bs2: nat | s.mappings.contains_key(bs1) && s.mappings.contains_key(bs2) && overlap(s.mappings[bs1].frame, s.mappings[bs2].frame) ==> equal(bs1, bs2)
 }
 
 proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables,)
@@ -471,6 +469,11 @@ proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2
         inv(c, s2),
 {
     next_step_preserves_wf(c, s1, s2);
+    let p = choose|step: AbstractStep| next_step(c, s1, s2, step);
+    match p {
+     AbstractStep::MapEnd         { thread_id, result }              => {assume(false);},
+    _                                                                => {}
+}
 }
 
 } // verus!
