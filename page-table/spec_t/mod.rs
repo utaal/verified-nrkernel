@@ -4,3 +4,4 @@ pub mod hardware;
 //#[cfg(feature = "impl")]
 //pub mod impl_spec;
 pub mod mem;
+pub mod hlproof;
