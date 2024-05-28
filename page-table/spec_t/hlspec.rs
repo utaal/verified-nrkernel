@@ -281,6 +281,7 @@ pub open spec fn step_Map_end(
     &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
     &&& match s1.thread_state[thread_id] {
         AbstractArguments::Map{vaddr,pte} => {
+            &&& !candidate_mapping_overlaps_existing_pmem(s1.mappings, pte)
             &&& if (candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte)) {
                 &&& result is Err
                 &&& s2.mappings === s1.mappings
@@ -439,7 +440,13 @@ pub open spec fn next(c: AbstractConstants, s1: AbstractVariables, s2: AbstractV
 spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool
 {
     &&& wf(c, s)
-    &&& forall | bs1 : nat, bs2: nat | s.mappings.contains_key(bs1) && s.mappings.contains_key(bs2) && overlap(s.mappings[bs1].frame, s.mappings[bs2].frame) ==> equal(bs1, bs2)
+    &&& forall | bs1 : nat, bs2 : nat | s.mappings.contains_key(bs1) && s.mappings.contains_key(bs2) && overlap(s.mappings[bs1].frame, s.mappings[bs2].frame) ==> equal(bs1, bs2)
+
+
+// s.mappings.contains_key(bs1) ==> !candidate_mapping_overlaps_existing_pmem(s.mappings.remove(bs1), s.mappings[bs1]) 
+
+
+    //
 }
 
 proof fn init_implies_inv( c: AbstractConstants, s: AbstractVariables,)
@@ -461,6 +468,7 @@ proof fn next_step_preserves_wf(c: AbstractConstants, s1: AbstractVariables, s2:
     }
 }
 
+                                                                         
 proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables,)
     requires
         next(c, s1, s2),
@@ -471,9 +479,15 @@ proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2
     next_step_preserves_wf(c, s1, s2);
     let p = choose|step: AbstractStep| next_step(c, s1, s2, step);
     match p {
-     AbstractStep::MapEnd         { thread_id, result }              => {assume(false);},
-    _                                                                => {}
+     AbstractStep::MapEnd  { thread_id, result }   => { match s1.thread_state[thread_id] {                        
+                                                          AbstractArguments::Map{vaddr,pte} => {
+                                                                assert(!candidate_mapping_overlaps_existing_pmem(s1.mappings, pte));    assume(false);
+
+                                                                assert(inv(c,s2));}
+                                                          _ => {assert(inv(c, s2));}}}
+    _                                              => {}
+    }
 }
-}
+
 
 } // verus!
