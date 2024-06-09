@@ -1,13 +1,14 @@
 #![verus::trusted]
 use crate::definitions_t::{
-    between, PageTableEntry, WORD_SIZE,
+    between, PageTableEntry, WORD_SIZE, above_zero, candidate_mapping_overlaps_existing_pmem, MemRegion, overlap
 };
 use crate::spec_t::mem;
 use vstd::prelude::*;
 
+
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 
-use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains};
+use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap};
 
 
 
@@ -238,6 +239,52 @@ pub proof fn lemma_mem_domain_from_new_mappings_subset(
     }
         
 
+}
+
+pub proof fn lemma_overlap_sym(region1: MemRegion, region2: MemRegion)
+    requires !overlap(region1, region2),
+             region1.size > 0,
+             region2.size > 0,
+    ensures  !overlap(region2, region1),
+     {
+     
+} 
+
+pub proof fn lemma_overlap (mappings: Map<nat, PageTableEntry>, base: nat, pte : PageTableEntry)
+    requires pmem_no_overlap(mappings),
+            !candidate_mapping_overlaps_existing_pmem(mappings, pte),
+            mappings_frame_sizes_over_zero(mappings),
+            above_zero(pte.frame.size),
+    ensures pmem_no_overlap(mappings.insert(base, pte)),
+{   
+    assert (forall |bs1: nat| #![auto] mappings.dom().contains(bs1) ==> !overlap( pte.frame, mappings.index(bs1).frame));
+    assert forall |bs1: nat| #![auto] mappings.dom().contains(bs1) implies !overlap( mappings.index(bs1).frame, pte.frame) by {
+        lemma_overlap_sym(pte.frame, mappings.index(bs1).frame);
+    }
+    assert(pmem_no_overlap(mappings.insert(base, pte)));
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                               //
+//                                        Step preserves inv proofs                                              //
+//                                                                                                               //
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub proof fn unmap_start_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2:AbstractVariables, thread_id: nat, vaddr: nat)
+    requires
+        step_Unmap_start ( c, s1, s2, thread_id, vaddr ),
+        s1.sound ==> inv(c, s1),
+        s1.sound,
+        s1.thread_state.dom().contains(thread_id),
+    ensures
+        s2.sound ==> inv(c, s2)
+{
+    if (s2.sound) {
+        lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
+        assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
+        let pte = if (s1.mappings.dom().contains(vaddr)){Some (s1.mappings.index(vaddr))} else {Option::None};
+        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Unmap{ vaddr, pte })));
+    } else {}
 }
 
 
