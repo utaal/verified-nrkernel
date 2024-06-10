@@ -11,7 +11,7 @@ use crate::spec_t::mem;
 use vstd::prelude::*;
 
 
-use crate::spec_t::hlproof::{lemma_mem_domain_from_mapping_finite, unmap_start_preserves_inv, map_start_preserves_inv, map_end_preserves_inv};
+use crate::spec_t::hlproof::{lemma_mem_domain_from_mapping_finite, unmap_start_preserves_inv, map_start_preserves_inv, map_end_preserves_inv, insert_non_map_preserves_unique};
 
 
 verus! {
@@ -451,11 +451,11 @@ pub open spec fn inflight_map_no_overlap_pmem(inflightargs: Set<AbstractArgument
     }
 }
 
-pub open spec fn inflight_map_no_overlap_inflight_pmem(inflightargs: Map<nat, AbstractArguments>) -> bool {
-    forall| b: nat| #![auto] {
-        inflightargs.dom().contains(b) ==>
-        match inflightargs.index(b) {
-            AbstractArguments::Map {vaddr, pte}  => { !candidate_mapping_overlaps_inflight_pmem(inflightargs.remove(b).values(), pte) }
+pub open spec fn inflight_map_no_overlap_inflight_pmem(inflightargs: Set<AbstractArguments>) -> bool {
+    forall| b: AbstractArguments| #![auto] {
+        inflightargs.contains(b) ==>
+        match b {
+            AbstractArguments::Map {vaddr, pte}  => { !candidate_mapping_overlaps_inflight_pmem(inflightargs.remove(b), pte) }
             _ => {true}
             }
     }
@@ -475,15 +475,32 @@ pub open spec fn inflight_mem_size_over_zero(inflightargs: Set<AbstractArguments
     }
 }
 
+pub open spec fn if_map_then_unique(thread_state: Map<nat, AbstractArguments>, id: nat  ) -> bool
+    recommends thread_state.dom().contains(id) 
+{
+    if let AbstractArguments::Map {vaddr, pte} = thread_state.index(id){ 
+        !thread_state.remove(id).values().contains(thread_state.index(id)) }
+    else {  
+        true    
+    }
+}
+
+pub open spec fn inflight_maps_unique(thread_state: Map<nat, AbstractArguments>) -> bool
+{ 
+    forall| a: nat |  #[trigger] thread_state.dom().contains(a) ==> if_map_then_unique(thread_state, a)
+}
+
 
 pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool
 {
     &&&  wf(c, s)
     &&&  pmem_no_overlap(s.mappings)
+    //invariants needed to proof the former
     &&&  inflight_map_no_overlap_pmem(s.thread_state.values(), s.mappings)
-    &&&  inflight_map_no_overlap_inflight_pmem(s.thread_state)
+    &&&  inflight_map_no_overlap_inflight_pmem(s.thread_state.values())
     &&&  mappings_frame_sizes_over_zero(s.mappings)
     &&&  inflight_mem_size_over_zero(s.thread_state.values())
+    &&&  inflight_maps_unique(s.thread_state)
 }
 
 
@@ -503,15 +520,17 @@ pub proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables
         let p = choose|step: AbstractStep| next_step(c, s1, s2, step);
         match p {
             AbstractStep::UnmapStart   { thread_id, vaddr  }     => { unmap_start_preserves_inv(c, s1, s2, thread_id, vaddr);}
+            AbstractStep::UnmapEnd     { thread_id, result }     => { assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
+                                                                      lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
+                                                                      insert_non_map_preserves_unique(s1.thread_state, thread_id, AbstractArguments::Empty);}
             AbstractStep::MapStart     { thread_id, vaddr, pte } => { map_start_preserves_inv(c, s1, s2, thread_id, vaddr, pte);}
             AbstractStep::MapEnd       { thread_id, result }     => { map_end_preserves_inv(c, s1, s2, thread_id, result);}
-            AbstractStep::ResolveStart { thread_id, vaddr }      => { assert(s1.mappings == s2.mappings);
-                                                                      assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Resolve{vaddr}))); 
-                                                                      assume(false);}
-            _                                                    => { assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
-                                                                      assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
-                                                                      lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
-                                                                      assume(false);}}
+            AbstractStep::ResolveStart { thread_id, vaddr }      => { assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Resolve{vaddr})));
+                                                                      insert_non_map_preserves_unique(s1.thread_state, thread_id, AbstractArguments::Resolve{vaddr}); }
+            AbstractStep::ResolveEnd     { thread_id, result }   => { assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
+                                                                      insert_non_map_preserves_unique(s1.thread_state, thread_id, AbstractArguments::Empty);}
+            _                                                    => {  }
+            }
     } else { assert (!s2.sound); }
 }
 

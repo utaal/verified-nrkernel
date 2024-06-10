@@ -8,7 +8,7 @@ use vstd::prelude::*;
 
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 
-use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap, step_Map_start, step_Map_end, inflight_map_no_overlap_pmem, inflight_map_no_overlap_inflight_pmem};
+use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap, step_Map_start, step_Map_end, inflight_maps_unique, if_map_then_unique, candidate_mapping_overlaps_inflight_pmem};
 
 verus! {
 
@@ -261,26 +261,56 @@ pub proof fn lemma_overlap (mappings: Map<nat, PageTableEntry>, base: nat, pte :
     assert(pmem_no_overlap(mappings.insert(base, pte)));
 }
 
+pub proof fn insert_non_map_preserves_unique(thread_state: Map<nat, AbstractArguments>, base: nat, arg:AbstractArguments)
+    requires inflight_maps_unique(thread_state),
+             !is_map(arg),
+    ensures inflight_maps_unique(thread_state.insert(base, arg)),
+{
+    let args = thread_state.insert(base, arg);
+    assert forall| id : nat | #[trigger] args.dom().contains(id) implies if_map_then_unique(args, id) by {
+        if (args.dom().contains(id)){
+            if (id == base) {}
+            else {
+                if let AbstractArguments::Map {vaddr, pte} = thread_state.index(id){ 
+                    //assert( if_map_then_unique(thread_state, id));
+                    //assert( !thread_state.remove(id).values().contains(thread_state.index(id)) );
+                    //assert( args.values().subset_of(thread_state.values().insert(arg)));
+                    //assert( args.index(id) == thread_state.index(id));
+                    //assert( args.remove(id) == thread_state.insert(base, arg).remove(id));
+                    assert (args.remove(id) == thread_state.remove(id).insert(base, arg));
+                    //assert (args.remove(id).values().subset_of(thread_state.remove(id).values().insert(arg)));
+                    //assert( !thread_state.remove(id).values().insert(arg).contains(thread_state.index(id)));
+                    //assert ( !args.remove(id).values().contains(thread_state.index(id)));
+                } else {}
+             }
+        } else {}
+    }
+}
 
-pub proof fn lemma_map_preserves_no_overlap_inflights (inflights: Map<nat, AbstractArguments> ,mappings: Map<nat, PageTableEntry>, thread_id: nat)
-    requires inflight_map_no_overlap_inflight_pmem(inflights),
-             inflight_map_no_overlap_pmem(inflights.values(), mappings),
-             inflights.dom().contains(thread_id),
-    ensures  if let AbstractArguments::Map{vaddr: base, pte:pt} = inflights.index(thread_id) {
-             inflight_map_no_overlap_pmem(inflights.remove(thread_id).values(), mappings.insert(base, pt))} 
-             else {true}
-{   /*
-        
-        assert( forall| b: AbstractArguments| #![auto] {
-        inflights.remove(AbstractArguments::Map{vaddr:base, pte:pt}).contains(b) ==>
-        match b {
-            AbstractArguments::Map {vaddr, pte}  => { !candidate_mapping_overlaps_existing_pmem(mappings, pte) &&   !overlap(pte.frame , pt.frame) }
-            _ => {true}
-            }
-        });
-        
-*/
-    assume(false);
+
+pub proof fn insert_map_preserves_unique(thread_state: Map<nat, AbstractArguments>, thread_id: nat, vaddr: nat, pte: PageTableEntry)
+    requires inflight_maps_unique(thread_state),
+            !candidate_mapping_overlaps_inflight_pmem(thread_state.values(), pte)
+    ensures inflight_maps_unique(thread_state.insert(thread_id, AbstractArguments::Map{vaddr, pte})),
+{
+    let args = thread_state.insert(thread_id, AbstractArguments::Map{vaddr, pte});
+    assert forall| id : nat | #[trigger] args.dom().contains(id) implies if_map_then_unique(args, id) by {
+        if (args.dom().contains(id)){
+            if (id == thread_id) { 
+                   assume(false);
+                }
+            else { assume(false);
+      
+             }
+        } else {}
+    }
+}
+
+
+pub open spec fn is_map(arg: AbstractArguments) -> bool {
+
+ if let AbstractArguments::Map {vaddr, pte} = arg {true} else {false}
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -302,8 +332,8 @@ pub proof fn unmap_start_preserves_inv(c: AbstractConstants, s1: AbstractVariabl
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
         assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
         let pte = if (s1.mappings.dom().contains(vaddr)){Some (s1.mappings.index(vaddr))} else {Option::None};
-        assert( s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte }));
-        assume(false);
+        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Unmap{ vaddr, pte })));
+        insert_non_map_preserves_unique(s1.thread_state, thread_id, AbstractArguments::Unmap{ vaddr, pte });
     } else {}
 }
 
@@ -320,9 +350,10 @@ pub proof fn map_start_preserves_inv(c: AbstractConstants, s1: AbstractVariables
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
         assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
         assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Map{vaddr, pte})));
-    assume(false);
+        insert_map_preserves_unique(s1.thread_state ,thread_id,vaddr, pte);
     } else {}
 }
+
 
 pub proof fn map_end_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2:AbstractVariables, thread_id: nat, result:Result<(), ()>)
     requires
@@ -335,29 +366,17 @@ pub proof fn map_end_preserves_inv(c: AbstractConstants, s1: AbstractVariables, 
 {   if let AbstractArguments::Map{vaddr,pte} = s1.thread_state.index(thread_id) 
     {   lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
         assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
+        insert_non_map_preserves_unique(s1.thread_state, thread_id, AbstractArguments::Empty);
         if (result is Ok) {
             assert( s1.thread_state.values().contains(AbstractArguments::Map{vaddr, pte}));
-            assert( !candidate_mapping_overlaps_existing_pmem( s1.mappings, pte));
-            assert( above_zero(pte.frame.size));
-            assert( s2.mappings === s1.mappings.insert(vaddr, pte));
-            assert( mappings_frame_sizes_over_zero(s2.mappings));
-            lemma_overlap(s1.mappings, vaddr, pte);
-            assume(false);
-            lemma_map_preserves_no_overlap_inflights(s1.thread_state, s1.mappings, thread_id );
-            //TODO
-            assume(false);
-            assert(s2.thread_state.values().subset_of(s1.thread_state.values().remove(AbstractArguments::Map{vaddr, pte})));
-            assume(false);
+            assert(s2.thread_state == s1.thread_state.remove(thread_id).insert(thread_id, AbstractArguments::Empty));
         }
         else {
-           // assert(s2.mappings == s1.mappings);
-           assume(false);
         } 
     }  
-   else {assert(inv(c, s2));}
+   else {}
 }
 
 
 
 }
-
