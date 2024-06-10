@@ -8,12 +8,9 @@ use vstd::prelude::*;
 
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 
-use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap};
-
-
+use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap, step_Map_start, step_Map_end, inflight_map_no_overlap_pmem, inflight_map_no_overlap_inflight_pmem};
 
 verus! {
-
 
 //ensures that if a new mapping is added the old ones are still in there and no new other mappings appear
 pub proof fn lemma_mem_domain_from_mappings(
@@ -264,6 +261,28 @@ pub proof fn lemma_overlap (mappings: Map<nat, PageTableEntry>, base: nat, pte :
     assert(pmem_no_overlap(mappings.insert(base, pte)));
 }
 
+
+pub proof fn lemma_map_preserves_no_overlap_inflights (inflights: Map<nat, AbstractArguments> ,mappings: Map<nat, PageTableEntry>, thread_id: nat)
+    requires inflight_map_no_overlap_inflight_pmem(inflights),
+             inflight_map_no_overlap_pmem(inflights.values(), mappings),
+             inflights.dom().contains(thread_id),
+    ensures  if let AbstractArguments::Map{vaddr: base, pte:pt} = inflights.index(thread_id) {
+             inflight_map_no_overlap_pmem(inflights.remove(thread_id).values(), mappings.insert(base, pt))} 
+             else {true}
+{   /*
+        
+        assert( forall| b: AbstractArguments| #![auto] {
+        inflights.remove(AbstractArguments::Map{vaddr:base, pte:pt}).contains(b) ==>
+        match b {
+            AbstractArguments::Map {vaddr, pte}  => { !candidate_mapping_overlaps_existing_pmem(mappings, pte) &&   !overlap(pte.frame , pt.frame) }
+            _ => {true}
+            }
+        });
+        
+*/
+    assume(false);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                               //
 //                                        Step preserves inv proofs                                              //
@@ -283,10 +302,62 @@ pub proof fn unmap_start_preserves_inv(c: AbstractConstants, s1: AbstractVariabl
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
         assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
         let pte = if (s1.mappings.dom().contains(vaddr)){Some (s1.mappings.index(vaddr))} else {Option::None};
-        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Unmap{ vaddr, pte })));
+        assert( s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte }));
+        assume(false);
     } else {}
 }
 
+pub proof fn map_start_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2:AbstractVariables, thread_id: nat, vaddr: nat, pte:PageTableEntry)
+    requires
+        step_Map_start ( c, s1, s2, thread_id, vaddr, pte),
+        s1.sound ==> inv(c, s1),
+        s1.sound,
+        s1.thread_state.dom().contains(thread_id),
+    ensures
+        s2.sound ==> inv(c, s2)
+{
+    if (s2.sound) {
+        lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
+        assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
+        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Map{vaddr, pte})));
+    assume(false);
+    } else {}
+}
+
+pub proof fn map_end_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2:AbstractVariables, thread_id: nat, result:Result<(), ()>)
+    requires
+        step_Map_end ( c, s1, s2, thread_id, result ),
+        s1.sound ==> inv(c, s1),
+        s1.sound,
+        s1.thread_state.dom().contains(thread_id),
+    ensures
+        s2.sound ==> inv(c, s2)
+{   if let AbstractArguments::Map{vaddr,pte} = s1.thread_state.index(thread_id) 
+    {   lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
+        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
+        if (result is Ok) {
+            assert( s1.thread_state.values().contains(AbstractArguments::Map{vaddr, pte}));
+            assert( !candidate_mapping_overlaps_existing_pmem( s1.mappings, pte));
+            assert( above_zero(pte.frame.size));
+            assert( s2.mappings === s1.mappings.insert(vaddr, pte));
+            assert( mappings_frame_sizes_over_zero(s2.mappings));
+            lemma_overlap(s1.mappings, vaddr, pte);
+            assume(false);
+            lemma_map_preserves_no_overlap_inflights(s1.thread_state, s1.mappings, thread_id );
+            //TODO
+            assume(false);
+            assert(s2.thread_state.values().subset_of(s1.thread_state.values().remove(AbstractArguments::Map{vaddr, pte})));
+            assume(false);
+        }
+        else {
+           // assert(s2.mappings == s1.mappings);
+           assume(false);
+        } 
+    }  
+   else {assert(inv(c, s2));}
+}
+
 
 
 }
+

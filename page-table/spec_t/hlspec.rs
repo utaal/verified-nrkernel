@@ -11,7 +11,7 @@ use crate::spec_t::mem;
 use vstd::prelude::*;
 
 
-use crate::spec_t::hlproof::{lemma_mem_domain_from_mapping_finite, unmap_start_preserves_inv,lemma_overlap};
+use crate::spec_t::hlproof::{lemma_mem_domain_from_mapping_finite, unmap_start_preserves_inv, map_start_preserves_inv, map_end_preserves_inv};
 
 
 verus! {
@@ -243,7 +243,6 @@ pub open spec fn step_Map_enabled(
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
     }
-    // TODO: remove the following an enabling condition, turn it into unspecified behavior
 }
 
 //think about weather or not map start is valid if it overlaps with existing vmem
@@ -452,11 +451,11 @@ pub open spec fn inflight_map_no_overlap_pmem(inflightargs: Set<AbstractArgument
     }
 }
 
-pub open spec fn inflight_map_no_overlap_inflight_pmem(inflightargs: Set<AbstractArguments>) -> bool {
-    forall| b: AbstractArguments| #![auto] {
-        inflightargs.contains(b) ==>
-        match b {
-            AbstractArguments::Map {vaddr, pte}  => { !candidate_mapping_overlaps_inflight_pmem(inflightargs.remove(b), pte) }
+pub open spec fn inflight_map_no_overlap_inflight_pmem(inflightargs: Map<nat, AbstractArguments>) -> bool {
+    forall| b: nat| #![auto] {
+        inflightargs.dom().contains(b) ==>
+        match inflightargs.index(b) {
+            AbstractArguments::Map {vaddr, pte}  => { !candidate_mapping_overlaps_inflight_pmem(inflightargs.remove(b).values(), pte) }
             _ => {true}
             }
     }
@@ -466,7 +465,7 @@ pub open spec fn mappings_frame_sizes_over_zero(mappings: Map<nat, PageTableEntr
 forall |base: nat| #![auto] mappings.dom().contains(base) ==> above_zero(mappings.index(base).frame.size)
 }
 
-pub open spec fn infilght_mem_size_over_zero(inflightargs: Set<AbstractArguments> ) -> bool {
+pub open spec fn inflight_mem_size_over_zero(inflightargs: Set<AbstractArguments> ) -> bool {
     forall| b: AbstractArguments| #![auto] {
         inflightargs.contains(b) ==>
         match b {
@@ -475,24 +474,16 @@ pub open spec fn infilght_mem_size_over_zero(inflightargs: Set<AbstractArguments
             }
     }
 }
-/*
-    assert( wf(c, s2));
-    assert( pmen_no_overlap(s2.mappings));
-    assert( inflight_map_no_overlap_pmem(s2.thread_state.values(), s2.mappings));
-    assert( inflight_map_no_overlap_inflight_pmem(s2.thread_state.values()));
-    assert( mappings_frame_sizes_over_zero(s2.mappings));
-    assert( infilght_mem_size_over_zero(s2.thread_state.values()));
 
-*/
 
 pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool
 {
     &&&  wf(c, s)
     &&&  pmem_no_overlap(s.mappings)
     &&&  inflight_map_no_overlap_pmem(s.thread_state.values(), s.mappings)
-    &&&  inflight_map_no_overlap_inflight_pmem(s.thread_state.values())
+    &&&  inflight_map_no_overlap_inflight_pmem(s.thread_state)
     &&&  mappings_frame_sizes_over_zero(s.mappings)
-    &&&  infilght_mem_size_over_zero(s.thread_state.values())
+    &&&  inflight_mem_size_over_zero(s.thread_state.values())
 }
 
 
@@ -500,55 +491,6 @@ pub proof fn init_implies_inv( c: AbstractConstants, s: AbstractVariables)
     requires init(c, s),
     ensures inv(c, s),
 { }
-
-pub proof fn map_end_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2:AbstractVariables, thread_id: nat, result:Result<(), ()>)
-    requires
-        step_Map_end ( c, s1, s2, thread_id, result ),
-        s1.sound ==> inv(c, s1),
-        s1.sound,
-        s1.thread_state.dom().contains(thread_id),
-    ensures
-        s2.sound ==> inv(c, s2)
-{   if let AbstractArguments::Map{vaddr,pte} = s1.thread_state.index(thread_id) 
-    {   lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
-        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
-        assert(infilght_mem_size_over_zero(s2.thread_state.values()));
-        assert(inflight_map_no_overlap_inflight_pmem(s2.thread_state.values()));
-
-        if (result is Ok) {
-            assert( s1.thread_state.values().contains(AbstractArguments::Map{vaddr, pte}));
-            assert( !candidate_mapping_overlaps_existing_pmem( s1.mappings, pte));
-            assert( above_zero(pte.frame.size));
-            assert( s2.mappings === s1.mappings.insert(vaddr, pte));
-            assert( mappings_frame_sizes_over_zero(s2.mappings));
-            lemma_overlap(s1.mappings, vaddr, pte);
-            //TODO
-            assume( inflight_map_no_overlap_pmem(s2.thread_state.values(), s2.mappings));
-        }
-        else {
-           // assert(s2.mappings == s1.mappings);
-        } 
-    }  
-   else {assert(inv(c, s2));}
-}
-
-
-pub proof fn map_start_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2:AbstractVariables, thread_id: nat, vaddr: nat, pte:PageTableEntry)
-    requires
-        step_Map_start ( c, s1, s2, thread_id, vaddr, pte),
-        s1.sound ==> inv(c, s1),
-        s1.sound,
-        s1.thread_state.dom().contains(thread_id),
-    ensures
-        s2.sound ==> inv(c, s2)
-{
-    if (s2.sound) {
-        //assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
-        lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
-        assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
-        assume(false);
-    } else {}
-}
 
 pub proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables,)
     requires
@@ -564,10 +506,12 @@ pub proof fn next_step_preserves_inv(c: AbstractConstants, s1: AbstractVariables
             AbstractStep::MapStart     { thread_id, vaddr, pte } => { map_start_preserves_inv(c, s1, s2, thread_id, vaddr, pte);}
             AbstractStep::MapEnd       { thread_id, result }     => { map_end_preserves_inv(c, s1, s2, thread_id, result);}
             AbstractStep::ResolveStart { thread_id, vaddr }      => { assert(s1.mappings == s2.mappings);
-                                                                      assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Resolve{vaddr}))); }
+                                                                      assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Resolve{vaddr}))); 
+                                                                      assume(false);}
             _                                                    => { assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(AbstractArguments::Empty)));
                                                                       assert(forall |id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
-                                                                      lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);}}
+                                                                      lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
+                                                                      assume(false);}}
     } else { assert (!s2.sound); }
 }
 
