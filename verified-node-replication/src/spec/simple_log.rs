@@ -195,6 +195,20 @@ state_machine! {
         }
     }
 
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // Out-of-band Read Transition
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    /// Out-of-band read (e.g. by the MMU) on a replica
+    readonly!{
+        readonly_view_oob(label: Label<DT>, rid: ReqId, version: LogIdx, res: DT::View) {
+            require label is Internal;
+            require version <= pre.version;
+            require res == pre.nrstate_at_version(version);
+        }
+    }
+
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Update Operation Transitions
