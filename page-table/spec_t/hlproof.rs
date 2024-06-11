@@ -8,7 +8,7 @@ use vstd::prelude::*;
 
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 
-use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap, step_Map_start, step_Map_end, inflight_maps_unique, if_map_then_unique, candidate_mapping_overlaps_inflight_pmem};
+use crate::spec_t::hlspec::{mem_domain_from_entry, mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains, inv, AbstractConstants, AbstractVariables, AbstractArguments, step_Unmap_start, mappings_frame_sizes_over_zero, pmem_no_overlap, step_Map_start, step_Map_end, inflight_maps_unique, if_map_then_unique, candidate_mapping_overlaps_inflight_pmem, inflight_mem_size_over_zero};
 
 verus! {
 
@@ -238,6 +238,12 @@ pub proof fn lemma_mem_domain_from_new_mappings_subset(
 
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                               //
+//                                        Step preserves inv lemmata                                             //
+//                                                                                                               //
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub proof fn lemma_overlap_sym(region1: MemRegion, region2: MemRegion)
     requires !overlap(region1, region2),
              region1.size > 0,
@@ -290,16 +296,35 @@ pub proof fn insert_non_map_preserves_unique(thread_state: Map<nat, AbstractArgu
 
 pub proof fn insert_map_preserves_unique(thread_state: Map<nat, AbstractArguments>, thread_id: nat, vaddr: nat, pte: PageTableEntry)
     requires inflight_maps_unique(thread_state),
-            !candidate_mapping_overlaps_inflight_pmem(thread_state.values(), pte)
-    ensures inflight_maps_unique(thread_state.insert(thread_id, AbstractArguments::Map{vaddr, pte})),
+            !candidate_mapping_overlaps_inflight_pmem(thread_state.values(), pte),
+            above_zero(pte.frame.size),
+            inflight_mem_size_over_zero(thread_state.values()),
+    ensures inflight_maps_unique(thread_state.insert(thread_id, AbstractArguments::Map{ vaddr, pte}))
 {
-    let args = thread_state.insert(thread_id, AbstractArguments::Map{vaddr, pte});
+    let arg = AbstractArguments::Map{vaddr, pte};
+    let args = thread_state.insert(thread_id, arg);
+    let p = pte;
+    assume(inflight_mem_size_over_zero(args.values()));
     assert forall| id : nat | #[trigger] args.dom().contains(id) implies if_map_then_unique(args, id) by {
         if (args.dom().contains(id)){
             if (id == thread_id) { 
-                   assume(false);
+                assert  forall |other_id: nat| #[trigger] thread_state.dom().contains(other_id) implies arg != thread_state.index(other_id) by {
+                    if let AbstractArguments::Map { vaddr: x, pte: y} = thread_state.index(other_id){ 
+                        assert (thread_state.values().contains(AbstractArguments::Map { vaddr: x, pte: y}));
+                        assert (!overlap(pte.frame, y.frame));
+                    } else {}
+                    
+                    }
                 }
-            else { assume(false);
+            else { if let AbstractArguments::Map { vaddr: x, pte: y} = thread_state.index(id){ 
+                    assert (thread_state.dom().contains(id));
+                    assert (thread_state.values().contains(AbstractArguments::Map { vaddr: x, pte: y}));
+                    assert (!overlap(pte.frame, y.frame));
+                    assert (args.index(id) != arg );
+                    assert (args.remove(id) == thread_state.remove(id).insert(thread_id, arg));
+                  
+                } else {}
+
       
              }
         } else {}
