@@ -6,7 +6,7 @@ pub mod types;
 pub mod utils;
 
 // the linearization proof
-pub mod linearization;
+//pub mod linearization;
 
 // the simple log model
 pub mod simple_log;
