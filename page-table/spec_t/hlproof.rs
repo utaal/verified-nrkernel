@@ -322,7 +322,6 @@ pub proof fn insert_map_preserves_unique(thread_state: Map<nat, AbstractArgument
                     assert (!overlap(pte.frame, y.frame));
                     assert (args.index(id) != arg );
                     assert (args.remove(id) == thread_state.remove(id).insert(thread_id, arg));
-                  
                 } else {}
 
       

@@ -321,8 +321,14 @@ pub open spec fn step_Unmap_start(
      &&& s1.thread_state[thread_id] === AbstractArguments::Empty
      &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, (s1.mappings.index(vaddr))) || pte is None) {
         &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte })
-        &&& if (pte is None ){s2.mappings === s1.mappings}
-            else {s2.mappings === s1.mappings.remove(vaddr)}
+        &&& if (pte is None ){ &&& s2.mappings === s1.mappings
+                               &&& s2.mem === s1.mem
+                             }
+            else {
+                              &&& s2.mappings === s1.mappings.remove(vaddr)
+                              &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
+                              &&& (forall|idx: nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+        }
         &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
         &&& s2.sound == s1.sound
     } else {
@@ -342,17 +348,14 @@ pub open spec fn step_Unmap_end(
     &&& valid_thread(c, thread_id)
     &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
     &&& s2.sound == s1.sound
+    &&& s2.mappings === s1.mappings
+    &&& s2.mem === s1.mem
     &&& match s1.thread_state[thread_id] {
         AbstractArguments::Unmap{vaddr, pte} => {
             &&& if pte is Some {
-                &&& result is Ok
-                &&& s2.mappings === s1.mappings.remove(vaddr)
-                &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
-                &&& (forall|idx: nat| #![auto] s2.mem.dom().contains(idx) ==> s2.mem[idx] === s1.mem[idx])
+                result is Ok
             } else {
-                &&& result is Err
-                &&& s2.mappings === s1.mappings
-                &&& s2.mem === s1.mem
+               result is Err
             }
         },
         _ => { false }
