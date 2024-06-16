@@ -17,8 +17,11 @@ verus! {
 
 pub struct OSConstants {
     pub hw: hardware::HWConstants,
+
     //maps User Level Thread to its core    
-    pub ULT2core : Map<nat, (nat, nate)>
+    pub ULT2core : Map<nat, (nat, nate)>,
+    //highest thread_id
+    pub ULT_no: nat,
 }
 
 
@@ -79,7 +82,7 @@ impl OSVariables {
     }
 	*/
 
-	
+	//TODO this
 	//INFO is now referring to nr-log pt. however it is questionable if this is what we want
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables {
@@ -87,11 +90,13 @@ impl OSVariables {
         }
     }
 	
+    //TODO this
 	//INFO is now referring to nr-log pt. however it is questionable if this is what we want
     pub open spec fn interp_pt_mem(self) -> Map<nat,PageTableEntry> {
         hardware::interp_pt_mem(self.log_pt)
     }
 
+    //TODO this
     pub open spec fn effective_mappings(self) -> Map<nat,PageTableEntry> {
         Map::new(
             |base: nat| /* self.hw.tlb.dom().contains(base) || */ self.interp_pt_mem().dom().contains(base),
@@ -99,6 +104,7 @@ impl OSVariables {
             )
     }
 
+    //TODO this
     pub open spec fn interp_vmem(self) -> Map<nat,nat> {
         let phys_mem_size = self.interp_constants().phys_mem_size;
         let mappings: Map<nat,PageTableEntry> = self.effective_mappings();
@@ -114,7 +120,7 @@ impl OSVariables {
 			
     }
 	
-
+    //TODO this
     pub open spec fn interp(self) -> hlspec::AbstractVariables {
         let mappings: Map<nat,PageTableEntry> = self.effective_mappings();
         let mem: Map<nat,nat> = self.interp_vmem();
@@ -124,44 +130,39 @@ impl OSVariables {
         }
     }
 
+    
     pub open spec fn interp_constants(self) -> hlspec::AbstractConstants {
         hlspec::AbstractConstants {
+            thread_no: self.ULT_no,
             phys_mem_size: self.hw.mem.len(),
         }
     }
 }
 
 
-
-
 //INFO: added OSConstant
 pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
-	&&& s1.log_pt == s2.log_pt
-    &&& s1.pf == s2.pf
+
     &&& !(system_step is PTMemOp)
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
-    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
-}
-
-//INFO: added OSConstants, NUMA_id and core_id
-pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
-	
-	//PROPOSAL: put entry in log_pt if valid and set NUMA_id_pt to log_pt 
-	//(this should simulate the NUMA_Node syncing the pagetable and adding a new entry to it. )
-	//(however it is incorrect as putting entry into log_pt could return a log_pt that has more entries after new entry)
-	&&& s1.log_pt == s2.log_pt
-    &&& s1.pf == s2.pf
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
-    &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
     &&& nr::simple_log::SimpleLog::Step::no_op()
 }
 
+/*
+pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
+
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
+    &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
+}
+*/
 
 //Proposal: add HW stutter step
+//TODO update Replica
+//TODO check im step_PTmemOP lets you change entire pt
 pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat) ->
 {
-    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id)
-    &&& hardware::step_PTMumOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
+    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& match step {
         nr::simple_log::SimpleLog::Step::update_start(rid, uop) =>{
             true,
@@ -175,8 +176,6 @@ pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, nr_s
          nr::simple_log::SimpleLog::Step::update_finish(rid, resp) => {
             true,
          },
-         //nr::simple_log::SimpleLog::Step::no_op() => { false},
-         //nr::simple_log::SimpleLog::Step::dummy_to_use_type_params(state) => { false},
          _ => {false},
     }
 }
@@ -186,10 +185,9 @@ pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NU
     // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
 	//INFO this is not necessary as it is already in step_PT
-	&&& s1.log_pt == s2.log_pt
-    &&& s1.pf == s2.pf
+
 	&&& hardware::valid_core_id(c.hw, NUMA_id, core_id)
-  	&&& s1.pf[(NUMA_id, core_id)] == 0
+
 	//PROPOSAL: this for either one NUMA node or all
     &&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> !s2.hw.NUMAs[NUMA_id].cores[core_id].tlb.dom().contains(base)
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
@@ -198,8 +196,7 @@ pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NU
 
 //INFO: added OSConstants, NUMA_id and core_id
 pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat , base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
-	&&& s1.log_pt == s2.log_pt
-    &&& s1.pf == s2.pf
+	
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
@@ -208,9 +205,9 @@ pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, 
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW      { step: hardware::HWStep },
-    Map     { nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat},
-    Unmap   { NUMA_id:nat , core_id:nat, vaddr: nat, result: Result<(),()> },
-    Resolve { NUMA_id:nat , core_id:nat, vaddr: nat, result: Result<(nat,PageTableEntry),()> },
+    Map     { nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat, vaddr: nat, pte: PageTableEntry, result: Result<(),()>,},
+    Unmap   { nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat, vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    Resolve { nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat, vaddr: nat, result: Result<(nat,PageTableEntry),()> },
 }
 
 
@@ -273,11 +270,11 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     //TODO hardware stuff
 	&&& hardware::interp_pt_mem(s.log_pt) === Map::empty()
     &&& hardware::init(c.hw, s.hw)
-	//&&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf.contains_key((NUMA_id, core_id))
-    //&&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf[(NUMA_id, core_id)] == 0
-     
-    &&& nr::simple_log::SimpleLog::Step::
-	
+    //wf of ULT2core mapping
+	&&& forall |id: nat| id <= c.ULT_no <==> c.ULT2core.contains_key(id)
+    &&& forall |id: nat| id <= c.ULT_no ==> let (NUMA_id, core_id) = ULT2core.index(id) in hardware::valid_core_id(c.hw, NUMA_id, core_id)
+   
+    &&& nr::simple_log::SimpleLog::Initialize()
 }
 
 }
