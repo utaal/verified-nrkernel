@@ -13,18 +13,26 @@ use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, aligned
 L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
 
 verus! {
-	
-//INFO: OSConstants smth smth IronFleet
+
+
 pub struct OSConstants {
     pub hw: hardware::HWConstants,
+    //maps User Level Thread to its core    
+    pub ULT2core : Map<nat, (nat, nate)>
 }
-	
+
 
 pub struct OSVariables {
+
     pub hw: hardware::HWVariables,
-	pub log_pt: mem::PageTableMemory,
-	pub pf: Map<(nat, nat), nat>,			
+    pub nr: nr::simple_log::SimpleLog::State,
+
+    // maps node_id to its version
+    pub replicas: Map<nat, nat>,
+    // maps numa node to ULT id blocking it 
+    // pub lock: Map<nat, nat>,
 }
+
 
 impl OSVariables {
 	
@@ -123,6 +131,9 @@ impl OSVariables {
     }
 }
 
+
+
+
 //INFO: added OSConstant
 pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
 	&&& s1.log_pt == s2.log_pt
@@ -142,6 +153,32 @@ pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA
     &&& s1.pf == s2.pf
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Map(s1.pt_variables(), s2.pt_variables(), base, pte, result)
+    &&& nr::simple_log::SimpleLog::Step::no_op()
+}
+
+
+//Proposal: add HW stutter step
+pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat) ->
+{
+    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id)
+    &&& hardware::step_PTMumOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
+    &&& match step {
+        nr::simple_log::SimpleLog::Step::update_start(rid, uop) =>{
+            true,
+         },
+         nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid) => {
+            true,
+         },
+         nr::simple_log::SimpleLog::Step::update_incr_version(logidx) => {
+            true,
+         },
+         nr::simple_log::SimpleLog::Step::update_finish(rid, resp) => {
+            true,
+         },
+         //nr::simple_log::SimpleLog::Step::no_op() => { false},
+         //nr::simple_log::SimpleLog::Step::dummy_to_use_type_params(state) => { false},
+         _ => {false},
+    }
 }
 	
 //INFO: added OSConstants, NUMA_id and core_id
@@ -171,11 +208,14 @@ pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, 
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW      { step: hardware::HWStep },
-    Map     { NUMA_id:nat , core_id:nat, vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    Map     { nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat},
     Unmap   { NUMA_id:nat , core_id:nat, vaddr: nat, result: Result<(),()> },
     Resolve { NUMA_id:nat , core_id:nat, vaddr: nat, result: Result<(nat,PageTableEntry),()> },
 }
 
+
+
+//INFO map updated OS Steps to updated HL steps
 impl OSStep {
     pub open spec fn interp(self) -> hlspec::AbstractStep {
         match self {
@@ -183,42 +223,60 @@ impl OSStep {
                 match step {
 					//INFO: looses information on who is doing the readwrite
                     hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, NUMA_id, core_id } => hlspec::AbstractStep::ReadWrite { vaddr, op, pte },
-                    hardware::HWStep::PTMemOp { NUMA_id, core_id}                       => arbitrary(),
+                    hardware::HWStep::PTMemOp { NUMA_id, core_id}                           => arbitrary(),
                     hardware::HWStep::TLBFill { vaddr, pte, NUMA_id, core_id }              => hlspec::AbstractStep::Stutter,
                     hardware::HWStep::TLBEvict { vaddr, NUMA_id, core_id }                  => hlspec::AbstractStep::Stutter,
                 },
-			//INFO: added Core_id and NUMA_id
-            OSStep::Map     { NUMA_id, core_id, vaddr, pte, result } => hlspec::AbstractStep::Map { vaddr, pte, result },
-            OSStep::Unmap   { NUMA_id, core_id, vaddr, result }      => hlspec::AbstractStep::Unmap { vaddr, result },
-            OSStep::Resolve { NUMA_id, core_id, vaddr, result }      => hlspec::AbstractStep::Resolve { vaddr, result },
+			OSStep::Map { nr_step, ULT_id, vaddr, pte, result } =>
+                match nr_step {
+                    nr::simple_log::SimpleLog::Step::update_start(rid, uop)      => {hlspec::AbstractStep::Map_Start {thread_id: ULT_id, vaddr, pte}},
+                    nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid)   => {hlspec::AbstractStep::Stutter},
+                    nr::simple_log::SimpleLog::Step::update_incr_version(logidx) => {hlspec::AbstractStep::Stutter},
+                    nr::simple_log::SimpleLog::Step::update_finish(rid, resp)    => {hlspec::AbstractStep::Map_End {thread_id: ULT_id, result}},
+                    _ => {arbitary()},
+                },
+            OSStep::Unmap { nr_step, ULT_id, vaddr, pte, result } =>
+                match nr_step {
+                    nr::simple_log::SimpleLog::Step::update_start(rid, uop)      => {hlspec::AbstractStep::Unmap_Start {thread_id: ULT_id, vaddr, pte}},
+                    nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid)   => {hlspec::AbstractStep::Stutter},
+                    nr::simple_log::SimpleLog::Step::update_incr_version(logidx) => {hlspec::AbstractStep::Stutter},
+                    nr::simple_log::SimpleLog::Step::update_finish(rid, resp)    => {hlspec::AbstractStep::Unmap_End {thread_id: ULT_id, result}},
+                    _ => {arbitary()},
+                },
+            OSStep::Resolve { nr_step, ULT_id, vaddr, result }      =>
+                match nr_step {
+                    nr::simple_log::SimpleLog::Step::readonly_start(rid, uop)          => {hlspec::AbstractStep::Resolve_Start {thread_id: ULT_id, vaddr}},
+                    nr::simple_log::SimpleLog::Step::readonly_read_version(rid)        => {hlspec::AbstractStep::Stutter},
+                    nr::simple_log::SimpleLog::Step::readonly_finish(rid, logidx, rop) => {hlspec::AbstractStep::Resolve_End {thread_id: ULT_id, result}},
+                    _ => {arbitary()},
+                },
         }
     }
 }
 
-// INFO: added NUMA_id and core_id
-// INFO: added OSConstants
+
 pub open spec fn next_step(c: OSConstants, s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
-        OSStep::HW      { step }               => step_HW(c, s1, s2, step),
-        OSStep::Map     { NUMA_id, core_id, vaddr, pte, result } => step_Map(c, s1, s2, NUMA_id, core_id, vaddr, pte, result),
-        OSStep::Unmap   { NUMA_id, core_id, vaddr, result }      => step_Unmap(c, s1, s2, NUMA_id, core_id, vaddr, result),
-        OSStep::Resolve { NUMA_id, core_id, vaddr, result }      => step_Resolve(c, s1, s2, NUMA_id, core_id, vaddr, result),
+        OSStep::HW      { step }                                 => step_HW     (c, s1, s2, step),
+        OSStep::Map     { nr_step, ULT_id, vaddr, pte, result }  => step_Map    (c, s1, s2, ULT_id, vaddr, pte, result),
+        OSStep::Unmap   { nr_step, ULT_id, vaddr, pte, result }  => step_Unmap  (c, s1, s2, ULT_id, vaddr, pte, result),
+        OSStep::Resolve { nr_step, ULT_id, vaddr, result }       => step_Resolve(c, s1, s2, ULT_id, vaddr, result),
     }
 }
 
-//INFO: exist wegbekommen?
-//INFO: added OSConstants
 pub open spec fn next(c: OSConstants, s1: OSVariables, s2: OSVariables) -> bool {
     exists|step: OSStep| next_step(c, s1, s2, step)
 }
 
 //INFO: added OSConstants
 pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
+    //TODO hardware stuff
 	&&& hardware::interp_pt_mem(s.log_pt) === Map::empty()
-    &&& spec_pt::init(s.pt_variables())
     &&& hardware::init(c.hw, s.hw)
-	&&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf.contains_key((NUMA_id, core_id))
-    &&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf[(NUMA_id, core_id)] == 0
+	//&&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf.contains_key((NUMA_id, core_id))
+    //&&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> s.pf[(NUMA_id, core_id)] == 0
+     
+    &&& nr::simple_log::SimpleLog::Step::
 	
 }
 

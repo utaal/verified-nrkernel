@@ -47,6 +47,12 @@ impl TLB {
     }
 }
 
+
+pub struct PTMemView{
+    cr3: usize,
+    mem: Seq<usize>, 
+}
+
 // FIXME: We need to allow the dirty and accessed bits to change in the memory.
 // Or maybe we just specify reads to return those bits as arbitrary?
 #[verifier(external_body)]

@@ -283,15 +283,7 @@ pub proof fn insert_non_map_preserves_unique(
             if (id == base) {
             } else {
                 if let AbstractArguments::Map { vaddr, pte } = thread_state.index(id) {
-                    //assert( if_map_then_unique(thread_state, id));
-                    //assert( !thread_state.remove(id).values().contains(thread_state.index(id)) );
-                    //assert( args.values().subset_of(thread_state.values().insert(arg)));
-                    //assert( args.index(id) == thread_state.index(id));
-                    //assert( args.remove(id) == thread_state.insert(base, arg).remove(id));
                     assert(args.remove(id) == thread_state.remove(id).insert(base, arg));
-                    //assert (args.remove(id).values().subset_of(thread_state.remove(id).values().insert(arg)));
-                    //assert( !thread_state.remove(id).values().insert(arg).contains(thread_state.index(id)));
-                    //assert ( !args.remove(id).values().contains(thread_state.index(id)));
                 } else {
                 }
             }
