@@ -30,10 +30,17 @@ pub struct OSVariables {
     pub hw: hardware::HWVariables,
     pub nr: nr::simple_log::SimpleLog::State,
 
-    // maps node_id to its version
+    // maps node_id to its (min?) version
     pub replicas: Map<nat, nat>,
     // maps numa node to ULT id blocking it 
-    // pub lock: Map<nat, nat>,
+    pub core_state: Map<(nat, core), OSArguments>,
+}
+
+
+pub struct OSArguments {
+    Map   {ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>},
+    Unmap {ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>},
+    Empty,
 }
 
 
@@ -82,21 +89,27 @@ impl OSVariables {
     }
 	*/
 
-	//TODO this
-	//INFO is now referring to nr-log pt. however it is questionable if this is what we want
+
+//self.NRvariables.nrstate_at_version::<DT>(NRVariables.log.len)
+//self.FNRVariables.nrstate_at_version::<DT>(NRVariables.version)
+
+
+	//TODO delete this
+    // this is only used for spec_pt transitions so its not used anymore
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables {
             pt_mem: self.log_pt,
         }
     }
 	
-    //TODO this
+    //TODO adjust DT. Think what compute log does and how it needs to be implemented/changed
+    // also think about what our view is. i dont think it was the pagetable? but it would make sense to me
 	//INFO is now referring to nr-log pt. however it is questionable if this is what we want
     pub open spec fn interp_pt_mem(self) -> Map<nat,PageTableEntry> {
-        hardware::interp_pt_mem(self.log_pt)
+        hardware::interp_pt_mem(self.NRVariables.nrstate_at_version::<DT>(NRVariables.log.len))
     }
 
-    //TODO this
+    //TODO see above and change if needed
     pub open spec fn effective_mappings(self) -> Map<nat,PageTableEntry> {
         Map::new(
             |base: nat| /* self.hw.tlb.dom().contains(base) || */ self.interp_pt_mem().dom().contains(base),
@@ -120,7 +133,7 @@ impl OSVariables {
 			
     }
 	
-    //TODO this
+    //TODO add solution for thread_state and sound bool
     pub open spec fn interp(self) -> hlspec::AbstractVariables {
         let mappings: Map<nat,PageTableEntry> = self.effective_mappings();
         let mem: Map<nat,nat> = self.interp_vmem();
@@ -139,8 +152,19 @@ impl OSVariables {
     }
 }
 
+pub open spec fn core_state_unchanged_besides_thread_state(
+    s1: AbstractVariables,
+    s2: AbstractVariables,
+    thread_id: nat,
+    thread_arguments: AbstractArguments,
+) -> bool {
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, thread_arguments)
+    &&& s2.mem === s1.mem
+    &&& s2.mappings === s1.mappings
+    &&& s2.sound == s1.sound
+}
 
-//INFO: added OSConstant
+
 pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
 
     &&& !(system_step is PTMemOp)
@@ -156,31 +180,85 @@ pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA
 }
 */
 
-//Proposal: add HW stutter step
-//TODO update Replica
-//TODO check im step_PTmemOP lets you change entire pt
-pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat) ->
+//TODO think aboutt Replica min version.
+//TODO built aop from os_step
+pub open spec fn step_Map(c: OSConstants, s1: OSVariables, s2: OSVariables, nr_step: nr::simple_log::SimpleLog::Step<DT>, ULT_id: nat, os_args: OSArguments) -> bool
 {
     let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
-    &&& match step {
-        nr::simple_log::SimpleLog::Step::update_start(rid, uop) =>{
-            true,
-         },
-         nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid) => {
-            true,
-         },
-         nr::simple_log::SimpleLog::Step::update_incr_version(logidx) => {
-            true,
-         },
-         nr::simple_log::SimpleLog::Step::update_finish(rid, resp) => {
-            true,
-         },
-         _ => {false},
+    let if OSArguments::Map {ULT_id: ult_id, rid, vaddr, pte, result}, = os_args {
+        let aop = //TODO
+        &&& s2.replicas == s1.replicas
+        &&& ULT_id == ult_id
+        &&& nr::simple_log::SimpleLog::State::next_by(s1.nr, s2.nr, aop, nr_step)
+        &&& match nr_step {
+            nr::simple_log::SimpleLog::Step::update_start(rid, uop) =>{
+                &&& s1.core_state[(NUMA_id, core_id)] is OSArguments::Empty
+                &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), os_args)
+                &&& s1.hw == s2.hw
+            },
+            nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid) => {
+                &&& s1.core_state[(NUMA_id, core_id)] == os_args
+                &&& s2.core_state == s1.core_state
+                &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id) //TODO check this
+            },
+            nr::simple_log::SimpleLog::Step::update_incr_version(logidx) => {
+                &&& s1.core_state[(NUMA_id, core_id)] == os_args
+                &&& s2.core_state == s1.core_state
+                &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id) //TODO check this
+            },
+            nr::simple_log::SimpleLog::Step::update_finish(rid, resp) => {
+                &&& s1.core_state[(NUMA_id, core_id)] == os_args
+                &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), OSArguments::Empty)
+                &&& s1.hw == s2.hw
+            },
+             _ => {false},
+        }
+    } else {
+        false
     }
 }
-	
-//INFO: added OSConstants, NUMA_id and core_id
+
+
+pub open spec fn step_Map_Start (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>} ) -> bool {
+    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
+    let os_arg = OSArguments::Map {ULT_id, rid, vaddr, pte, result},
+    &&& s1.core_state[(NUMA_id, core_id)] is OSArguments::Empty
+    &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), os_args)
+    &&& s2.replicas == s1.replicas
+    &&& s2.hw == s1.hw
+    &&& nr::simple_log::SimpleLog::Step::update_start(rid, uop)
+}
+
+
+pub open spec fn step_Map_End (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat ) -> bool {
+    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
+    if let OSArguments::Map {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[(NUMA_id, core_id)] {
+        &&& ULT_id == ult_id
+        &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), OSArguments::Empty)
+        &&& s2.replicas == s1.replicas
+        &&& s2.hw == s1.hw
+        &&& nr::simple_log::SimpleLog::Step::update_end(rid, uop)
+    } else { false }
+}
+
+pub open spec fn step_nr (c: OSConstants, s1: OSVariables, s2: OSVariables, aop: <DT>, step: nr::simple_log::SimpleLog::Step<DT>) -> bool {
+    &&& s1.hw == s2.hw // optional pmem_op
+    &&& s1.replicas == s2.replicas // also not right
+    &&& s2.core_state == s1.core_state
+    &&& nr::simple_log::SimpleLog::State::next_by(s1.nr, s2.nr, aop, step);
+    &&& match step {
+        nr::simple_log::SimpleLog::Step::readonly_start(rid, rop)          => { true  },
+        nr::simple_log::SimpleLog::Step::readonly_read_version(rid)        => { true  },
+        nr::simple_log::SimpleLog::Step::readonly_finish(rid, logidx, rop) => { true  },
+        nr::simple_log::SimpleLog::Step::update_start(rid, uop)            => { false }, //no
+        nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid)         => { true  },
+        nr::simple_log::SimpleLog::Step::update_incr_version(logidx)       => { false }, //no 
+        nr::simple_log::SimpleLog::Step::update_finish(rid, resp)          => { true  },
+        SimpleLog::Step::no_op()                                           => { true  },
+        SimpleLog::Step::dummy_to_use_type_params(state)                   => { false }, //no
+    }
+}
+
 pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, result: Result<(),()>) -> bool {
     // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
     // that s2.tlb doesn't contain this particular entry.
@@ -194,14 +272,14 @@ pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NU
     &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-//INFO: added OSConstants, NUMA_id and core_id
+
 pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat , base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
 	
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
-//INFO: added NUMA_id and core_id
+
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW      { step: hardware::HWStep },
@@ -211,14 +289,12 @@ pub enum OSStep {
 }
 
 
-
 //INFO map updated OS Steps to updated HL steps
 impl OSStep {
     pub open spec fn interp(self) -> hlspec::AbstractStep {
         match self {
             OSStep::HW { step } =>
                 match step {
-					//INFO: looses information on who is doing the readwrite
                     hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, NUMA_id, core_id } => hlspec::AbstractStep::ReadWrite { vaddr, op, pte },
                     hardware::HWStep::PTMemOp { NUMA_id, core_id}                           => arbitrary(),
                     hardware::HWStep::TLBFill { vaddr, pte, NUMA_id, core_id }              => hlspec::AbstractStep::Stutter,
@@ -265,7 +341,6 @@ pub open spec fn next(c: OSConstants, s1: OSVariables, s2: OSVariables) -> bool 
     exists|step: OSStep| next_step(c, s1, s2, step)
 }
 
-//INFO: added OSConstants
 pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     //TODO hardware stuff
 	&&& hardware::interp_pt_mem(s.log_pt) === Map::empty()
