@@ -66,6 +66,10 @@ state_machine! {
     fields {
         /// a sequence of update operations,
         pub log: Seq<DT::WriteOperation>,
+        /// the number of replicas, TODO: can we make this a constant?
+        pub num_replicas: nat,
+        /// the current version of each replica
+        pub replica_versions: Map<nat, LogIdx>,
         /// the completion tail current index into the log
         pub version: LogIdx,
         /// in flight read requests
@@ -116,7 +120,9 @@ state_machine! {
 
 
     init!{
-        initialize() {
+        initialize(num_replicas: nat) {
+            init num_replicas = num_replicas;
+            init replica_versions = Map::new(|i:nat| i < num_replicas, |i| 0);
             init log = Seq::empty();
             init version = 0;
             init readonly_reqs = Map::empty();
@@ -202,10 +208,10 @@ state_machine! {
 
     /// Out-of-band read (e.g. by the MMU) on a replica
     readonly!{
-        readonly_view_oob(label: Label<DT>, rid: ReqId, version: LogIdx, res: DT::View) {
-            require label is Internal;
-            require version <= pre.version;
-            require res == pre.nrstate_at_version(version);
+        readonly_view_oob(label: Label<DT>, replica: nat, res: DT::View) {
+            require label is Internal; // TODO: ??
+            require replica < pre.num_replicas;
+            require res == pre.nrstate_at_version(pre.replica_versions[replica]);
         }
     }
 
@@ -267,6 +273,17 @@ state_machine! {
         }
     }
 
+    transition!{
+        update_replica_update(label: Label<DT>, node_id: NodeId, new_version: LogIdx) {
+            require label is Internal;
+
+            require node_id < pre.num_replicas;
+            require pre.replica_versions[node_id] < new_version <= pre.log.len();
+
+            update replica_versions = pre.replica_versions.insert(node_id, new_version);
+        }
+    }
+
     /// Update: Finish the update operation
     ///
     /// This removes the update response from the update responses. The supplied return value
@@ -305,7 +322,7 @@ state_machine! {
 
 
     #[inductive(initialize)]
-    fn initialize_inductive(post: Self) { }
+    fn initialize_inductive(post: Self, num_replicas: nat) { }
 
     #[inductive(readonly_start)]
     fn readonly_start_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId, op: DT::ReadOperation) { }
@@ -324,6 +341,9 @@ state_machine! {
 
     #[inductive(update_incr_version)]
     fn update_incr_version_inductive(pre: Self, post: Self, label: Label<DT>, new_version: LogIdx) { }
+
+    #[inductive(update_replica_update)]
+    fn update_replica_update_inductive(pre: Self, post: Self, label: Label<DT>, node_id: NodeId, new_version: LogIdx) { }
 
     #[inductive(update_finish)]
     fn update_finish_inductive(pre: Self, post: Self, label: Label<DT>, rid: nat,  ret: DT::Response) { }

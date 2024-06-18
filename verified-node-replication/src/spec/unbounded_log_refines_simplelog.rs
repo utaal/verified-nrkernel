@@ -101,6 +101,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op: read_op}),
                     interp(post).readonly_reqs
                 );
+                assert(interp(pre).replica_versions =~= interp(post).replica_versions);
                 SimpleLog::show::readonly_start(interp(pre), interp(post), aop, rid, read_op);
             },
             InputOperation::Write(write_op) => {
@@ -109,6 +110,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                     interp(pre).update_reqs.insert(rid, write_op),
                     interp(post).update_reqs
                 );
+                assert(interp(pre).replica_versions =~= interp(post).replica_versions);
                 SimpleLog::show::update_start(interp(pre), interp(post), aop, rid, write_op);
             },
         }
@@ -141,6 +143,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
                 assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
                 assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
                 assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
+                assert(interp(pre).replica_versions =~= interp(post).replica_versions);
                 SimpleLog::show::readonly_finish(
                     interp(pre),
                     interp(post),
@@ -153,6 +156,7 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
             OutputOperation::Write(response) => {
                 assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
                 assert_maps_equal!(interp(pre).update_resps.remove(rid), interp(post).update_resps);
+                assert(interp(pre).replica_versions =~= interp(post).replica_versions);
                 let version = pre.local_updates[rid].get_Done_idx();
                 assert(response == DT::dispatch_mut_spec(
                     interp(pre).nrstate_at_version(version),
@@ -232,6 +236,10 @@ spec fn interp_update_resps<DT: Dispatch>(local_updates: Map<nat, UpdateState<DT
 
 spec fn interp<DT: Dispatch>(s: UnboundedLog::State<DT>) -> SimpleLog::State<DT> {
     SimpleLog::State {
+        num_replicas: s.num_replicas,
+        replica_versions:
+            Map::new(|node_id: NodeId| node_id < s.num_replicas,
+                     |node_id| s.current_local_version(node_id)),
         log: interp_log(s.tail, s.log),
         version: s.version_upper_bound,
         readonly_reqs: interp_readonly_reqs(s.local_reads),
@@ -260,11 +268,12 @@ proof fn refinement_init<DT: Dispatch>(post: UnboundedLog::State<DT>)
 {
     case_on_init!{ post, UnboundedLog::<DT> => {
         initialize(number_of_nodes) => {
+            assert_maps_equal!(interp(post).replica_versions, Map::new(|n: NodeId| n < number_of_nodes, |n| 0));
             assert_maps_equal!(interp(post).readonly_reqs, Map::empty());
             assert_maps_equal!(interp(post).update_reqs, Map::empty());
             assert_maps_equal!(interp(post).update_resps, Map::empty());
             assert_seqs_equal!(interp(post).log, Seq::empty());
-            SimpleLog::show::initialize(interp(post));
+            SimpleLog::show::initialize(interp(post), post.num_replicas);
         }
     }}
 }
@@ -298,6 +307,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
         readonly_version_upper_bound(rid) => {
             let op = pre.local_reads.index(rid).get_Init_op();
 
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             assert_maps_equal!(
                 interp(pre).readonly_reqs.insert(rid, SReadReq::Req { op, version: pre.version_upper_bound }),
                 interp(post).readonly_reqs
@@ -307,11 +317,13 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
         }
 
         readonly_ready_to_read(rid, node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         readonly_apply(rid) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
@@ -395,6 +407,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
                 interp(pre).update_resps.insert(rid, SUpdateResp(pre.tail)),
                 interp(post).update_resps
             );
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
 
             SimpleLog::show::update_add_op_to_log(interp(pre), interp(post), aop, rid);
         }
@@ -402,6 +415,7 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
         update_done(rid) => {
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
             assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
 
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
@@ -417,29 +431,37 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
         }*/
 
         exec_trivial_start(node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_load_local_version(node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_load_local_version(node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_load_global_head(node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_dispatch_local(node_id) => {
+            assert(interp(post).replica_versions =~=
+                interp(pre).replica_versions.insert(node_id, interp(pre).replica_versions[node_id] + 1));
             assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
             assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
-            SimpleLog::show::no_op(interp(pre), interp(post), aop);
+            SimpleLog::show::update_replica_update(interp(pre), interp(post), aop, node_id, interp(pre).replica_versions[node_id] + 1);
         }
 
         exec_dispatch_remote(node_id) => {
-            SimpleLog::show::no_op(interp(pre), interp(post), aop);
+            assert(interp(post).replica_versions =~=
+                interp(pre).replica_versions.insert(node_id, interp(pre).replica_versions[node_id] + 1));
+            SimpleLog::show::update_replica_update(interp(pre), interp(post), aop, node_id, interp(pre).replica_versions[node_id] + 1);
         }
 
         exec_update_version_upper_bound(node_id) => {
@@ -449,14 +471,17 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             } else {
                 global_tail
             };
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::update_incr_version(interp(pre), interp(post), aop, version);
         }
 
         exec_finish(node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
         exec_finish_no_change(node_id) => {
+            assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
       }
