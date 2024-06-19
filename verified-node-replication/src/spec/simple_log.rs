@@ -69,7 +69,7 @@ state_machine! {
         /// the number of replicas, TODO: can we make this a constant?
         pub num_replicas: nat,
         /// the current version of each replica
-        pub replica_versions: Map<nat, LogIdx>,
+        pub replica_versions: Map<NodeId, LogIdx>,
         /// the completion tail current index into the log
         pub version: LogIdx,
         /// in flight read requests
@@ -122,7 +122,7 @@ state_machine! {
     init!{
         initialize(num_replicas: nat) {
             init num_replicas = num_replicas;
-            init replica_versions = Map::new(|i:nat| i < num_replicas, |i| 0);
+            init replica_versions = Map::new(|i:NodeId| i < num_replicas, |i| 0);
             init log = Seq::empty();
             init version = 0;
             init readonly_reqs = Map::empty();
@@ -209,7 +209,7 @@ state_machine! {
 
     /// Out-of-band read (e.g. by the MMU) on a replica
     readonly!{
-        readonly_view_oob(label: Label<DT>, replica: nat, res: DT::View) {
+        readonly_view_oob(label: Label<DT>, replica: NodeId, res: DT::View) {
             require label is Internal; // TODO: ??
             require replica < pre.num_replicas;
             require res == pre.nrstate_at_version(pre.replica_versions[replica]);
