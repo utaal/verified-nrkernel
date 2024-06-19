@@ -1024,7 +1024,7 @@ impl<DT: Dispatch> Replica<DT> {
             self.replica_token@ == tkn.replica_token()@,
             self.unbounded_log_instance@ == slog.unbounded_log_instance@,
             self.cyclic_buffer_instance@ == slog.cyclic_buffer_instance@,
-            is_readonly_ticket(ticket@, op, slog.unbounded_log_instance@),
+            is_readonly_ticket(ticket@, op, self.spec_id(), slog.unbounded_log_instance@),
         ensures
             result.1.wf(&self),
             result.1.batch_perm@@.pcell
@@ -1063,6 +1063,7 @@ impl<DT: Dispatch> Replica<DT> {
                 !is_synced ==> ticket@@.value.is_VersionUpperBound(),
                 !is_synced ==> ticket@@.value.get_VersionUpperBound_version_upper_bound()
                     == version_upper_bound,
+                !is_synced ==> ticket@@.value.get_VersionUpperBound_node_id() == self.spec_id(),
                 !is_synced ==> ticket@@.value.get_VersionUpperBound_op() == op,
                 is_synced ==> ticket@@.value.is_ReadyToRead(),
                 is_synced ==> ticket@@.value.get_ReadyToRead_node_id() == self.spec_id(),

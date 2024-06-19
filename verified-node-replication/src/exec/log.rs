@@ -567,6 +567,7 @@ impl<DT: Dispatch> NrLog<DT> {
             ret.1@@.value.is_VersionUpperBound(),
             ret.1@@.value.get_VersionUpperBound_version_upper_bound() == ret.0 as nat,
             ret.1@@.value.get_VersionUpperBound_op() == local_reads@@.value.get_Init_op(),
+            ret.1@@.value.get_VersionUpperBound_node_id() == local_reads@@.value.get_Init_node_id(),
             ret.1@@.instance == self.unbounded_log_instance@,
             ret.1@@.key == local_reads@@.key,
     {
@@ -602,6 +603,7 @@ impl<DT: Dispatch> NrLog<DT> {
             local_reads@@.instance == self.unbounded_log_instance@,
             local_reads@@.value.is_VersionUpperBound(),
             local_reads@@.value.get_VersionUpperBound_version_upper_bound() == version_upper_bound,
+            local_reads@@.value.get_VersionUpperBound_node_id() == node_id,
         ensures
             result.0 ==> result.1@@.value.is_ReadyToRead(),
             result.0 ==> result.1@@.value.get_ReadyToRead_node_id() == node_id,
@@ -624,7 +626,7 @@ impl<DT: Dispatch> NrLog<DT> {
                 new_local_reads_g = if res >= version_upper_bound {
                     self.unbounded_log_instance
                         .borrow()
-                        .readonly_ready_to_read(rid_g.view(), node_id as NodeId, &g.0, local_reads.get())
+                        .readonly_ready_to_read(rid_g.view(), &g.0, local_reads.get())
                 } else {
                     local_reads.get()
                 };

@@ -94,17 +94,17 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
         );
         UnboundedLog::State::add_ticket_inductive(pre, post, input, rid);
         match input {
-            InputOperation::Read(read_op) => {
+            InputOperation::Read(read_op, node_id) => {
                 assert_maps_equal!(
-                    pre.local_reads.insert(rid, ReadonlyState::Init {op: read_op}),
+                    pre.local_reads.insert(rid, ReadonlyState::Init {op: read_op, node_id}),
                     post.local_reads
                 );
                 assert_maps_equal!(
-                    interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op: read_op}),
+                    interp(pre).readonly_reqs.insert(rid, SReadReq::Init{op: read_op, node_id}),
                     interp(post).readonly_reqs
                 );
                 assert(interp(pre).replica_versions =~= interp(post).replica_versions);
-                SimpleLog::show::readonly_start(interp(pre), interp(post), aop, rid, read_op);
+                SimpleLog::show::readonly_start(interp(pre), interp(post), aop, rid, node_id, read_op);
             },
             InputOperation::Write(write_op) => {
                 assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
@@ -130,22 +130,24 @@ impl<DT: Dispatch> crate::UnboundedLogRefinesSimpleLog<DT> for RefinementProof<D
             OutputOperation::Read(response) => {
                 let op = pre.local_reads.index(rid).get_Done_op();
                 let version_upper_bound = pre.local_reads.index(rid).get_Done_version_upper_bound();
+                let node_id = pre.local_reads[rid].get_Done_node_id();
                 assert(exists|version: nat| #[trigger]
                     rangeincl(version_upper_bound, version, pre.version_upper_bound)
+                        && version <= pre.current_local_version(node_id)
                         && result_match(pre.log, response, version, op));
-                let version: nat = choose|version|
+                let version: nat = choose|version: nat|
                     {
                         version_upper_bound <= version <= pre.version_upper_bound
+                            && version <= pre.current_local_version(node_id)
                             && #[trigger] result_match(pre.log, response, version, op)
                     };
-                assert(response == DT::dispatch_spec(interp(pre).nrstate_at_version(version), op))
-                    by {
+                assert(response == DT::dispatch_spec(interp(pre).nrstate_at_version(version), op)) by {
                     state_at_version_refines(interp(pre).log, pre.log, pre.tail, version);
                 }
-                assert_maps_equal!(interp(pre).update_resps, interp(post).update_resps);
-                assert_maps_equal!(interp(pre).update_reqs, interp(post).update_reqs);
-                assert_maps_equal!(interp(pre).readonly_reqs.remove(rid), interp(post).readonly_reqs);
-                assert(interp(pre).replica_versions =~= interp(post).replica_versions);
+                assert(interp(post).update_resps =~= interp(pre).update_resps);
+                assert(interp(post).update_reqs =~= interp(pre).update_reqs);
+                assert(interp(post).readonly_reqs =~= interp(pre).readonly_reqs.remove(rid));
+                assert(interp(post).replica_versions =~= interp(pre).replica_versions);
                 SimpleLog::show::readonly_finish(
                     interp(pre),
                     interp(post),
@@ -189,18 +191,21 @@ spec fn interp_readonly_reqs<DT: Dispatch>(local_reads: Map<nat, ReadonlyState<D
         |rid| local_reads.contains_key(rid),
         |rid|
             match local_reads.index(rid) {
-                ReadonlyState::Init { op } => SReadReq::Init { op },
-                ReadonlyState::VersionUpperBound { version_upper_bound: idx, op } => SReadReq::Req {
+                ReadonlyState::Init { op, node_id } => SReadReq::Init { op, node_id },
+                ReadonlyState::VersionUpperBound { version_upper_bound: idx, op, node_id, } => SReadReq::Req {
                     op,
                     version: idx,
+                    node_id,
                 },
-                ReadonlyState::ReadyToRead { version_upper_bound: idx, op, .. } => SReadReq::Req {
+                ReadonlyState::ReadyToRead { version_upper_bound: idx, op, node_id, .. } => SReadReq::Req {
                     op,
                     version: idx,
+                    node_id,
                 },
-                ReadonlyState::Done { version_upper_bound: idx, op, .. } => SReadReq::Req {
+                ReadonlyState::Done { version_upper_bound: idx, op, node_id, .. } => SReadReq::Req {
                     op,
                     version: idx,
+                    node_id,
                 },
             },
     )
@@ -308,17 +313,18 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
 
         readonly_version_upper_bound(rid) => {
             let op = pre.local_reads.index(rid).get_Init_op();
+            let node_id = pre.local_reads.index(rid).get_Init_node_id();
 
             assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             assert_maps_equal!(
-                interp(pre).readonly_reqs.insert(rid, SReadReq::Req { op, version: pre.version_upper_bound }),
+                interp(pre).readonly_reqs.insert(rid, SReadReq::Req { op, version: pre.version_upper_bound, node_id }),
                 interp(post).readonly_reqs
             );
 
             SimpleLog::show::readonly_read_version(interp(pre), interp(post), aop, rid);
         }
 
-        readonly_ready_to_read(rid, node_id) => {
+        readonly_ready_to_read(rid) => {
             assert(interp(pre).replica_versions =~= interp(post).replica_versions);
             assert_maps_equal!(interp(pre).readonly_reqs, interp(post).readonly_reqs);
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
@@ -528,7 +534,7 @@ pub open spec fn result_match<DT: Dispatch>(
 
 proof fn lemma_interp_log_len<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, tail: LogIdx)
     requires
-        log.dom().finite(),
+        log.dom().finite(), // TODO: this should be derivable from the other two facts
         super::unbounded_log::LogContainsEntriesUpToHere(log, tail),
         super::unbounded_log::LogNoEntriesFromHere(log, tail)
     ensures
@@ -538,8 +544,11 @@ proof fn lemma_interp_log_len<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, tail
 {
     assert(forall|x| vstd::set_lib::set_int_range(0, tail as int).contains(x) ==> log.contains_key(x as nat));
     assert(log.dom().map(|x| x as int) =~= vstd::set_lib::set_int_range(0, tail as int));
-    extra::lemma_map_len_eq(|x| x as int, log.dom());
     vstd::set_lib::lemma_int_range(0, tail as int);
+    //assert(vstd::set_lib::set_int_range(0, tail as int).finite());
+    //assert(log.dom().map(|x| x as int).finite());
+    //extra::lemma_map_finite_implies_finite(|x| x as int, log.dom());
+    extra::lemma_map_len_eq(|x| x as int, log.dom());
 }
 
 proof fn state_at_version_refines<DT: Dispatch>(

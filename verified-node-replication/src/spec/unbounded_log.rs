@@ -50,19 +50,21 @@ verus! {
 /// These 3 steps progress the status of the request through the cycle
 ///    Init -> VersionUpperBound -> ReadyToRead -> Done
 ///
-/// Note that the request itself does not "care" which nodeId it takes place on;
-/// we only track the nodeId to make sure that steps 2 and 3 use the same node.
+/// (Note that the request itself does not "care" which nodeId it takes place on;
+/// we only track the nodeId to make sure that steps 2 and 3 use the same node.)
+/// --> After the changes to integrate this with the page table, we do actually care about the node
+///     id because we use it to track what replica gets updated.
 ///
 #[is_variant]
 pub ghost enum ReadonlyState<DT: Dispatch> {
     /// a new read request that has come in
-    Init { op: DT::ReadOperation },
+    Init { op: DT::ReadOperation, node_id: NodeId },
     /// has read the version upper bound value
-    VersionUpperBound { op: DT::ReadOperation, version_upper_bound: LogIdx },
+    VersionUpperBound { op: DT::ReadOperation, node_id: NodeId, version_upper_bound: LogIdx },
     /// ready to read
-    ReadyToRead { op: DT::ReadOperation, version_upper_bound: LogIdx, node_id: NodeId },
+    ReadyToRead { op: DT::ReadOperation, node_id: NodeId, version_upper_bound: LogIdx },
     /// read request is done
-    Done { op: DT::ReadOperation, version_upper_bound: LogIdx, node_id: NodeId, ret: DT::Response },
+    Done { op: DT::ReadOperation, node_id: NodeId, version_upper_bound: LogIdx, ret: DT::Response },
 }
 
 impl<DT: Dispatch> ReadonlyState<DT> {
@@ -384,10 +386,10 @@ UnboundedLog<DT: Dispatch> {
 
     pub open spec fn wf_readstate(&self, rs: ReadonlyState<DT>) -> bool {
         match rs {
-            ReadonlyState::Init{op} => {
+            ReadonlyState::Init{op, node_id} => {
                 true
             }
-            ReadonlyState::VersionUpperBound{op, version_upper_bound} => {
+            ReadonlyState::VersionUpperBound{op, node_id, version_upper_bound} => {
                 version_upper_bound <= self.version_upper_bound
             }
             ReadonlyState::ReadyToRead{op, node_id, version_upper_bound} => {
@@ -479,7 +481,7 @@ UnboundedLog<DT: Dispatch> {
     /// Inv_LogEntriesUpToCTailExists(s) && Inv_LogEntriesUpToLocalTailExist(s) are implied
     #[invariant]
     pub fn inv_log_complete(&self) -> bool {
-        &&& self.log.dom().finite()
+        &&& self.log.dom().finite() // TODO: this should be derivable from the other two facts
         &&& LogContainsEntriesUpToHere(self.log, self.tail)
         &&& LogNoEntriesFromHere(self.log, self.tail)
     }
@@ -522,8 +524,9 @@ UnboundedLog<DT: Dispatch> {
 
     pub open spec fn read_results_match(&self, read: ReadonlyState<DT>) -> bool {
         match read {
-            ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
+            ReadonlyState::Done { ret, version_upper_bound, op, node_id } => {
                 exists |v: nat| (#[trigger] rangeincl(version_upper_bound, v, self.version_upper_bound))
+                    && v <= self.current_local_version(node_id)
                     && ret == DT::dispatch_spec(compute_nrstate_at_version(self.log, v), op)
             },
             _ => true,
@@ -608,9 +611,9 @@ UnboundedLog<DT: Dispatch> {
     /// The algorithm waits while local_version < read_version
     transition!{
         readonly_version_upper_bound(rid: ReqId) {
-            remove local_reads -= [ rid => let ReadonlyState::Init { op } ];
+            remove local_reads -= [ rid => let ReadonlyState::Init { op, node_id } ];
             add    local_reads += [ rid => ReadonlyState::VersionUpperBound {
-                                                op, version_upper_bound: pre.version_upper_bound } ];
+                                                op, version_upper_bound: pre.version_upper_bound, node_id } ];
         }
     }
 
@@ -618,8 +621,8 @@ UnboundedLog<DT: Dispatch> {
     ///
     /// The algorithm waits while local_version < read_version
     transition!{
-        readonly_ready_to_read(rid: ReqId, node_id: NodeId) {
-            remove local_reads    -= [ rid => let ReadonlyState::VersionUpperBound { op, version_upper_bound } ];
+        readonly_ready_to_read(rid: ReqId) {
+            remove local_reads    -= [ rid => let ReadonlyState::VersionUpperBound { op, version_upper_bound, node_id } ];
             have   local_versions >= [ node_id => let local_head ];
 
             require(local_head >= version_upper_bound);
@@ -772,7 +775,7 @@ UnboundedLog<DT: Dispatch> {
     /// Combiner: dispatch a remote update and apply it to the local replica
     transition!{
         exec_dispatch_remote(node_id: NodeId) {
-            remove combiner -= [ node_id => let CombinerState:: Loop { queued_ops, lversion, tail, idx } ];
+            remove combiner -= [ node_id => let CombinerState::Loop { queued_ops, lversion, tail, idx } ];
             remove replicas -= [ node_id => let old_nr_state ];
 
             have   log      >= [ lversion => let log_entry ];
@@ -884,7 +887,7 @@ UnboundedLog<DT: Dispatch> {
     fn readonly_version_upper_bound_inductive(pre: Self, post: Self, rid: ReqId) { }
 
     #[inductive(readonly_ready_to_read)]
-    fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: ReqId, node_id: NodeId) {
+    fn readonly_ready_to_read_inductive(pre: Self, post: Self, rid: ReqId) {
         match post.local_reads[rid] {
             ReadonlyState::ReadyToRead{op, node_id, version_upper_bound} => {
                 assert(post.combiner.contains_key(node_id));
@@ -920,7 +923,7 @@ UnboundedLog<DT: Dispatch> {
     {
         get_fresh_nat_not_in(pre.local_updates.dom() + pre.local_reads.dom(), pre.combiner);
         match input {
-            crate::InputOperation::Read(op) => {
+            crate::InputOperation::Read(op, node_id) => {
                 assert(post.inv_readonly_requests_wf());
             }
             crate::InputOperation::Write(op) => {
@@ -1089,8 +1092,9 @@ UnboundedLog<DT: Dispatch> {
             implies post.read_results_match(post.local_reads[rid]) by
         {
             match post.local_reads[rid] {
-                ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
+                ReadonlyState::Done { ret, version_upper_bound, op, node_id: node_id0 } => {
                     let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
+                        && ver <= pre.current_local_version(node_id0)
                         && ret == DT::dispatch_spec(compute_nrstate_at_version(pre.log, ver), op));
                     compute_nrstate_at_version_preserves(pre.log, post.log, ver);
                 },
@@ -1151,8 +1155,9 @@ UnboundedLog<DT: Dispatch> {
 
         assert forall |rid| (#[trigger] post.local_reads.contains_key(rid)) implies post.read_results_match(post.local_reads[rid]) by {
             match post.local_reads[rid] {
-                ReadonlyState::Done { ret, version_upper_bound, op, .. } => {
+                ReadonlyState::Done { ret, version_upper_bound, op, node_id: node_id0 } => {
                     let ver = choose |ver| (#[trigger] rangeincl(version_upper_bound, ver, pre.version_upper_bound)
+                        && ver <= pre.current_local_version(node_id0)
                         && ret == DT::dispatch_spec(compute_nrstate_at_version(post.log, ver), op));
                     assert(rangeincl(version_upper_bound, ver, post.version_upper_bound));
                 },

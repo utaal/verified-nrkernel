@@ -41,16 +41,16 @@ verus! {
 ///
 pub ghost enum ReadReq<R> {
     /// a new read request that has entered the system
-    Init { op: R },
+    Init { op: R, node_id: NodeId },
     /// a request that has been dispatched at a specific version
-    Req { version: LogIdx, op: R },
+    Req { version: LogIdx, op: R, node_id: NodeId },
 }
 
 impl<R> ReadReq<R> {
     /// Extracts the operation from the ReadReq
     pub open spec fn op(self) -> R {
         match self {
-            ReadReq::Init { op } => op,
+            ReadReq::Init { op, .. } => op,
             ReadReq::Req { op, .. } => op,
         }
     }
@@ -156,14 +156,14 @@ state_machine! {
     ///
     /// The supplied request id must not yet be know to the system
     transition!{
-        readonly_start(label: Label<DT>, rid: ReqId, op: DT::ReadOperation) {
-            require label == AsyncLabel::<DT>::Start(rid, InputOperation::Read(op));
+        readonly_start(label: Label<DT>, rid: ReqId, node_id: NodeId, op: DT::ReadOperation) {
+            require label == AsyncLabel::<DT>::Start(rid, InputOperation::Read(op, node_id));
 
             require !pre.readonly_reqs.contains_key(rid);
             require !pre.update_reqs.contains_key(rid);
             require !pre.update_resps.contains_key(rid);
 
-            update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Init{ op };
+            update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Init{ op, node_id };
         }
     }
 
@@ -175,9 +175,9 @@ state_machine! {
             require label is Internal;
 
             require pre.readonly_reqs.contains_key(rid);
-            require let ReadReq::<DT::ReadOperation>::Init { op } = pre.readonly_reqs[rid];
+            require let ReadReq::<DT::ReadOperation>::Init { op, node_id } = pre.readonly_reqs[rid];
 
-            update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Req { op, version: pre.version };
+            update readonly_reqs[rid] = ReadReq::<DT::ReadOperation>::Req { op, version: pre.version, node_id };
         }
     }
 
@@ -191,8 +191,9 @@ state_machine! {
             require label == AsyncLabel::<DT>::End(rid, OutputOperation::Read(ret));
 
             require pre.readonly_reqs.contains_key(rid);
-            require let ReadReq::<DT::ReadOperation>::Req { op, version: current } = pre.readonly_reqs[rid];
+            require let ReadReq::<DT::ReadOperation>::Req { op, version: current, node_id } = pre.readonly_reqs[rid];
 
+            require version <= pre.replica_versions[node_id];
             require current <= version <= pre.log.len();
             require version <= pre.version;
             require ret == DT::dispatch_spec(pre.nrstate_at_version(version), op);
@@ -227,6 +228,10 @@ state_machine! {
     //  2. collect the updates and store them in the log
     //  3. increase the version of the log
     //  4. return the version of the log at the update
+    //
+    //  X. increase the version of the replica
+    //     (This doesn't have to happen sequentially within an update, it can also be triggered by
+    //     a read operation.)
 
 
     /// Update Request: place an update request in the system
@@ -274,17 +279,6 @@ state_machine! {
         }
     }
 
-    transition!{
-        update_replica_update(label: Label<DT>, node_id: NodeId, new_version: LogIdx) {
-            require label is Internal;
-
-            require node_id < pre.num_replicas;
-            require pre.replica_versions[node_id] < new_version <= pre.log.len();
-
-            update replica_versions = pre.replica_versions.insert(node_id, new_version);
-        }
-    }
-
     /// Update: Finish the update operation
     ///
     /// This removes the update response from the update responses. The supplied return value
@@ -300,6 +294,18 @@ state_machine! {
             require ret == DT::dispatch_mut_spec(pre.nrstate_at_version(uidx), pre.log[uidx as int]).1;
 
             update update_resps = pre.update_resps.remove(rid);
+        }
+    }
+
+    /// Update: Increasing the version of a replica
+    transition!{
+        update_replica_update(label: Label<DT>, node_id: NodeId, new_version: LogIdx) {
+            require label is Internal;
+
+            require node_id < pre.num_replicas;
+            require pre.replica_versions[node_id] < new_version <= pre.log.len();
+
+            update replica_versions = pre.replica_versions.insert(node_id, new_version);
         }
     }
 
@@ -326,7 +332,7 @@ state_machine! {
     fn initialize_inductive(post: Self, num_replicas: nat) { }
 
     #[inductive(readonly_start)]
-    fn readonly_start_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId, op: DT::ReadOperation) { }
+    fn readonly_start_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId, node_id: NodeId, op: DT::ReadOperation) { }
 
     #[inductive(readonly_read_version)]
     fn readonly_read_version_inductive(pre: Self, post: Self, label: Label<DT>, rid: ReqId) { }

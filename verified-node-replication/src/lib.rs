@@ -315,7 +315,7 @@ pub trait NodeReplicatedT<DT: Dispatch + Sync>: Sized {
         requires
             self.wf(),  // wf global node
             tkn.wf(&self.replicas()[tkn.replica_id_spec() as int]),
-            is_readonly_ticket(ticket@, op, self.unbounded_log_instance()),
+            is_readonly_ticket(ticket@, op, tkn.replica_id_spec(), self.unbounded_log_instance()),
         ensures
             result.is_Ok() ==> is_readonly_stub(
                 result.get_Ok_0().2@,
@@ -340,11 +340,14 @@ spec fn implements_NodeReplicated<DT: Dispatch + Sync, N: NodeReplicatedT<DT>>()
 pub open spec fn is_readonly_ticket<DT: Dispatch>(
     ticket: UnboundedLog::local_reads<DT>,
     op: DT::ReadOperation,
+    node_id: NodeId,
     log: UnboundedLog::Instance<DT>,
 ) -> bool {
     // requires ticket.val == ssm.Ticket(rid, input)
-    &&& ticket@.value.is_Init() && ticket@.value.get_Init_op()
-        == op
+    &&& ticket@.value is Init
+    &&& ticket@.value.get_Init_op() == op
+    &&& ticket@.value.get_Init_node_id() == node_id
+
     // requires ticket.loc == TicketStubSingletonLoc.loc()
 
     &&& ticket@.instance == log
@@ -358,8 +361,7 @@ pub open spec fn is_readonly_stub<DT: Dispatch>(
     log: UnboundedLog::Instance<DT>,
 ) -> bool {
     // ensures stub.loc == TicketStubSingletonLoc.loc()
-    &&& stub@.instance
-        == log
+    &&& stub@.instance == log
     // ensures ssm.IsStub(rid, output, stub.val)  -> (exists ctail, op, nodeid :: stub == ReadOp(rid, ReadonlyDone(op, output, nodeid, ctail)))
 
     &&& stub@.key == rid
@@ -409,11 +411,11 @@ pub open spec fn add_ticket<DT: Dispatch>(
     rid: ReqId,
 ) -> bool {
     !pre.local_reads.dom().contains(rid) && !pre.local_updates.dom().contains(rid) && (match input {
-        InputOperation::Read(read_op) => {
+        InputOperation::Read(read_op, node_id) => {
             &&post == UnboundedLog::State::<DT> {
                 local_reads: pre.local_reads.insert(
                     rid,
-                    crate::spec::unbounded_log::ReadonlyState::Init { op: read_op },
+                    crate::spec::unbounded_log::ReadonlyState::Init { op: read_op, node_id },
                 ),
                 ..pre
             }
@@ -541,7 +543,7 @@ spec fn implements_UnboundedLogRefinesSimpleLog<
 #[is_variant]
 #[verus::trusted]
 pub enum InputOperation<DT: Dispatch> {
-    Read(DT::ReadOperation),
+    Read(DT::ReadOperation, NodeId),
     Write(DT::WriteOperation),
 }
 
