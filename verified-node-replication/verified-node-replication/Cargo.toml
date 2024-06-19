@@ -1,0 +1,14 @@
+[package]
+name = "verified-node-replication"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+builtin = { path = "/st/verus/verus/source/builtin" }
+builtin_macros = { path = "/st/verus/verus/source/builtin_macros" }
+state_machines_macros = { path = "/st/verus/verus/source/state_machines_macros" }
+vstd = { path = "/st/verus/verus/source/vstd" }
+
+# Add debug symbols on the release build so that we can debug performance issues
+[profile.release]
+debug = true

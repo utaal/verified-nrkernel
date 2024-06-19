@@ -1,0 +1,9 @@
+[submodule "verus"]
+	path = verus
+	url = https://github.com/verus-lang/verus.git
+[submodule "benchmarks/lib/node-replication"]
+	path = benchmarks/lib/node-replication
+	url = https://github.com/vmware/node-replication.git
+[submodule "benchmarks/ironsync/ironsync-osdi2023"]
+	path = benchmarks/ironsync/ironsync-osdi2023
+	url = https://github.com/secure-foundations/ironsync-osdi2023.git

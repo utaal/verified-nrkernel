@@ -1,0 +1,56 @@
+name: Compilation and static checks NR
+
+on:
+  push:
+    paths:
+      - node-replication/**
+      - bench_utils/**
+      - .github/**
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y libhwloc-dev gnuplot libfuse-dev liburcu-dev liburcu8
+    - uses: actions/checkout@v2.4.0
+    - name: Install rust toolchain
+      working-directory: ./node-replication
+      run: rustup show
+    - name: Check formatting of bench_utils
+      working-directory: ./bench_utils
+      run: cargo fmt -- --check
+    - name: Check formatting of NR
+      working-directory: ./node-replication
+      run: cargo fmt -- --check
+    - name: Build
+      working-directory: ./node-replication
+      run: cargo build --release
+    - name: Test
+      working-directory: ./node-replication
+      run: cargo test --release
+    - name: Compile and run examples
+      working-directory: ./node-replication
+      run: |
+        cargo run --example nr_async_hashmap
+        cargo run --example nr_btreeset
+        cargo run --example nr_hashmap
+        cargo run --example nr_stack
+        cargo run --example cnr_hashmap
+        cargo run --example cnr_stack
+    - name: Compile benchmarks
+      working-directory: ./node-replication
+      run: |
+        cargo bench --bench log --features smokebench --no-run
+        cargo bench --bench hashmap --features smokebench --no-run
+        cargo bench --bench synthetic --features smokebench --no-run
+        cargo bench --bench stack --features smokebench --no-run
+        cargo bench --bench vspace --features smokebench --no-run
+        cargo bench --bench lockfree --features smokebench --no-run
+        cargo bench --bench hashbench -- --readers 1 --writers 1
+        cargo bench --bench rwlockbench -- --readers 1 --writers 1
+        cargo bench --bench chashbench -- --readers 1 --writers 1
+#    - name: Execute loom tests
+#      run: RUSTFLAGS="--cfg loom" cargo test --test read_linearizes --release -- --nocapture
+#      working-directory: ./node-replication

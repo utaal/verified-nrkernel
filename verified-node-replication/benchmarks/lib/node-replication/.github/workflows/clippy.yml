@@ -1,0 +1,25 @@
+name: Check code with clippy
+
+on:
+  push:
+    branches-ignore:
+      - 'dependabot/**'
+    paths:
+      - node-replication/**
+      - .github/**
+
+jobs:
+  build:
+    name: Clippy
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2.4.0
+    - name: Install rust toolchain
+      run: rustup show
+    - name: Run clippy
+      uses: actions-rs/clippy-check@v1
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        args: --manifest-path node-replication/Cargo.toml
+        name: nr clippy
