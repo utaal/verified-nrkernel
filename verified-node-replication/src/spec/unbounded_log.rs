@@ -306,12 +306,12 @@ UnboundedLog<DT: Dispatch> {
         &&& self.combiner.dom().finite()
     }
 
-    // /// there must be a replicat for all nodes
-    // #[invariant]
-    // pub fn inv_replicas_complete(&self) -> bool {
-    //     forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
-    //         self.replicas.contains_key(node_id)
-    // }
+     /// there must be a replica for all nodes
+     #[invariant]
+     pub fn inv_replicas_complete(&self) -> bool {
+         forall |node_id: NodeId| 0 <= node_id < self.num_replicas <==>
+             self.replicas.contains_key(node_id)
+     }
 
     // /// ther emust be a local version for all nodes
     // #[invariant]
@@ -479,6 +479,7 @@ UnboundedLog<DT: Dispatch> {
     /// Inv_LogEntriesUpToCTailExists(s) && Inv_LogEntriesUpToLocalTailExist(s) are implied
     #[invariant]
     pub fn inv_log_complete(&self) -> bool {
+        &&& self.log.dom().finite()
         &&& LogContainsEntriesUpToHere(self.log, self.tail)
         &&& LogNoEntriesFromHere(self.log, self.tail)
     }
@@ -571,6 +572,12 @@ UnboundedLog<DT: Dispatch> {
             self.replicas[node_id] == compute_nrstate_at_version(self.log, self.current_local_version(node_id))
     }
 
+    #[invariant]
+    pub open spec fn current_local_version_in_range(&self) -> bool {
+        forall |node_id| (#[trigger] self.replicas.contains_key(node_id)) ==>
+            self.current_local_version(node_id) <= self.tail
+    }
+
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // State Machine Initialization
@@ -634,12 +641,20 @@ UnboundedLog<DT: Dispatch> {
         }
     }
 
-    /// Out-of-band read (e.g. by the MMU)
-    transition!{
-        readonly_read_oob(rid: ReqId, op: DT::ReadOperation) {
-            let ret = DT::dispatch_spec(state, op);
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+    // Out-of-band Read Transition
+    ////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+    /// Out-of-band read (e.g. by the MMU) on a replica
+    readonly!{
+        readonly_view_oob(replica: nat, res: DT::View) {
+            //require label is Internal; // TODO: ??
+            require replica < pre.num_replicas;
+            require res == pre.replicas[replica];
         }
     }
+
 
     ////////////////////////////////////////////////////////////////////////////////////////////
     // Update Transitions
@@ -892,10 +907,6 @@ UnboundedLog<DT: Dispatch> {
         assert(rangeincl(vup, v, post.version_upper_bound));
     }
 
-    #[inductive(readonly_read_oob)]
-    fn readonly_read_oob_inductive(pre: Self, post: Self, rid: ReqId, op: DT::ReadOperation) {
-    }
-
     pub proof fn add_ticket_inductive(
         pre: UnboundedLog::State<DT>,
         post: UnboundedLog::State<DT>,
@@ -1131,7 +1142,7 @@ UnboundedLog<DT: Dispatch> {
     }
 
     #[inductive(exec_dispatch_remote)]
-    fn exec_dispatch_remote_inductive(pre: Self, post: Self, node_id: NodeId) { }
+    fn exec_dispatch_remote_inductive(pre: Self, post: Self, node_id: NodeId) {}
 
     #[inductive(exec_update_version_upper_bound)]
     fn exec_update_version_upper_bound_inductive(pre: Self, post: Self, node_id: NodeId) {

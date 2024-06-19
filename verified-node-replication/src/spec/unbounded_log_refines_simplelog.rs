@@ -31,6 +31,8 @@ use super::unbounded_log::{
 };
 use super::utils::*;
 
+use crate::extra;
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //
 // Refinement Proof: UnboundedLog refines SimpleLog
@@ -328,8 +330,11 @@ proof fn refinement_next<DT: Dispatch>(pre: UnboundedLog::State<DT>, post: Unbou
             SimpleLog::show::no_op(interp(pre), interp(post), aop);
         }
 
-        readonly_read_oob(rid, op) => {
-            SimpleLog::show::no_op(interp(pre), interp(post), aop);
+        readonly_view_oob(replica, res) => {
+            assert(pre.replicas.contains_key(replica));
+            lemma_interp_log_len(pre.log, pre.tail);
+            state_at_version_refines(interp(pre).log, pre.log, pre.tail, interp(pre).replica_versions[replica]);
+            SimpleLog::show::readonly_view_oob(interp(pre), interp(post), aop, replica, res);
         }
 
         /*readonly_finish(rid, op, ret) => {
@@ -519,6 +524,22 @@ pub open spec fn result_match<DT: Dispatch>(
         version_in_log(log, version),
 {
     output == DT::dispatch_spec(i_nrstate_at_version(log, version), op)
+}
+
+proof fn lemma_interp_log_len<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, tail: LogIdx)
+    requires
+        log.dom().finite(),
+        super::unbounded_log::LogContainsEntriesUpToHere(log, tail),
+        super::unbounded_log::LogNoEntriesFromHere(log, tail)
+    ensures
+        log.len() == tail,
+        interp_log(tail, log).len() == tail,
+    decreases tail
+{
+    assert(forall|x| vstd::set_lib::set_int_range(0, tail as int).contains(x) ==> log.contains_key(x as nat));
+    assert(log.dom().map(|x| x as int) =~= vstd::set_lib::set_int_range(0, tail as int));
+    extra::lemma_map_len_eq(|x| x as int, log.dom());
+    vstd::set_lib::lemma_int_range(0, tail as int);
 }
 
 proof fn state_at_version_refines<DT: Dispatch>(
