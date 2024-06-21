@@ -481,7 +481,6 @@ UnboundedLog<DT: Dispatch> {
     /// Inv_LogEntriesUpToCTailExists(s) && Inv_LogEntriesUpToLocalTailExist(s) are implied
     #[invariant]
     pub fn inv_log_complete(&self) -> bool {
-        &&& self.log.dom().finite() // TODO: this should be derivable from the other two facts
         &&& LogContainsEntriesUpToHere(self.log, self.tail)
         &&& LogNoEntriesFromHere(self.log, self.tail)
     }

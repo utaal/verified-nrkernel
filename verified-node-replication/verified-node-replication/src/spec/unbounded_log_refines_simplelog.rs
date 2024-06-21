@@ -534,7 +534,6 @@ pub open spec fn result_match<DT: Dispatch>(
 
 proof fn lemma_interp_log_len<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, tail: LogIdx)
     requires
-        log.dom().finite(), // TODO: this should be derivable from the other two facts
         super::unbounded_log::LogContainsEntriesUpToHere(log, tail),
         super::unbounded_log::LogNoEntriesFromHere(log, tail)
     ensures
@@ -542,12 +541,8 @@ proof fn lemma_interp_log_len<DT: Dispatch>(log: Map<LogIdx, LogEntry<DT>>, tail
         interp_log(tail, log).len() == tail,
     decreases tail
 {
-    assert(forall|x| vstd::set_lib::set_int_range(0, tail as int).contains(x) ==> log.contains_key(x as nat));
-    assert(log.dom().map(|x| x as int) =~= vstd::set_lib::set_int_range(0, tail as int));
-    vstd::set_lib::lemma_int_range(0, tail as int);
-    //assert(vstd::set_lib::set_int_range(0, tail as int).finite());
-    //assert(log.dom().map(|x| x as int).finite());
-    //extra::lemma_map_finite_implies_finite(|x| x as int, log.dom());
+    assert(log.dom() =~= extra::set_nat_range(0, tail));
+    extra::lemma_nat_range(0, tail);
     extra::lemma_map_len_eq(|x| x as int, log.dom());
 }
 
