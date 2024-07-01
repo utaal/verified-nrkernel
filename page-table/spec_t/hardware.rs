@@ -35,6 +35,11 @@ pub struct CoreVariables {
     pub tlb: Map<nat, PageTableEntry>,
 }
 
+pub struct Core {
+   pub NUMA_id: nat,
+   pub core_id: nat,
+}
+
 #[allow(inconsistent_fields)]
 pub enum HWStep {
     ReadWrite {
@@ -42,12 +47,11 @@ pub enum HWStep {
         paddr: nat,
         op: RWOp,
         pte: Option<(nat, PageTableEntry)>,
-        NUMA_id: nat,
-        core_id: nat,
+        core: Core,
     },
-    PTMemOp { NUMA_id: nat, core_id: nat },
-    TLBFill { vaddr: nat, pte: PageTableEntry, NUMA_id: nat, core_id: nat },
-    TLBEvict { vaddr: nat, NUMA_id: nat, core_id: nat },
+    PTMemOp { core: Core },
+    TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
+    TLBEvict { vaddr: nat, core: Core },
 }
 
 // FIXME: Including is_variant conditionally to avoid the warning when not building impl. But this
@@ -580,18 +584,17 @@ pub open spec fn step_ReadWrite(
     paddr: nat,
     op: RWOp,
     pte: Option<(nat, PageTableEntry)>,
-    NUMA_id: nat,
-    core_id: nat,
+    core: Core
 ) -> bool {
     &&& aligned(vaddr, 8)
     //page tables and TLBs stay the same
     &&& s2.NUMAs === s1.NUMAs
-	&&& valid_core_id(c, NUMA_id, core_id)
+	&&& valid_core_id(c, core)
     &&& match pte {
         Some((base, pte)) => {
             let pmem_idx = word_index_spec(paddr);
             // If pte is Some, it's a cached mapping that maps vaddr to paddr..
-            &&& s1.NUMAs[NUMA_id].cores[core_id].tlb.contains_pair(base, pte)
+            &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
             &&& paddr === (pte.frame.base + (vaddr
                 - base)) as nat
@@ -624,7 +627,7 @@ pub open spec fn step_ReadWrite(
             // If pte is None, no mapping containing vaddr exists..
             &&& (!exists|base, pte|
                 {
-                    &&& interp_pt_mem(s1.NUMAs[NUMA_id].pt_mem).contains_pair(base, pte)
+                    &&& interp_pt_mem(s1.NUMAs[core.NUMA_id].pt_mem).contains_pair(base, pte)
                     &&& between(vaddr, base, base + pte.frame.size)
                 })
             // .. and the result is always a Undefined and an unchanged memory.
@@ -639,12 +642,12 @@ pub open spec fn step_ReadWrite(
 }
 
 //need some more explanation on this one
-pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables, NUMA_id: nat, core_id: nat) -> bool {
-	&&& valid_core_id(c, NUMA_id, core_id)
+pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables, core: Core) -> bool {
+	&&& valid_core_id(c, core)
     &&& s2.mem === s1.mem
-    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
+    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
     // s2.tlb is a submap of s1.tlb
-    &&& forall|base: nat, pte: PageTableEntry| s2.NUMAs[NUMA_id].cores[core_id].tlb.contains_pair(base, pte) ==> s1.NUMAs[NUMA_id].cores[core_id].tlb.contains_pair(base, pte)
+    &&& forall|base: nat, pte: PageTableEntry| s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte) ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
     // pt_mem may change arbitrarily but only for one NUMA nodes?
 
 }
@@ -653,8 +656,7 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     c: HWConstants,  
     s1: HWVariables,
     s2: HWVariables,
-    NUMA_id: nat,
-    core_id: nat,
+    core: Core
 ) -> bool {
     //Memory stays the same
     &&& s2.mem === s1.mem
@@ -662,16 +664,16 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     //all NUMA states are the same besides the one of NUMA_id
 
     &&& s2.NUMAs.dom() === s1.NUMAs.dom()
-    &&& s2.NUMAs.remove(NUMA_id) === s1.NUMAs.remove(NUMA_id)
+    &&& s2.NUMAs.remove(core.NUMA_id) === s1.NUMAs.remove(core.NUMA_id)
     //all cores_states of NUMA_id stay the same besides core_id
 
-    &&& s2.NUMAs[NUMA_id].cores.dom() === s1.NUMAs[NUMA_id].cores.dom()
-    &&& s2.NUMAs[NUMA_id].cores.remove(core_id) === s1.NUMAs[NUMA_id].cores.remove(core_id)
+    &&& s2.NUMAs[core.NUMA_id].cores.dom() === s1.NUMAs[core.NUMA_id].cores.dom()
+    &&& s2.NUMAs[core.NUMA_id].cores.remove(core.core_id) === s1.NUMAs[core.NUMA_id].cores.remove(core.core_id)
 }
 
-pub open spec fn valid_core_id (c: HWConstants, NUMA_id:nat, core_id:nat) -> bool {
-	&&& NUMA_id <= c.NUMA_no
-    &&& core_id <= c.core_no
+pub open spec fn valid_core_id (c: HWConstants, core: Core) -> bool {
+	&&& core.NUMA_id <= c.NUMA_no
+    &&& core.core_id <= c.core_no
 }
 
 pub open spec fn step_TLBFill(
@@ -680,16 +682,15 @@ pub open spec fn step_TLBFill(
     s2: HWVariables,
     vaddr: nat,
     pte: PageTableEntry,
-    NUMA_id: nat,
-    core_id: nat,
+    core: Core,
 ) -> bool {
-    &&& valid_core_id(c, NUMA_id, core_id)
-    &&& interp_pt_mem(s1.NUMAs[NUMA_id].pt_mem).contains_pair(vaddr, pte)
-    &&& s2.NUMAs[NUMA_id].cores[core_id].tlb === s1.NUMAs[NUMA_id].cores[core_id].tlb.insert(
+    &&& valid_core_id(c, core)
+    &&& interp_pt_mem(s1.NUMAs[core.NUMA_id].pt_mem).contains_pair(vaddr, pte)
+    &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(
         vaddr,
         pte,
     )
-    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
+    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
 }
 
 pub open spec fn step_TLBEvict(
@@ -697,18 +698,17 @@ pub open spec fn step_TLBEvict(
     s1: HWVariables,
     s2: HWVariables,
     vaddr: nat,
-    NUMA_id: nat,
-    core_id: nat,
+    core: Core,
 ) -> bool {
-    &&& valid_core_id(c, NUMA_id, core_id)
-    &&& s1.NUMAs[NUMA_id].cores[core_id].tlb.dom().contains(vaddr)
-    &&& s2.NUMAs[NUMA_id].cores[core_id].tlb === s1.NUMAs[NUMA_id].cores[core_id].tlb.remove(vaddr)
-    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, NUMA_id, core_id)
+    &&& valid_core_id(c, core)
+    &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
+    &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.remove(vaddr)
+    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
 }
 
 pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
-        HWStep::ReadWrite { vaddr, paddr, op, pte, NUMA_id, core_id } => step_ReadWrite(
+        HWStep::ReadWrite { vaddr, paddr, op, pte, core } => step_ReadWrite(
             c,            
             s1,
             s2,
@@ -716,26 +716,23 @@ pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, ste
             paddr,
             op,
             pte,
-            NUMA_id,
-            core_id,
+            core,
         ),
-        HWStep::PTMemOp { NUMA_id, core_id } => step_PTMemOp(c, s1, s2, NUMA_id, core_id),
-        HWStep::TLBFill { vaddr, pte, NUMA_id, core_id } => step_TLBFill(
+        HWStep::PTMemOp {core } => step_PTMemOp(c, s1, s2, core),
+        HWStep::TLBFill { vaddr, pte, core} => step_TLBFill(
             c,            
             s1,
             s2,
             vaddr,
             pte,
-            NUMA_id,
-            core_id,
+            core
         ),
-        HWStep::TLBEvict { vaddr, NUMA_id, core_id } => step_TLBEvict(
+        HWStep::TLBEvict { vaddr, core } => step_TLBEvict(
             c,            
             s1,
             s2,
             vaddr,
-            NUMA_id,
-            core_id,
+            core
         ),
     }
 }

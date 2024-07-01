@@ -160,21 +160,18 @@ pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, syste
     &&& nr::simple_log::SimpleLog::Step::no_op()
 }
 
-pub open spec fn step_nr (c: OSConstants, s1: OSVariables, s2: OSVariables, aop: <DT>, step: nr::simple_log::SimpleLog::Step<DT>) -> bool {
+pub open spec fn step_nr (c: OSConstants, s1: OSVariables, s2: OSVariables, aop: <DT>) -> bool {
     &&& s1.hw == s2.hw // optional pmem_op
     &&& s2.core_state == s1.core_state
-    &&& nr::simple_log::SimpleLog::State::next_by(s1.nr, s2.nr, aop, step);
-    &&& match step {
-        nr::simple_log::SimpleLog::Step::readonly_start(rid, rop)          => { true  },
-        nr::simple_log::SimpleLog::Step::readonly_read_version(rid)        => { true  },
-        nr::simple_log::SimpleLog::Step::readonly_finish(rid, logidx, rop) => { true  },
-        nr::simple_log::SimpleLog::Step::update_start(rid, uop)            => { false }, //no
-        nr::simple_log::SimpleLog::Step::update_add_op_to_log(rid)         => { true  },
-        nr::simple_log::SimpleLog::Step::update_incr_version(logidx)       => { false }, //no 
-        nr::simple_log::SimpleLog::Step::update_finish(rid, resp)          => { true  },
-        SimpleLog::Step::no_op()                                           => { true  },
-        SimpleLog::Step::dummy_to_use_type_params(state)                   => { false }, //no
-    }
+    &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop);
+    &&& match aop {
+        AsyncLabel::<DT>::Start(rid, InputOperation::Read(op, node_id))    => { true  }, //resolve/readonly start
+        AsyncLabel::<DT>::End(rid, OutputOperation::Read(ret));            => { true  }, //resolve/readonly end 
+        AsyncLabel::<DT>::Start(rid, InputOperation::Write(op));           => { false }, //update start
+        AsyncLabel::<DT>::End(rid, OutputOperation::Write(ret));           => { false }, //update end
+        Internal                                                           => { true  }, //everything else
+        _                                                                  => { false }, //mmu label 
+     }
 }
 
 pub open spec fn step_Map_Start (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>} ) -> bool {
