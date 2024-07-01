@@ -42,10 +42,7 @@ pub struct OSArguments {
     Empty,
 }
 
-pub struct Core {
-    NUMA_id: nat,
-    core_id: nat,
-}
+
 
 
 impl OSVariables {
@@ -153,6 +150,9 @@ impl OSVariables {
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// HW/NR-Statemachine steps 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub open spec fn step_HW(c: OSConstants, s1: OSVariables, s2: OSVariables, system_step: hardware::HWStep) -> bool {
     &&& !(system_step is PTMemOp)
@@ -174,40 +174,39 @@ pub open spec fn step_nr (c: OSConstants, s1: OSVariables, s2: OSVariables, aop:
      }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Map
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub open spec fn step_Map_Start (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>} ) -> bool {
-    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
+    let core = c.ULT2core.index(ULT_id);
     let os_arg = OSArguments::Map {ULT_id, rid, vaddr, pte, result},
-    &&& s1.core_state[(NUMA_id, core_id)] is OSArguments::Empty
-    &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), os_args)
+    &&& s1.core_state[core] is OSArguments::Empty
+    &&& s2.core_state == s1.core_state.insert(core, os_args)
     &&& s2.hw == s1.hw
-    &&& nr::simple_log::SimpleLog::Step::update_start(rid, uop)
+    &&& s2.shootdown == s1.shootdown
+    &&& aop is AsyncLabel::<DT>::Start(rid, InputOperation::Write(op))
+    &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop)
 }
 
 
-pub open spec fn step_Map_End (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat ) -> bool {
+pub open spec fn step_Map_End (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat, aop: AsyncLabel::<DT> ) -> bool {
     let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
     if let OSArguments::Map {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[(NUMA_id, core_id)] {
         &&& ULT_id == ult_id
         &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), OSArguments::Empty)
         &&& s2.hw == s1.hw
-        &&& nr::simple_log::SimpleLog::Step::update_end(rid, uop)
+        &&& s2.shootdown == s1.shootdown
+        aop is  AsyncLabel::<DT>::End(rid, OutputOperation::Write(ret));  
+        &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop)
     } else { false }
 }
 
-/*
-pub open spec fn step_Unmap(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat, base: nat, result: Result<(),()>) -> bool {
-    // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
-    // that s2.tlb doesn't contain this particular entry.
-	//INFO this is not necessary as it is already in step_PT
 
-	&&& hardware::valid_core_id(c.hw, NUMA_id, core_id)
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Unmap
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	//PROPOSAL: this for either one NUMA node or all
-    &&& forall|NUMA_id: nat, core_id: nat| hardware::valid_core_id(c.hw, NUMA_id, core_id) ==> !s2.hw.NUMAs[NUMA_id].cores[core_id].tlb.dom().contains(base)
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, NUMA_id, core_id)
-    &&& spec_pt::step_Unmap(s1.pt_variables(), s2.pt_variables(), base, result)
-}
-*/
 
 pub open spec fn step_Unmap_Start (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>} ) -> bool {
     let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
@@ -215,20 +214,46 @@ pub open spec fn step_Unmap_Start (c: OSConstants, s1: OSVariables, s2: OSVariab
     &&& s1.core_state[(NUMA_id, core_id)] is OSArguments::Empty
     &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), os_args)
     &&& s2.hw == s1.hw
-    &&& nr::simple_log::SimpleLog::Step::update_start(rid, uop)
+    &&& s2.shootdown == s1.shootdown
+    //TODO more condidtions on aop
+    &&& aop is AsyncLabel::<DT>::Start(rid, InputOperation::Write(op));
+    &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop);
+
+}
+
+
+pub open spec fn step_shootdown (c: OSConstants, s1: OSVariables, s2: OSVariables, core: Core, dispatcher: Core) -> bool {
+    &&& s2.core_state = s1.core_state
+    &&& s2.shootdown = s1.shootdown.insert((dispatcher, core), false)
+    &&& s1.core_state[core] is OSArguments::Unmap || s1.core_state[core] is OSArguments::Empty
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, core)
+    &&& if let OSArguments::Unmap {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[(NUMA_id, core_id)] {
+            // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
+            // that s2.tlb doesn't contain this particular entry.
+            &&& !s2.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
+            //TODO might need to force an update of the replica
+            &&& s2.nr == s1.nr
+        } else {false}
 }
 
 
 pub open spec fn step_Unmap_End (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat ) -> bool {
-    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
-    if let OSArguments::Map {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[(NUMA_id, core_id)] {
-        &&& ULT_id == ult_id
-        &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), OSArguments::Empty)
-        &&& s2.hw == s1.hw
-        &&& nr::simple_log::SimpleLog::Step::update_end(rid, uop)
-    } else { false }
+    let core = c.ULT2core.index(ULT_id);
+    &&& forall |id : (nat, nat)| hardware::valid_core_id(c.hw, id)  ==>  !s1.shootdown[(core, id)]
+    //TODO more condidtions on aop
+    &&& aop is  AsyncLabel::<DT>::End(rid, OutputOperation::Write(ret));  
+    &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop);
+    &&& s2.shootdown == s1.shootdown
+    &&& s2.hw == s1.hw
+    &&& if let OSArguments::Unmap {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[core] {
+            &&& ULT_id == ult_id
+            &&& s2.core_state == s1.core_state.insert(core), OSArguments::Empty)
+        } else { false }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Resolve
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat , base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
 	
@@ -236,6 +261,9 @@ pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, 
     &&& spec_pt::step_Resolve(s1.pt_variables(), s2.pt_variables(), base, result)
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Statemachine functions
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[allow(inconsistent_fields)]
 pub enum OSStep {
@@ -294,8 +322,12 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     //wf of ULT2core mapping
 	&&& forall |id: nat| id <= c.ULT_no <==> c.ULT2core.contains_key(id)
     &&& forall |id: nat| id <= c.ULT_no ==> let (NUMA_id, core_id) = ULT2core.index(id) in hardware::valid_core_id(c.hw, NUMA_id, core_id)
-   
+    //wf of shootdown
+    &&& forall |dispatcher: (nat, nat), handler: (nat, nat) | hardware::valid_core_id(c.w, dispatcher) && hardware::valid_core_id(c.hw, handler) <==> shootdown.dom().contains(dispatcher, handler)
+    &&& forall |dispatcher: (nat, nat), handler: (nat, nat) | hardware::valid_core_id(c.w, dispatcher) && hardware::valid_core_id(c.hw, handler) ==> !shootdown[(dispatcher, handler)]
+    
     &&& nr::simple_log::SimpleLog::Initialize()
+
 }
 
 }
