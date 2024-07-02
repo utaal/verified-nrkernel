@@ -207,32 +207,50 @@ pub open spec fn step_Map_End (c: OSConstants, s1: OSVariables, s2: OSVariables,
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+//NR shootsdown all cores that run the same process -> entire shootdown row is set true at beginning of shootdown
+
+
 
 pub open spec fn step_Unmap_Start (c: OSConstants, s1: OSVariables, s2: OSVariables, ULT_id: nat, rid: nat, vaddr: nat, pte: PageTableEntry, result: result<()()>} ) -> bool {
-    let (NUMA_id, core_id) = c.ULT2core.index(ULT_id);
-    let os_arg = OSArguments::Map {ULT_id, rid, vaddr, pte, result},
-    &&& s1.core_state[(NUMA_id, core_id)] is OSArguments::Empty
-    &&& s2.core_state == s1.core_state.insert((NUMA_id, core_id), os_args)
+    let core = c.ULT2core.index(ULT_id);
+    let version = //TODO;
+    let os_arg = OSArguments::Map {ULT_id, rid, vaddr, pte, result, version},
+    &&& s1.core_state[core] is OSArguments::Empty
+    &&& s2.core_state == s1.core_state.insert(core, os_args)
     &&& s2.hw == s1.hw
-    &&& s2.shootdown == s1.shootdown
+    &&& forall |handler: (nat, nat)| hardware::valid_core_id(c.hw, handler) ==> s2.shootdown[(core, handler)] 
+    //TODO debug this line
+    &&& forall |dispatcher: (nat,nat), handler: (nat, nat)| hardware::valid_core_id(c.hw, handler) && hardware::valid_core_id(c.hw, dispatcher) && dispatcher !== core ==> s2.shootdown[(dispatcher, handler)] === s1.shootdown[(dispatcher, handler)] 
+    &&& s2.shootdown.dom() === s1.shootdown.dom()
     //TODO more condidtions on aop
     &&& aop is AsyncLabel::<DT>::Start(rid, InputOperation::Write(op));
     &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop);
 
 }
 
+//proposal B.2 
+// make shootdown step hw::TLB_evict if entry is in TLB otherwise HW::stutter_step -> dosnt restrict other evicts but makes sure that special "shootdown" step cant happend during maps
+// -> shootdown sets shootdown map bit false -> shootdown step is not just redundant to hw step
+// require that all numa_nodes have a version number higher than unmap-version-number and all shootdown for unmap to finish
+
+//what if we unmapped and mapped same entry? and by 
 
 pub open spec fn step_shootdown (c: OSConstants, s1: OSVariables, s2: OSVariables, core: Core, dispatcher: Core) -> bool {
-    &&& s2.core_state = s1.core_state
-    &&& s2.shootdown = s1.shootdown.insert((dispatcher, core), false)
+    
+    &&& hardware::valid_core_id(c.hw, core) 
+    &&& hardware::valid_core_id(c.hw, dispatcher) 
+    &&& s1.shootdown[(dispatcher, core)]
     &&& s1.core_state[core] is OSArguments::Unmap || s1.core_state[core] is OSArguments::Empty
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, core)
-    &&& if let OSArguments::Unmap {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[(NUMA_id, core_id)] {
-            // The hw step tells us that s2.tlb is a submap of s1.tlb, so all we need to specify is
-            // that s2.tlb doesn't contain this particular entry.
-            &&& !s2.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
-            //TODO might need to force an update of the replica
-            &&& s2.nr == s1.nr
+
+    &&& s2.core_state = s1.core_state
+    &&& s2.nr == s1.nr
+    &&& s2.shootdown = s1.shootdown.insert((dispatcher, core), false)
+    &&& if let OSArguments::Unmap {ULT_id: ult_id, rid, vaddr, pte, result, version} = s1.core_state[core] {
+            if s.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr) { 
+                hardware::step_tlb_evict(c.hw, s1.hw, s2.hw, vaddr, core)) 
+            } else { 
+                s2.hw == s1.hw
+            }
         } else {false}
 }
 
@@ -242,18 +260,23 @@ pub open spec fn step_Unmap_End (c: OSConstants, s1: OSVariables, s2: OSVariable
     &&& forall |id : (nat, nat)| hardware::valid_core_id(c.hw, id)  ==>  !s1.shootdown[(core, id)]
     //TODO more condidtions on aop
     &&& aop is  AsyncLabel::<DT>::End(rid, OutputOperation::Write(ret));  
+    
     &&& nr::simple_log::SimpleLog::State::next(s1.nr, s2.nr, aop);
     &&& s2.shootdown == s1.shootdown
     &&& s2.hw == s1.hw
-    &&& if let OSArguments::Unmap {ULT_id: ult_id, rid, vaddr, pte, result} = s1.core_state[core] {
+    &&& s2.core_state == s1.core_state.insert(core), OSArguments::Empty)
+    &&& if let OSArguments::Unmap {ULT_id: ult_id, rid, vaddr, pte, result, version} = s1.core_state[core] {
             &&& ULT_id == ult_id
-            &&& s2.core_state == s1.core_state.insert(core), OSArguments::Empty)
+            //TODO &&& forall |replica: nat| replica < c.hw.NUMA_no ==> s1.nr.replicas[replica] > version 
+            
         } else { false }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Resolve
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+//TODO everything
 
 pub open spec fn step_Resolve(c: OSConstants, s1: OSVariables, s2: OSVariables, NUMA_id:nat , core_id:nat , base: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
 	
