@@ -23,9 +23,12 @@ pub struct HWVariables {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
     pub NUMAs: Map<nat, NUMAVariables>,
+    //one global page_table
+    pub global_pt: mem::PageTableMemory,
 }
 
 pub struct NUMAVariables {
+    //replicated page_table
     pub pt_mem: mem::PageTableMemory,
     pub cores: Map<nat, CoreVariables>,
 }
