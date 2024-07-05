@@ -20,6 +20,10 @@ L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_PHYADDR, MAX_BASE };
 // if we split impl <-> system state machines, this becomes trusted for the impl
 verus! {
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// State
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub struct PageTableVariables {
     pub pt_mem: mem::PageTableMemory,
     pub core_state: Map<hardware::Core, os::OSArguments>,
@@ -35,11 +39,18 @@ impl PageTableVariables {
 
 #[allow(inconsistent_fields)]
 pub enum PageTableStep {
-    Map     { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
-    Unmap   { vaddr: nat, result: Result<(),()> },
-    Resolve { vaddr: nat, result: Result<(nat,PageTableEntry),()> },
+    MapStart     { vaddr: nat, pte: PageTableEntry },
+    MapEnd       { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
+    UnmapStart   { vaddr: nat, result: Result<(),()> },
+    UnmapEnd     { vaddr: nat, },
+    ResolveStart { vaddr: nat, },
+    ResolveEnd   { vaddr: nat, result: Result<(nat,PageTableEntry),()> },
     Stutter,
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Map
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
@@ -55,8 +66,11 @@ pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTa
     &&& s.pt_mem.alloc_available_pages() >= 3
 }
 
-pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
+pub open spec fn step_Map_Start(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, ) -> bool {
     &&& step_Map_enabled(s1, vaddr, pte)
+}
+
+pub open spec fn step_Map_End(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool {
     &&& if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
         &&& result is Err
         &&& s2.interp() == s1.interp()
@@ -65,6 +79,10 @@ pub open spec fn step_Map(s1: PageTableVariables, s2: PageTableVariables, vaddr:
         &&& s2.interp() == s1.interp().insert(vaddr, pte)
     }
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Unmap
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH as nat)
@@ -75,7 +93,7 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     }
 }
 
-pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(),()>) -> bool {
+pub open spec fn step_Unmap_Start(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(),()>) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& if s1.interp().dom().contains(vaddr) {
         &&& result is Ok
@@ -86,13 +104,26 @@ pub open spec fn step_Unmap(s1: PageTableVariables, s2: PageTableVariables, vadd
     }
 }
 
+pub open spec fn step_Unmap_End(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, ) -> bool {
+    s1 == s2
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Resolve
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
     &&& aligned(vaddr, 8)
     &&& vaddr < MAX_BASE
 }
 
-pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
+pub open spec fn step_Resolve_Start(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, ) -> bool {
     &&& step_Resolve_enabled(vaddr)
+    &&& s2 == s1
+}
+
+
+pub open spec fn step_Resolve_End(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(nat,PageTableEntry),()>) -> bool {
     &&& s2 == s1
     &&& match result {
         Ok((base, pte)) => {
@@ -107,10 +138,17 @@ pub open spec fn step_Resolve(s1: PageTableVariables, s2: PageTableVariables, va
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Stutter
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
     s1 == s2
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Init
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub open spec fn init(s: PageTableVariables) -> bool {
     &&& s.pt_mem.inv()
@@ -119,12 +157,19 @@ pub open spec fn init(s: PageTableVariables) -> bool {
     &&& (forall|i: nat| i < 512 ==> s.pt_mem.region_view(s.pt_mem.cr3_spec()@)[i as int] == 0)
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Next_Step
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {
     match step {
-        PageTableStep::Map     { vaddr, pte, result } => step_Map(s1, s2, vaddr, pte, result),
-        PageTableStep::Unmap   { vaddr, result }      => step_Unmap(s1, s2, vaddr, result),
-        PageTableStep::Resolve { vaddr, result }      => step_Resolve(s1, s2, vaddr, result),
-        PageTableStep::Stutter                        => step_Stutter(s1, s2),
+        PageTableStep::MapStart     { vaddr, pte }         => step_Map_Start    (s1, s2, vaddr, pte ),
+        PageTableStep::MapEnd       { vaddr, pte, result } => step_Map_End      (s1, s2, vaddr, pte, result),
+        PageTableStep::UnmapStart   { vaddr, result }      => step_Unmap_Start  (s1, s2, vaddr, result ),
+        PageTableStep::UnmapEnd     { vaddr }              => step_Unmap_End    (s1, s2, vaddr ),
+        PageTableStep::ResolveStart { vaddr }              => step_Resolve_Start(s1, s2, vaddr ),
+        PageTableStep::ResolveEnd   { vaddr, result }      => step_Resolve_End  (s1, s2, vaddr, result),
+        PageTableStep::Stutter                             => step_Stutter(s1, s2),
     }
 }
 
