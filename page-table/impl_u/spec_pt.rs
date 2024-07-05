@@ -1,5 +1,6 @@
 use vstd::prelude::*;
 
+use crate::spec_t::os;
 use crate::spec_t::mem;
 use crate::spec_t::hardware;
 use crate::definitions_t::{ PageTableEntry, aligned, between,
@@ -21,6 +22,8 @@ verus! {
 
 pub struct PageTableVariables {
     pub pt_mem: mem::PageTableMemory,
+    pub core_state: Map<hardware::Core, os::OSArguments>,
+    pub sound: bool,
 }
 
 impl PageTableVariables {
