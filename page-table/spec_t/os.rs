@@ -33,10 +33,9 @@ pub struct OSVariables {
     pub core_state: Map<Core, OSArguments>,
     //TODO change to Map<core, Set<Core>>
     pub TLB_Shootdown: Map<(Core, Core), bool>,
-    //TODO add usefull comment here
+    //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
     pub sound: bool,
     pub lock: Option<Core>
-
     //for replicated pagetables use:
     //pub nr: nr::simple_log::SimpleLog::State,
 }
@@ -164,12 +163,21 @@ impl OSVariables {
                 self.hw.mem[pmem_idx as int]
             })
     }
+   
 
     //TODO add solution for thread_state
     pub open spec fn interp_thread_state(self, c: OSConstants) -> Map<nat, hlspec::AbstractArguments> {
         Map::new(
-            |ULT_id: nat| ULT_id < c.ULT_no,
-            |ULT_id: nat| hlspec::AbstractArguments::Empty
+            |ult_id: nat| ult_id < c.ULT_no,
+            |ult_id: nat| { match self.core_state[c.ULT2core[ult_id]] {
+                                OSArguments::Map   { ULT_id, vaddr, pte }  => {if ULT_id == ult_id {hlspec::AbstractArguments::Map  {vaddr, pte}}
+                                                                                else  {hlspec::AbstractArguments::Empty} 
+                                                                 },
+                                OSArguments::Unmap { ULT_id, vaddr, }      => {let pte = if (self.interp_pt_mem().dom().contains(vaddr)){Some (self.interp_pt_mem().index(vaddr))} else {Option::None};
+                                                                  if ULT_id == ult_id { hlspec::AbstractArguments::Unmap{ vaddr, pte }} 
+                                                                  else {hlspec::AbstractArguments::Empty }},
+                                _                                                       => hlspec::AbstractArguments::Empty
+                          }}
         )
     }
 	
@@ -328,7 +336,6 @@ pub open spec fn step_Unmap_Start (c: OSConstants, s1: OSVariables, s2: OSVariab
 }
 
 pub open spec fn step_unmap_op_end (c: OSConstants, s1: OSVariables, s2: OSVariables, vaddr: nat, result: Result<(),()>) -> bool {
-
     &&& spec_pt::step_Unmap_End(s1.pt_variables(), s2.pt_variables(), vaddr, result)
 }
 

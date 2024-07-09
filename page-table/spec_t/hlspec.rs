@@ -220,7 +220,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(inflightargs: Set<Abst
     &&& exists|b: AbstractArguments| #![auto] {
         &&& inflightargs.contains(b)
         &&& match b {
-            AbstractArguments::Map {vaddr, pte} => { overlap(candidate.frame, pte.frame)}
+            AbstractArguments::Map  {vaddr, pte} => { overlap(candidate.frame, pte.frame)}
             AbstractArguments::Unmap{vaddr, pte} => { &&& pte.is_some() 
                                                       &&& overlap(candidate.frame, pte.unwrap().frame)}
             _ => {false}
