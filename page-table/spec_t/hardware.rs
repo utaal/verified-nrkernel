@@ -635,6 +635,7 @@ pub open spec fn step_ReadWrite(
         },
     }
 }
+
 //TODO change this for global ptmem
 //need some more explanation on this one
 pub open spec fn step_PTMemOp(
@@ -653,12 +654,10 @@ pub open spec fn step_PTMemOp(
     )
     // s2.tlbs are submap of s1.tlbs
 
-    &&& forall |core: Core| valid_core_id(c, core) ==> forall |base: nat, pte: PageTableEntry|  s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
-            ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(
-            base,
-            pte,
-        )
-
+    &&& forall|core: Core|
+        valid_core_id(c, core) ==> forall|base: nat, pte: PageTableEntry|
+            s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
+                ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
 }
 
 pub open spec fn other_NUMAs_and_cores_unchanged(
@@ -666,8 +665,9 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     s1: HWVariables,
     s2: HWVariables,
     core: Core,
-) -> bool 
-recommends valid_core_id(c, core)    
+) -> bool
+    recommends
+        valid_core_id(c, core),
 {
     //Memory stays the same
     &&& s2.mem === s1.mem
@@ -721,15 +721,13 @@ pub open spec fn step_TLBEvict(
 }
 
 pub open spec fn step_Stutter(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
-
-     &&&   s2.mem == s1.mem
-     &&&   s2.NUMAs == s1.NUMAs
-
+    &&& s2.mem == s1.mem
+    &&& s2.NUMAs == s1.NUMAs
 }
 
 pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
-        HWStep::Stutter => step_Stutter (c, s1, s2),
+        HWStep::Stutter => step_Stutter(c, s1, s2),
         HWStep::ReadWrite { vaddr, paddr, op, pte, core } => step_ReadWrite(
             c,
             s1,
