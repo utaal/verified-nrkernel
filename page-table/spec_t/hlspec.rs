@@ -319,7 +319,7 @@ pub open spec fn step_Unmap_start(
      &&& step_Unmap_enabled(vaddr)
      &&& valid_thread(c, thread_id)
      &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-     &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, (s1.mappings.index(vaddr))) || pte is None) {
+     &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, (s1.mappings.index(vaddr)))) {
         &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Unmap{ vaddr, pte })
         &&& if (pte is None ){ &&& s2.mappings === s1.mappings
                                &&& s2.mem === s1.mem

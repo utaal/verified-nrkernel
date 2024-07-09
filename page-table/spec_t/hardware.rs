@@ -23,7 +23,7 @@ pub struct HWVariables {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
     pub NUMAs: Map<nat, NUMAVariables>,
-    //one global page_table
+    //one global page_table , handled by spec_pt, unconstrained by hw state
     pub global_pt: mem::PageTableMemory,
 }
 
@@ -637,7 +637,7 @@ pub open spec fn step_ReadWrite(
         },
     }
 }
-
+//TODO change this for global ptmem
 //need some more explanation on this one
 pub open spec fn step_PTMemOp(
     c: HWConstants,
@@ -655,8 +655,7 @@ pub open spec fn step_PTMemOp(
     )
     // s2.tlb is a submap of s1.tlb
 
-    &&& forall|base: nat, pte: PageTableEntry|
-        s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
+    &&& forall |core: Core| valid_core_id(c, core) ==> forall |base: nat, pte: PageTableEntry|  s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
             ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(
             base,
             pte,
