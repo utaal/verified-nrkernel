@@ -28,8 +28,6 @@ pub struct HWVariables {
 }
 
 pub struct NUMAVariables {
-    //replicated page_table
-    pub pt_mem: mem::PageTableMemory,
     pub cores: Map<nat, CoreVariables>,
 }
 
@@ -48,6 +46,7 @@ pub enum HWStep {
     PTMemOp { core: Core },
     TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
     TLBEvict { vaddr: nat, core: Core },
+    Stutter,
 }
 
 // FIXME: Including is_variant conditionally to avoid the warning when not building impl. But this
@@ -559,7 +558,6 @@ pub open spec fn init(c: HWConstants, s: HWVariables) -> bool {
 }
 
 pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
-    &&& interp_pt_mem(n.pt_mem) === Map::empty()
     &&& c.core_no >= 1
     &&& forall|id: nat| (id < c.core_no) == n.cores.contains_key(id)
     &&& forall|id: nat| (id < c.core_no) ==> #[trigger] core_init(n.cores[id])
@@ -624,7 +622,7 @@ pub open spec fn step_ReadWrite(
             // If pte is None, no mapping containing vaddr exists..
             &&& (!exists|base, pte|
                 {
-                    &&& interp_pt_mem(s1.NUMAs[core.NUMA_id].pt_mem).contains_pair(base, pte)
+                    &&& interp_pt_mem(s1.global_pt).contains_pair(base, pte)
                     &&& between(vaddr, base, base + pte.frame.size)
                 })
             // .. and the result is always a Undefined and an unchanged memory.
@@ -653,14 +651,13 @@ pub open spec fn step_PTMemOp(
         s2,
         core,
     )
-    // s2.tlb is a submap of s1.tlb
+    // s2.tlbs are submap of s1.tlbs
 
     &&& forall |core: Core| valid_core_id(c, core) ==> forall |base: nat, pte: PageTableEntry|  s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
             ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(
             base,
             pte,
         )
-    // pt_mem may change arbitrarily but only for one NUMA nodes?
 
 }
 
@@ -669,7 +666,9 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     s1: HWVariables,
     s2: HWVariables,
     core: Core,
-) -> bool {
+) -> bool 
+recommends valid_core_id(c, core)    
+{
     //Memory stays the same
     &&& s2.mem === s1.mem
     //Number of Numa nodes stays the same
@@ -701,7 +700,7 @@ pub open spec fn step_TLBFill(
     core: Core,
 ) -> bool {
     &&& valid_core_id(c, core)
-    &&& interp_pt_mem(s1.NUMAs[core.NUMA_id].pt_mem).contains_pair(vaddr, pte)
+    &&& interp_pt_mem(s1.global_pt).contains_pair(vaddr, pte)
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
         === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vaddr, pte)
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
@@ -721,8 +720,16 @@ pub open spec fn step_TLBEvict(
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
 }
 
+pub open spec fn step_Stutter(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
+
+     &&&   s2.mem == s1.mem
+     &&&   s2.NUMAs == s1.NUMAs
+
+}
+
 pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
     match step {
+        HWStep::Stutter => step_Stutter (c, s1, s2),
         HWStep::ReadWrite { vaddr, paddr, op, pte, core } => step_ReadWrite(
             c,
             s1,
