@@ -14,7 +14,7 @@ use crate::definitions_t::{
     between, candidate_mapping_overlaps_existing_pmem, overlap, MemRegion, PageTableEntry,
     WORD_SIZE,
 };
-use crate::spec_t::hardware::{ Core, valid_core_id };
+use crate::spec_t::hardware::{ Core };
 
 verus! {
 
@@ -32,10 +32,10 @@ pub struct OSVariables {
     pub core_state: Map<Core, OSArguments>,
     //TODO change to Map<core, Set<Core>>
     pub TLB_Shootdown: Map<(Core, Core), bool>,
-    //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
-    pub sound: bool,
     //TODO maybe have option<ULT_id:nat> instead
     pub lock: Option<Core>,
+    //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
+    pub sound: bool,
 }
 
 pub enum OSArguments {
@@ -287,12 +287,14 @@ pub open spec fn step_HW(
     system_step: hardware::HWStep,
 ) -> bool {
     &&& !(system_step is PTMemOp)
+
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.sound == s1.sound
-    &&& s2.lock == s1.lock
-    &&& s2.core_state == s1.core_state
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+
+    &&& s2.core_state == s1.core_state
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.lock == s1.lock
+    &&& s2.sound == s1.sound
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -306,12 +308,14 @@ pub open spec fn step_set_lock(
 ) -> bool {
     &&& s1.lock.is_none()
     &&& s1.core_state[core] is Map || s1.core_state[core] is Unmap
-    &&& s2.lock == Some(core)
+
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+
     &&& s2.core_state == s1.core_state
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.lock == Some(core)
     &&& s2.sound == s1.sound
-    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -339,10 +343,12 @@ pub open spec fn step_Map_Start(
     let core = c.ULT2core.index(ULT_id);
     let os_arg = OSArguments::Map { ULT_id, vaddr, pte };
     &&& s1.core_state[core] is Empty
-    &&& s2.core_state == s1.core_state.insert(core, os_arg)
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Map_Start(s1.pt_variables(), s2.pt_variables(), vaddr, pte)
+    
+    &&& s2.core_state == s1.core_state.insert(core, os_arg)
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.lock == s1.lock
     &&& s2.sound == s1.sound && step_Map_sound(
         hardware::interp_pt_mem(s1.hw.global_pt),
@@ -361,14 +367,16 @@ pub open spec fn step_Map_End(
 ) -> bool {
     let core = c.ULT2core.index(ULT_id);
     &&& s1.core_state[core] matches OSArguments::Map { ULT_id: ult_id, vaddr, pte }
-    &&& s2.core_state == s1.core_state.insert(core, OSArguments::Empty)
     &&& ULT_id == ult_id
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& spec_pt::step_Map_End(s1.pt_variables(), s2.pt_variables(), vaddr, pte, result)
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
-    &&& s1.sound == s2.sound
-    &&& s1.lock == Some(core)
     &&& s2.lock.is_none()
+
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Map_End(s1.pt_variables(), s2.pt_variables(), vaddr, pte, result)
+    
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.core_state == s1.core_state.insert(core, OSArguments::Empty)
+    &&& s1.lock == Some(core)
+    &&& s1.sound == s2.sound
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -394,11 +402,11 @@ pub open spec fn step_UnmapOp_Start(
     let core = c.ULT2core.index(ULT_id);
     let os_arg = OSArguments::Unmap { ULT_id, vaddr };
     &&& s1.core_state[core] is Empty
-    &&& s2.core_state == s1.core_state.insert(core, os_arg)
-    &&& s2.hw
-        == s1.hw
-    //NR shootsdown all cores that run the same process -> entire shootdown row is set true at beginning of shootdown
+    
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Unmap_Start(s1.pt_variables(), s2.pt_variables(), vaddr)
 
+    &&& s2.core_state == s1.core_state.insert(core, os_arg)
     &&& forall|handler: Core| #[trigger]
         hardware::valid_core_id(c.hw, handler) ==> s2.TLB_Shootdown[(core, handler)]
     &&& forall|dispatcher: Core, handler: Core|
@@ -406,15 +414,13 @@ pub open spec fn step_UnmapOp_Start(
         dispatcher !== core) ==> s2.TLB_Shootdown[(dispatcher, handler)]
             === #[trigger] s1.TLB_Shootdown[(dispatcher, handler)]
     &&& s2.TLB_Shootdown.dom() === s1.TLB_Shootdown.dom()
+    &&& s2.lock == s1.lock
     &&& s2.sound == s1.sound && (!pt.contains_key(vaddr) || step_Unmap_sound(
         hardware::interp_pt_mem(s1.hw.global_pt),
         s1.core_state.values(),
         vaddr,
         pt.index(vaddr),
     ))
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& spec_pt::step_Unmap_Start(s1.pt_variables(), s2.pt_variables(), vaddr)
-    &&& s2.lock == s1.lock
 }
 
 pub open spec fn step_UnmapOp_End(
@@ -426,22 +432,26 @@ pub open spec fn step_UnmapOp_End(
 ) -> bool {
     let core = c.ULT2core.index(ULT_id);
     &&& s1.core_state[core] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
-    &&& ULT_id == ult_id
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.core_state == s1.core_state
-    &&& spec_pt::step_Unmap_End(s1.pt_variables(), s2.pt_variables(), vaddr, result)
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
-    &&& s2.sound == s1.sound
     &&& s1.lock == Some(core)
+    &&& ULT_id == ult_id
+   
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Unmap_End(s1.pt_variables(), s2.pt_variables(), vaddr, result)
+   
+    &&& s2.core_state == s1.core_state
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.lock == s1.lock
+    &&& s2.sound == s1.sound
 }
 
+//TODO
 pub open spec fn step_Unmap_Initiate_Shootdown(/* ... */) -> bool {
     /* ... */
     true
 }
 
 // Acknowledge TLB eviction to other core (in response to shootdown IPI)
+//check if tlb shootdown/unmap has happend and send ACK
 pub open spec fn step_Ack_Shootdown_IPI(
     c: OSConstants,
     s1: OSVariables,
@@ -450,21 +460,22 @@ pub open spec fn step_Ack_Shootdown_IPI(
     dispatcher: Core,
 ) -> bool {
     &&& s1.core_state[dispatcher] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
-    &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
     &&& hardware::valid_core_id(c.hw, core)
     &&& hardware::valid_core_id(c.hw, dispatcher)
+    //TODO
     &&& !(s1.core_state[core] is Map && s1.lock == Some(core))
-    &&& s2.core_state
-        == s1.core_state
-    //check if tlb shootdown has happend and send ACK
-
-    &&& !s1.interp_pt_mem().contains_key(vaddr)
     &&& s1.TLB_Shootdown[(dispatcher, core)]
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown.insert((dispatcher, core), false)
+    &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
+    &&& !s1.interp_pt_mem().contains_key(vaddr)
+   
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+
+    &&& s2.core_state
+    == s1.core_state
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown.insert((dispatcher, core), false)
     &&& s2.sound == s1.sound
-    &&& s2.lock == s1.lock
+    &&& s2.lock == s1.lock   
 }
 
 pub open spec fn step_Unmap_End(
@@ -477,15 +488,17 @@ pub open spec fn step_Unmap_End(
     let core = c.ULT2core.index(ULT_id);
     &&& s1.core_state[core] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
     &&& ULT_id == ult_id
+    &&& s1.lock == Some(core)
     &&& forall|id: Core| #[trigger]
         hardware::valid_core_id(c.hw, id) ==> !s1.TLB_Shootdown[(core, id)]
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+  
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& s2.core_state == s1.core_state.insert((core), OSArguments::Empty)
-    &&& s1.sound == s2.sound
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
-    &&& s1.lock == Some(core)
+
+    &&& s2.core_state == s1.core_state.insert((core), OSArguments::Empty)
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.lock.is_none()
+    &&& s1.sound == s2.sound
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -551,6 +564,8 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     // hardware stuff
     &&& hardware::interp_pt_mem(s.hw.global_pt) === Map::empty()
     &&& hardware::init(c.hw, s.hw)
+    //spec_pt
+    &&& spec_pt::init(s.pt_variables())
     //wf of ULT2core mapping
 
     &&& forall|id: nat| id <= c.ULT_no <==> c.ULT2core.contains_key(id)
@@ -568,9 +583,7 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
         #![auto]
         hardware::valid_core_id(c.hw, dispatcher) && hardware::valid_core_id(c.hw, handler)
             ==> !s.TLB_Shootdown[(dispatcher, handler)]
-        //spec_pt
-
-    &&& spec_pt::init(s.pt_variables())
+        
 }
 
 } // verus!
