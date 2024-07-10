@@ -10,9 +10,9 @@ use vstd::prelude::*;
 use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem};
 //TODO move core to definitions
-use crate::definitions_t::{
-    between, candidate_mapping_overlaps_existing_pmem, overlap, MemRegion, PageTableEntry,
-    WORD_SIZE,
+use crate::definitions_t::{aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem, 
+    L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,  MAX_PHYADDR, MemRegion, overlap, PageTableEntry,
+    WORD_SIZE, x86_arch_spec
 };
 use crate::spec_t::hardware::{ Core };
 
@@ -298,27 +298,6 @@ pub open spec fn step_HW(
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Acquire lock
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn step_set_lock(
-    c: OSConstants,
-    s1: OSVariables,
-    s2: OSVariables,
-    core: Core,
-) -> bool {
-    &&& s1.lock.is_none()
-    &&& s1.core_state[core] is Map || s1.core_state[core] is Unmap
-
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
-
-    &&& s2.core_state == s1.core_state
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.lock == Some(core)
-    &&& s2.sound == s1.sound
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Map
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Map_sound(
@@ -332,6 +311,19 @@ pub open spec fn step_Map_sound(
     &&& !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte)
 }
 
+pub open spec fn step_Map_enabled(pt_mem: mem::PageTableMemory, vaddr: nat, pte: PageTableEntry) -> bool {
+    &&& aligned(vaddr, pte.frame.size)
+    &&& aligned(pte.frame.base, pte.frame.size)
+    &&& pte.frame.base <= MAX_PHYADDR
+    &&& candidate_mapping_in_bounds(vaddr, pte)
+    &&& {  // The size of the frame must be the entry_size of a layer that supports page mappings
+        ||| pte.frame.size == L3_ENTRY_SIZE
+        ||| pte.frame.size == L2_ENTRY_SIZE
+        ||| pte.frame.size == L1_ENTRY_SIZE
+    }
+    &&& pt_mem.alloc_available_pages() >= 3
+}
+
 pub open spec fn step_Map_Start(
     c: OSConstants,
     s1: OSVariables,
@@ -343,9 +335,10 @@ pub open spec fn step_Map_Start(
     let core = c.ULT2core.index(ULT_id);
     let os_arg = OSArguments::Map { ULT_id, vaddr, pte };
     &&& s1.core_state[core] is Empty
+    &&& step_Map_enabled(s1.hw.global_pt, vaddr, pte)
     
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& spec_pt::step_Map_Start(s1.pt_variables(), s2.pt_variables(), vaddr, pte)
+    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
     
     &&& s2.core_state == s1.core_state.insert(core, os_arg)
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -356,6 +349,26 @@ pub open spec fn step_Map_Start(
         vaddr,
         pte,
     )
+}
+
+pub open spec fn step_Map_op_Start(
+    c: OSConstants,
+    s1: OSVariables,
+    s2: OSVariables,
+    ULT_id: nat,
+) -> bool {
+    let core = c.ULT2core.index(ULT_id);
+    &&& s1.core_state[core] matches OSArguments::Map { ULT_id: ult_id, vaddr, pte }
+    &&& ULT_id == ult_id
+    &&& s1.lock.is_none()
+
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Map_Start(s1.pt_variables(), s2.pt_variables(), vaddr, pte)
+
+    &&& s2.core_state == s1.core_state
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.lock == Some(core)
+    &&& s2.sound == s1.sound
 }
 
 pub open spec fn step_Map_End(
@@ -391,7 +404,17 @@ pub open spec fn step_Unmap_sound(
     !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte)
 }
 
-pub open spec fn step_UnmapOp_Start(
+
+pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
+    &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
+    &&& {  // The given vaddr must be aligned to some valid page size
+        ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
+        ||| aligned(vaddr, L2_ENTRY_SIZE as nat)
+        ||| aligned(vaddr, L1_ENTRY_SIZE as nat)
+    }
+}
+
+pub open spec fn step_Unmap_Start(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
@@ -402,18 +425,14 @@ pub open spec fn step_UnmapOp_Start(
     let core = c.ULT2core.index(ULT_id);
     let os_arg = OSArguments::Unmap { ULT_id, vaddr };
     &&& s1.core_state[core] is Empty
+    &&& step_Unmap_enabled(vaddr)
     
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& spec_pt::step_Unmap_Start(s1.pt_variables(), s2.pt_variables(), vaddr)
+    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+   
 
     &&& s2.core_state == s1.core_state.insert(core, os_arg)
-    &&& forall|handler: Core| #[trigger]
-        hardware::valid_core_id(c.hw, handler) ==> s2.TLB_Shootdown[(core, handler)]
-    &&& forall|dispatcher: Core, handler: Core|
-        hardware::valid_core_id(c.hw, handler) && hardware::valid_core_id(c.hw, dispatcher) && (
-        dispatcher !== core) ==> s2.TLB_Shootdown[(dispatcher, handler)]
-            === #[trigger] s1.TLB_Shootdown[(dispatcher, handler)]
-    &&& s2.TLB_Shootdown.dom() === s1.TLB_Shootdown.dom()
+    
     &&& s2.lock == s1.lock
     &&& s2.sound == s1.sound && (!pt.contains_key(vaddr) || step_Unmap_sound(
         hardware::interp_pt_mem(s1.hw.global_pt),
@@ -423,7 +442,30 @@ pub open spec fn step_UnmapOp_Start(
     ))
 }
 
-pub open spec fn step_UnmapOp_End(
+
+pub open spec fn step_Unmap_Op_Start(
+    c: OSConstants,
+    s1: OSVariables,
+    s2: OSVariables,
+    ULT_id: nat,
+) -> bool {
+    let core = c.ULT2core.index(ULT_id);
+    &&& s1.core_state[core] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
+    &&& ULT_id == ult_id
+    &&& s1.lock.is_none()
+    
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Unmap_Start(s1.pt_variables(), s2.pt_variables(), vaddr)
+
+    &&& s2.core_state == s1.core_state
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.lock == Some(core)
+    &&& s2.sound == s1.sound
+}
+
+
+
+pub open spec fn step_Unmap_Op_End(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
@@ -445,9 +487,30 @@ pub open spec fn step_UnmapOp_End(
 }
 
 //TODO
-pub open spec fn step_Unmap_Initiate_Shootdown(/* ... */) -> bool {
-    /* ... */
-    true
+pub open spec fn step_Unmap_Initiate_Shootdown( c: OSConstants,
+    s1: OSVariables,
+    s2: OSVariables,
+    ULT_id: nat,)
+     -> bool {
+    let core = c.ULT2core.index(ULT_id);
+    &&& s1.core_state[core] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
+    &&& s1.lock == Some(core)
+    &&& ULT_id == ult_id
+    //TODO c
+    
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+
+    &&& s2.core_state == s1.core_state
+    &&& forall|handler: Core| #[trigger]
+        hardware::valid_core_id(c.hw, handler) ==> s2.TLB_Shootdown[(core, handler)]
+    &&& forall|dispatcher: Core, handler: Core|
+        hardware::valid_core_id(c.hw, handler) && hardware::valid_core_id(c.hw, dispatcher) && (
+        dispatcher !== core) ==> s2.TLB_Shootdown[(dispatcher, handler)]
+            === #[trigger] s1.TLB_Shootdown[(dispatcher, handler)]
+    &&& s2.TLB_Shootdown.dom() === s1.TLB_Shootdown.dom()
+    &&& s2.lock == s1.lock
+    &&& s2.sound == s1.sound
 }
 
 // Acknowledge TLB eviction to other core (in response to shootdown IPI)
@@ -551,7 +614,7 @@ pub open spec fn next_step(c: OSConstants, s1: OSVariables, s2: OSVariables, ste
         OSStep::HW { ULT_id, step } => step_HW(c, s1, s2, step),
         OSStep::MapStart { ULT_id, vaddr, pte } => step_Map_Start(c, s1, s2, ULT_id, vaddr, pte),
         OSStep::MapEnd { ULT_id, result } => step_Map_End(c, s1, s2, ULT_id, result),
-        OSStep::UnmapStart { ULT_id, vaddr } => step_UnmapOp_Start(c, s1, s2, ULT_id, vaddr),
+        OSStep::UnmapStart { ULT_id, vaddr } => step_Unmap_Start(c, s1, s2, ULT_id, vaddr),
         OSStep::UnmapEnd { ULT_id, result } => step_Unmap_End(c, s1, s2, ULT_id, result),
     }
 }

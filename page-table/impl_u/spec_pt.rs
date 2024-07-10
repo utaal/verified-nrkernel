@@ -1,9 +1,6 @@
 use vstd::prelude::*;
 
-use crate::definitions_t::{
-    aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
-    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, x86_arch_spec
-};
+use crate::definitions_t::{ candidate_mapping_overlaps_existing_vmem, PageTableEntry, };
 use crate::spec_t::hardware;
 use crate::spec_t::mem;
 
@@ -44,18 +41,6 @@ pub enum PageTableStep {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Map
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTableEntry) -> bool {
-    &&& aligned(vaddr, pte.frame.size)
-    &&& aligned(pte.frame.base, pte.frame.size)
-    &&& pte.frame.base <= MAX_PHYADDR
-    &&& candidate_mapping_in_bounds(vaddr, pte)
-    &&& {  // The size of the frame must be the entry_size of a layer that supports page mappings
-        ||| pte.frame.size == L3_ENTRY_SIZE
-        ||| pte.frame.size == L2_ENTRY_SIZE
-        ||| pte.frame.size == L1_ENTRY_SIZE
-    }
-    &&& s.pt_mem.alloc_available_pages() >= 3
-}
 
 pub open spec fn step_Map_Start(
     s1: PageTableVariables,
@@ -63,7 +48,6 @@ pub open spec fn step_Map_Start(
     vaddr: nat,
     pte: PageTableEntry,
 ) -> bool {
-    &&& step_Map_enabled(s1, vaddr, pte)
     &&& s1 == s2
 }
 
@@ -86,21 +70,12 @@ pub open spec fn step_Map_End(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
-    &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
-    &&& {  // The given vaddr must be aligned to some valid page size
-        ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
-        ||| aligned(vaddr, L2_ENTRY_SIZE as nat)
-        ||| aligned(vaddr, L1_ENTRY_SIZE as nat)
-    }
-}
 
 pub open spec fn step_Unmap_Start(
     s1: PageTableVariables,
     s2: PageTableVariables,
     vaddr: nat,
 ) -> bool {
-    &&& step_Unmap_enabled(vaddr)
     &&& s1 == s2
 }
 
