@@ -266,7 +266,7 @@ pub open spec fn step_HW(
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// aquire Lock
+// Acquire lock
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_set_lock(
     c: OSConstants,
@@ -353,7 +353,7 @@ pub open spec fn step_Unmap_sound(
     !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte)
 }
 
-pub open spec fn step_Unmap_Start(
+pub open spec fn step_UnmapOp_Start(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
@@ -387,7 +387,7 @@ pub open spec fn step_Unmap_Start(
     &&& s2.lock == s1.lock
 }
 
-pub open spec fn step_unmap_op_end(
+pub open spec fn step_UnmapOp_End(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
@@ -406,8 +406,13 @@ pub open spec fn step_unmap_op_end(
     &&& s2.lock == s1.lock
 }
 
-//simulates ack send from other cores otherwise stutter step
-pub open spec fn step_shootdown(
+pub open spec fn step_Unmap_Initiate_Shootdown(/* ... */) -> bool {
+    /* ... */
+    true
+}
+
+// Acknowledge TLB eviction to other core (in response to shootdown IPI)
+pub open spec fn step_Ack_Shootdown_IPI(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
@@ -503,7 +508,7 @@ pub open spec fn next_step(c: OSConstants, s1: OSVariables, s2: OSVariables, ste
         OSStep::HW { ULT_id, step } => step_HW(c, s1, s2, step),
         OSStep::MapStart { ULT_id, vaddr, pte } => step_Map_Start(c, s1, s2, ULT_id, vaddr, pte),
         OSStep::MapEnd { ULT_id, result } => step_Map_End(c, s1, s2, ULT_id, result),
-        OSStep::UnmapStart { ULT_id, vaddr } => step_Unmap_Start(c, s1, s2, ULT_id, vaddr),
+        OSStep::UnmapStart { ULT_id, vaddr } => step_UnmapOp_Start(c, s1, s2, ULT_id, vaddr),
         OSStep::UnmapEnd { ULT_id, result } => step_Unmap_End(c, s1, s2, ULT_id, result),
     }
 }

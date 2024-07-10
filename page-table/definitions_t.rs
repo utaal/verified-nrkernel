@@ -51,10 +51,6 @@ pub const PAGE_SIZE: usize = 4096;
 pub spec const X86_MAX_ENTRY_SIZE: nat = 512 * 512 * 512 * 4096;
 pub spec const MAX_BASE:           nat = X86_MAX_ENTRY_SIZE * (X86_NUM_ENTRIES as nat);
 
-pub spec const PT_BOUND_LOW:  nat = 0;
-// Upper bound for x86 4-level paging.
-// 512 entries, each mapping 512*1024*1024*1024 bytes
-pub const PT_BOUND_HIGH: usize = 512 * 512 * 1024 * 1024 * 1024;
 pub const L3_ENTRY_SIZE: usize = PAGE_SIZE;
 pub const L2_ENTRY_SIZE: usize = 512 * L3_ENTRY_SIZE;
 pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
@@ -393,5 +389,11 @@ pub spec const x86_arch_spec: Arch = Arch {
         ArchLayer { entry_size: L3_ENTRY_SIZE as nat, num_entries: 512 },
     ],
 };
+
+pub proof fn x86_arch_spec_upper_bound()
+    ensures x86_arch_spec.upper_vaddr(0, 0) == 512 * 512 * 1024 * 1024 * 1024
+{
+    assert(x86_arch_spec.upper_vaddr(0, 0) == 512 * 512 * 1024 * 1024 * 1024) by (compute_only);
+}
 
 }

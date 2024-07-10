@@ -6,7 +6,7 @@ use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
     MemRegion, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR,
-    PT_BOUND_HIGH, PT_BOUND_LOW, WORD_SIZE,
+    WORD_SIZE, x86_arch_spec
 };
 use crate::spec_t::mem;
 use vstd::prelude::*;
@@ -325,7 +325,7 @@ pub open spec fn step_Map_end(
 }
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
-    &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH as nat)
+    &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
     &&& {  // The given vaddr must be aligned to some valid page size
         ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
         ||| aligned(vaddr, L2_ENTRY_SIZE as nat)

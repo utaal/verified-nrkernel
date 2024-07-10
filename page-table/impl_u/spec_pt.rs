@@ -1,9 +1,8 @@
 use vstd::prelude::*;
 
 use crate::definitions_t::{
-    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
-    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, PT_BOUND_HIGH,
-    PT_BOUND_LOW,
+    aligned, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
+    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, x86_arch_spec
 };
 use crate::spec_t::hardware;
 use crate::spec_t::mem;
@@ -75,7 +74,7 @@ pub open spec fn step_Map_End(
     pte: PageTableEntry,
     result: Result<(), ()>,
 ) -> bool {
-    &&& if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
+    if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
         &&& result is Err
         &&& s2.interp() == s1.interp()
     } else {
@@ -88,7 +87,7 @@ pub open spec fn step_Map_End(
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
-    &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH as nat)
+    &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
     &&& {  // The given vaddr must be aligned to some valid page size
         ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
         ||| aligned(vaddr, L2_ENTRY_SIZE as nat)
