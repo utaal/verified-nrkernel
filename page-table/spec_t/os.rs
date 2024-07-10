@@ -392,7 +392,7 @@ pub open spec fn step_unmap_op_end(
     s1: OSVariables,
     s2: OSVariables,
     result: Result<(), ()>,
-    ULT: ult_id,
+    ULT_id: nat,
 ) -> bool {
     let core = c.ULT2core.index(ULT_id);
     &&& s1.core_state[core] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
@@ -423,7 +423,7 @@ pub open spec fn step_shootdown(
         == s1.core_state
     //check if tlb shootdown has happend and send ACK
     
-    &&& !s1.interp_pt_mem.contains_key(vaddr)
+    &&& !s1.interp_pt_mem().contains_key(vaddr)
 
 
     &&& s1.TLB_Shootdown[(dispatcher, core)]
