@@ -1,11 +1,12 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mem;
+use crate::definitions_t::{
+    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
+    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, PT_BOUND_HIGH,
+    PT_BOUND_LOW,
+};
 use crate::spec_t::hardware;
-use crate::definitions_t::{ PageTableEntry, aligned, between,
-candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
-L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_PHYADDR };
-
+use crate::spec_t::mem;
 
 // trusted: not trusted
 // the interface spec is written in such a way that it guarantees that the impl behaves according
@@ -21,7 +22,6 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // State
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub struct PageTableVariables {
     pub pt_mem: mem::PageTableMemory,
 }
@@ -35,23 +35,22 @@ impl PageTableVariables {
 
 #[allow(inconsistent_fields)]
 pub enum PageTableStep {
-    MapStart     { vaddr: nat, pte: PageTableEntry },
-    MapEnd       { vaddr: nat, pte: PageTableEntry, result: Result<(),()> },
-    UnmapStart   { vaddr: nat, },
-    UnmapEnd     { vaddr: nat, result: Result<(),()> },
+    MapStart { vaddr: nat, pte: PageTableEntry },
+    MapEnd { vaddr: nat, pte: PageTableEntry, result: Result<(), ()> },
+    UnmapStart { vaddr: nat },
+    UnmapEnd { vaddr: nat, result: Result<(), ()> },
     Stutter,
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Map
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTableEntry) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
     &&& pte.frame.base <= MAX_PHYADDR
     &&& candidate_mapping_in_bounds(vaddr, pte)
-    &&& { // The size of the frame must be the entry_size of a layer that supports page mappings
+    &&& {  // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE
         ||| pte.frame.size == L2_ENTRY_SIZE
         ||| pte.frame.size == L1_ENTRY_SIZE
@@ -59,15 +58,23 @@ pub open spec fn step_Map_enabled(s: PageTableVariables, vaddr: nat, pte: PageTa
     &&& s.pt_mem.alloc_available_pages() >= 3
 }
 
-
-pub open spec fn step_Map_Start(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry ) -> bool
-{
+pub open spec fn step_Map_Start(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+    vaddr: nat,
+    pte: PageTableEntry,
+) -> bool {
     &&& step_Map_enabled(s1, vaddr, pte)
-    &&& s1 == s2 
+    &&& s1 == s2
 }
 
-pub open spec fn step_Map_End(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, pte: PageTableEntry, result: Result<(),()>) -> bool
-{
+pub open spec fn step_Map_End(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+    vaddr: nat,
+    pte: PageTableEntry,
+    result: Result<(), ()>,
+) -> bool {
     &&& if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
         &&& result is Err
         &&& s2.interp() == s1.interp()
@@ -80,22 +87,30 @@ pub open spec fn step_Map_End(s1: PageTableVariables, s2: PageTableVariables, va
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& between(vaddr, PT_BOUND_LOW, PT_BOUND_HIGH as nat)
-    &&& { // The given vaddr must be aligned to some valid page size
+    &&& {  // The given vaddr must be aligned to some valid page size
         ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
         ||| aligned(vaddr, L2_ENTRY_SIZE as nat)
         ||| aligned(vaddr, L1_ENTRY_SIZE as nat)
     }
 }
 
-pub open spec fn step_Unmap_Start(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat) -> bool {
+pub open spec fn step_Unmap_Start(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+    vaddr: nat,
+) -> bool {
     &&& step_Unmap_enabled(vaddr)
     &&& s1 == s2
 }
 
-pub open spec fn step_Unmap_End(s1: PageTableVariables, s2: PageTableVariables, vaddr: nat, result: Result<(),()>) -> bool {
+pub open spec fn step_Unmap_End(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+    vaddr: nat,
+    result: Result<(), ()>,
+) -> bool {
     if s1.interp().dom().contains(vaddr) {
         &&& result is Ok
         &&& s2.interp() == s1.interp().remove(vaddr)
@@ -105,11 +120,9 @@ pub open spec fn step_Unmap_End(s1: PageTableVariables, s2: PageTableVariables, 
     }
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Stutter
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
     s1 == s2
 }
@@ -117,7 +130,6 @@ pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) ->
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Init
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub open spec fn init(s: PageTableVariables) -> bool {
     &&& s.pt_mem.inv()
     &&& s.pt_mem.regions() === set![s.pt_mem.cr3_spec()@]
@@ -128,14 +140,17 @@ pub open spec fn init(s: PageTableVariables) -> bool {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Next_Step
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-pub open spec fn next_step(s1: PageTableVariables, s2: PageTableVariables, step: PageTableStep) -> bool {
+pub open spec fn next_step(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+    step: PageTableStep,
+) -> bool {
     match step {
-        PageTableStep::MapStart     { vaddr, pte }         => step_Map_Start    (s1, s2, vaddr, pte ),
-        PageTableStep::MapEnd       { vaddr, pte, result } => step_Map_End      (s1, s2, vaddr, pte, result),
-        PageTableStep::UnmapStart   { vaddr }              => step_Unmap_Start  (s1, s2, vaddr ),
-        PageTableStep::UnmapEnd     { vaddr, result }      => step_Unmap_End    (s1, s2, vaddr, result ),
-        PageTableStep::Stutter                             => step_Stutter(s1, s2),
+        PageTableStep::MapStart { vaddr, pte } => step_Map_Start(s1, s2, vaddr, pte),
+        PageTableStep::MapEnd { vaddr, pte, result } => step_Map_End(s1, s2, vaddr, pte, result),
+        PageTableStep::UnmapStart { vaddr } => step_Unmap_Start(s1, s2, vaddr),
+        PageTableStep::UnmapEnd { vaddr, result } => step_Unmap_End(s1, s2, vaddr, result),
+        PageTableStep::Stutter => step_Stutter(s1, s2),
     }
 }
 
@@ -143,4 +158,4 @@ pub open spec fn next(s1: PageTableVariables, s2: PageTableVariables) -> bool {
     exists|step: PageTableStep| next_step(s1, s2, step)
 }
 
-}
+} // verus!

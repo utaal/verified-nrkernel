@@ -43,7 +43,7 @@ pub struct Core {
 #[allow(inconsistent_fields)]
 pub enum HWStep {
     ReadWrite { vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>, core: Core },
-    PTMemOp ,
+    PTMemOp,
     TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
     TLBEvict { vaddr: nat, core: Core },
     Stutter,
@@ -638,11 +638,7 @@ pub open spec fn step_ReadWrite(
 
 //TODO change this for global ptmem
 //need some more explanation on this one
-pub open spec fn step_PTMemOp(
-    c: HWConstants,
-    s1: HWVariables,
-    s2: HWVariables,
-) -> bool {
+pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
     &&& s2.mem === s1.mem
     &&& forall|core: Core|
         valid_core_id(c, core) ==> forall|base: nat, pte: PageTableEntry|
@@ -728,7 +724,7 @@ pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, ste
             pte,
             core,
         ),
-        HWStep::PTMemOp                      => step_PTMemOp(c, s1, s2),
+        HWStep::PTMemOp => step_PTMemOp(c, s1, s2),
         HWStep::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, vaddr, pte, core),
         HWStep::TLBEvict { vaddr, core } => step_TLBEvict(c, s1, s2, vaddr, core),
     }

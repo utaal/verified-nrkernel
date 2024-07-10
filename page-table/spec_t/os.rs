@@ -108,7 +108,8 @@ impl OSVariables {
         Map::new(
             |vmem_idx: nat|
                 {
-                    exists|core: Core| #![auto]
+                    exists|core: Core|
+                        #![auto]
                         self.hw.NUMAs.contains_key(core.NUMA_id)
                             && self.hw.NUMAs[core.NUMA_id].cores.contains_key(core.core_id)
                             && self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_key(
@@ -267,7 +268,6 @@ pub open spec fn step_HW(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // aquire Lock
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 pub open spec fn step_set_lock(
     c: OSConstants,
     s1: OSVariables,
@@ -281,7 +281,7 @@ pub open spec fn step_set_lock(
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw,)
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -422,10 +422,8 @@ pub open spec fn step_shootdown(
     &&& s2.core_state
         == s1.core_state
     //check if tlb shootdown has happend and send ACK
-    
+
     &&& !s1.interp_pt_mem().contains_key(vaddr)
-
-
     &&& s1.TLB_Shootdown[(dispatcher, core)]
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown.insert((dispatcher, core), false)
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
@@ -478,7 +476,7 @@ impl OSStep {
                     pte,
                     core,
                 } => hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op, pte },
-                hardware::HWStep::PTMemOp  => arbitrary(),
+                hardware::HWStep::PTMemOp => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,
                 //TODO discuss this
