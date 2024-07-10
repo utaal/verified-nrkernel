@@ -14,7 +14,7 @@ use crate::definitions_t::{
     between, candidate_mapping_overlaps_existing_pmem, overlap, MemRegion, PageTableEntry,
     WORD_SIZE,
 };
-use crate::spec_t::hardware::Core;
+use crate::spec_t::hardware::{ Core, valid_core_id };
 
 verus! {
 
@@ -44,7 +44,37 @@ pub enum OSArguments {
     Empty,
 }
 
+// MB: This is not necessarily complete and I didn't add the necessary fields
+pub enum KCoreState {
+    Idle,
+    MapWaiting { },
+    MapExecuting { },
+    UnmapWaiting { },
+    UnmapOpExecuting { },
+    UnmapOpDone { },
+    UnmapShootdownWaiting { },
+}
+
+impl KCoreState {
+    pub open spec fn holds_lock(self) -> bool {
+        match self {
+            KCoreState::Idle | KCoreState::MapWaiting { .. } | KCoreState::UnmapWaiting { .. } => false,
+            _ => true
+        }
+    }
+}
+
+
 impl OSVariables {
+    pub open spec fn kernel_lock(self, consts: OSConstants) -> Option<Core> {
+        // This should work if the core_state is KCoreState instead of OSArguments
+        //if exists|c: Core| valid_core_id(consts.hw, c) && self.core_state[c].holds_lock() {
+        //    Some(choose|c: Core| valid_core_id(consts.hw, c) && self.core_state[c].holds_lock())
+        //} else {
+        //    None
+        //}
+        None
+    }
     /*
     pub open spec fn NUMA_pt_mappings_dont_overlap_in_vmem(self) -> bool {
         forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
