@@ -34,6 +34,7 @@ pub struct OSVariables {
     pub TLB_Shootdown: Map<(Core, Core), bool>,
     //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
     pub sound: bool,
+    //TODO maybe have option<ULT_id:nat> instead
     pub lock: Option<Core>,
 }
 
@@ -107,7 +108,7 @@ impl OSVariables {
         Map::new(
             |vmem_idx: nat|
                 {
-                    exists|core: Core|
+                    exists|core: Core| #![auto]
                         self.hw.NUMAs.contains_key(core.NUMA_id)
                             && self.hw.NUMAs[core.NUMA_id].cores.contains_key(core.core_id)
                             && self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_key(
@@ -258,8 +259,29 @@ pub open spec fn step_HW(
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
+    &&& s2.lock == s1.lock
     &&& s2.core_state == s1.core_state
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// aquire Lock
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub open spec fn step_set_lock(
+    c: OSConstants,
+    s1: OSVariables,
+    s2: OSVariables,
+    core: Core,
+) -> bool {
+    &&& s1.lock.is_none()
+    &&& s1.core_state[core] is Map || s1.core_state[core] is Unmap
+    &&& s2.lock == Some(core)
+    &&& s2.core_state == s1.core_state
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.sound == s1.sound
+    &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw,)
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -288,15 +310,16 @@ pub open spec fn step_Map_Start(
     let os_arg = OSArguments::Map { ULT_id, vaddr, pte };
     &&& s1.core_state[core] is Empty
     &&& s2.core_state == s1.core_state.insert(core, os_arg)
-    &&& s2.hw == s1.hw
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& spec_pt::step_Map_Start(s1.pt_variables(), s2.pt_variables(), vaddr, pte)
+    &&& s2.lock == s1.lock
     &&& s2.sound == s1.sound && step_Map_sound(
         hardware::interp_pt_mem(s1.hw.global_pt),
         s1.core_state.values(),
         vaddr,
         pte,
     )
-    &&& spec_pt::step_Map_Start(s1.pt_variables(), s2.pt_variables(), vaddr, pte)
 }
 
 pub open spec fn step_Map_End(
@@ -311,9 +334,11 @@ pub open spec fn step_Map_End(
     &&& s2.core_state == s1.core_state.insert(core, OSArguments::Empty)
     &&& ULT_id == ult_id
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s1.sound == s2.sound
     &&& spec_pt::step_Map_End(s1.pt_variables(), s2.pt_variables(), vaddr, pte, result)
-    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw, core)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
+    &&& s1.sound == s2.sound
+    &&& s1.lock == Some(core)
+    &&& s2.lock.is_none()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -357,17 +382,28 @@ pub open spec fn step_Unmap_Start(
         vaddr,
         pt.index(vaddr),
     ))
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Unmap_Start(s1.pt_variables(), s2.pt_variables(), vaddr)
+    &&& s2.lock == s1.lock
 }
 
 pub open spec fn step_unmap_op_end(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
-    vaddr: nat,
     result: Result<(), ()>,
+    ULT: ult_id,
 ) -> bool {
+    let core = c.ULT2core.index(ULT_id);
+    &&& s1.core_state[core] matches OSArguments::Unmap { ULT_id: ult_id, vaddr }
+    &&& ULT_id == ult_id
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.core_state == s1.core_state
     &&& spec_pt::step_Unmap_End(s1.pt_variables(), s2.pt_variables(), vaddr, result)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
+    &&& s2.sound == s1.sound
+    &&& s1.lock == Some(core)
+    &&& s2.lock == s1.lock
 }
 
 //simulates ack send from other cores otherwise stutter step
@@ -382,16 +418,20 @@ pub open spec fn step_shootdown(
     &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
     &&& hardware::valid_core_id(c.hw, core)
     &&& hardware::valid_core_id(c.hw, dispatcher)
-    &&& s1.core_state[core] is Unmap || s1.core_state[core] is Empty
+    &&& !(s1.core_state[core] is Map && s1.lock == Some(core))
     &&& s2.core_state
         == s1.core_state
     //check if tlb shootdown has happend and send ACK
+    
+    &&& !s1.interp_pt_mem.contains_key(vaddr)
+
 
     &&& s1.TLB_Shootdown[(dispatcher, core)]
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown.insert((dispatcher, core), false)
-    &&& s2.hw == s1.hw
-    &&& s2.sound == s1.sound
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+    &&& s2.sound == s1.sound
+    &&& s2.lock == s1.lock
 }
 
 pub open spec fn step_Unmap_End(
@@ -407,10 +447,12 @@ pub open spec fn step_Unmap_End(
     &&& forall|id: Core| #[trigger]
         hardware::valid_core_id(c.hw, id) ==> !s1.TLB_Shootdown[(core, id)]
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.hw == s1.hw
+    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
     &&& s2.core_state == s1.core_state.insert((core), OSArguments::Empty)
     &&& s1.sound == s2.sound
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+    &&& s1.lock == Some(core)
+    &&& s2.lock.is_none()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -436,10 +478,10 @@ impl OSStep {
                     pte,
                     core,
                 } => hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op, pte },
-                hardware::HWStep::PTMemOp { core } => arbitrary(),
+                hardware::HWStep::PTMemOp  => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,
-                //TODO discuss this with Matthias
+                //TODO discuss this
                 hardware::HWStep::Stutter => hlspec::AbstractStep::Stutter,
             },
             OSStep::MapStart { ULT_id, vaddr, pte } => {

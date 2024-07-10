@@ -43,7 +43,7 @@ pub struct Core {
 #[allow(inconsistent_fields)]
 pub enum HWStep {
     ReadWrite { vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>, core: Core },
-    PTMemOp { core: Core },
+    PTMemOp ,
     TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
     TLBEvict { vaddr: nat, core: Core },
     Stutter,
@@ -642,18 +642,8 @@ pub open spec fn step_PTMemOp(
     c: HWConstants,
     s1: HWVariables,
     s2: HWVariables,
-    core: Core,
 ) -> bool {
-    &&& valid_core_id(c, core)
     &&& s2.mem === s1.mem
-    &&& other_NUMAs_and_cores_unchanged(
-        c,
-        s1,
-        s2,
-        core,
-    )
-    // s2.tlbs are submap of s1.tlbs
-
     &&& forall|core: Core|
         valid_core_id(c, core) ==> forall|base: nat, pte: PageTableEntry|
             s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
@@ -738,7 +728,7 @@ pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, ste
             pte,
             core,
         ),
-        HWStep::PTMemOp { core } => step_PTMemOp(c, s1, s2, core),
+        HWStep::PTMemOp                      => step_PTMemOp(c, s1, s2),
         HWStep::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, vaddr, pte, core),
         HWStep::TLBEvict { vaddr, core } => step_TLBEvict(c, s1, s2, vaddr, core),
     }
