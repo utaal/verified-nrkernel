@@ -17,6 +17,7 @@ use crate::definitions_t::{
 };
 use crate::spec_t::hardware::Core;
 
+//TODO think about labels
 verus! {
 
 pub struct OSConstants {
@@ -31,10 +32,14 @@ pub struct OSVariables {
     pub hw: hardware::HWVariables,
     // maps numa node to ULT operation spinning/operating on it
     pub core_states: Map<Core, CoreState>,
-    //TODO change to Map<core, Set<Core>>
-    pub TLB_Shootdown: Map<(Core, Core), bool>,
+    pub TLB_Shootdown: ShootdownVector,
     //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
     pub sound: bool,
+}
+
+pub struct ShootdownVector {
+    pub vaddr: nat, 
+    pub open_requests: Set<Core>,
 }
 
 // MB: This is not necessarily complete and I didn't add the necessary fields
@@ -370,9 +375,12 @@ pub open spec fn step_HW(
     s2: OSVariables,
     system_step: hardware::HWStep,
 ) -> bool {
+    //enabling conditions
     &&& !(system_step is PTMemOp)
+    //hw/spec_pt-statemachine steps
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
     &&& spec_pt::step_Stutter(s1.pt_variables(), s2.pt_variables())
+    //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
@@ -584,8 +592,8 @@ pub open spec fn step_Unmap_Op_End(
     c: OSConstants,
     s1: OSVariables,
     s2: OSVariables,
-    result: Result<(), ()>,
     ULT_id: nat,
+    result: Result<(), ()>,
 ) -> bool {
     let core = c.ULT2core.index(ULT_id);
     //enabling conditions
@@ -634,13 +642,8 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
         core,
         CoreState::UnmapShootdownWaiting { ULT_id: ult_id, vaddr, result },
     )
-    &&& forall|handler: Core| #[trigger]
-        hardware::valid_core_id(c.hw, handler) ==> s2.TLB_Shootdown[(core, handler)]
-    &&& forall|dispatcher: Core, handler: Core|
-        hardware::valid_core_id(c.hw, handler) && hardware::valid_core_id(c.hw, dispatcher) && (
-        dispatcher !== core) ==> s2.TLB_Shootdown[(dispatcher, handler)]
-            === #[trigger] s1.TLB_Shootdown[(dispatcher, handler)]
-    &&& s2.TLB_Shootdown.dom() === s1.TLB_Shootdown.dom()
+    &&& s2.TLB_Shootdown == ShootdownVector { vaddr: vaddr,
+        open_requests: Set::new(|core: Core| hardware::valid_core_id(c.hw, core))}
     &&& s2.sound == s1.sound
 }
 
@@ -651,21 +654,12 @@ pub open spec fn step_Ack_Shootdown_IPI(
     s1: OSVariables,
     s2: OSVariables,
     core: Core,
-    dispatcher: Core,
 ) -> bool {
     //enabling conditions
-    &&& s1.core_states[dispatcher] matches CoreState::UnmapShootdownWaiting {
-        ULT_id: ult_id,
-        vaddr,
-        result,
-    }
-    &&& hardware::valid_core_id(c.hw, core)
-    &&& hardware::valid_core_id(c.hw, dispatcher)
-    &&& s1.TLB_Shootdown[(dispatcher, core)]
-    &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
-    &&& !s1.interp_pt_mem().contains_key(
-        vaddr,
-    )
+    &&& hardware::valid_core_id(c.hw, core) //not needed
+    &&& s1.TLB_Shootdown.open_requests.contains(core)
+    &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(s1.TLB_Shootdown.vaddr)
+    &&& !s1.interp_pt_mem().contains_key(s1.TLB_Shootdown.vaddr)
     //hw/spec_pt-statemachine steps
 
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
@@ -676,7 +670,8 @@ pub open spec fn step_Ack_Shootdown_IPI(
     //new state
 
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown.insert((dispatcher, core), false)
+    &&& s2.TLB_Shootdown == ShootdownVector { vaddr: s1.TLB_Shootdown.vaddr,
+                                              open_requests: s1.TLB_Shootdown.open_requests.remove(core),}
     &&& s2.sound == s1.sound
 }
 
@@ -692,14 +687,12 @@ pub open spec fn step_Unmap_End(
     &&& s1.core_states[core] matches CoreState::UnmapShootdownWaiting {
         ULT_id: ult_id,
         vaddr,
-        result,
+        result: Result,
     }
     &&& ULT_id == ult_id
-    &&& forall|id: Core| #[trigger]
-        hardware::valid_core_id(c.hw, id) ==> !s1.TLB_Shootdown[(
-            core,
-            id,
-        )]
+    //TODO discuss this
+    &&& result == Result
+    &&& s1.TLB_Shootdown.open_requests.is_empty()
         //hw/spec_pt-statemachine steps
 
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
@@ -721,9 +714,16 @@ pub open spec fn step_Unmap_End(
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW { ULT_id: nat, step: hardware::HWStep },
+    //map
     MapStart { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
+    MapOpStart { ULT_id: nat },
     MapEnd { ULT_id: nat, result: Result<(), ()> },
+    //unmap
     UnmapStart { ULT_id: nat, vaddr: nat },
+    UnmapOpStart {ULT_id: nat},
+    UnmapOpEnd {ULT_id: nat, result: Result<(), ()>,},
+    UnmapInitiateShootdown {ULT_id: nat},
+    AckShootdownIPI {core: Core},
     UnmapEnd { ULT_id: nat, result: Result<(), ()> },
 }
 
@@ -744,15 +744,22 @@ impl OSStep {
                 //TODO discuss this
                 hardware::HWStep::Stutter => hlspec::AbstractStep::Stutter,
             },
+            //Map steps
             OSStep::MapStart { ULT_id, vaddr, pte } => {
                 hlspec::AbstractStep::MapStart { thread_id: ULT_id, vaddr, pte }
             },
+            OSStep::MapOpStart { ULT_id } => hlspec::AbstractStep::Stutter,
             OSStep::MapEnd { ULT_id, result } => {
                 hlspec::AbstractStep::MapEnd { thread_id: ULT_id, result }
             },
+            //Unmap steps
             OSStep::UnmapStart { ULT_id, vaddr } => {
                 hlspec::AbstractStep::UnmapStart { thread_id: ULT_id, vaddr }
             },
+            OSStep::UnmapOpStart {ULT_id} => hlspec::AbstractStep::Stutter,
+            OSStep::UnmapOpEnd { ULT_id, result} => hlspec::AbstractStep::Stutter,
+            OSStep::UnmapInitiateShootdown {ULT_id} => hlspec::AbstractStep::Stutter,
+            OSStep::AckShootdownIPI {core} => hlspec::AbstractStep::Stutter,
             OSStep::UnmapEnd { ULT_id, result } => {
                 hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
             },
@@ -763,10 +770,17 @@ impl OSStep {
 pub open spec fn next_step(c: OSConstants, s1: OSVariables, s2: OSVariables, step: OSStep) -> bool {
     match step {
         OSStep::HW { ULT_id, step } => step_HW(c, s1, s2, step),
+        //Map steps
         OSStep::MapStart { ULT_id, vaddr, pte } => step_Map_Start(c, s1, s2, ULT_id, vaddr, pte),
+        OSStep::MapOpStart { ULT_id } => step_Map_op_Start(c, s1, s2, ULT_id),
         OSStep::MapEnd { ULT_id, result } => step_Map_End(c, s1, s2, ULT_id, result),
+        //Unmap steps
         OSStep::UnmapStart { ULT_id, vaddr } => step_Unmap_Start(c, s1, s2, ULT_id, vaddr),
-        OSStep::UnmapEnd { ULT_id, result } => step_Unmap_End(c, s1, s2, ULT_id, result),
+        OSStep::UnmapOpStart {ULT_id} => step_Unmap_Op_Start(c, s1, s2, ULT_id), 
+        OSStep::UnmapOpEnd {ULT_id, result} => step_Unmap_Op_End(c, s1, s2, ULT_id, result), 
+        OSStep::UnmapInitiateShootdown {ULT_id} => step_Unmap_Initiate_Shootdown(c, s1, s2, ULT_id),
+        OSStep::AckShootdownIPI {core} => step_Ack_Shootdown_IPI(c, s1, s2, core),
+        OSStep::UnmapEnd { ULT_id, result} => step_Unmap_End(c, s1, s2, ULT_id, result),
     }
 }
 
@@ -790,14 +804,8 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
             c.ULT2core.index(id),
         )
     //wf of shootdown
-
-    &&& forall|dispatcher: Core, handler: Core|
-        hardware::valid_core_id(c.hw, dispatcher) && hardware::valid_core_id(c.hw, handler)
-            <==> #[trigger] s.TLB_Shootdown.dom().contains((dispatcher, handler))
-    &&& forall|dispatcher: Core, handler: Core|
-        #![auto]
-        hardware::valid_core_id(c.hw, dispatcher) && hardware::valid_core_id(c.hw, handler)
-            ==> !s.TLB_Shootdown[(dispatcher, handler)]
+    &&& s.TLB_Shootdown.open_requests.is_empty()
+    
 }
 
 } // verus!
