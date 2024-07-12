@@ -15,3 +15,4 @@ global size_of usize == 8;
 
 }
 
+pub mod hlspec_user;

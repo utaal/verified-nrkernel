@@ -57,7 +57,7 @@ pub enum AbstractArguments {
 }
 
 pub open spec fn wf(c: AbstractConstants, s: AbstractVariables) -> bool {
-    &&& forall|id: nat| id <= c.thread_no <==> s.thread_state.contains_key(id)
+    &&& forall|id: nat| id < c.thread_no <==> s.thread_state.contains_key(id)
     &&& s.mappings.dom().finite()
     &&& s.mem.dom().finite()
 }
@@ -65,7 +65,7 @@ pub open spec fn wf(c: AbstractConstants, s: AbstractVariables) -> bool {
 pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
     &&& s.mem === Map::empty()
     &&& s.mappings === Map::empty()
-    &&& forall|id: nat| id <= c.thread_no ==> (s.thread_state[id] === AbstractArguments::Empty)
+    &&& forall|id: nat| id < c.thread_no ==> (s.thread_state[id] === AbstractArguments::Empty)
     &&& wf(c, s)
     &&& s.sound
 }
@@ -112,7 +112,7 @@ pub open spec fn mem_domain_from_entry(phys_mem_size: nat, base: nat, pte: PageT
 }
 
 pub open spec fn valid_thread(c: AbstractConstants, thread_id: nat) -> bool {
-    thread_id <= c.thread_no
+    thread_id < c.thread_no
 }
 
 pub open spec fn state_unchanged_besides_thread_state(
