@@ -67,10 +67,10 @@ impl CoreState {
 impl OSVariables {
     pub open spec fn kernel_lock(self, consts: OSConstants) -> Option<Core> {
         if exists|c: Core|
-            hardware::valid_core_id(consts.hw, c) && self.core_states[c].holds_lock() {
+            hardware::valid_core_id(consts.hw, c) && (#[trigger] self.core_states[c].holds_lock()) {
             Some(
                 choose|c: Core|
-                    hardware::valid_core_id(consts.hw, c) && self.core_states[c].holds_lock(),
+                    hardware::valid_core_id(consts.hw, c) && (#[trigger] self.core_states[c].holds_lock()),
             )
         } else {
             None
