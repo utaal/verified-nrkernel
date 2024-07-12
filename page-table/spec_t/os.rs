@@ -283,29 +283,18 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
         {
             &&& inflightargs.contains(b)
             &&& match b {
-                CoreState::MapWaiting { ULT_id, vaddr, pte } => {
+                CoreState::MapWaiting { vaddr, pte, .. }
+                | CoreState::MapExecuting { vaddr, pte, .. } => {
                     overlap(candidate.frame, pte.frame)
                 },
-                CoreState::MapExecuting { ULT_id, vaddr, pte } => {
-                    overlap(candidate.frame, pte.frame)
-                },
-                CoreState::UnmapWaiting { ULT_id, vaddr } => {
+                CoreState::UnmapWaiting { ULT_id, vaddr }
+                | CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                     &&& pt.dom().contains(vaddr)
                     &&& overlap(candidate.frame, pt.index(vaddr).frame)
                 },
-                CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(candidate.frame, pt.index(vaddr).frame)
-                },
-                CoreState::UnmapOpDone { ULT_id, vaddr, result } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(candidate.frame, pt.index(vaddr).frame)
-                },
-                CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(candidate.frame, pt.index(vaddr).frame)
-                },
-                _ => { false },
+                CoreState::Idle => false,
             }
         }
 }
@@ -633,6 +622,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
     let core = c.ULT2core.index(ULT_id);
     //enabling conditions
     &&& s1.core_states[core] matches CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, result }
+    &&& result is Ok
     &&& ULT_id == ult_id
     //hw/spec_pt-statemachine steps
 
@@ -696,16 +686,19 @@ pub open spec fn step_Unmap_End(
 ) -> bool {
     let core = c.ULT2core.index(ULT_id);
     //enabling conditions
-    &&& s1.core_states[core] matches CoreState::UnmapShootdownWaiting {
-        ULT_id: ult_id,
-        vaddr,
-        result: Result,
+    &&& match s1.core_states[core] {
+        CoreState::UnmapShootdownWaiting { result: cresult, ULT_id: ult_id, .. } => {
+            &&& ULT_id == ult_id
+            &&& cresult == result
+            &&& s1.TLB_Shootdown.open_requests.is_empty()
+        },
+        CoreState::UnmapOpDone { result: cresult, ULT_id: ult_id, .. } => {
+            &&& ULT_id == ult_id
+            &&& cresult == result
+            &&& result is Err
+        },
+        _ => false,
     }
-    &&& ULT_id == ult_id
-    //TODO discuss this
-
-    &&& result == Result
-    &&& s1.TLB_Shootdown.open_requests.is_empty()
     //hw/spec_pt-statemachine steps
 
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
@@ -715,7 +708,7 @@ pub open spec fn step_Unmap_End(
     )
     //new state
 
-    &&& s2.core_states == s1.core_states.insert((core), CoreState::Idle)
+    &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s1.sound == s2.sound
 }
