@@ -15,4 +15,3 @@ global size_of usize == 8;
 
 }
 
-fn main() {}

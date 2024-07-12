@@ -1,4 +1,4 @@
 #! /bin/bash 
 
-~/Dokumente/Studium/Thesis/verus/source/target-verus/release/verus ~/Dokumente/Studium/Thesis//verified-nrkernel/page-table/main.rs "$@"
+~/Dokumente/Studium/Thesis/verus/source/target-verus/release/verus ~/Dokumente/Studium/Thesis//verified-nrkernel/page-table/main.rs --crate-type=lib "$@"
 
