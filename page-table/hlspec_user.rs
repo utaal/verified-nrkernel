@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound,
-    Flags, MemRegion, PageTableEntry, MAX_PHYADDR_SPEC, WORD_SIZE,
+    Flags, MemRegion, PageTableEntry, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
 };
 use crate::spec_t::hlspec::*;
 
@@ -77,10 +77,8 @@ proof fn program_1() {
     assert(s3.mem.dom() == s2.mem.dom().union(
         Set::new(
             |w: nat|
-                {
-                    &&& aligned(w, WORD_SIZE as nat)
-                    &&& 4096 * 3 <= w < 4096 * 3 + 4096
-                },
+                crate::spec_t::mem::word_index_spec(4096 * 3) <= w
+                    < crate::spec_t::mem::word_index_spec(4096 * 3) + (4096nat / WORD_SIZE as nat),
         ),
     ));
 
@@ -88,6 +86,24 @@ proof fn program_1() {
     assume(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
 
     assert(next_step(c, s2, s3, AbstractStep::MapEnd { thread_id: 1, result: Ok(()) }));
+
+    let s4 = AbstractVariables { mem: s3.mem.insert(512 * 3, 42), ..s3 };
+
+    assert(crate::spec_t::mem::word_index_spec(4096 * 3) == 512 * 3) by (nonlinear_arith){
+        assert(aligned(4096 * 3, WORD_SIZE as nat));
+    }
+    assert(next_step(
+        c,
+        s3,
+        s4,
+        AbstractStep::ReadWrite {
+            thread_id: 1,
+            vaddr: 4096 * 3,
+            op: RWOp::Store { new_value: 42, result: StoreResult::Ok },
+            pte: Some((4096 * 3, pte1)),
+        },
+    ));
+
 }
 
 mod util {
@@ -102,7 +118,9 @@ mod util {
         via all_words_in_range_decreases
     {
         if size > 0 {
-            all_words_in_range((vaddr + WORD_SIZE) as nat, (size - WORD_SIZE) as nat).insert(vaddr)
+            all_words_in_range((vaddr + WORD_SIZE) as nat, (size - WORD_SIZE) as nat).insert(
+                crate::spec_t::mem::word_index_spec(vaddr),
+            )
         } else {
             Set::empty()
         }
@@ -136,10 +154,9 @@ mod util {
             r.dom() =~= map.dom().union(
                 Set::new(
                     |w: nat|
-                        {
-                            &&& aligned(w, WORD_SIZE as nat)
-                            &&& vaddr <= w < vaddr + size
-                        },
+                        crate::spec_t::mem::word_index_spec(vaddr) <= w
+                            < crate::spec_t::mem::word_index_spec(vaddr) + (size
+                            / WORD_SIZE as nat),
                 ),
             ),
         decreases size,
@@ -170,7 +187,7 @@ mod util {
                 (vaddr + WORD_SIZE) as nat,
                 (size - WORD_SIZE) as nat,
             );
-            let r = extended.insert(vaddr, arbitrary());
+            let r = extended.insert(crate::spec_t::mem::word_index_spec(vaddr), arbitrary());
             r
         } else {
             map
