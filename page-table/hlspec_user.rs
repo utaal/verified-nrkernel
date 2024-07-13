@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound,
-    Flags, MemRegion, PageTableEntry, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
+    Flags, LoadResult, MemRegion, PageTableEntry, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
 };
 use crate::spec_t::hlspec::*;
 
@@ -103,6 +103,32 @@ proof fn program_1() {
             pte: Some((4096 * 3, pte1)),
         },
     ));
+
+    let s5 = s4;
+    assert(next_step(
+        c,
+        s4,
+        s5,
+        AbstractStep::ReadWrite {
+            thread_id: 1,
+            vaddr: 4096 * 3,
+            op: RWOp::Load { is_exec: false, result: LoadResult::Value(42) },
+            pte: Some((4096 * 3, pte1)),
+        },
+    ));
+
+    let s6 = AbstractVariables {
+        thread_state: s5.thread_state.insert(
+            2,
+            AbstractArguments::Unmap { vaddr: 4096 * 3, pte: Some(pte1) },
+        ),
+        mappings: s5.mappings.remove(4096 * 3),
+        mem: arbitrary(),  // TODO
+        ..s5
+    };
+
+    assert(s6.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s6.mappings));
+    assert(next_step(c, s5, s6, AbstractStep::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
 
 }
 
