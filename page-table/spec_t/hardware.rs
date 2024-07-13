@@ -673,8 +673,8 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
 }
 
 pub open spec fn valid_core_id(c: HWConstants, core: Core) -> bool {
-    &&& core.NUMA_id <= c.NUMA_no
-    &&& core.core_id <= c.core_no
+    &&& core.NUMA_id < c.NUMA_no
+    &&& core.core_id < c.core_no
 }
 
 pub open spec fn step_TLBFill(

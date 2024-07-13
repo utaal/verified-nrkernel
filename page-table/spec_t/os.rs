@@ -159,8 +159,28 @@ impl OSVariables {
         )
     }
 
+    pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {
+        Set::new(|v_address: nat| { exists |core_state: CoreState| self.core_states.values().contains(core_state) 
+                                                            && match core_state {
+                                                                CoreState::UnmapWaiting { ULT_id, vaddr } 
+                                                            |   CoreState::UnmapOpExecuting { ULT_id, vaddr } 
+                                                            |   CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                                                            |   CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
+                                                                let pt = hardware::interp_pt_mem(self.hw.global_pt);
+                                                                &&& pt.dom().contains(vaddr)
+                                                                &&& vaddr <= v_address < vaddr + pt.index(vaddr).frame.size
+                                                                }
+                                                                _ => false,
+                                                             } })
+
+
+    }
+
     pub open spec fn effective_mappings(self) -> Map<nat, PageTableEntry> {
-        self.interp_pt_mem().union_prefer_right(self.joint_tlbs())
+        let effective_mappings = self.interp_pt_mem().union_prefer_right(self.joint_tlbs());
+        let unmap_dom = self.inflight_unmap_vaddr();
+        Map::new(|vmem_idx: nat| effective_mappings.contains_key(vmem_idx) && !unmap_dom.contains(vmem_idx),
+                 |vmem_idx: nat| effective_mappings[vmem_idx])
     }
 
     pub open spec fn interp_vmem(self, c: OSConstants) -> Map<nat, nat> {
