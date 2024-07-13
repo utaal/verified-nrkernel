@@ -76,7 +76,8 @@ impl OSVariables {
             hardware::valid_core_id(consts.hw, c) && (#[trigger] self.core_states[c].holds_lock()) {
             Some(
                 choose|c: Core|
-                    hardware::valid_core_id(consts.hw, c) && (#[trigger] self.core_states[c].holds_lock()),
+                    hardware::valid_core_id(consts.hw, c) && (
+                    #[trigger] self.core_states[c].holds_lock()),
             )
         } else {
             None
@@ -159,28 +160,35 @@ impl OSVariables {
         )
     }
 
+    //TODO think this over
     pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {
-        Set::new(|v_address: nat| { exists |core_state: CoreState| self.core_states.values().contains(core_state) 
-                                                            && match core_state {
-                                                                CoreState::UnmapWaiting { ULT_id, vaddr } 
-                                                            |   CoreState::UnmapOpExecuting { ULT_id, vaddr } 
-                                                            |   CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                                                            |   CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
-                                                                let pt = hardware::interp_pt_mem(self.hw.global_pt);
-                                                                &&& pt.dom().contains(vaddr)
-                                                                &&& vaddr <= v_address < vaddr + pt.index(vaddr).frame.size
-                                                                }
-                                                                _ => false,
-                                                             } })
-
-
+        Set::new(
+            |v_address: nat|
+                {
+                    exists|core_state: CoreState|
+                        self.core_states.values().contains(core_state) && match core_state {
+                            CoreState::UnmapWaiting { ULT_id, vaddr }
+                            | CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                            | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                            | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
+                                let pt = hardware::interp_pt_mem(self.hw.global_pt);
+                                &&& pt.dom().contains(vaddr)
+                                &&& vaddr <= v_address < vaddr + pt.index(vaddr).frame.size
+                            },
+                            _ => false,
+                        }
+                },
+        )
     }
 
     pub open spec fn effective_mappings(self) -> Map<nat, PageTableEntry> {
         let effective_mappings = self.interp_pt_mem().union_prefer_right(self.joint_tlbs());
         let unmap_dom = self.inflight_unmap_vaddr();
-        Map::new(|vmem_idx: nat| effective_mappings.contains_key(vmem_idx) && !unmap_dom.contains(vmem_idx),
-                 |vmem_idx: nat| effective_mappings[vmem_idx])
+        Map::new(
+            |vmem_idx: nat|
+                effective_mappings.contains_key(vmem_idx) && !unmap_dom.contains(vmem_idx),
+            |vmem_idx: nat| effective_mappings[vmem_idx],
+        )
     }
 
     pub open spec fn interp_vmem(self, c: OSConstants) -> Map<nat, nat> {
@@ -215,7 +223,7 @@ impl OSVariables {
             |ult_id: nat|
                 {
                     match self.core_states[c.ULT2core[ult_id]] {
-                        CoreState::MapWaiting { ULT_id, vaddr, pte } 
+                        CoreState::MapWaiting { ULT_id, vaddr, pte }
                         | CoreState::MapExecuting { ULT_id, vaddr, pte } => {
                             if ULT_id == ult_id {
                                 hlspec::AbstractArguments::Map { vaddr, pte }
@@ -223,10 +231,10 @@ impl OSVariables {
                                 hlspec::AbstractArguments::Empty
                             }
                         },
-                        CoreState::UnmapWaiting { ULT_id, vaddr } 
-                        |   CoreState::UnmapOpExecuting { ULT_id, vaddr } 
-                        |   CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                        |   CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
+                        CoreState::UnmapWaiting { ULT_id, vaddr }
+                        | CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                        | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                        | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                             let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {
                                 Some(self.interp_pt_mem().index(vaddr))
                             } else {
@@ -297,23 +305,23 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
         {
             &&& inflightargs.contains(b)
             &&& match b {
-                   CoreState::MapWaiting { vaddr, pte, .. } 
-                |  CoreState::MapExecuting { vaddr, pte, .. } => {
+                CoreState::MapWaiting { vaddr, pte, .. }
+                | CoreState::MapExecuting { vaddr, pte, .. } => {
                     overlap(
                         MemRegion { base: vaddr, size: pte.frame.size },
                         MemRegion { base: base, size: candidate.frame.size },
                     )
                 },
-                    CoreState::UnmapWaiting            { vaddr, .. } 
-                |   CoreState::UnmapOpExecuting      { vaddr, .. } 
-                |   CoreState::UnmapOpDone           { vaddr, .. } 
-                |   CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        &&& pt.dom().contains(vaddr)
-                        &&& overlap(
-                            MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
-                            MemRegion { base: base, size: candidate.frame.size },
-                        )
-                    },
+                CoreState::UnmapWaiting { vaddr, .. }
+                | CoreState::UnmapOpExecuting { vaddr, .. }
+                | CoreState::UnmapOpDone { vaddr, .. }
+                | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                    &&& pt.dom().contains(vaddr)
+                    &&& overlap(
+                        MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
+                        MemRegion { base: base, size: candidate.frame.size },
+                    )
+                },
                 _ => { false },
             }
         }
@@ -773,7 +781,7 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     &&& spec_pt::init(s.pt_variables())
     //wf of ULT2core mapping
 
-    &&& forall|id: nat| #[trigger]c.valid_ULT(id) <==> c.ULT2core.contains_key(id)
+    &&& forall|id: nat| #[trigger] c.valid_ULT(id) <==> c.ULT2core.contains_key(id)
     &&& forall|id: nat|
         c.valid_ULT(id) ==> #[trigger] hardware::valid_core_id(
             c.hw,
