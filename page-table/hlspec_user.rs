@@ -1,30 +1,35 @@
 use vstd::prelude::*;
 
+use crate::definitions_t::{
+    aligned, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound,
+    Flags, MemRegion, PageTableEntry, MAX_PHYADDR_SPEC, WORD_SIZE,
+};
 use crate::spec_t::hlspec::*;
-use crate::definitions_t::{PageTableEntry, MemRegion, Flags, MAX_PHYADDR_SPEC, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound};
 
 verus! {
-proof fn lemma_max_phyaddr_at_least()
-    ensures MAX_PHYADDR_SPEC >= 0xffffffff {
 
+proof fn lemma_max_phyaddr_at_least()
+    ensures
+        MAX_PHYADDR_SPEC >= 0xffffffff,
+{
     axiom_max_phyaddr_width_facts();
 
     assert((1u64 << 32) - 1u64 == 0xffffffff) by (compute);
-    assert(forall|m:u64,n:u64|  n < m < 64 ==> 1u64 << n < 1u64 << m) by (bit_vector);
+    assert(forall|m: u64, n: u64| n < m < 64 ==> 1u64 << n < 1u64 << m) by (bit_vector);
 }
+
+use util::*;
 
 proof fn program_1() {
     lemma_max_phyaddr_at_least();
     x86_arch_spec_upper_bound();
 
-    let c = AbstractConstants {
-        thread_no: 4,
-        phys_mem_size: 4096 * 4096,
-    };
+    let c = AbstractConstants { thread_no: 4, phys_mem_size: 4096 * 4096 };
 
     let s1 = AbstractVariables {
         mem: Map::empty(),
-        thread_state: map![
+        thread_state:
+            map![
             0 => AbstractArguments::Empty,
             1 => AbstractArguments::Empty,
             2 => AbstractArguments::Empty,
@@ -38,15 +43,8 @@ proof fn program_1() {
     assert(init(c, s1));
 
     let pte1 = PageTableEntry {
-        frame: MemRegion {
-            base: 4096,
-            size: 4096,
-        },
-        flags: Flags {
-            is_writable: true,
-            is_supervisor: false,
-            disable_execute: true,
-        }
+        frame: MemRegion { base: 4096, size: 4096 },
+        flags: Flags { is_writable: true, is_supervisor: false, disable_execute: true },
     };
 
     assert(candidate_mapping_in_bounds(4096 * 3, pte1));
@@ -55,20 +53,130 @@ proof fn program_1() {
     let s2 = AbstractVariables {
         thread_state: s1.thread_state.insert(
             1,
-            AbstractArguments::Map {
-                vaddr: 4096 * 3, 
-                pte: pte1,
-            }),
+            AbstractArguments::Map { vaddr: 4096 * 3, pte: pte1 },
+        ),
         ..s1
     };
 
     // assert(step_Map_start(c, s1, s2, 1, 4096 * 3, pte1));
-    assert(next_step(c, s1, s2, AbstractStep::MapStart {
-        thread_id: 1,
-        vaddr: 4096 * 3,
-        pte: pte1,
-    }));
+    assert(next_step(
+        c,
+        s1,
+        s2,
+        AbstractStep::MapStart { thread_id: 1, vaddr: 4096 * 3, pte: pte1 },
+    ));
     assert(next(c, s1, s2));
 
+    let mem3 = lemma_extend_mem_domain(s2.mem, 4096 * 3, 4096);
+    let s3 = AbstractVariables {
+        thread_state: s2.thread_state.insert(1, AbstractArguments::Empty),
+        mappings: s2.mappings.insert(4096 * 3, pte1),
+        mem: mem3,
+        ..s2
+    };
+    assert(s3.mem.dom() == s2.mem.dom().union(
+        Set::new(
+            |w: nat|
+                {
+                    &&& aligned(w, WORD_SIZE as nat)
+                    &&& 4096 * 3 <= w < 4096 * 3 + 4096
+                },
+        ),
+    ));
+
+    // TODO prove
+    assume(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
+
+    assert(next_step(c, s2, s3, AbstractStep::MapEnd { thread_id: 1, result: Ok(()) }));
 }
+
+mod util {
+    use super::*;
+
+    pub closed spec fn all_words_in_range(vaddr: nat, size: nat) -> Set<nat>
+        recommends
+            aligned(vaddr, WORD_SIZE as nat),
+            aligned(size, WORD_SIZE as nat),
+        decreases size,
+        when aligned(size, WORD_SIZE as nat)
+        via all_words_in_range_decreases
+    {
+        if size > 0 {
+            all_words_in_range((vaddr + WORD_SIZE) as nat, (size - WORD_SIZE) as nat).insert(vaddr)
+        } else {
+            Set::empty()
+        }
+    }
+
+    #[via_fn]
+    proof fn all_words_in_range_decreases(vaddr: nat, size: nat) {
+        assert(aligned(size, WORD_SIZE as nat));
+        if size > 0 {
+            if size - WORD_SIZE >= 0 {
+            } else {
+                assert(0 < size < WORD_SIZE);
+                // TODO(matthias) can you try verusfind here?
+                assert(!aligned(size, WORD_SIZE as nat)) by (nonlinear_arith){}
+                assert(false);
+            }
+        } else {
+        }
+    }
+
+    pub proof fn lemma_extend_mem_domain(map: Map<nat, nat>, vaddr: nat, size: nat) -> (r: Map<
+        nat,
+        nat,
+    >)
+        requires
+            aligned(vaddr, WORD_SIZE as nat),
+            aligned(size, WORD_SIZE as nat),
+        ensures
+    // r.dom() =~= map.dom() + all_words_in_range(vaddr, size),
+
+            r.dom() =~= map.dom().union(
+                Set::new(
+                    |w: nat|
+                        {
+                            &&& aligned(w, WORD_SIZE as nat)
+                            &&& vaddr <= w < vaddr + size
+                        },
+                ),
+            ),
+        decreases size,
+    {
+        if size > 0 {
+            assert(aligned(size, WORD_SIZE as nat));
+            if size - WORD_SIZE >= 0 {
+            } else {
+                assert(0 < size < WORD_SIZE);
+                // TODO(matthias) can you try verusfind here?
+                assert(!aligned(size, WORD_SIZE as nat)) by (nonlinear_arith)
+                    requires
+                        0 < size < WORD_SIZE,
+                {}
+                assert(false);
+            }
+            assert(aligned((vaddr + WORD_SIZE) as nat, WORD_SIZE as nat)) by (nonlinear_arith)
+                requires
+                    aligned(vaddr, WORD_SIZE as nat),
+            {}
+            assert(aligned((size - WORD_SIZE) as nat, WORD_SIZE as nat)) by (nonlinear_arith)
+                requires
+                    aligned(size, WORD_SIZE as nat),
+                    size > 0,
+            {}
+            let extended = lemma_extend_mem_domain(
+                map,
+                (vaddr + WORD_SIZE) as nat,
+                (size - WORD_SIZE) as nat,
+            );
+            let r = extended.insert(vaddr, arbitrary());
+            r
+        } else {
+            map
+        }
+    }
+
 }
+
+} // verus!
