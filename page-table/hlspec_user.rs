@@ -82,8 +82,8 @@ proof fn program_1() {
         ),
     ));
 
-    // TODO prove
-    assume(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
+    assert(s3.mappings.contains_pair(4096 * 3, pte1));  // discharge exists in `mem_domain_from_mappings_contains`
+    assert(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
 
     assert(next_step(c, s2, s3, AbstractStep::MapEnd { thread_id: 1, result: Ok(()) }));
 
@@ -109,7 +109,7 @@ proof fn program_1() {
 mod util {
     use super::*;
 
-    pub closed spec fn all_words_in_range(vaddr: nat, size: nat) -> Set<nat>
+    pub open spec fn all_words_in_range(vaddr: nat, size: nat) -> Set<nat>
         recommends
             aligned(vaddr, WORD_SIZE as nat),
             aligned(size, WORD_SIZE as nat),
@@ -149,8 +149,7 @@ mod util {
             aligned(vaddr, WORD_SIZE as nat),
             aligned(size, WORD_SIZE as nat),
         ensures
-    // r.dom() =~= map.dom() + all_words_in_range(vaddr, size),
-
+            r.dom() =~= map.dom() + all_words_in_range(vaddr, size),
             r.dom() =~= map.dom().union(
                 Set::new(
                     |w: nat|
