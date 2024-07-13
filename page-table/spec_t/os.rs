@@ -28,6 +28,12 @@ pub struct OSConstants {
     pub ULT_no: nat,
 }
 
+impl OSConstants {
+    pub open spec fn valid_ULT(self, ULT_id: nat) -> bool {
+        ULT_id < self.ULT_no
+    }
+}
+
 pub struct OSVariables {
     pub hw: hardware::HWVariables,
     // maps numa node to ULT operation spinning/operating on it
@@ -185,61 +191,22 @@ impl OSVariables {
         hlspec::AbstractArguments,
     > {
         Map::new(
-            |ult_id: nat| ult_id < c.ULT_no,
+            |ult_id: nat| c.valid_ULT(ult_id),
             |ult_id: nat|
                 {
                     match self.core_states[c.ULT2core[ult_id]] {
-                        CoreState::MapWaiting { ULT_id, vaddr, pte } => {
+                        CoreState::MapWaiting { ULT_id, vaddr, pte } 
+                        | CoreState::MapExecuting { ULT_id, vaddr, pte } => {
                             if ULT_id == ult_id {
                                 hlspec::AbstractArguments::Map { vaddr, pte }
                             } else {
                                 hlspec::AbstractArguments::Empty
                             }
                         },
-                        CoreState::MapExecuting { ULT_id, vaddr, pte } => {
-                            if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Map { vaddr, pte }
-                            } else {
-                                hlspec::AbstractArguments::Empty
-                            }
-                        },
-                        CoreState::UnmapWaiting { ULT_id, vaddr } => {
-                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {
-                                Some(self.interp_pt_mem().index(vaddr))
-                            } else {
-                                Option::None
-                            };
-                            if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Unmap { vaddr, pte }
-                            } else {
-                                hlspec::AbstractArguments::Empty
-                            }
-                        },
-                        CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
-                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {
-                                Some(self.interp_pt_mem().index(vaddr))
-                            } else {
-                                Option::None
-                            };
-                            if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Unmap { vaddr, pte }
-                            } else {
-                                hlspec::AbstractArguments::Empty
-                            }
-                        },
-                        CoreState::UnmapOpDone { ULT_id, vaddr, result } => {
-                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {
-                                Some(self.interp_pt_mem().index(vaddr))
-                            } else {
-                                Option::None
-                            };
-                            if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Unmap { vaddr, pte }
-                            } else {
-                                hlspec::AbstractArguments::Empty
-                            }
-                        },
-                        CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result } => {
+                        CoreState::UnmapWaiting { ULT_id, vaddr } 
+                        |   CoreState::UnmapOpExecuting { ULT_id, vaddr } 
+                        |   CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                        |   CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                             let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {
                                 Some(self.interp_pt_mem().index(vaddr))
                             } else {
@@ -310,46 +277,23 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
         {
             &&& inflightargs.contains(b)
             &&& match b {
-                CoreState::MapWaiting { ULT_id, vaddr, pte } => {
+                   CoreState::MapWaiting { vaddr, pte, .. } 
+                |  CoreState::MapExecuting { vaddr, pte, .. } => {
                     overlap(
                         MemRegion { base: vaddr, size: pte.frame.size },
                         MemRegion { base: base, size: candidate.frame.size },
                     )
                 },
-                CoreState::MapExecuting { ULT_id, vaddr, pte } => {
-                    overlap(
-                        MemRegion { base: vaddr, size: pte.frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
-                CoreState::UnmapWaiting { ULT_id, vaddr } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
-                CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
-                CoreState::UnmapOpDone { ULT_id, vaddr, result } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
-                CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
+                    CoreState::UnmapWaiting            { vaddr, .. } 
+                |   CoreState::UnmapOpExecuting      { vaddr, .. } 
+                |   CoreState::UnmapOpDone           { vaddr, .. } 
+                |   CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        &&& pt.dom().contains(vaddr)
+                        &&& overlap(
+                            MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
+                            MemRegion { base: base, size: candidate.frame.size },
+                        )
+                    },
                 _ => { false },
             }
         }
@@ -366,6 +310,7 @@ pub open spec fn step_HW(
 ) -> bool {
     //enabling conditions
     &&& !(system_step is PTMemOp)
+    &&& !(system_step is Stutter)
     //hw/spec_pt-statemachine steps
 
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
@@ -421,6 +366,7 @@ pub open spec fn step_Map_Start(
 ) -> bool {
     let core = c.ULT2core.index(ULT_id);
     //enabling conditions
+    &&& c.valid_ULT(ULT_id)
     &&& s1.core_states[core] is Idle
     &&& step_Map_enabled(
         s1.hw.global_pt,
@@ -535,6 +481,7 @@ pub open spec fn step_Unmap_Start(
     let pt = hardware::interp_pt_mem(s1.hw.global_pt);
     let core = c.ULT2core.index(ULT_id);
     //enabling conditions
+    &&& c.valid_ULT(ULT_id)
     &&& s1.core_states[core] is Idle
     &&& step_Unmap_enabled(vaddr)
     //hw/spec_pt-statemachine steps
@@ -612,7 +559,6 @@ pub open spec fn step_Unmap_Op_End(
     &&& s2.sound == s1.sound
 }
 
-//TODO dont do this operation if unmap resulted in error
 pub open spec fn step_Unmap_Initiate_Shootdown(
     c: OSConstants,
     s1: OSVariables,
@@ -716,7 +662,6 @@ pub open spec fn step_Unmap_End(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Statemachine functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-//TODO add new steps
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW { ULT_id: nat, step: hardware::HWStep },
@@ -733,6 +678,7 @@ pub enum OSStep {
     UnmapEnd { ULT_id: nat, result: Result<(), ()> },
 }
 
+//TODO simplify this
 impl OSStep {
     pub open spec fn interp(self) -> hlspec::AbstractStep {
         match self {
@@ -747,8 +693,7 @@ impl OSStep {
                 hardware::HWStep::PTMemOp => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,
-                //TODO discuss this
-                hardware::HWStep::Stutter => hlspec::AbstractStep::Stutter,
+                hardware::HWStep::Stutter => arbitrary(),
             },
             //Map steps
             OSStep::MapStart { ULT_id, vaddr, pte } => {
@@ -808,9 +753,9 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
     &&& spec_pt::init(s.pt_variables())
     //wf of ULT2core mapping
 
-    &&& forall|id: nat| id <= c.ULT_no <==> c.ULT2core.contains_key(id)
+    &&& forall|id: nat| #[trigger]c.valid_ULT(id) <==> c.ULT2core.contains_key(id)
     &&& forall|id: nat|
-        id <= c.ULT_no ==> #[trigger] hardware::valid_core_id(
+        c.valid_ULT(id) ==> #[trigger] hardware::valid_core_id(
             c.hw,
             c.ULT2core.index(id),
         )

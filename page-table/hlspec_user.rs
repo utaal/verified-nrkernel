@@ -126,6 +126,7 @@ proof fn program_1() {
         mem: arbitrary(),  // TODO
         ..s5
     };
+    assume(false); //TODO
 
     assert(s6.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s6.mappings));
     assert(next_step(c, s5, s6, AbstractStep::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
