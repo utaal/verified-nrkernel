@@ -117,16 +117,17 @@ proof fn program_1() {
         },
     ));
 
+    let mem6 = lemma_contract_mem_domain(s5.mem, 4096 * 3, 4096);
     let s6 = AbstractVariables {
         thread_state: s5.thread_state.insert(
             2,
             AbstractArguments::Unmap { vaddr: 4096 * 3, pte: Some(pte1) },
         ),
         mappings: s5.mappings.remove(4096 * 3),
-        mem: arbitrary(),  // TODO
+        mem: mem6,
         ..s5
     };
-    assume(false); //TODO
+    // assume(false);  //TODO
 
     assert(s6.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s6.mappings));
     assert(next_step(c, s5, s6, AbstractStep::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
@@ -214,6 +215,58 @@ mod util {
                 (size - WORD_SIZE) as nat,
             );
             let r = extended.insert(crate::spec_t::mem::word_index_spec(vaddr), arbitrary());
+            r
+        } else {
+            map
+        }
+    }
+
+    pub proof fn lemma_contract_mem_domain(map: Map<nat, nat>, vaddr: nat, size: nat) -> (r: Map<
+        nat,
+        nat,
+    >)
+        requires
+            aligned(vaddr, WORD_SIZE as nat),
+            aligned(size, WORD_SIZE as nat),
+        ensures
+            r.dom() =~= map.dom() - all_words_in_range(vaddr, size),
+            r.dom() =~= map.dom().difference(
+                Set::new(
+                    |w: nat|
+                        crate::spec_t::mem::word_index_spec(vaddr) <= w
+                            < crate::spec_t::mem::word_index_spec(vaddr) + (size
+                            / WORD_SIZE as nat),
+                ),
+            ),
+        decreases size,
+    {
+        if size > 0 {
+            assert(aligned(size, WORD_SIZE as nat));
+            if size - WORD_SIZE >= 0 {
+            } else {
+                assert(0 < size < WORD_SIZE);
+                // TODO(matthias) can you try verusfind here?
+                assert(!aligned(size, WORD_SIZE as nat)) by (nonlinear_arith)
+                    requires
+                        0 < size < WORD_SIZE,
+                {}
+                assert(false);
+            }
+            assert(aligned((vaddr + WORD_SIZE) as nat, WORD_SIZE as nat)) by (nonlinear_arith)
+                requires
+                    aligned(vaddr, WORD_SIZE as nat),
+            {}
+            assert(aligned((size - WORD_SIZE) as nat, WORD_SIZE as nat)) by (nonlinear_arith)
+                requires
+                    aligned(size, WORD_SIZE as nat),
+                    size > 0,
+            {}
+            let contracted = lemma_contract_mem_domain(
+                map,
+                (vaddr + WORD_SIZE) as nat,
+                (size - WORD_SIZE) as nat,
+            );
+            let r = contracted.remove(crate::spec_t::mem::word_index_spec(vaddr));
             r
         } else {
             map
