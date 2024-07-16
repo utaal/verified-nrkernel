@@ -11,9 +11,9 @@ use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem};
 //TODO move core to definitions
 use crate::definitions_t::{
-    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
+    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem, HWRWOp,
     overlap, x86_arch_spec, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
-    MAX_PHYADDR, WORD_SIZE,
+    LoadResult, MAX_PHYADDR, RWOp, StoreResult, WORD_SIZE,
 };
 use crate::spec_t::hardware::Core;
 
@@ -72,9 +72,43 @@ impl CoreState {
 
 impl OSConstants {
 
-    pub open spec fn interp(self, s: OSVariables) -> hlspec::AbstractConstants {
-        hlspec::AbstractConstants { thread_no: self.ULT_no, phys_mem_size: s.hw.mem.len() }
+    pub open spec fn interp(self,) -> hlspec::AbstractConstants {
+        hlspec::AbstractConstants { thread_no: self.ULT_no, phys_mem_size: self.hw.phys_mem_size }
     }
+
+    pub open spec fn valid_store(self, vaddr: nat,  pte_op: Option<(nat, PageTableEntry)>, ) -> bool {
+        &&& pte_op matches Some((base, pte)) 
+        &&&  mem::word_index_spec((pte.frame.base + (vaddr - base)) as nat) < self.interp().phys_mem_size
+        &&& !pte.flags.is_supervisor
+        &&& pte.flags.is_writable
+    }
+    
+    pub open spec fn valid_load(self, vaddr: nat, is_exec: bool, pte_op: Option<(nat, PageTableEntry)>, ) -> bool {
+        &&& pte_op matches Some((base, pte))
+        &&& mem::word_index_spec((pte.frame.base + (vaddr - base)) as nat) < self.interp().phys_mem_size
+        &&& !pte.flags.is_supervisor 
+        &&& (is_exec ==> !pte.flags.disable_execute)
+    }
+
+    pub open spec fn interp_RWop(self, vaddr: nat, op :HWRWOp, pte: Option<(nat, PageTableEntry)>, ) -> RWOp {
+       match op {
+            HWRWOp::Store { new_value, result } => {
+                if self.valid_store(vaddr, pte) {
+                    RWOp::Store {new_value, result: StoreResult::Ok}
+                } else {
+                    RWOp::Store {new_value, result: StoreResult::Undefined}
+                }
+            },
+            HWRWOp::Load { is_exec, result } => {
+                if self.valid_load( vaddr, is_exec, pte) {
+                    RWOp::Load {is_exec, result: LoadResult::Value(result->0)}//TODO chuck if result is value in if clause
+                } else {
+                    RWOp::Load {is_exec, result: LoadResult::Undefined}
+                }
+            },
+        }
+    }
+
 
 }
 
@@ -133,6 +167,12 @@ impl OSVariables {
         &&& self.tlb_is_submap_of_pt()
     }
 	*/
+    //TODO discuss this
+    //I made this pretty much like the HL specs
+    //But that does mean if we try to read an address that is inflight or mapped the pte_op of this transition is none
+    //this mean we need to adjust pte in map transiton. maybe.
+ 
+
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables { pt_mem: self.hw.global_pt }
     }
@@ -141,34 +181,6 @@ impl OSVariables {
         hardware::interp_pt_mem(self.hw.global_pt)
     }
 
-    pub open spec fn is_effective_mappings(self, vmem_idx: nat, pte: PageTableEntry) -> bool {
-        exists|core: Core| #[trigger]
-            self.hw.NUMAs.contains_key(core.NUMA_id)
-                && #[trigger] self.hw.NUMAs[core.NUMA_id].cores.contains_key(core.core_id)
-                && #[trigger] self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(
-                vmem_idx,
-                pte,
-            )
-    }
-
-    pub open spec fn joint_tlbs(self) -> Map<nat, PageTableEntry> {
-        Map::new(
-            |vmem_idx: nat|
-                {
-                    exists|core: Core|
-                        #![auto]
-                        self.hw.NUMAs.contains_key(core.NUMA_id)
-                            && self.hw.NUMAs[core.NUMA_id].cores.contains_key(core.core_id)
-                            && self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_key(
-                            vmem_idx,
-                        )
-                },
-            |vmem_idx: nat|
-                { choose|pte: PageTableEntry| self.is_effective_mappings(vmem_idx, pte) },
-        )
-    }
-
-    //TODO think this over
     pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {
         Set::new(
             |v_address: nat|
@@ -190,7 +202,7 @@ impl OSVariables {
     }
 
     pub open spec fn effective_mappings(self) -> Map<nat, PageTableEntry> {
-        let effective_mappings = self.interp_pt_mem().union_prefer_right(self.joint_tlbs());
+        let effective_mappings = self.interp_pt_mem();
         let unmap_dom = self.inflight_unmap_vaddr();
         Map::new(
             |vmem_idx: nat|
@@ -200,7 +212,7 @@ impl OSVariables {
     }
 
     pub open spec fn interp_vmem(self, c: OSConstants) -> Map<nat, nat> {
-        let phys_mem_size = c.interp(self).phys_mem_size;
+        let phys_mem_size = c.interp().phys_mem_size;
         let mappings: Map<nat, PageTableEntry> = self.effective_mappings();
         Map::new(
             |vmem_idx: nat|
@@ -714,7 +726,7 @@ pub enum OSStep {
 
 //TODO simplify this
 impl OSStep {
-    pub open spec fn interp(self) -> hlspec::AbstractStep {
+    pub open spec fn interp(self, c: OSConstants, s: OSVariables) -> hlspec::AbstractStep {
         match self {
             OSStep::HW { ULT_id, step } => match step {
                 hardware::HWStep::ReadWrite {
@@ -723,7 +735,8 @@ impl OSStep {
                     op,
                     pte,
                     core,
-                } => hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op, pte },
+                } => {  let hl_pte = if (pte is None || (pte matches Some((base, pte)) && !s.effective_mappings().contains_pair(base, pte) )) {None} else {pte};
+                        hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op: c.interp_RWop(vaddr, op, hl_pte), pte: hl_pte }},
                 hardware::HWStep::PTMemOp => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,

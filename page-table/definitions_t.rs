@@ -119,6 +119,7 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     }
 }
 
+//for Highlevel read write operations
 pub enum LoadResult {
     Undefined,
     Value(nat), // word-sized load
@@ -133,6 +134,23 @@ pub enum StoreResult {
 pub enum RWOp {
     Store { new_value: nat, result: StoreResult },
     Load { is_exec: bool, result: LoadResult },
+}
+
+//for Hardware read write operations
+pub enum HWLoadResult {
+    Pagefault,
+    Value(nat), // word-sized load
+}
+
+pub enum HWStoreResult {
+    Pagefault,
+    Ok,
+}
+
+#[allow(inconsistent_fields)]
+pub enum HWRWOp {
+    Store { new_value: nat, result: HWStoreResult },
+    Load { is_exec: bool, result: HWLoadResult },
 }
 
 pub struct MemRegion { pub base: nat, pub size: nat }

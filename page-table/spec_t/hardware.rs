@@ -5,7 +5,7 @@
 
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, MemRegion,
-    PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_BASE, MAX_PHYADDR_WIDTH,
+    PageTableEntry, HWRWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_BASE, MAX_PHYADDR_WIDTH,
     PAGE_SIZE,
 };
 use crate::spec_t::mem::{self, word_index_spec};
@@ -16,8 +16,10 @@ verus! {
 pub struct HWConstants {
     pub NUMA_no: nat,
     pub core_no: nat,
+    pub phys_mem_size: nat,
     //optionally: core_nos: Map<nat, nat>,
 }
+//TODO add invariant
 
 pub struct HWVariables {
     /// Word-indexed physical memory
@@ -42,7 +44,7 @@ pub struct Core {
 
 #[allow(inconsistent_fields)]
 pub enum HWStep {
-    ReadWrite { vaddr: nat, paddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)>, core: Core },
+    ReadWrite { vaddr: nat, paddr: nat, op: HWRWOp, pte: Option<(nat, PageTableEntry)>, core: Core },
     PTMemOp,
     TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
     TLBEvict { vaddr: nat, core: Core },
@@ -552,13 +554,13 @@ pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTab
 }
 
 pub open spec fn init(c: HWConstants, s: HWVariables) -> bool {
-    &&& c.NUMA_no >= 0
+    &&& c.NUMA_no > 0
     &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) == s.NUMAs.contains_key(id)
     &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) ==> NUMA_init(c, s.NUMAs[id])
 }
 
 pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
-    &&& c.core_no >= 0
+    &&& c.core_no > 0
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) == n.cores.contains_key(id)
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==>  n.cores[id].tlb.dom() === Set::empty()
 }
@@ -573,7 +575,7 @@ pub open spec fn step_ReadWrite(
     s2: HWVariables,
     vaddr: nat,
     paddr: nat,
-    op: RWOp,
+    op: HWRWOp,
     pte: Option<(nat, PageTableEntry)>,
     core: Core,
 ) -> bool {
@@ -593,24 +595,24 @@ pub open spec fn step_ReadWrite(
             // .. and the result depends on the flags.
 
             &&& match op {
-                RWOp::Store { new_value, result } => {
+                HWRWOp::Store { new_value, result } => {
                     if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor
                         && pte.flags.is_writable {
                         &&& result is Ok
                         &&& s2.mem === s1.mem.update(pmem_idx as int, new_value)
                     } else {
-                        &&& result is Undefined
+                        &&& result is Pagefault
                         &&& s2.mem === s1.mem
                     }
                 },
-                RWOp::Load { is_exec, result } => {
+                HWRWOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
                     &&& if pmem_idx < s1.mem.len() && !pte.flags.is_supervisor && (is_exec
                         ==> !pte.flags.disable_execute) {
                         &&& result is Value
                         &&& result->0 == s1.mem[pmem_idx as int]
                     } else {
-                        &&& result is Undefined
+                        &&& result is Pagefault 
                     }
                 },
             }
@@ -626,8 +628,8 @@ pub open spec fn step_ReadWrite(
 
             &&& s2.mem === s1.mem
             &&& match op {
-                RWOp::Store { new_value, result } => result is Undefined,
-                RWOp::Load { is_exec, result } => result is Undefined,
+                HWRWOp::Store { new_value, result } => result is Pagefault, 
+                HWRWOp::Load { is_exec, result } => result is Pagefault, 
             }
         },
     }
@@ -677,10 +679,10 @@ pub open spec fn valid_core_id(c: HWConstants, id: nat) -> bool {
     id < c.core_no
 }
 
-
+//TODO this
 pub open spec fn valid_core(c: HWConstants, core: Core) -> bool {
-    &&& core.NUMA_id < c.NUMA_no
-    &&& core.core_id < c.core_no
+    &&& valid_NUMA_id(c, core.NUMA_id)
+    &&& valid_core_id(c, core.core_id)
 }
 
 pub open spec fn step_TLBFill(
