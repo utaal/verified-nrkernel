@@ -552,21 +552,18 @@ pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTab
 }
 
 pub open spec fn init(c: HWConstants, s: HWVariables) -> bool {
-    &&& c.NUMA_no >= 1
-    &&& forall|id: nat| (id < c.NUMA_no) == s.NUMAs.contains_key(id)
-    &&& forall|id: nat| (id < c.NUMA_no) ==> #[trigger] NUMA_init(c, s.NUMAs[id])
+    &&& c.NUMA_no >= 0
+    &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) == s.NUMAs.contains_key(id)
+    &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) ==> NUMA_init(c, s.NUMAs[id])
 }
 
 pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
-    &&& c.core_no >= 1
-    &&& forall|id: nat| (id < c.core_no) == n.cores.contains_key(id)
-    &&& forall|id: nat| (id < c.core_no) ==> #[trigger] core_init(n.cores[id])
+    &&& c.core_no >= 0
+    &&& forall|id: nat| #[trigger] valid_core_id(c, id) == n.cores.contains_key(id)
+    &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==>  n.cores[id].tlb.dom() === Set::empty()
 }
 
-//might be issue later on
-pub open spec fn core_init(c: CoreVariables) -> bool {
-    c.tlb.dom() === Set::empty()
-}
+
 
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
@@ -584,7 +581,7 @@ pub open spec fn step_ReadWrite(
     //page tables and TLBs stay the same
 
     &&& s2.NUMAs === s1.NUMAs
-    &&& valid_core_id(c, core)
+    &&& valid_core(c, core)
     &&& match pte {
         Some((base, pte)) => {
             let pmem_idx = word_index_spec(paddr);
@@ -636,12 +633,12 @@ pub open spec fn step_ReadWrite(
     }
 }
 
-//TODO change this for global ptmem
+//TODO Why submap?
 //need some more explanation on this one
 pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
     &&& s2.mem === s1.mem
     &&& forall|core: Core|
-        valid_core_id(c, core) ==> forall|base: nat, pte: PageTableEntry|
+        valid_core(c, core) ==> forall|base: nat, pte: PageTableEntry|
             s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
                 ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
 }
@@ -653,7 +650,7 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     core: Core,
 ) -> bool
     recommends
-        valid_core_id(c, core),
+        valid_core(c, core),
 {
     //Memory stays the same
     &&& s2.mem === s1.mem
@@ -672,7 +669,16 @@ pub open spec fn other_NUMAs_and_cores_unchanged(
     )
 }
 
-pub open spec fn valid_core_id(c: HWConstants, core: Core) -> bool {
+pub open spec fn valid_NUMA_id(c: HWConstants, id: nat) -> bool {
+    id < c.NUMA_no
+}
+
+pub open spec fn valid_core_id(c: HWConstants, id: nat) -> bool {
+    id < c.core_no
+}
+
+
+pub open spec fn valid_core(c: HWConstants, core: Core) -> bool {
     &&& core.NUMA_id < c.NUMA_no
     &&& core.core_id < c.core_no
 }
@@ -685,7 +691,7 @@ pub open spec fn step_TLBFill(
     pte: PageTableEntry,
     core: Core,
 ) -> bool {
-    &&& valid_core_id(c, core)
+    &&& valid_core(c, core)
     &&& interp_pt_mem(s1.global_pt).contains_pair(vaddr, pte)
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
         === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vaddr, pte)
@@ -699,7 +705,7 @@ pub open spec fn step_TLBEvict(
     vaddr: nat,
     core: Core,
 ) -> bool {
-    &&& valid_core_id(c, core)
+    &&& valid_core(c, core)
     &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
         === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.remove(vaddr)

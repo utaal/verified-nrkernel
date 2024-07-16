@@ -70,13 +70,21 @@ impl CoreState {
     }
 }
 
+impl OSConstants {
+
+    pub open spec fn interp(self, s: OSVariables) -> hlspec::AbstractConstants {
+        hlspec::AbstractConstants { thread_no: self.ULT_no, phys_mem_size: s.hw.mem.len() }
+    }
+
+}
+
 impl OSVariables {
     pub open spec fn kernel_lock(self, consts: OSConstants) -> Option<Core> {
         if exists|c: Core|
-            hardware::valid_core_id(consts.hw, c) && (#[trigger] self.core_states[c].holds_lock()) {
+            hardware::valid_core(consts.hw, c) && (#[trigger] self.core_states[c].holds_lock()) {
             Some(
                 choose|c: Core|
-                    hardware::valid_core_id(consts.hw, c) && (
+                    hardware::valid_core(consts.hw, c) && (
                     #[trigger] self.core_states[c].holds_lock()),
             )
         } else {
@@ -173,7 +181,7 @@ impl OSVariables {
                             | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                 let pt = hardware::interp_pt_mem(self.hw.global_pt);
                                 &&& pt.dom().contains(vaddr)
-                                &&& vaddr <= v_address < vaddr + pt.index(vaddr).frame.size
+                                &&& vaddr === v_address
                             },
                             _ => false,
                         }
@@ -192,7 +200,7 @@ impl OSVariables {
     }
 
     pub open spec fn interp_vmem(self, c: OSConstants) -> Map<nat, nat> {
-        let phys_mem_size = self.interp_constants(c).phys_mem_size;
+        let phys_mem_size = c.interp(self).phys_mem_size;
         let mappings: Map<nat, PageTableEntry> = self.effective_mappings();
         Map::new(
             |vmem_idx: nat|
@@ -246,7 +254,7 @@ impl OSVariables {
                                 hlspec::AbstractArguments::Empty
                             }
                         },
-                        _ => hlspec::AbstractArguments::Empty,
+                        CoreState::Idle => hlspec::AbstractArguments::Empty,
                     }
                 },
         )
@@ -260,9 +268,7 @@ impl OSVariables {
         hlspec::AbstractVariables { mem, mappings, thread_state, sound }
     }
 
-    pub open spec fn interp_constants(self, c: OSConstants) -> hlspec::AbstractConstants {
-        hlspec::AbstractConstants { thread_no: c.ULT_no, phys_mem_size: self.hw.mem.len() }
-    }
+    
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -613,7 +619,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
     )
     &&& s2.TLB_Shootdown == ShootdownVector {
         vaddr: vaddr,
-        open_requests: Set::new(|core: Core| hardware::valid_core_id(c.hw, core)),
+        open_requests: Set::new(|core: Core| hardware::valid_core(c.hw, core)),
     }
     &&& s2.sound == s1.sound
 }
@@ -627,7 +633,7 @@ pub open spec fn step_Ack_Shootdown_IPI(
     core: Core,
 ) -> bool {
     //enabling conditions
-    &&& hardware::valid_core_id(c.hw, core)  //not needed
+    &&& hardware::valid_core(c.hw, core)  //not needed
 
     &&& s1.TLB_Shootdown.open_requests.contains(core)
     &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(s1.TLB_Shootdown.vaddr)
@@ -783,13 +789,20 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
 
     &&& forall|id: nat| #[trigger] c.valid_ULT(id) <==> c.ULT2core.contains_key(id)
     &&& forall|id: nat|
-        c.valid_ULT(id) ==> #[trigger] hardware::valid_core_id(
+        c.valid_ULT(id) ==> #[trigger] hardware::valid_core(
             c.hw,
             c.ULT2core.index(id),
         )
-    //wf of shootdown
+    //core_state
+
+    &&& forall|core: Core| hardware::valid_core(c.hw, core) <==> #[trigger] s.core_states.contains_key(core)
+    &&& forall|core: Core| #[trigger] hardware::valid_core(c.hw, core) ==> s.core_states[core] === CoreState::Idle
+    //shootdown
 
     &&& s.TLB_Shootdown.open_requests.is_empty()
+    
+    //sound
+    &&& s.sound
 }
 
 } // verus!
