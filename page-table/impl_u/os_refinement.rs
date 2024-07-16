@@ -11,7 +11,7 @@ use crate::extra;
 
 verus! {
 
-proof fn init_refines_hl_init(c: os::OSConstants, s: os::OSVariables)
+proof fn os_init_refines_hl_init(c: os::OSConstants, s: os::OSVariables)
     requires
         os::init(c, s)
     ensures
@@ -19,7 +19,6 @@ proof fn init_refines_hl_init(c: os::OSConstants, s: os::OSVariables)
 {
     let abs_c = c.interp();
     let abs_s = s.interp(c);
-    
     //lemma_effective_mappings_equal_interp_pt_mem(s);
     assert forall|id: nat| id < abs_c.thread_no implies (abs_s.thread_state[id] === hlspec::AbstractArguments::Empty) by {
         assert (c.ULT2core.contains_key(id));
@@ -27,23 +26,8 @@ proof fn init_refines_hl_init(c: os::OSConstants, s: os::OSVariables)
         assert (hardware::valid_core(c.hw ,core));
         assert (s.core_states[core] === os::CoreState::Idle); //nn
     };
-    //created by 
-    assert forall |core: Core| #[trigger] hardware::valid_core(c.hw, core) implies s.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb === Map::empty() by {
-        assert (core.NUMA_id < c.hw.NUMA_no);
-        assert (hardware::valid_NUMA_id(c.hw, core.NUMA_id));
-        assert (s.hw.NUMAs.contains_key(core.NUMA_id));
-        assert (hardware::NUMA_init(c.hw, s.hw.NUMAs[core.NUMA_id]));
-        assert (core.core_id < c.hw.core_no);
-        assert (hardware::valid_core_id(c.hw, core.core_id));
-        assert (s.hw.NUMAs[core.NUMA_id].cores.contains_key(core.core_id));
-        assert (s.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb === Map::empty());
-    }
-   
-    assume( abs_s.mem === Map::empty());
-    //created by 
-    assume( abs_s.mappings === Map::empty());
-    
-    //assert(s.interp().mem =~= Map::empty());
+    assert( abs_s.mem === Map::empty());
+    assert( abs_s.mappings === Map::empty());
 }
 
 proof fn os_next_refines_hl_next(c: os::OSConstants, s1: os::OSVariables, s2: os::OSVariables)
