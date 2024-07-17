@@ -11,9 +11,10 @@ use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem};
 //TODO move core to definitions
 use crate::definitions_t::{
-    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem, HWRWOp, HWStoreResult, HWLoadResult,
-    overlap, x86_arch_spec, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
-    LoadResult, MAX_PHYADDR, RWOp, StoreResult, WORD_SIZE,
+    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
+    overlap, x86_arch_spec, HWLoadResult, HWRWOp, HWStoreResult, LoadResult, MemRegion,
+    PageTableEntry, RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR,
+    WORD_SIZE,
 };
 use crate::spec_t::hardware::Core;
 
@@ -69,7 +70,7 @@ impl OSConstants {
         ULT_id < self.ULT_no
     }
 
-    pub open spec fn interp(self,) -> hlspec::AbstractConstants {
+    pub open spec fn interp(self) -> hlspec::AbstractConstants {
         hlspec::AbstractConstants { thread_no: self.ULT_no, phys_mem_size: self.hw.phys_mem_size }
     }
 }
@@ -133,8 +134,6 @@ impl OSVariables {
     //I made this pretty much like the HL specs
     //But that does mean if we try to read an address that is inflight or mapped the pte_op of this transition is none
     //this mean we need to adjust pte in map transiton. maybe.
- 
-
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables { pt_mem: self.hw.global_pt }
     }
@@ -241,8 +240,6 @@ impl OSVariables {
         let sound: bool = self.sound;
         hlspec::AbstractVariables { mem, mappings, thread_state, sound }
     }
-
-    
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -691,27 +688,45 @@ impl OSStep {
     pub open spec fn interp(self, c: OSConstants, s: OSVariables) -> hlspec::AbstractStep {
         match self {
             OSStep::HW { ULT_id, step } => match step {
-                hardware::HWStep::ReadWrite {
-                    vaddr,
-                    paddr,
-                    op,
-                    pte,
-                    core,
-                } => {
-                    let hl_pte = if pte is None || (pte matches Some((base, _)) && s.inflight_unmap_vaddr().contains(base)) {
+                hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, core } => {
+                    let hl_pte = if pte is None || (pte matches Some((base, _))
+                        && s.inflight_unmap_vaddr().contains(base)) {
                         None
                     } else {
                         pte
                     };
                     let rwop = match (op, hl_pte) {
-                        (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_))    => RWOp::Store { new_value, result: StoreResult::Ok },
-                        (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, None)       => RWOp::Store { new_value, result: StoreResult::Undefined },
-                        (HWRWOp::Store { new_value, result: HWStoreResult::Pagefault }, _)   => RWOp::Store { new_value, result: StoreResult::Undefined },
-                        (HWRWOp::Load  { is_exec, result: HWLoadResult::Value(v) }, Some(_)) => RWOp::Load { is_exec, result: LoadResult::Value(v) },
-                        (HWRWOp::Load  { is_exec, result: HWLoadResult::Value(v) }, None)    => RWOp::Load { is_exec, result: LoadResult::Undefined },
-                        (HWRWOp::Load  { is_exec, result: HWLoadResult::Pagefault }, _)      => RWOp::Load { is_exec, result: LoadResult::Undefined },
+                        (
+                            HWRWOp::Store { new_value, result: HWStoreResult::Ok },
+                            Some(_),
+                        ) => RWOp::Store { new_value, result: StoreResult::Ok },
+                        (
+                            HWRWOp::Store { new_value, result: HWStoreResult::Ok },
+                            None,
+                        ) => RWOp::Store { new_value, result: StoreResult::Undefined },
+                        (
+                            HWRWOp::Store { new_value, result: HWStoreResult::Pagefault },
+                            _,
+                        ) => RWOp::Store { new_value, result: StoreResult::Undefined },
+                        (
+                            HWRWOp::Load { is_exec, result: HWLoadResult::Value(v) },
+                            Some(_),
+                        ) => RWOp::Load { is_exec, result: LoadResult::Value(v) },
+                        (
+                            HWRWOp::Load { is_exec, result: HWLoadResult::Value(v) },
+                            None,
+                        ) => RWOp::Load { is_exec, result: LoadResult::Undefined },
+                        (
+                            HWRWOp::Load { is_exec, result: HWLoadResult::Pagefault },
+                            _,
+                        ) => RWOp::Load { is_exec, result: LoadResult::Undefined },
                     };
-                    hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op: rwop, pte: hl_pte }
+                    hlspec::AbstractStep::ReadWrite {
+                        thread_id: ULT_id,
+                        vaddr,
+                        op: rwop,
+                        pte: hl_pte,
+                    }
                 },
                 hardware::HWStep::PTMemOp => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
@@ -784,13 +799,16 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
         )
     //core_state
 
-    &&& forall|core: Core| hardware::valid_core(c.hw, core) <==> #[trigger] s.core_states.contains_key(core)
-    &&& forall|core: Core| #[trigger] hardware::valid_core(c.hw, core) ==> s.core_states[core] === CoreState::Idle
-    //shootdown
+    &&& forall|core: Core|
+        hardware::valid_core(c.hw, core) <==> #[trigger] s.core_states.contains_key(core)
+    &&& forall|core: Core| #[trigger]
+        hardware::valid_core(c.hw, core) ==> s.core_states[core]
+            === CoreState::Idle
+        //shootdown
 
     &&& s.TLB_Shootdown.open_requests.is_empty()
-    
     //sound
+
     &&& s.sound
 }
 
