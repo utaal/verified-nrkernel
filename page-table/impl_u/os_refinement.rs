@@ -75,11 +75,32 @@ proof fn next_step_refines_hl_next_step(c: os::OSConstants, s1: os::OSVariables,
         },
         //Map steps
         os::OSStep::MapStart { ULT_id, vaddr, pte } => { assume(false); },
-        os::OSStep::MapOpStart { ULT_id } => {  assume(s1.interp(c).mem === s2.interp(c).mem);
-                                                assume(s1.interp(c).thread_state === s2.interp(c).thread_state);
-                                                assume(s1.interp(c).mappings === s2.interp(c).mappings);
-                                                //HL_Stutter_step(c.interp(), s1.interp(c), s2.interp(c));
-},
+        os::OSStep::MapOpStart { ULT_id } => {
+            let core = c.ULT2core.index(ULT_id);
+            assert(s1.interp(c).thread_state.dom() =~= s2.interp(c).thread_state.dom());
+            let vaddr = s1.core_states[core]->MapWaiting_vaddr;
+            let pte = s1.core_states[core]->MapWaiting_pte;
+            assert(s2.core_states == s1.core_states.insert(core, os::CoreState::MapExecuting { ULT_id, vaddr, pte }));
+            assert forall|k| #![auto] s1.interp(c).thread_state.contains_key(k)
+                implies s1.interp(c).thread_state[k] == s2.interp(c).thread_state[k] by
+            {
+                if k == ULT_id {
+                } else {
+                    if c.ULT2core[k] == core {
+                        assert(s1.interp(c).thread_state[k] == s2.interp(c).thread_state[k]);
+                    } else {
+                        assume(s1.core_states.dom().contains(c.ULT2core[k]));
+                        assert(s1.interp(c).thread_state[k] == s2.interp(c).thread_state[k]);
+                    }
+                }
+            };
+            assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
+
+            assume(s2.inflight_unmap_vaddr() == s1.inflight_unmap_vaddr());
+            assert(s1.interp(c).mappings =~= s2.interp(c).mappings);
+            assert(s1.interp(c).mem === s2.interp(c).mem);
+            //HL_Stutter_step(c.interp(), s1.interp(c), s2.interp(c));
+        },
         os::OSStep::MapEnd { ULT_id, result } => {assume(false);},
         //Unmap steps
         os::OSStep::UnmapStart { ULT_id, vaddr } => {assume(false); },
