@@ -11,7 +11,7 @@ use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem};
 //TODO move core to definitions
 use crate::definitions_t::{
-    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem, HWRWOp,
+    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem, HWRWOp, HWStoreResult, HWLoadResult,
     overlap, x86_arch_spec, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
     LoadResult, MAX_PHYADDR, RWOp, StoreResult, WORD_SIZE,
 };
@@ -26,12 +26,6 @@ pub struct OSConstants {
     pub ULT2core: Map<nat, Core>,
     //highest thread_id
     pub ULT_no: nat,
-}
-
-impl OSConstants {
-    pub open spec fn valid_ULT(self, ULT_id: nat) -> bool {
-        ULT_id < self.ULT_no
-    }
 }
 
 pub struct OSVariables {
@@ -71,45 +65,13 @@ impl CoreState {
 }
 
 impl OSConstants {
+    pub open spec fn valid_ULT(self, ULT_id: nat) -> bool {
+        ULT_id < self.ULT_no
+    }
 
     pub open spec fn interp(self,) -> hlspec::AbstractConstants {
         hlspec::AbstractConstants { thread_no: self.ULT_no, phys_mem_size: self.hw.phys_mem_size }
     }
-
-    pub open spec fn valid_store(self, vaddr: nat,  pte_op: Option<(nat, PageTableEntry)>, ) -> bool {
-        &&& pte_op matches Some((base, pte)) 
-        &&&  mem::word_index_spec((pte.frame.base + (vaddr - base)) as nat) < self.interp().phys_mem_size
-        &&& !pte.flags.is_supervisor
-        &&& pte.flags.is_writable
-    }
-    
-    pub open spec fn valid_load(self, vaddr: nat, is_exec: bool, pte_op: Option<(nat, PageTableEntry)>, ) -> bool {
-        &&& pte_op matches Some((base, pte))
-        &&& mem::word_index_spec((pte.frame.base + (vaddr - base)) as nat) < self.interp().phys_mem_size
-        &&& !pte.flags.is_supervisor 
-        &&& (is_exec ==> !pte.flags.disable_execute)
-    }
-
-    pub open spec fn interp_RWop(self, vaddr: nat, op :HWRWOp, pte: Option<(nat, PageTableEntry)>, ) -> RWOp {
-       match op {
-            HWRWOp::Store { new_value, result } => {
-                if self.valid_store(vaddr, pte) {
-                    RWOp::Store {new_value, result: StoreResult::Ok}
-                } else {
-                    RWOp::Store {new_value, result: StoreResult::Undefined}
-                }
-            },
-            HWRWOp::Load { is_exec, result } => {
-                if self.valid_load( vaddr, is_exec, pte) {
-                    RWOp::Load {is_exec, result: LoadResult::Value(result->0)}//TODO chuck if result is value in if clause
-                } else {
-                    RWOp::Load {is_exec, result: LoadResult::Undefined}
-                }
-            },
-        }
-    }
-
-
 }
 
 impl OSVariables {
@@ -735,8 +697,22 @@ impl OSStep {
                     op,
                     pte,
                     core,
-                } => {  let hl_pte = if (pte is None || (pte matches Some((base, pte)) && !s.effective_mappings().contains_pair(base, pte) )) {None} else {pte};
-                        hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op: c.interp_RWop(vaddr, op, hl_pte), pte: hl_pte }},
+                } => {
+                    let hl_pte = if pte is None || (pte matches Some((base, _)) && s.inflight_unmap_vaddr().contains(base)) {
+                        None
+                    } else {
+                        pte
+                    };
+                    let rwop = match (op, hl_pte) {
+                        (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_))    => RWOp::Store { new_value, result: StoreResult::Ok },
+                        (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, None)       => RWOp::Store { new_value, result: StoreResult::Undefined },
+                        (HWRWOp::Store { new_value, result: HWStoreResult::Pagefault }, _)   => RWOp::Store { new_value, result: StoreResult::Undefined },
+                        (HWRWOp::Load  { is_exec, result: HWLoadResult::Value(v) }, Some(_)) => RWOp::Load { is_exec, result: LoadResult::Value(v) },
+                        (HWRWOp::Load  { is_exec, result: HWLoadResult::Value(v) }, None)    => RWOp::Load { is_exec, result: LoadResult::Undefined },
+                        (HWRWOp::Load  { is_exec, result: HWLoadResult::Pagefault }, _)      => RWOp::Load { is_exec, result: LoadResult::Undefined },
+                    };
+                    hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op: rwop, pte: hl_pte }
+                },
                 hardware::HWStep::PTMemOp => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,
