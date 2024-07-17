@@ -43,6 +43,18 @@ proof fn os_next_refines_hl_next(c: os::OSConstants, s1: os::OSVariables, s2: os
 // to prove lemma that if we choose one TLB entry its the same as choosing another
 // also needs invariant that tlbs are submap of pt to pt + inflight memory
 
+proof fn HL_Stutter_step(c: hlspec::AbstractConstants, s1 : hlspec::AbstractVariables, s2 : hlspec::AbstractVariables )
+    requires
+        s1.mem          === s2.mem,
+        s1.thread_state === s2.thread_state,
+        s1.mappings     === s2.mappings,
+        s1.sound        === s2.sound,
+    ensures 
+        hlspec::step_Stutter(c, s1, s2)
+{
+    assume(false);
+}
+
 
 proof fn next_step_refines_hl_next_step(c: os::OSConstants, s1: os::OSVariables, s2: os::OSVariables, step: os::OSStep)
     requires
@@ -59,21 +71,25 @@ proof fn next_step_refines_hl_next_step(c: os::OSConstants, s1: os::OSVariables,
                 pte,
                 core,
             } => {assume(false);},
-            hardware::HWStep::PTMemOp => {},
-            hardware::HWStep::TLBFill { vaddr, pte, core } => {},
-            hardware::HWStep::TLBEvict { vaddr, core } => {},
-            hardware::HWStep::Stutter => {},
+            _ => {},
         },
         //Map steps
         os::OSStep::MapStart { ULT_id, vaddr, pte } => { assume(false); },
-        os::OSStep::MapOpStart { ULT_id } => {assume(false);},
+        os::OSStep::MapOpStart { ULT_id } => {  assume(s1.interp(c).mem === s2.interp(c).mem);
+                                                assume(s1.interp(c).thread_state === s2.interp(c).thread_state);
+                                                assume(s1.interp(c).mappings === s2.interp(c).mappings);
+                                                //HL_Stutter_step(c.interp(), s1.interp(c), s2.interp(c));
+},
         os::OSStep::MapEnd { ULT_id, result } => {assume(false);},
         //Unmap steps
         os::OSStep::UnmapStart { ULT_id, vaddr } => {assume(false); },
         os::OSStep::UnmapOpStart { ULT_id } => {assume(false);},
         os::OSStep::UnmapOpEnd { ULT_id, result } => {assume(false);},
-        os::OSStep::UnmapInitiateShootdown { ULT_id } => {assume(false);},
-        os::OSStep::AckShootdownIPI { core } => {assume(false);},
+        os::OSStep::UnmapInitiateShootdown { ULT_id } => {assume(s1.interp(c).thread_state === s2.interp(c).thread_state);
+                                                          assume(s1.interp(c).mem === s2.interp(c).mem);
+                                                          assume(s1.interp(c).mappings === s2.interp(c).mappings);
+                                                          //HL_Stutter_step(c.interp(), s1.interp(c), s2.interp(c));
+},
         os::OSStep::UnmapEnd { ULT_id, result } => {assume(false);
         },
         _ => {},
