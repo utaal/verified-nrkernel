@@ -4,8 +4,8 @@
 // and the hardware state machine
 
 use crate::definitions_t::{
-    aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, MemRegion,
-    PageTableEntry, HWRWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_BASE, MAX_PHYADDR_WIDTH,
+    aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, HWRWOp, MemRegion,
+    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_BASE, MAX_PHYADDR_WIDTH,
     PAGE_SIZE,
 };
 use crate::spec_t::mem::{self, word_index_spec};
@@ -19,8 +19,8 @@ pub struct HWConstants {
     pub phys_mem_size: nat,
     //optionally: core_nos: Map<nat, nat>,
 }
-//TODO add invariant
 
+//TODO add invariant
 pub struct HWVariables {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
@@ -44,7 +44,13 @@ pub struct Core {
 
 #[allow(inconsistent_fields)]
 pub enum HWStep {
-    ReadWrite { vaddr: nat, paddr: nat, op: HWRWOp, pte: Option<(nat, PageTableEntry)>, core: Core },
+    ReadWrite {
+        vaddr: nat,
+        paddr: nat,
+        op: HWRWOp,
+        pte: Option<(nat, PageTableEntry)>,
+        core: Core,
+    },
     PTMemOp,
     TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
     TLBEvict { vaddr: nat, core: Core },
@@ -562,10 +568,8 @@ pub open spec fn init(c: HWConstants, s: HWVariables) -> bool {
 pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
     &&& c.core_no > 0
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) == n.cores.contains_key(id)
-    &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==>  n.cores[id].tlb.dom() === Set::empty()
+    &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==> n.cores[id].tlb.dom() === Set::empty()
 }
-
-
 
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
@@ -612,7 +616,7 @@ pub open spec fn step_ReadWrite(
                         &&& result is Value
                         &&& result->0 == s1.mem[pmem_idx as int]
                     } else {
-                        &&& result is Pagefault 
+                        &&& result is Pagefault
                     }
                 },
             }
@@ -628,8 +632,8 @@ pub open spec fn step_ReadWrite(
 
             &&& s2.mem === s1.mem
             &&& match op {
-                HWRWOp::Store { new_value, result } => result is Pagefault, 
-                HWRWOp::Load { is_exec, result } => result is Pagefault, 
+                HWRWOp::Store { new_value, result } => result is Pagefault,
+                HWRWOp::Load { is_exec, result } => result is Pagefault,
             }
         },
     }
@@ -768,5 +772,4 @@ pub open spec fn next(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool 
 //         HWStep::TLBEvict { vaddr }                  => (),
 //     }
 // }
-
 } // verus!

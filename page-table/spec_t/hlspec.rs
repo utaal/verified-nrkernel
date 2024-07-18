@@ -5,8 +5,8 @@
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
-    MemRegion, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR,
-    WORD_SIZE, x86_arch_spec
+    x86_arch_spec, MemRegion, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
+    MAX_PHYADDR, WORD_SIZE,
 };
 use crate::spec_t::mem;
 use vstd::prelude::*;

@@ -7,8 +7,10 @@
 
 use vstd::prelude::*;
 
-use crate::definitions_t::{ MemRegion, MemRegionExec, overlap, aligned, new_seq, PageTableEntry,
-WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
+use crate::definitions_t::{
+    aligned, new_seq, overlap, MemRegion, MemRegionExec, PageTableEntry, MAX_PHYADDR, PAGE_SIZE,
+    WORD_SIZE,
+};
 
 verus! {
 
@@ -19,38 +21,41 @@ pub fn word_index(addr: usize) -> (res: usize)
         res as nat === word_index_spec(addr as nat),
         // Prove this equivalence to use the indexing lemmas
         res as nat === crate::definitions_t::index_from_offset(addr as nat, WORD_SIZE as nat),
-        word_index_spec(addr as nat) === crate::definitions_t::index_from_offset(addr as nat, WORD_SIZE as nat),
+        word_index_spec(addr as nat) === crate::definitions_t::index_from_offset(
+            addr as nat,
+            WORD_SIZE as nat,
+        ),
 {
     addr / WORD_SIZE
 }
 
 pub open spec fn word_index_spec(addr: nat) -> nat
-    recommends aligned(addr, 8)
+    recommends
+        aligned(addr, 8),
 {
     addr / (WORD_SIZE as nat)
 }
 
-pub struct TLB {
-}
+pub struct TLB {}
 
 impl TLB {
-    pub spec fn view(self) -> Map<nat,PageTableEntry>;
+    pub spec fn view(self) -> Map<nat, PageTableEntry>;
 
     /// Invalidates any TLB entries containing `vbase`.
     #[verifier(external_body)]
     pub fn invalidate_entry(&mut self, vbase: usize)
         ensures
-            forall|base, pte| self.view().contains_pair(base, pte) ==> old(self).view().contains_pair(base, pte),
+            forall|base, pte|
+                self.view().contains_pair(base, pte) ==> old(self).view().contains_pair(base, pte),
             !self.view().dom().contains(vbase as nat),
     {
         unimplemented!()
     }
 }
 
-
-pub struct PTMemView{
+pub struct PTMemView {
     cr3: usize,
-    mem: Seq<usize>, 
+    mem: Seq<usize>,
 }
 
 // FIXME: We need to allow the dirty and accessed bits to change in the memory.
@@ -64,12 +69,18 @@ pub struct PageTableMemory {
 
 impl PageTableMemory {
     pub spec fn alloc_available_pages(self) -> nat;
+
     pub spec fn regions(self) -> Set<MemRegion>;
+
     pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
 
     pub open spec fn inv(self) -> bool {
         &&& self.phys_mem_ref_as_usize_spec() <= 0x7FE0_0000_0000_0000
-        &&& forall|s1: MemRegion, s2: MemRegion| self.regions().contains(s1) && self.regions().contains(s2) && s1 !== s2 ==> !overlap(s1, s2)
+        &&& forall|s1: MemRegion, s2: MemRegion|
+            self.regions().contains(s1) && self.regions().contains(s2) && s1 !== s2 ==> !overlap(
+                s1,
+                s2,
+            )
         &&& aligned(self.cr3_spec().base as nat, PAGE_SIZE as nat)
         &&& self.cr3_spec().size == PAGE_SIZE
     }
@@ -81,12 +92,10 @@ impl PageTableMemory {
     /// `cr3` returns a MemRegion whose base is the address at which the layer 0 page directory is mapped
     #[verifier(external_body)]
     pub fn cr3(&self) -> (res: MemRegionExec)
-        ensures res === self.cr3_spec()
+        ensures
+            res === self.cr3_spec(),
     {
-        MemRegionExec {
-            base: self.cr3 as usize,
-            size: PAGE_SIZE,
-        }
+        MemRegionExec { base: self.cr3 as usize, size: PAGE_SIZE }
     }
 
     pub open spec fn cr3_spec(&self) -> MemRegionExec;
@@ -107,7 +116,8 @@ impl PageTableMemory {
             !old(self).regions().contains(r@),
             self.regions() === old(self).regions().insert(r@),
             self.region_view(r@) === new_seq::<u64>(512nat, 0u64),
-            forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
+            forall|r2: MemRegion|
+                r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.cr3_spec() == old(self).cr3_spec(),
             self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
             self.inv(),
@@ -123,7 +133,8 @@ impl PageTableMemory {
             old(self).regions().contains(r@),
         ensures
             self.regions() === old(self).regions().remove(r@),
-            forall|r2: MemRegion| r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
+            forall|r2: MemRegion|
+                r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.cr3_spec() == old(self).cr3_spec(),
             self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
             self.inv(),
@@ -149,7 +160,9 @@ impl PageTableMemory {
             self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
     {
         let word_offset: isize = (word_index(pbase) + idx) as isize;
-        unsafe { self.phys_mem_ref.offset(word_offset).write(value); }
+        unsafe {
+            self.phys_mem_ref.offset(word_offset).write(value);
+        }
     }
 
     #[verifier(external_body)]
@@ -161,7 +174,7 @@ impl PageTableMemory {
             self.regions().contains(region@),
             idx < 512,
         ensures
-            res == self.spec_read(idx as nat, region@)
+            res == self.spec_read(idx as nat, region@),
     {
         let word_offset: isize = (word_index(pbase) + idx) as isize;
         unsafe { self.phys_mem_ref.offset(word_offset).read() }
@@ -186,7 +199,9 @@ impl PageTableMemory {
             self.regions().contains(region@),
             idx < 512,
     {
-        proof { crate::definitions_u::lemma_maxphyaddr_facts(); }
+        proof {
+            crate::definitions_u::lemma_maxphyaddr_facts();
+        }
         // https://dev-doc.rust-lang.org/beta/std/primitive.pointer.html#method.offset
         // The raw pointer offset computation needs to fit in an isize.
         // isize::MAX is   0x7FFF_FFFF_FFFF_FFFF
@@ -197,21 +212,25 @@ impl PageTableMemory {
         // 0x7FE0_0000_0000_0000 as an upper bound for phys_mem_ref.
         // (In practice the address has to be smaller anyway, because the address space
         // isn't that large.) NrOS uses 0x4000_0000_0000.
-        assert(word_index_spec(pbase as nat) < 0x2_0000_0000_0000) by(nonlinear_arith)
+        assert(word_index_spec(pbase as nat) < 0x2_0000_0000_0000) by (nonlinear_arith)
             requires
                 aligned(pbase as nat, WORD_SIZE as nat),
                 pbase <= MAX_PHYADDR,
-                MAX_PHYADDR <= 0xFFFFFFFFFFFFF;
+                MAX_PHYADDR <= 0xFFFFFFFFFFFFF,
+        ;
         let word_offset: isize = (word_index(pbase) + idx) as isize;
-        assert(word_offset < 0x2_0000_0000_01FF) by(nonlinear_arith)
+        assert(word_offset < 0x2_0000_0000_01FF) by (nonlinear_arith)
             requires
                 idx < 512,
                 word_offset == word_index_spec(pbase as nat) + idx,
-                word_index_spec(pbase as nat) < 0x2_0000_0000_0000;
+                word_index_spec(pbase as nat) < 0x2_0000_0000_0000,
+        ;
         let phys_mem_ref: isize = self.phys_mem_ref_as_usize() as isize;
 
-        assert(word_offset * WORD_SIZE < 0x10_0000_0000_0FF8) by(nonlinear_arith)
-            requires word_offset < 0x2_0000_0000_01FF;
+        assert(word_offset * WORD_SIZE < 0x10_0000_0000_0FF8) by (nonlinear_arith)
+            requires
+                word_offset < 0x2_0000_0000_01FF,
+        ;
         let byte_offset: isize = word_offset * (WORD_SIZE as isize);
         let raw_ptr_offset = phys_mem_ref + word_offset * (WORD_SIZE as isize);
     }
@@ -221,10 +240,11 @@ impl PageTableMemory {
 
     #[verifier(external_body)]
     fn phys_mem_ref_as_usize(&self) -> (res: usize)
-        ensures res == self.phys_mem_ref_as_usize_spec()
+        ensures
+            res == self.phys_mem_ref_as_usize_spec(),
     {
         unsafe { self.phys_mem_ref as usize }
     }
 }
 
-}
+} // verus!
