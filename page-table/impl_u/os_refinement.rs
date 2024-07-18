@@ -1,29 +1,31 @@
 use vstd::prelude::*;
 
-
 //use crate::impl_u::spec_pt;
 use crate::spec_t::hardware::Core;
 use crate::spec_t::{hardware, hlspec, os};
 
 verus! {
 
-
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of Invariant
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-proof fn init_implies_inv(c: os::OSConstants,s: os::OSVariables)
+proof fn init_implies_inv(c: os::OSConstants, s: os::OSVariables)
     requires
-        os::init(c, s)
+        os::init(c, s),
     ensures
-        s.inv(c)
+        s.inv(c),
 {
 }
 
-proof fn next_step_preserves_inv(c: os::OSConstants, s1: os::OSVariables, s2: os::OSVariables, step: os::OSStep)
+proof fn next_step_preserves_inv(
+    c: os::OSConstants,
+    s1: os::OSVariables,
+    s2: os::OSVariables,
+    step: os::OSStep,
+)
     requires
         s1.inv(c),
-        os::next_step(c, s1, s2, step)
+        os::next_step(c, s1, s2, step),
     ensures
         s2.inv(c),
 {
@@ -34,78 +36,93 @@ proof fn next_step_preserves_inv(c: os::OSConstants, s1: os::OSVariables, s2: os
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 proof fn lemma_infllight_vaddr_equals_hl_unmap(c: os::OSConstants, s: os::OSVariables)
     requires
-     s.inv(c)
-    ensures 
-    forall |v_addr| s.inflight_unmap_vaddr().contains(v_addr) 
-    <==> exists |thread_state| { &&& s.interp_thread_state(c).values().contains(thread_state) 
-                                 &&& s.interp_pt_mem().dom().contains(v_addr)
-                                 &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. }
-                                 &&& vaddr === v_addr},
+        s.inv(c),
+    ensures
+        forall|v_addr|
+            s.inflight_unmap_vaddr().contains(v_addr) <==> exists|thread_state|
+                {
+                    &&& s.interp_thread_state(c).values().contains(thread_state)
+                    &&& s.interp_pt_mem().dom().contains(v_addr)
+                    &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. }
+                    &&& vaddr === v_addr
+                },
 {
     // proof ==> direction
-    assert forall |v_addr| s.inflight_unmap_vaddr().contains(v_addr) 
-    implies exists |thread_state|  { &&& s.interp_thread_state(c).values().contains(thread_state) 
-                                     &&& s.interp_pt_mem().dom().contains(v_addr)
-                                     &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. }
-                                     &&& vaddr === v_addr}
-    by {
-        let core = choose |core | { &&& s.core_states.dom().contains(core) 
-         &&& ( {&&& s.core_states[core] matches  os::CoreState::UnmapWaiting { ULT_id, vaddr } &&& vaddr == v_addr}  
-            || {&&& s.core_states[core] matches os::CoreState::UnmapOpExecuting { ULT_id, vaddr } &&& vaddr == v_addr }
-            || {&&& s.core_states[core] matches os::CoreState::UnmapOpDone { ULT_id, vaddr, .. } &&& vaddr == v_addr}
-            || {&&& s.core_states[core] matches os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } &&& vaddr == v_addr})
-        };
-        assert(hardware::valid_core(c.hw, core));
+    assert forall|v_addr| s.inflight_unmap_vaddr().contains(v_addr) implies exists|thread_state|
+        {
+            &&& s.interp_thread_state(c).values().contains(thread_state)
+            &&& s.interp_pt_mem().dom().contains(v_addr)
+            &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. }
+            &&& vaddr === v_addr
+        } by {
+        let core = choose|core|
+            {
+                &&& s.core_states.dom().contains(core)
+                &&& ({
+                    &&& s.core_states[core] matches os::CoreState::UnmapWaiting { ULT_id, vaddr }
+                    &&& vaddr == v_addr
+                } || {
+                    &&& s.core_states[core] matches os::CoreState::UnmapOpExecuting {
+                        ULT_id,
+                        vaddr,
+                    }
+                    &&& vaddr == v_addr
+                } || {
+                    &&& s.core_states[core] matches os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                    &&& vaddr == v_addr
+                } || {
+                    &&& s.core_states[core] matches os::CoreState::UnmapShootdownWaiting {
+                        ULT_id,
+                        vaddr,
+                        ..
+                    }
+                    &&& vaddr == v_addr
+                })
+            };
+        //assert(hardware::valid_core(c.hw, core));
         match s.core_states[core] {
-                os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
-                | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
-                    assert(c.valid_ULT(ULT_id));
-                    assert(s.interp_thread_state(c).dom().contains(ULT_id));
-                    let thread_state = s.interp_thread_state(c)[ULT_id];
-                    assert(s.interp_thread_state(c).values().contains(thread_state));
-                    assert(thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. } );
-                },
-                _ => {assert(false);},
-            }
-    };
-    // proof  <== diretion
-    assert forall |v_addr| exists |thread_state|  { &&& s.interp_thread_state(c).values().contains(thread_state) 
-                                                   &&& s.interp_pt_mem().dom().contains(v_addr)
-                                                   &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. }
-                                                   &&& vaddr === v_addr}
-    implies  s.inflight_unmap_vaddr().contains(v_addr)             
-    by {let thread_state = choose  |thread_state| {&&& s.interp_thread_state(c).values().contains(thread_state) 
-        &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, pte }
-        &&& vaddr == v_addr
-    };
-        let ULT_id = choose |id|  #[trigger]  s.interp_thread_state(c).dom().contains(id) && s.interp_thread_state(c)[id] === thread_state  ;
-        assert (c.valid_ULT(ULT_id));
-        let core = c.ULT2core[ULT_id];
-        assert (hardware::valid_core(c.hw, core));
-        assert (s.core_states.dom().contains(core));
-        assert (s.interp_pt_mem().dom().contains(v_addr) );
-        assert ((s.core_states[core] matches  os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                ||s.core_states[core] matches os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
-                || s.core_states[core] matches os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                || s.core_states[core] matches os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. }) );
-            
-        match s.core_states[core] {
-              os::CoreState::UnmapWaiting { ULT_id, vaddr }
+            os::CoreState::UnmapWaiting { ULT_id, vaddr }
             | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
             | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
             | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
-                },
-            _ => {assert(false);},
-            }
-    
+                assert(s.interp_thread_state(c).dom().contains(ULT_id));
+                let thread_state = s.interp_thread_state(c)[ULT_id];
+                assert(s.interp_thread_state(c).values().contains(thread_state));
+            },
+            _ => {
+                assert(false);
+            },
+        }
+    };
+    // proof  <== diretion
+    assert forall|v_addr|
+        exists|thread_state|
+            {
+                &&& s.interp_thread_state(c).values().contains(thread_state)
+                &&& s.interp_pt_mem().dom().contains(v_addr)
+                &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, .. }
+                &&& vaddr === v_addr
+            } implies s.inflight_unmap_vaddr().contains(v_addr) by {
+        let thread_state = choose|thread_state|
+            {
+                &&& s.interp_thread_state(c).values().contains(thread_state)
+                &&& thread_state matches hlspec::AbstractArguments::Unmap { vaddr, pte }
+                &&& vaddr == v_addr
+            };
+        let ULT_id = choose|id| #[trigger]
+            s.interp_thread_state(c).dom().contains(id) && s.interp_thread_state(c)[id]
+                === thread_state;
+        assert(s.core_states.dom().contains(c.ULT2core[ULT_id]));
     };
 
 }
 
-proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(c: os::OSConstants, s1: os::OSVariables, s2: os::OSVariables)
-    requires 
+proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(
+    c: os::OSConstants,
+    s1: os::OSVariables,
+    s2: os::OSVariables,
+)
+    requires
         s1.inv(c),
         s2.inv(c),
         s1.interp_thread_state(c) === s2.interp_thread_state(c),
@@ -195,13 +212,12 @@ proof fn next_step_refines_hl_next_step(
             assume(false);
         },
         os::OSStep::MapOpStart { core } => {
-            
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-          
+
             //assert(s1.interp(c).mappings =~= s2.interp(c).mappings);
             //assert(s1.interp(c).mem === s2.interp(c).mem);
-          
+
         },
         os::OSStep::MapEnd { core, result } => {
             assume(false);
