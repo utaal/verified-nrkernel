@@ -155,8 +155,6 @@ impl OSVariables {
                 CoreState::Idle  => { true },
             }
         }
-
-
     }
 
     pub open spec fn wf(self, c: OSConstants) -> bool {
