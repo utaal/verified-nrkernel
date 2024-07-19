@@ -115,6 +115,10 @@ pub open spec fn valid_thread(c: AbstractConstants, thread_id: nat) -> bool {
     thread_id < c.thread_no
 }
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Helper function to specify relation between 2 states
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn state_unchanged_besides_thread_state(
     s1: AbstractVariables,
     s2: AbstractVariables,
@@ -128,12 +132,62 @@ pub open spec fn state_unchanged_besides_thread_state(
 }
 
 pub open spec fn unsound_state(s1: AbstractVariables, s2: AbstractVariables) -> bool {
-    // &&& s2.mem == arbitrary::Map<nat, nat>()
-    // &&& s2.thread_state == arbitrary::Map<nat, AbstractArguments>()
-    // &&& s2.mappings == arbitrary::Map<nat, PageTableEntry>()
-    &&& !s2.sound
+    !s2.sound
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Overlapping inflight memory helper functions 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+pub open spec fn candidate_mapping_overlaps_inflight_vmem(
+    inflightargs: Set<AbstractArguments>,
+    base: nat,
+    candidate: PageTableEntry,
+) -> bool {
+    &&& exists|b: AbstractArguments|
+        #![auto]
+        {
+            &&& inflightargs.contains(b)
+            &&& match b {
+                AbstractArguments::Map { vaddr, pte } => {
+                    overlap(
+                        MemRegion { base: vaddr, size: pte.frame.size },
+                        MemRegion { base: base, size: candidate.frame.size },
+                    )
+                },
+                AbstractArguments::Unmap { vaddr, pte } => {
+                    &&& pte.is_some()
+                    &&& overlap(
+                        MemRegion { base: vaddr, size: pte.unwrap().frame.size },
+                        MemRegion { base: base, size: candidate.frame.size },
+                    )
+                },
+                _ => { false },
+            }
+        }
+}
+
+pub open spec fn candidate_mapping_overlaps_inflight_pmem(
+    inflightargs: Set<AbstractArguments>,
+    candidate: PageTableEntry,
+) -> bool {
+    &&& exists|b: AbstractArguments|
+        #![auto]
+        {
+            &&& inflightargs.contains(b)
+            &&& match b {
+                AbstractArguments::Map { vaddr, pte } => { overlap(candidate.frame, pte.frame) },
+                AbstractArguments::Unmap { vaddr, pte } => {
+                    &&& pte.is_some()
+                    &&& overlap(candidate.frame, pte.unwrap().frame)
+                },
+                _ => { false },
+            }
+        }
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// MMU atomic ReadWrite
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //since unmap deleted pte inflight pte == pagefault
 pub open spec fn step_ReadWrite(
     c: AbstractConstants,
@@ -203,52 +257,13 @@ pub open spec fn step_ReadWrite(
     }
 }
 
-//call with candidate_mapping_overlaps_inflight_vmem(threadstate.values(), pte)
-pub open spec fn candidate_mapping_overlaps_inflight_vmem(
-    inflightargs: Set<AbstractArguments>,
-    base: nat,
-    candidate: PageTableEntry,
-) -> bool {
-    &&& exists|b: AbstractArguments|
-        #![auto]
-        {
-            &&& inflightargs.contains(b)
-            &&& match b {
-                AbstractArguments::Map { vaddr, pte } => {
-                    overlap(
-                        MemRegion { base: vaddr, size: pte.frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
-                AbstractArguments::Unmap { vaddr, pte } => {
-                    &&& pte.is_some()
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pte.unwrap().frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
-                    )
-                },
-                _ => { false },
-            }
-        }
-}
-
-pub open spec fn candidate_mapping_overlaps_inflight_pmem(
-    inflightargs: Set<AbstractArguments>,
-    candidate: PageTableEntry,
-) -> bool {
-    &&& exists|b: AbstractArguments|
-        #![auto]
-        {
-            &&& inflightargs.contains(b)
-            &&& match b {
-                AbstractArguments::Map { vaddr, pte } => { overlap(candidate.frame, pte.frame) },
-                AbstractArguments::Unmap { vaddr, pte } => {
-                    &&& pte.is_some()
-                    &&& overlap(candidate.frame, pte.unwrap().frame)
-                },
-                _ => { false },
-            }
-        }
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Map
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+pub open spec fn step_Map_sound(mappings: Map<nat, PageTableEntry>, inflights: Set<AbstractArguments>,  vaddr: nat, pte: PageTableEntry ) -> bool {
+    &&& !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte)
+    &&& !candidate_mapping_overlaps_existing_pmem(mappings, pte)
+    &&& !candidate_mapping_overlaps_inflight_pmem(inflights, pte)
 }
 
 pub open spec fn step_Map_enabled(
@@ -280,10 +295,8 @@ pub open spec fn step_Map_start(
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& if (!candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, pte)
-        && !candidate_mapping_overlaps_existing_pmem(s1.mappings, pte)
-        && !candidate_mapping_overlaps_inflight_pmem(s1.thread_state.values(), pte)) {
-        &&& state_unchanged_besides_thread_state(
+    &&& if step_Map_sound(s1.mappings, s1.thread_state.values(), vaddr, pte) {
+        state_unchanged_besides_thread_state(
             s1,
             s2,
             thread_id,
@@ -324,6 +337,9 @@ pub open spec fn step_Map_end(
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Unmap
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
     &&& {  // The given vaddr must be aligned to some valid page size
