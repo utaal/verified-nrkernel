@@ -115,7 +115,6 @@ pub open spec fn valid_thread(c: AbstractConstants, thread_id: nat) -> bool {
     thread_id < c.thread_no
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Helper function to specify relation between 2 states
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -136,7 +135,7 @@ pub open spec fn unsound_state(s1: AbstractVariables, s2: AbstractVariables) -> 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Overlapping inflight memory helper functions 
+// Overlapping inflight memory helper functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     inflightargs: Set<AbstractArguments>,
@@ -260,7 +259,12 @@ pub open spec fn step_ReadWrite(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Map
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn step_Map_sound(mappings: Map<nat, PageTableEntry>, inflights: Set<AbstractArguments>,  vaddr: nat, pte: PageTableEntry ) -> bool {
+pub open spec fn step_Map_sound(
+    mappings: Map<nat, PageTableEntry>,
+    inflights: Set<AbstractArguments>,
+    vaddr: nat,
+    pte: PageTableEntry,
+) -> bool {
     &&& !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte)
     &&& !candidate_mapping_overlaps_existing_pmem(mappings, pte)
     &&& !candidate_mapping_overlaps_inflight_pmem(inflights, pte)

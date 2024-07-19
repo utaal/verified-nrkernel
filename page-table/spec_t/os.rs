@@ -11,10 +11,10 @@ use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem};
 //TODO move core to definitions
 use crate::definitions_t::{
-    above_zero, aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    overlap, x86_arch_spec, HWLoadResult, HWRWOp, HWStoreResult, LoadResult, MemRegion,
-    PageTableEntry, RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR,
-    WORD_SIZE,
+    above_zero, aligned, between, candidate_mapping_in_bounds,
+    candidate_mapping_overlaps_existing_pmem, overlap, x86_arch_spec, HWLoadResult, HWRWOp,
+    HWStoreResult, LoadResult, MemRegion, PageTableEntry, RWOp, StoreResult, L1_ENTRY_SIZE,
+    L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE,
 };
 use crate::spec_t::hardware::Core;
 
@@ -139,22 +139,22 @@ impl OSVariables {
     }
 
     pub open spec fn inflight_pte_above_zero(self, c: OSConstants) -> bool {
-        forall |core: Core|
-        {   hardware::valid_core(c.hw, core)
-            ==> match self.core_states[core] {
-                CoreState::MapWaiting { vaddr, pte, .. }
-                | CoreState::MapExecuting { vaddr, pte, .. } => {
-                    above_zero(pte.frame.size)
-                },
-                CoreState::UnmapWaiting { vaddr, .. }
-                | CoreState::UnmapOpExecuting { vaddr, .. }
-                | CoreState::UnmapOpDone { vaddr, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                    self.effective_mappings().dom().contains(vaddr) ==> above_zero(self.effective_mappings()[vaddr].frame.size)
-                },
-                CoreState::Idle  => { true },
+        forall|core: Core|
+            {
+                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
+                    CoreState::MapWaiting { vaddr, pte, .. }
+                    | CoreState::MapExecuting { vaddr, pte, .. } => { above_zero(pte.frame.size) },
+                    CoreState::UnmapWaiting { vaddr, .. }
+                    | CoreState::UnmapOpExecuting { vaddr, .. }
+                    | CoreState::UnmapOpDone { vaddr, .. }
+                    | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        self.effective_mappings().dom().contains(vaddr) ==> above_zero(
+                            self.effective_mappings()[vaddr].frame.size,
+                        )
+                    },
+                    CoreState::Idle => { true },
+                }
             }
-        }
     }
 
     pub open spec fn wf(self, c: OSConstants) -> bool {
@@ -163,11 +163,10 @@ impl OSVariables {
             c.valid_ULT(id) ==> #[trigger] hardware::valid_core(c.hw, c.ULT2core.index(id))
         &&& forall|core: Core|
             hardware::valid_core(c.hw, core) <==> #[trigger] self.core_states.contains_key(core)
-        &&& forall|core1: Core, core2: Core|  ( #[trigger] hardware::valid_core(c.hw, core1) 
-                                           &&  self.core_states[core1].holds_lock() 
-                                           && #[trigger]  hardware::valid_core(c.hw, core2) 
-                                           && self.core_states[core2].holds_lock())
-                                           ==> core1 === core2
+        &&& forall|core1: Core, core2: Core|
+            (#[trigger] hardware::valid_core(c.hw, core1) && self.core_states[core1].holds_lock()
+                && #[trigger] hardware::valid_core(c.hw, core2)
+                && self.core_states[core2].holds_lock()) ==> core1 === core2
     }
 
     pub open spec fn inv(self, c: OSConstants) -> bool {
