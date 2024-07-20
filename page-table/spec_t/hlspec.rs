@@ -344,6 +344,14 @@ pub open spec fn step_Map_end(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+pub open spec fn step_Unmap_sound(
+    inflights: Set<AbstractArguments>,
+    vaddr: nat,
+    pte: PageTableEntry,
+) -> bool {
+    !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte)
+}
+
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
     &&& {  // The given vaddr must be aligned to some valid page size
@@ -371,7 +379,7 @@ pub open spec fn step_Unmap_start(
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& if (!candidate_mapping_overlaps_inflight_vmem(
+    &&& if (step_Unmap_sound(
         s1.thread_state.values(),
         vaddr,
         (s1.mappings.index(vaddr)),
