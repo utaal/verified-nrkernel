@@ -379,11 +379,7 @@ pub open spec fn step_Unmap_start(
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& if (step_Unmap_sound(
-        s1.thread_state.values(),
-        vaddr,
-        (s1.mappings.index(vaddr)),
-    )) {
+    &&& if (step_Unmap_sound(s1.thread_state.values(), vaddr, (s1.mappings.index(vaddr)))) {
         &&& s2.thread_state === s1.thread_state.insert(
             thread_id,
             AbstractArguments::Unmap { vaddr, pte },

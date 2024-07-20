@@ -256,8 +256,11 @@ impl OSVariables {
                         | CoreState::UnmapOpExecuting { ULT_id, vaddr }
                         | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                         | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
-                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) { //TODO think this over real hard
-                                Some(self.interp_pt_mem().index(vaddr))                    //like really hard
+                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {  //TODO think this over real hard
+                                Some(
+                                    self.interp_pt_mem().index(vaddr),
+                                )  //like really hard
+
                             } else {
                                 Option::None
                             };
@@ -434,8 +437,8 @@ pub open spec fn step_Map_Start(
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapWaiting { ULT_id, vaddr, pte })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound && step_Map_sound(
-        s1.interp_pt_mem(),   
-        //TODO reallllllly think about this 
+        s1.interp_pt_mem(),
+        //TODO reallllllly think about this
         s1.core_states.values(),
         vaddr,
         pte,
