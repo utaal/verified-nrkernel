@@ -50,8 +50,13 @@ pub enum CoreState {
     MapExecuting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
     UnmapWaiting { ULT_id: nat, vaddr: nat },
     UnmapOpExecuting { ULT_id: nat, vaddr: nat },
-    UnmapOpDone { ULT_id: nat, vaddr: nat,  pte: Option<PageTableEntry> ,result: Result<(), ()> },
-    UnmapShootdownWaiting { ULT_id: nat, vaddr: nat,  pte: Option<PageTableEntry>  ,result: Result<(), ()> },
+    UnmapOpDone { ULT_id: nat, vaddr: nat, pte: Option<PageTableEntry>, result: Result<(), ()> },
+    UnmapShootdownWaiting {
+        ULT_id: nat,
+        vaddr: nat,
+        pte: Option<PageTableEntry>,
+        result: Result<(), ()>,
+    },
 }
 
 impl CoreState {
@@ -89,9 +94,9 @@ impl OSVariables {
         }
     }
 
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Invariant and WF
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Invariant and WF
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn valid_ids(self, c: OSConstants) -> bool {
         forall|core: Core|
             hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
@@ -122,11 +127,8 @@ impl OSVariables {
                     },
                     CoreState::UnmapOpDone { pte, .. }
                     | CoreState::UnmapShootdownWaiting { pte, .. } => {
-                       (pte is Some )==> above_zero(
-                            pte.unwrap().frame.size,
-                        )
+                        (pte is Some) ==> above_zero(pte.unwrap().frame.size)
                     },
-
                     CoreState::Idle => { true },
                 }
             }
@@ -136,9 +138,9 @@ impl OSVariables {
         forall|core: Core|
             {
                 hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                      CoreState::UnmapOpDone { vaddr, .. }
+                    CoreState::UnmapOpDone { vaddr, .. }
                     | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        !self.interp_pt_mem().dom().contains(vaddr) 
+                        !self.interp_pt_mem().dom().contains(vaddr)
                     },
                     _ => { true },
                 }
@@ -164,10 +166,9 @@ impl OSVariables {
         &&& self.successful_unmaps(c)
     }
 
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Interpretation functions
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Interpretation functions
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables { pt_mem: self.hw.global_pt }
     }
@@ -247,10 +248,8 @@ impl OSVariables {
                         },
                         CoreState::UnmapWaiting { ULT_id, vaddr }
                         | CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
-                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) { 
-                                Some(
-                                    self.interp_pt_mem().index(vaddr),
-                                ) 
+                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {
+                                Some(self.interp_pt_mem().index(vaddr))
                             } else {
                                 Option::None
                             };
@@ -260,7 +259,7 @@ impl OSVariables {
                                 hlspec::AbstractArguments::Empty
                             }
                         },
-                        | CoreState::UnmapOpDone { ULT_id, vaddr, result, pte }
+                        CoreState::UnmapOpDone { ULT_id, vaddr, result, pte }
                         | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result, pte } => {
                             if ULT_id == ult_id {
                                 hlspec::AbstractArguments::Unmap { vaddr, pte }
@@ -596,7 +595,7 @@ pub open spec fn step_Unmap_Op_End(
     s2: OSVariables,
     core: Core,
     result: Result<(), ()>,
-) -> bool { 
+) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
@@ -613,12 +612,23 @@ pub open spec fn step_Unmap_Op_End(
         result,
     )
     //new state
-    &&&  if (result is Ok) {s2.core_states == s1.core_states.insert(
-        core,
-        CoreState::UnmapOpDone { ULT_id, vaddr, result, pte: Some(s1.interp_pt_mem().index(vaddr)) },
-    )} else { s2.core_states == s1.core_states.insert(
-        core,
-        CoreState::UnmapOpDone { ULT_id, vaddr, result, pte: None },)}
+
+    &&& if (result is Ok) {
+        s2.core_states == s1.core_states.insert(
+            core,
+            CoreState::UnmapOpDone {
+                ULT_id,
+                vaddr,
+                result,
+                pte: Some(s1.interp_pt_mem().index(vaddr)),
+            },
+        )
+    } else {
+        s2.core_states == s1.core_states.insert(
+            core,
+            CoreState::UnmapOpDone { ULT_id, vaddr, result, pte: None },
+        )
+    }
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
 }
