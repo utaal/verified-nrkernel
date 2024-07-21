@@ -42,8 +42,6 @@ pub enum AbstractStep {
     MapEnd { thread_id: nat, result: Result<(), ()> },
     UnmapStart { thread_id: nat, vaddr: nat },
     UnmapEnd { thread_id: nat, result: Result<(), ()> },
-    ResolveStart { thread_id: nat, vaddr: nat },
-    ResolveEnd { thread_id: nat, result: Result<(nat, PageTableEntry), ()> },
     Stutter,
 }
 
@@ -52,7 +50,6 @@ pub enum AbstractStep {
 pub enum AbstractArguments {
     Map { vaddr: nat, pte: PageTableEntry },
     Unmap { vaddr: nat, pte: Option<PageTableEntry> },
-    Resolve { vaddr: nat },
     Empty,
 }
 
@@ -379,7 +376,7 @@ pub open spec fn step_Unmap_start(
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& if (step_Unmap_sound(s1.thread_state.values(), vaddr, (s1.mappings.index(vaddr)))) {
+    &&& if (pte is None || step_Unmap_sound(s1.thread_state.values(), vaddr, pte.unwrap())) {
         &&& s2.thread_state === s1.thread_state.insert(
             thread_id,
             AbstractArguments::Unmap { vaddr, pte },
@@ -425,61 +422,9 @@ pub open spec fn step_Unmap_end(
     }
 }
 
-pub open spec fn step_Resolve_enabled(vaddr: nat) -> bool {
-    &&& aligned(vaddr, 8)
-}
-
-pub open spec fn step_Resolve_start(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
-    thread_id: nat,
-    vaddr: nat,
-) -> bool {
-    &&& step_Resolve_enabled(vaddr)
-    //thread is valid and ready
-
-    &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id]
-        === AbstractArguments::Empty
-    //thread gets resolve-started state
-
-    &&& state_unchanged_besides_thread_state(
-        s1,
-        s2,
-        thread_id,
-        AbstractArguments::Resolve { vaddr },
-    )
-}
-
-pub open spec fn step_Resolve_end(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
-    thread_id: nat,
-    result: Result<(nat, PageTableEntry), ()>,
-) -> bool {
-    &&& valid_thread(c, thread_id)
-    &&& state_unchanged_besides_thread_state(s1, s2, thread_id, AbstractArguments::Empty)
-    &&& match s1.thread_state[thread_id] {
-        AbstractArguments::Resolve { vaddr } => {
-            &&& match result {
-                Ok((base, pte)) => {
-                    // If result is Ok, it's an existing mapping that contains vaddr..
-                    &&& s1.mappings.contains_pair(base, pte)
-                    &&& between(vaddr, base, base + pte.frame.size)
-                },
-                Err(_) => {
-                    let vmem_idx = mem::word_index_spec(vaddr);
-                    // If result is Err, no mapping containing vaddr exists..
-                    &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
-                },
-            }
-        },
-        _ => { false },
-    }
-}
-
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Stutter
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Stutter(
     c: AbstractConstants,
     s1: AbstractVariables,
@@ -521,20 +466,6 @@ pub open spec fn next_step(
             vaddr,
         ),
         AbstractStep::UnmapEnd { thread_id, result } => step_Unmap_end(
-            c,
-            s1,
-            s2,
-            thread_id,
-            result,
-        ),
-        AbstractStep::ResolveStart { thread_id, vaddr } => step_Resolve_start(
-            c,
-            s1,
-            s2,
-            thread_id,
-            vaddr,
-        ),
-        AbstractStep::ResolveEnd { thread_id, result } => step_Resolve_end(
             c,
             s1,
             s2,
@@ -675,26 +606,6 @@ pub proof fn next_step_preserves_inv(
             },
             AbstractStep::MapEnd { thread_id, result } => {
                 map_end_preserves_inv(c, s1, s2, thread_id, result);
-            },
-            AbstractStep::ResolveStart { thread_id, vaddr } => {
-                assert(s2.thread_state.values().subset_of(
-                    s1.thread_state.values().insert(AbstractArguments::Resolve { vaddr }),
-                ));
-                insert_non_map_preserves_unique(
-                    s1.thread_state,
-                    thread_id,
-                    AbstractArguments::Resolve { vaddr },
-                );
-            },
-            AbstractStep::ResolveEnd { thread_id, result } => {
-                assert(s2.thread_state.values().subset_of(
-                    s1.thread_state.values().insert(AbstractArguments::Empty),
-                ));
-                insert_non_map_preserves_unique(
-                    s1.thread_state,
-                    thread_id,
-                    AbstractArguments::Empty,
-                );
             },
             _ => {},
         }

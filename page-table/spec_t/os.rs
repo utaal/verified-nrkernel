@@ -43,15 +43,15 @@ pub struct ShootdownVector {
     pub open_requests: Set<Core>,
 }
 
-// MB: This is not necessarily complete and I didn't add the necessary fields
+#[allow(inconsistent_fields)]
 pub enum CoreState {
     Idle,
     MapWaiting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
     MapExecuting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
     UnmapWaiting { ULT_id: nat, vaddr: nat },
     UnmapOpExecuting { ULT_id: nat, vaddr: nat },
-    UnmapOpDone { ULT_id: nat, vaddr: nat, result: Result<(), ()> },
-    UnmapShootdownWaiting { ULT_id: nat, vaddr: nat, result: Result<(), ()> },
+    UnmapOpDone { ULT_id: nat, vaddr: nat,  pte: Option<PageTableEntry> ,result: Result<(), ()> },
+    UnmapShootdownWaiting { ULT_id: nat, vaddr: nat,  pte: Option<PageTableEntry>  ,result: Result<(), ()> },
 }
 
 impl CoreState {
@@ -89,39 +89,9 @@ impl OSVariables {
         }
     }
 
-    /*
-    pub open spec fn NUMA_pt_mappings_dont_overlap_in_vmem(self) -> bool {
-        forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
-            self.interp_pt_mem().contains_pair(b1, pte1) && self.interp_pt_mem().contains_pair(b2, pte2) ==>
-            ((b1 == b2) || !overlap(
-                    MemRegion { base: b1, size: pte1.frame.size },
-                    MemRegion { base: b2, size: pte2.frame.size }))
-    }
-
-    pub open spec fn pt_mappings_dont_overlap_in_pmem(self) -> bool {
-        forall|b1: nat, pte1: PageTableEntry, b2: nat, pte2: PageTableEntry|
-            self.interp_pt_mem().contains_pair(b1, pte1) && self.interp_pt_mem().contains_pair(b2, pte2) ==>
-            ((b1 == b2) || !overlap(pte1.frame, pte2.frame))
-    }
-
-    pub open spec fn tlb_is_submap_of_pt(self) -> bool {
-        forall|base, pte| self.hw.tlb.contains_pair(base, pte) ==> #[trigger] self.interp_pt_mem().contains_pair(base, pte)
-    }
-
-    pub open spec fn pt_entry_sizes_are_valid(self) -> bool {
-        forall|base, pte| self.interp_pt_mem().contains_pair(base, pte) ==> {
-            ||| pte.frame.size == L3_ENTRY_SIZE
-            ||| pte.frame.size == L2_ENTRY_SIZE
-            ||| pte.frame.size == L1_ENTRY_SIZE
-        }
-    }
-
-    #[verifier(opaque)]
-    pub open spec fn pt_entries_aligned(self) -> bool {
-        forall|base, pte| self.interp_pt_mem().contains_pair(base, pte)
-            ==> aligned(base, 8) && aligned(pte.frame.base, 8)
-    }
-    */
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Invariant and WF
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn valid_ids(self, c: OSConstants) -> bool {
         forall|core: Core|
             hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
@@ -145,14 +115,32 @@ impl OSVariables {
                     CoreState::MapWaiting { vaddr, pte, .. }
                     | CoreState::MapExecuting { vaddr, pte, .. } => { above_zero(pte.frame.size) },
                     CoreState::UnmapWaiting { vaddr, .. }
-                    | CoreState::UnmapOpExecuting { vaddr, .. }
-                    | CoreState::UnmapOpDone { vaddr, .. }
-                    | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        self.effective_mappings().dom().contains(vaddr) ==> above_zero(
-                            self.effective_mappings()[vaddr].frame.size,
+                    | CoreState::UnmapOpExecuting { vaddr, .. } => {
+                        self.interp_pt_mem().dom().contains(vaddr) ==> above_zero(
+                            self.interp_pt_mem()[vaddr].frame.size,
                         )
                     },
+                    CoreState::UnmapOpDone { pte, .. }
+                    | CoreState::UnmapShootdownWaiting { pte, .. } => {
+                       (pte is Some )==> above_zero(
+                            pte.unwrap().frame.size,
+                        )
+                    },
+
                     CoreState::Idle => { true },
+                }
+            }
+    }
+
+    pub open spec fn successful_unmaps(self, c: OSConstants) -> bool {
+        forall|core: Core|
+            {
+                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
+                      CoreState::UnmapOpDone { vaddr, .. }
+                    | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        !self.interp_pt_mem().dom().contains(vaddr) 
+                    },
+                    _ => { true },
                 }
             }
     }
@@ -173,8 +161,13 @@ impl OSVariables {
         &&& self.wf(c)
         &&& self.valid_ids(c)
         &&& self.inflight_pte_above_zero(c)
+        &&& self.successful_unmaps(c)
     }
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Interpretation functions
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn pt_variables(self) -> spec_pt::PageTableVariables {
         spec_pt::PageTableVariables { pt_mem: self.hw.global_pt }
     }
@@ -253,17 +246,22 @@ impl OSVariables {
                             }
                         },
                         CoreState::UnmapWaiting { ULT_id, vaddr }
-                        | CoreState::UnmapOpExecuting { ULT_id, vaddr }
-                        | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                        | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
-                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) {  //TODO think this over real hard
+                        | CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
+                            let pte = if (self.interp_pt_mem().dom().contains(vaddr)) { 
                                 Some(
                                     self.interp_pt_mem().index(vaddr),
-                                )  //like really hard
-
+                                ) 
                             } else {
                                 Option::None
                             };
+                            if ULT_id == ult_id {
+                                hlspec::AbstractArguments::Unmap { vaddr, pte }
+                            } else {
+                                hlspec::AbstractArguments::Empty
+                            }
+                        },
+                        | CoreState::UnmapOpDone { ULT_id, vaddr, result, pte }
+                        | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result, pte } => {
                             if ULT_id == ult_id {
                                 hlspec::AbstractArguments::Unmap { vaddr, pte }
                             } else {
@@ -303,11 +301,14 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
                     overlap(candidate.frame, pte.frame)
                 },
                 CoreState::UnmapWaiting { ULT_id, vaddr }
-                | CoreState::UnmapOpExecuting { ULT_id, vaddr }
-                | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
+                | CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
                     &&& pt.dom().contains(vaddr)
                     &&& overlap(candidate.frame, pt.index(vaddr).frame)
+                },
+                CoreState::UnmapOpDone { ULT_id, vaddr, pte, .. }
+                | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, pte, .. } => {
+                    &&& pte is Some
+                    &&& overlap(candidate.frame, pte.unwrap().frame)
                 },
                 CoreState::Idle => false,
             }
@@ -333,12 +334,18 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                     )
                 },
                 CoreState::UnmapWaiting { vaddr, .. }
-                | CoreState::UnmapOpExecuting { vaddr, .. }
-                | CoreState::UnmapOpDone { vaddr, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                | CoreState::UnmapOpExecuting { vaddr, .. } => {
                     &&& pt.dom().contains(vaddr)
                     &&& overlap(
                         MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
+                        MemRegion { base: base, size: candidate.frame.size },
+                    )
+                },
+                CoreState::UnmapOpDone { vaddr, pte, .. }
+                | CoreState::UnmapShootdownWaiting { vaddr, pte, .. } => {
+                    &&& pte is Some
+                    &&& overlap(
+                        MemRegion { base: vaddr, size: pte.unwrap().frame.size },
                         MemRegion { base: base, size: candidate.frame.size },
                     )
                 },
@@ -589,7 +596,7 @@ pub open spec fn step_Unmap_Op_End(
     s2: OSVariables,
     core: Core,
     result: Result<(), ()>,
-) -> bool {
+) -> bool { 
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
@@ -606,11 +613,12 @@ pub open spec fn step_Unmap_Op_End(
         result,
     )
     //new state
-
-    &&& s2.core_states == s1.core_states.insert(
+    &&&  if (result is Ok) {s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapOpDone { ULT_id, vaddr, result },
-    )
+        CoreState::UnmapOpDone { ULT_id, vaddr, result, pte: Some(s1.interp_pt_mem().index(vaddr)) },
+    )} else { s2.core_states == s1.core_states.insert(
+        core,
+        CoreState::UnmapOpDone { ULT_id, vaddr, result, pte: None },)}
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
 }
@@ -623,7 +631,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
-    &&& s1.core_states[core] matches CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, result }
+    &&& s1.core_states[core] matches CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, result, pte }
     &&& result is Ok
     //hw/spec_pt-statemachine steps
 
@@ -636,7 +644,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
 
     &&& s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapShootdownWaiting { ULT_id: ult_id, vaddr, result },
+        CoreState::UnmapShootdownWaiting { ULT_id: ult_id, vaddr, result, pte },
     )
     &&& s2.TLB_Shootdown == ShootdownVector {
         vaddr: vaddr,
