@@ -171,9 +171,9 @@ impl OSVariables {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about the TLB
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
     pub open spec fn shootdown_cores_valid(self, c: OSConstants) -> bool {
-        forall|core|  #[trigger] self.TLB_Shootdown.open_requests.contains(core) ==> hardware::valid_core(c.hw, core)
+        forall|core| #[trigger]
+            self.TLB_Shootdown.open_requests.contains(core) ==> hardware::valid_core(c.hw, core)
     }
 
     pub open spec fn successful_IPI(self, c: OSConstants) -> bool {
@@ -181,24 +181,33 @@ impl OSVariables {
             {
                 hardware::valid_core(c.hw, dispatcher) ==> match self.core_states[dispatcher] {
                     CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        forall |handler: Core|  #[trigger]   self.TLB_Shootdown.open_requests.contains(handler) ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(vaddr)
+                        forall|handler: Core| #[trigger]
+                            self.TLB_Shootdown.open_requests.contains(handler)
+                                ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(
+                            vaddr)
                     },
                     _ => true,
                 }
             }
     }
-    
+
     pub open spec fn successful_shootdown(self, c: OSConstants) -> bool {
         forall|dispatcher: Core|
             {
                 hardware::valid_core(c.hw, dispatcher) ==> match self.core_states[dispatcher] {
                     CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        self.TLB_Shootdown.open_requests.is_empty() ==>
-                        (forall |handler: Core|  #[trigger]  hardware::valid_core(c.hw, handler) ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(vaddr))
-                
+                        self.TLB_Shootdown.open_requests.is_empty() ==> (forall|handler: Core|
+                         #[trigger]
+                            hardware::valid_core(c.hw, handler)
+                                ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(
+                            vaddr))
                     },
-                    CoreState::UnmapOpDone { vaddr, result, .. } => { result is Err ==> 
-                        (forall |handler: Core|  #[trigger]  hardware::valid_core(c.hw, handler) ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(vaddr))},
+                    CoreState::UnmapOpDone { vaddr, result, .. } => {
+                        result is Err ==> (forall|handler: Core| #[trigger]
+                            hardware::valid_core(c.hw, handler)
+                                ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(
+                            vaddr))
+                    },
                     _ => true,
                 }
             }
@@ -207,16 +216,20 @@ impl OSVariables {
     pub open spec fn TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
-                #[trigger] hardware::valid_core(c.hw, core) ==> self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().subset_of(self.interp_pt_mem().dom().union(self.inflight_unmap_vaddr()))
+                #[trigger] hardware::valid_core(c.hw, core)
+                    ==> self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().subset_of(
+                    self.interp_pt_mem().dom().union(self.inflight_unmap_vaddr()),
+                )
             }
     }
 
     pub open spec fn tlb_inv(self, c: OSConstants) -> bool {
-            &&& self.shootdown_cores_valid(c)
-            &&& self.successful_IPI(c)
-            &&& self.successful_shootdown(c)
-            &&& self.TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(c)
+        &&& self.shootdown_cores_valid(c)
+        &&& self.successful_IPI(c)
+        &&& self.successful_shootdown(c)
+        &&& self.TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(c)
     }
+
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Interpretation functions
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -851,9 +864,10 @@ impl OSStep {
             OSStep::MapOpStart { .. } => hlspec::AbstractStep::Stutter,
             OSStep::MapEnd { core, result } => {
                 match s.core_states[core] {
-                    CoreState::MapExecuting { ULT_id, .. } =>
-                   { hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }},
-                _ => {arbitrary()},
+                    CoreState::MapExecuting { ULT_id, .. } => {
+                        hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
+                    },
+                    _ => { arbitrary() },
                 }
             },
             //Unmap steps
@@ -870,7 +884,8 @@ impl OSStep {
                         hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
                     },
                     CoreState::UnmapOpDone { result, ULT_id, .. } => {
-                         hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result } },
+                        hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
+                    },
                     _ => arbitrary(),
                 }
             },
@@ -923,7 +938,7 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
             === CoreState::Idle
         //shootdown
 
-    &&& s.TLB_Shootdown.open_requests  === Set::empty()
+    &&& s.TLB_Shootdown.open_requests === Set::empty()
     //sound
 
     &&& s.sound
