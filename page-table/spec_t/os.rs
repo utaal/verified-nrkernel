@@ -113,7 +113,7 @@ impl OSVariables {
             }
     }
 
-    pub open spec fn inflight_pte_above_zero(self, c: OSConstants) -> bool {
+    pub open spec fn inflight_pte_above_zero_pte_result_consistant(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
                 hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
@@ -125,9 +125,10 @@ impl OSVariables {
                             self.interp_pt_mem()[vaddr].frame.size,
                         )
                     },
-                    CoreState::UnmapOpDone { pte, .. }
-                    | CoreState::UnmapShootdownWaiting { pte, .. } => {
-                        (pte is Some) ==> above_zero(pte.unwrap().frame.size)
+                    CoreState::UnmapOpDone { pte, result, .. }
+                    | CoreState::UnmapShootdownWaiting { pte, result, .. } => {
+                        &&& (pte is Some) ==> above_zero(pte.unwrap().frame.size)
+                        &&& pte is None <==> result is Err
                     },
                     CoreState::Idle => { true },
                 }
@@ -162,10 +163,60 @@ impl OSVariables {
     pub open spec fn inv(self, c: OSConstants) -> bool {
         &&& self.wf(c)
         &&& self.valid_ids(c)
-        &&& self.inflight_pte_above_zero(c)
+        &&& self.inflight_pte_above_zero_pte_result_consistant(c)
         &&& self.successful_unmaps(c)
+        &&& self.tlb_inv(c)
     }
 
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // Invariants about the TLB
+    ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    pub open spec fn shootdown_cores_valid(self, c: OSConstants) -> bool {
+        forall|core|  #[trigger] self.TLB_Shootdown.open_requests.contains(core) ==> hardware::valid_core(c.hw, core)
+    }
+
+    pub open spec fn successful_IPI(self, c: OSConstants) -> bool {
+        forall|dispatcher: Core|
+            {
+                hardware::valid_core(c.hw, dispatcher) ==> match self.core_states[dispatcher] {
+                    CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        forall |handler: Core|  #[trigger]   self.TLB_Shootdown.open_requests.contains(handler) ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(vaddr)
+                    },
+                    _ => true,
+                }
+            }
+    }
+    
+    pub open spec fn successful_shootdown(self, c: OSConstants) -> bool {
+        forall|dispatcher: Core|
+            {
+                hardware::valid_core(c.hw, dispatcher) ==> match self.core_states[dispatcher] {
+                    CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        self.TLB_Shootdown.open_requests.is_empty() ==>
+                        (forall |handler: Core|  #[trigger]  hardware::valid_core(c.hw, handler) ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(vaddr))
+                
+                    },
+                    CoreState::UnmapOpDone { vaddr, result, .. } => { result is Err ==> 
+                        (forall |handler: Core|  #[trigger]  hardware::valid_core(c.hw, handler) ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(vaddr))},
+                    _ => true,
+                }
+            }
+    }
+
+    pub open spec fn TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
+        forall|core: Core|
+            {
+                #[trigger] hardware::valid_core(c.hw, core) ==> self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().subset_of(self.interp_pt_mem().dom().union(self.inflight_unmap_vaddr()))
+            }
+    }
+
+    pub open spec fn tlb_inv(self, c: OSConstants) -> bool {
+            &&& self.shootdown_cores_valid(c)
+            &&& self.successful_IPI(c)
+            &&& self.successful_shootdown(c)
+            &&& self.TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(c)
+    }
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Interpretation functions
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -799,10 +850,10 @@ impl OSStep {
             },
             OSStep::MapOpStart { .. } => hlspec::AbstractStep::Stutter,
             OSStep::MapEnd { core, result } => {
-                if let CoreState::MapExecuting { ULT_id, .. } = s.core_states[core] {
-                    hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
-                } else {
-                    arbitrary()
+                match s.core_states[core] {
+                    CoreState::MapExecuting { ULT_id, .. } =>
+                   { hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }},
+                _ => {arbitrary()},
                 }
             },
             //Unmap steps
@@ -814,11 +865,13 @@ impl OSStep {
             OSStep::UnmapInitiateShootdown { .. } => hlspec::AbstractStep::Stutter,
             OSStep::AckShootdownIPI { .. } => hlspec::AbstractStep::Stutter,
             OSStep::UnmapEnd { core } => {
-                if let CoreState::UnmapShootdownWaiting { ULT_id, result, .. } =
-                    s.core_states[core] {
-                    hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
-                } else {
-                    arbitrary()
+                match s.core_states[core] {
+                    CoreState::UnmapShootdownWaiting { result, ULT_id, .. } => {
+                        hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result }
+                    },
+                    CoreState::UnmapOpDone { result, ULT_id, .. } => {
+                         hlspec::AbstractStep::UnmapEnd { thread_id: ULT_id, result } },
+                    _ => arbitrary(),
                 }
             },
         }
@@ -870,7 +923,7 @@ pub open spec fn init(c: OSConstants, s: OSVariables) -> bool {
             === CoreState::Idle
         //shootdown
 
-    &&& s.TLB_Shootdown.open_requests.is_empty()
+    &&& s.TLB_Shootdown.open_requests  === Set::empty()
     //sound
 
     &&& s.sound
