@@ -155,9 +155,9 @@ impl OSVariables {
         &&& forall|core: Core|
             hardware::valid_core(c.hw, core) <==> #[trigger] self.core_states.contains_key(core)
         &&& forall|core1: Core, core2: Core|
-            (#[trigger] hardware::valid_core(c.hw, core1) && self.core_states[core1].holds_lock()
-                && #[trigger] hardware::valid_core(c.hw, core2)
-                && self.core_states[core2].holds_lock()) ==> core1 === core2
+            ( hardware::valid_core(c.hw, core1) && #[trigger] self.core_states[core1].holds_lock()
+                &&  #[trigger] hardware::valid_core(c.hw, core2)
+                &&  self.core_states[core2].holds_lock()) ==> core1 === core2
     }
 
     pub open spec fn inv(self, c: OSConstants) -> bool {
@@ -181,8 +181,8 @@ impl OSVariables {
             {
                 hardware::valid_core(c.hw, dispatcher) ==> match self.core_states[dispatcher] {
                     CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        forall|handler: Core| #[trigger]
-                            self.TLB_Shootdown.open_requests.contains(handler)
+                        forall|handler: Core| 
+                            !(#[trigger]self.TLB_Shootdown.open_requests.contains(handler))
                                 ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(
                             vaddr)
                     },
@@ -213,7 +213,7 @@ impl OSVariables {
             }
     }
 
-    pub open spec fn TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
+    pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
                 #[trigger] hardware::valid_core(c.hw, core)
@@ -227,7 +227,7 @@ impl OSVariables {
         &&& self.shootdown_cores_valid(c)
         &&& self.successful_IPI(c)
         &&& self.successful_shootdown(c)
-        &&& self.TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(c)
+        &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -185,6 +185,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
 // MMU atomic ReadWrite
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //since unmap deleted pte inflight pte == pagefault
+
 pub open spec fn step_ReadWrite(
     c: AbstractConstants,
     s1: AbstractVariables,
@@ -433,6 +434,7 @@ pub open spec fn step_Stutter(
     s1 === s2
 }
 
+//if s1.sound then match else !s2.sound
 pub open spec fn next_step(
     c: AbstractConstants,
     s1: AbstractVariables,

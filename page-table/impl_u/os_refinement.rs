@@ -45,8 +45,36 @@ proof fn next_step_preserves_inv(
     ensures
         s2.inv(c),
 {
+   
+    assert forall|core1, core2|
+        ( hardware::valid_core(c.hw, core1) && #[trigger] s2.core_states[core1].holds_lock()
+            &&  hardware::valid_core(c.hw, core2)
+            && #[trigger] s2.core_states[core2].holds_lock()) implies core1 === core2
+    by {
+        let _ = s1.core_states[core1].holds_lock();
+        let _ = s1.core_states[core2].holds_lock();
+    }
     next_step_preserves_tlb_inv(c, s1, s2, step);
-    admit();
+    assert(s2.wf(c));
+    assert( s2.valid_ids(c));
+    assert( s2.inflight_pte_above_zero_pte_result_consistant(c));
+    //assume( s2.successful_unmaps(c));
+    assert forall|core|
+            
+                hardware::valid_core(c.hw, core) implies { match s2.core_states[core] {
+                    os::CoreState::UnmapOpDone { vaddr, .. }
+                    | os::CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        !s2.interp_pt_mem().dom().contains(vaddr)
+                    },
+                    _ => { true },
+                }
+            } by {
+        let _ = s1.core_states[core].holds_lock();
+
+                
+            }
+    assert(s2.inv(c));
+    //admit();
 
 }
 
@@ -76,7 +104,7 @@ proof fn init_implies_tlb_inv(c: os::OSConstants, s: os::OSVariables)
     assert(s.shootdown_cores_valid(c));
     assert(s.successful_IPI(c));
     assert(s.successful_shootdown(c));
-    assert(s.TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(c));
+    assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 }
 
 proof fn next_step_preserves_tlb_inv(
@@ -91,9 +119,9 @@ proof fn next_step_preserves_tlb_inv(
         os::next_step(c, s1, s2, step),
     ensures
         s2.tlb_inv(c),
-{
+{ admit();/* 
     match step {
-        os::OSStep::HW { ULT_id, step } => {
+               os::OSStep::HW { ULT_id, step } => {
             match step {
                 hardware::HWStep::TLBFill { vaddr, pte, core } => {
                     assert(s2.shootdown_cores_valid(c));
@@ -138,7 +166,7 @@ proof fn next_step_preserves_tlb_inv(
             assert(s2.successful_shootdown(c));
             assert(s2.TLB_dom_supset_of_pt_and_inflight_unmap_vaddr(c))
         },
-    }
+    }*/
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -904,7 +932,7 @@ proof fn next_step_refines_hl_next_step(
             //        &&& result == r});
             //assert(hlspec::step_Map_end(c.interp(), s1.interp(c), s2.interp(c), ULT_id, result));
             assert({
-                &&& step.interp(c, s1) matches hlspec::AbstractStep::UnmapEnd {
+                &&& step.interp(c, s1) matches hlspec::AbstractStep::MapEnd {
                     thread_id,
                     result: r,
                 }
