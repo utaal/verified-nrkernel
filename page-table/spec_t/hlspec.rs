@@ -185,7 +185,6 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
 // MMU atomic ReadWrite
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //since unmap deleted pte inflight pte == pagefault
-
 pub open spec fn step_ReadWrite(
     c: AbstractConstants,
     s1: AbstractVariables,
@@ -441,40 +440,50 @@ pub open spec fn next_step(
     s2: AbstractVariables,
     step: AbstractStep,
 ) -> bool {
-    match step {
-        AbstractStep::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(
-            c,
-            s1,
-            s2,
-            thread_id,
-            vaddr,
-            op,
-            pte,
-        ),
-        AbstractStep::MapStart { thread_id, vaddr, pte } => step_Map_start(
-            c,
-            s1,
-            s2,
-            thread_id,
-            vaddr,
-            pte,
-        ),
-        AbstractStep::MapEnd { thread_id, result } => step_Map_end(c, s1, s2, thread_id, result),
-        AbstractStep::UnmapStart { thread_id, vaddr } => step_Unmap_start(
-            c,
-            s1,
-            s2,
-            thread_id,
-            vaddr,
-        ),
-        AbstractStep::UnmapEnd { thread_id, result } => step_Unmap_end(
-            c,
-            s1,
-            s2,
-            thread_id,
-            result,
-        ),
-        AbstractStep::Stutter => step_Stutter(c, s1, s2),
+    if (s1.sound) {
+        match step {
+            AbstractStep::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(
+                c,
+                s1,
+                s2,
+                thread_id,
+                vaddr,
+                op,
+                pte,
+            ),
+            AbstractStep::MapStart { thread_id, vaddr, pte } => step_Map_start(
+                c,
+                s1,
+                s2,
+                thread_id,
+                vaddr,
+                pte,
+            ),
+            AbstractStep::MapEnd { thread_id, result } => step_Map_end(
+                c,
+                s1,
+                s2,
+                thread_id,
+                result,
+            ),
+            AbstractStep::UnmapStart { thread_id, vaddr } => step_Unmap_start(
+                c,
+                s1,
+                s2,
+                thread_id,
+                vaddr,
+            ),
+            AbstractStep::UnmapEnd { thread_id, result } => step_Unmap_end(
+                c,
+                s1,
+                s2,
+                thread_id,
+                result,
+            ),
+            AbstractStep::Stutter => step_Stutter(c, s1, s2),
+        }
+    } else {
+        !s2.sound
     }
 }
 
