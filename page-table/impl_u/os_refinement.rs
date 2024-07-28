@@ -8,9 +8,12 @@ use crate::definitions_t::{
 };
 use crate::spec_t::{hardware, hlspec, mem, os};
 
-
-use crate::spec_t::os_invariant::{lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os, lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl,
-            lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl, lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os, next_step_preserves_inv  };
+use crate::spec_t::os_invariant::{
+    lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os,
+    lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl,
+    lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os,
+    lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl, next_step_preserves_inv,
+};
 
 verus! {
 
@@ -129,7 +132,6 @@ proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, value: B
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // soundness lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
 proof fn lemma_map_soundness_equality(
     c: os::OSConstants,
     s: os::OSVariables,
