@@ -187,12 +187,19 @@ impl OSVariables {
                 &&  self.core_states[core2].holds_lock()) ==> core1 === core2
     }
 
-    pub open spec fn inv(self, c: OSConstants) -> bool {
+    pub open spec fn basic_inv(self, c: OSConstants) -> bool {
         &&& self.wf(c)
         &&& self.valid_ids(c)
         &&& self.inflight_pte_above_zero_pte_result_consistant(c)
         &&& self.successful_unmaps(c)
         //&&& self.tlb_inv(c)
+    }
+
+
+    pub open spec fn inv(self, c: OSConstants) -> bool {
+        &&& self.basic_inv(c)
+        //&&& self.tlb_inv(c)
+        //&&& self.overlapping_inv(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
