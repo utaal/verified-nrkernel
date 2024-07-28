@@ -438,6 +438,48 @@ proof fn lemma_preserve_no_overlap_inflight_pmem_if_thread_state_consistent(
         }
     }
 }
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Unique definition and equivalence
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+pub open spec fn if_map_then_unique(c: os::OSConstants, s: os::OSVariables) -> bool
+{
+        forall|core| hardware::valid_core(c.hw, core) && #[trigger] s.core_states[core].is_map() ==>
+        !s.core_states.remove(core).values().contains(s.core_states[core])
+}
+
+pub open spec fn core_state_inflight_map_no_overlap_inflight_pmem( c: os::OSConstants, pt: Map<nat, PageTableEntry>,
+    corestates: Set<os::CoreState>,
+) -> bool {
+    forall|cs|
+        #![auto]
+        {
+            corestates.contains(cs) && cs.is_map() ==>
+            !os::candidate_mapping_overlaps_inflight_pmem(pt, corestates.remove(cs), cs.map_pte())
+                
+        }
+}
+
+proof fn lemma_unique_no_overlap_core_states_implies_no_inflight_overlap_pmem(c: os::OSConstants, s: os::OSVariables)
+    requires if_map_then_unique(c, s),
+             core_state_inflight_map_no_overlap_inflight_pmem(c, s.interp_pt_mem() ,s.core_states.values()),
+             s.sound,
+    ensures s.sound_implies_inflight_map_no_overlap_inflight_pmem(c),
+{
+    admit();
+}
+
+
+proof fn lemma_no_inflight_overlap_pmem_implies_unique_no_overlap_core_states_(c: os::OSConstants, s: os::OSVariables)
+    requires  s.sound_implies_inflight_map_no_overlap_inflight_pmem(c),
+              s.sound,
+    ensures if_map_then_unique(c, s),
+            core_state_inflight_map_no_overlap_inflight_pmem(c, s.interp_pt_mem() ,s.core_states.values()),
+            
+  
+{
+    admit();
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // soundness lemmata

@@ -105,8 +105,8 @@ proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(
     s2: os::OSVariables,
 )
     requires
-        s1.inv(c),
-        s2.inv(c),
+        s1.basic_inv(c),
+        s2.basic_inv(c),
         s1.interp_thread_state(c) === s2.interp_thread_state(c),
         s1.interp_pt_mem() === s2.interp_pt_mem(),
     ensures
