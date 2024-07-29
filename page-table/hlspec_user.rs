@@ -8,7 +8,7 @@ use crate::spec_t::hlspec::*;
 
 verus! {
 
-proof fn lemma_max_phyaddr_at_least()
+pub proof fn lemma_max_phyaddr_at_least()
     ensures
         MAX_PHYADDR_SPEC >= 0xffffffff,
 {
