@@ -8,7 +8,7 @@
 use vstd::prelude::*;
 
 use crate::definitions_t::{
-    aligned, new_seq, overlap, MemRegion, MemRegionExec, PageTableEntry, MAX_PHYADDR, PAGE_SIZE,
+    aligned, new_seq, overlap, MemRegion, MemRegionExec, MAX_PHYADDR, PAGE_SIZE,
     WORD_SIZE,
 };
 
@@ -34,23 +34,6 @@ pub open spec fn word_index_spec(addr: nat) -> nat
         aligned(addr, 8),
 {
     addr / (WORD_SIZE as nat)
-}
-
-pub struct TLB {}
-
-impl TLB {
-    pub spec fn view(self) -> Map<nat, PageTableEntry>;
-
-    /// Invalidates any TLB entries containing `vbase`.
-    #[verifier(external_body)]
-    pub fn invalidate_entry(&mut self, vbase: usize)
-        ensures
-            forall|base, pte|
-                self.view().contains_pair(base, pte) ==> old(self).view().contains_pair(base, pte),
-            !self.view().dom().contains(vbase as nat),
-    {
-        unimplemented!()
-    }
 }
 
 pub struct PTMemView {
