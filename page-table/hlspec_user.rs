@@ -8,7 +8,7 @@ use crate::spec_t::hlspec::*;
 
 verus! {
 
-proof fn lemma_max_phyaddr_at_least()
+pub proof fn lemma_max_phyaddr_at_least()
     ensures
         MAX_PHYADDR_SPEC >= 0xffffffff,
 {
@@ -161,8 +161,7 @@ mod util {
             if size - WORD_SIZE >= 0 {
             } else {
                 assert(0 < size < WORD_SIZE);
-                // TODO(matthias) can you try verusfind here?
-                assert(!aligned(size, WORD_SIZE as nat)) by (nonlinear_arith){}
+                broadcast use vstd::arithmetic::div_mod::lemma_mod_equivalence;
                 assert(false);
             }
         } else {
@@ -193,11 +192,7 @@ mod util {
             if size - WORD_SIZE >= 0 {
             } else {
                 assert(0 < size < WORD_SIZE);
-                // TODO(matthias) can you try verusfind here?
-                assert(!aligned(size, WORD_SIZE as nat)) by (nonlinear_arith)
-                    requires
-                        0 < size < WORD_SIZE,
-                {}
+                broadcast use vstd::arithmetic::div_mod::lemma_mod_equivalence;
                 assert(false);
             }
             assert(aligned((vaddr + WORD_SIZE) as nat, WORD_SIZE as nat)) by (nonlinear_arith)
@@ -245,11 +240,7 @@ mod util {
             if size - WORD_SIZE >= 0 {
             } else {
                 assert(0 < size < WORD_SIZE);
-                // TODO(matthias) can you try verusfind here?
-                assert(!aligned(size, WORD_SIZE as nat)) by (nonlinear_arith)
-                    requires
-                        0 < size < WORD_SIZE,
-                {}
+                broadcast use vstd::arithmetic::div_mod::lemma_mod_equivalence;
                 assert(false);
             }
             assert(aligned((vaddr + WORD_SIZE) as nat, WORD_SIZE as nat)) by (nonlinear_arith)
