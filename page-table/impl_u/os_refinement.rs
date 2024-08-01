@@ -22,7 +22,7 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 proof fn lemma_inflight_vaddr_equals_hl_unmap(c: os::OSConstants, s: os::OSVariables)
     requires
-        s.inv(c),
+        s.basic_inv(c),
     ensures
         forall|v_addr|
             s.inflight_unmap_vaddr().contains(v_addr) <==> exists|thread_state|
@@ -124,7 +124,7 @@ pub proof fn map_values_contain_value_of_contained_key<A, B>(map: Map<A, B>, key
     requires
         map.dom().contains(key),
     ensures
-        map.values().contains(map[key]), 
+        map.values().contains(map[key]),
 {
 }
 
@@ -143,13 +143,16 @@ pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, valu
     ensures
         map.values().insert(value) === map.insert(key, value).values().insert(map.index(key)),
 {
-  //  
-    assert forall |values| #![auto] map.values().insert(value).contains(values) implies map.insert(key, value).values().insert(map.index(key)).contains(values) by {
-        
+    //
+    assert forall|values| #![auto] map.values().insert(value).contains(values) implies map.insert(
+        key,
+        value,
+    ).values().insert(map.index(key)).contains(values) by {
         if (values == value) {
             lemma_map_insert_value(map, key, value);
         } else {
-            let k = choose | some_key | #[trigger] map.dom().contains(some_key) && (map[some_key] == values);
+            let k = choose|some_key| #[trigger]
+                map.dom().contains(some_key) && (map[some_key] == values);
             assert(map.insert(key, value).dom().contains(k));
             if (k == key) {
                 assert(map.index(key) == values);
@@ -158,7 +161,7 @@ pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, valu
             }
         }
     }
-    assert( map.values().insert(value) =~= map.insert(key, value).values().insert(map.index(key)));
+    assert(map.values().insert(value) =~= map.insert(key, value).values().insert(map.index(key)));
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -171,7 +174,7 @@ proof fn lemma_map_soundness_equality(
     pte: PageTableEntry,
 )
     requires
-        s.inv(c),
+        s.basic_inv(c),
         above_zero(pte.frame.size),
     ensures
         hlspec::step_Map_sound(s.interp(c).mappings, s.interp(c).thread_state.values(), vaddr, pte)
@@ -237,7 +240,7 @@ proof fn lemma_unmap_soundness_equality(
     pte: PageTableEntry,
 )
     requires
-        s.inv(c),
+        s.basic_inv(c),
         above_zero(pte.frame.size),
     ensures
         hlspec::step_Unmap_sound(s.interp(c).thread_state.values(), vaddr, pte)
@@ -390,6 +393,7 @@ proof fn next_step_refines_hl_next_step(
 
 */
 
+//TODO
 proof fn step_ReadWrite_refines(
     c: os::OSConstants,
     s1: os::OSVariables,
@@ -560,8 +564,8 @@ proof fn step_Map_Start_refines(
     pte: PageTableEntry,
 )
     requires
-        s1.inv(c),
-        s2.inv(c),
+        s1.basic_inv(c),
+        s2.basic_inv(c),
         os::step_Map_Start(c, s1, s2, ULT_id, vaddr, pte),
     ensures
         hlspec::step_Map_start(c.interp(), s1.interp(c), s2.interp(c), ULT_id, vaddr, pte),
@@ -629,7 +633,7 @@ proof fn step_Map_Start_refines(
     };
 }
 
-//TODO review ensures as its not enough...
+//TODO
 proof fn step_Map_End_refines(
     c: os::OSConstants,
     s1: os::OSVariables,
@@ -657,6 +661,7 @@ proof fn step_Map_End_refines(
     }
 }
 
+//TODO
 proof fn step_Unmap_Start_refines(
     c: os::OSConstants,
     s1: os::OSVariables,
@@ -706,6 +711,7 @@ proof fn step_Unmap_Start_refines(
     }
 }
 
+//TODO
 proof fn step_Unmap_Op_End_refines(
     c: os::OSConstants,
     s1: os::OSVariables,

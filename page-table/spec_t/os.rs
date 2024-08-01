@@ -197,8 +197,8 @@ impl OSVariables {
     pub open spec fn inv(self, c: OSConstants) -> bool {
         &&& self.basic_inv(c)
         //&&& self.tlb_inv(c)
-        //&&& self.overlapping_inv(c)
 
+        &&& self.overlapping_inv(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -265,14 +265,12 @@ impl OSVariables {
         c: OSConstants,
     ) -> bool {
         self.sound ==> forall|core: Core|
-            (
-                hardware::valid_core(c.hw, core) &&  #[trigger] self.core_states[core].is_map() ==>
-                        !candidate_mapping_overlaps_inflight_pmem(
-                            self.interp_pt_mem(),
-                            self.set_core_idle(c, core).core_states.values(),
-                            self.core_states[core].map_pte(),
-                        )
-                    )
+            (hardware::valid_core(c.hw, core) && #[trigger] self.core_states[core].is_map()
+                ==> !candidate_mapping_overlaps_inflight_pmem(
+                self.interp_pt_mem(),
+                self.set_core_idle(c, core).core_states.values(),
+                self.core_states[core].map_pte(),
+            ))
     }
 
     pub open spec fn sound_implies_inflight_map_no_overlap_existing_pmem(
@@ -280,8 +278,11 @@ impl OSVariables {
         c: OSConstants,
     ) -> bool {
         self.sound ==> forall|core: Core|
-               (  #[trigger]  hardware::valid_core(c.hw, core) &&  self.core_states[core].is_map() ==> 
-                        !candidate_mapping_overlaps_existing_pmem(self.interp_pt_mem(), self.core_states[core].map_pte()))
+            (#[trigger] hardware::valid_core(c.hw, core) && self.core_states[core].is_map()
+                ==> !candidate_mapping_overlaps_existing_pmem(
+                self.interp_pt_mem(),
+                self.core_states[core].map_pte(),
+            ))
     }
 
     pub open spec fn sound_implies_existing_map_no_overlap_existing_pmem(
@@ -448,7 +449,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
     inflightargs: Set<CoreState>,
     candidate: PageTableEntry,
 ) -> bool {
-    &&& exists|b: CoreState|
+    exists|b: CoreState|
         #![auto]
         {
             &&& inflightargs.contains(b)
@@ -478,7 +479,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     base: nat,
     candidate: PageTableEntry,
 ) -> bool {
-    &&& exists|b: CoreState|
+    exists|b: CoreState|
         #![auto]
         {
             &&& inflightargs.contains(b)
