@@ -265,20 +265,14 @@ impl OSVariables {
         c: OSConstants,
     ) -> bool {
         self.sound ==> forall|core: Core|
-            #![auto]
-            {
-                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                    CoreState::MapWaiting { vaddr, pte, .. }
-                    | CoreState::MapExecuting { vaddr, pte, .. } => {
+            (
+                hardware::valid_core(c.hw, core) &&  #[trigger] self.core_states[core].is_map() ==>
                         !candidate_mapping_overlaps_inflight_pmem(
                             self.interp_pt_mem(),
                             self.set_core_idle(c, core).core_states.values(),
-                            pte,
+                            self.core_states[core].map_pte(),
                         )
-                    },
-                    _ => { true },
-                }
-            }
+                    )
     }
 
     pub open spec fn sound_implies_inflight_map_no_overlap_existing_pmem(
@@ -286,16 +280,8 @@ impl OSVariables {
         c: OSConstants,
     ) -> bool {
         self.sound ==> forall|core: Core|
-            #![auto]
-            {
-                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                    CoreState::MapWaiting { vaddr, pte, .. }
-                    | CoreState::MapExecuting { vaddr, pte, .. } => {
-                        !candidate_mapping_overlaps_existing_pmem(self.interp_pt_mem(), pte)
-                    },
-                    _ => { true },
-                }
-            }
+               (  #[trigger]  hardware::valid_core(c.hw, core) &&  self.core_states[core].is_map() ==> 
+                        !candidate_mapping_overlaps_existing_pmem(self.interp_pt_mem(), self.core_states[core].map_pte()))
     }
 
     pub open spec fn sound_implies_existing_map_no_overlap_existing_pmem(

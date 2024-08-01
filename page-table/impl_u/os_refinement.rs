@@ -120,6 +120,13 @@ proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Map lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+pub proof fn map_values_contain_value_of_contained_key<A, B>(map: Map<A, B>, key: A)
+    requires
+        map.dom().contains(key),
+    ensures
+        map.values().contains(map[key]), 
+{
+}
 
 proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
     requires
@@ -130,7 +137,7 @@ proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
     assert(map.insert(key, value)[key] == value);
 }
 
-proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, value: B)
+pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, value: B)
     requires
         map.dom().contains(key),
     ensures
