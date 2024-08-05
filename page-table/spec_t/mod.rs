@@ -6,3 +6,4 @@ pub mod os;
 pub mod hlproof;
 pub mod mem;
 pub mod os_invariant;
+pub mod atomic_mmu;
