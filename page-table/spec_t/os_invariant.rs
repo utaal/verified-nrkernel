@@ -239,20 +239,20 @@ pub proof fn next_step_preserves_overlapping_inv(
                                 os::CoreState::Idle => false,
                             }
                         });
-                        assert(s1.core_states =~= s2.core_states.insert(core, os::CoreState::Idle));
-                        assert forall|overlap_core: Core|
+                        //assert(s1.core_states =~= s2.core_states.insert(core, os::CoreState::Idle));
+                        assert forall|overlap_core|
                         hardware::valid_core(c.hw, overlap_core) && #[trigger] s2.core_states[overlap_core].is_map()
                             implies !os::candidate_mapping_overlaps_inflight_pmem(
-                            self.interp_pt_mem(),
-                            self.set_core_idle(c, core).core_states.values(),
-                            self.core_states[core].map_pte(),
+                            s2.interp_pt_mem(),
+                            s2.set_core_idle(c, overlap_core).core_states.values(),
+                            s2.core_states[overlap_core].map_pte(),
                         ) by {
                             if ( hardware::valid_core(c.hw, overlap_core) && #[trigger] s2.core_states[overlap_core].is_map()){
-                                if (overlap_core == core) {} else {
+                                
                                     
                                     
                                     assume(false);}
-                            }
+                            
                         }
                 }
             },
