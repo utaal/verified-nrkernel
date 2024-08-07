@@ -166,15 +166,14 @@ pub open spec fn above_zero(size: nat) -> bool {
 }
 
 // only well-defined for sizes > 0
-pub open spec(checked) fn overlap(region1: MemRegion, region2: MemRegion) -> bool 
-    recommends above_zero(region1.size),
-               above_zero(region2.size),
-{
-    if region1.base <= region2.base {
-        region2.base < region1.base + region1.size
-    } else {
-        region1.base < region2.base + region2.size
-    }
+pub open spec(checked) fn overlap(region1: MemRegion, region2: MemRegion) -> bool
+{ 
+   
+        if region1.base <= region2.base {
+                (region1.size == 0 ) || region2.base < region1.base + region1.size
+        } else {
+            region1.base < region2.base + region2.size
+        }
 }
 
 // hardens spec for overlap

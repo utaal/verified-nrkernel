@@ -209,7 +209,7 @@ pub proof fn next_step_preserves_overlapping_inv(
                         s1.core_states.values(),
                         candidate,
                     ));
-                    assume(!exists|b|
+                    assert(!exists|b|
                         #![auto]
                         {
                             &&& s1.core_states.values().contains(b)
@@ -239,9 +239,21 @@ pub proof fn next_step_preserves_overlapping_inv(
                                 os::CoreState::Idle => false,
                             }
                         });
-                    assume(s2.sound_implies_inflight_map_no_overlap_inflight_pmem(c));
-
-                } else {
+                        assert(s1.core_states =~= s2.core_states.insert(core, os::CoreState::Idle));
+                        assert forall|overlap_core: Core|
+                        hardware::valid_core(c.hw, overlap_core) && #[trigger] s2.core_states[overlap_core].is_map()
+                            implies !os::candidate_mapping_overlaps_inflight_pmem(
+                            self.interp_pt_mem(),
+                            self.set_core_idle(c, core).core_states.values(),
+                            self.core_states[core].map_pte(),
+                        ) by {
+                            if ( hardware::valid_core(c.hw, overlap_core) && #[trigger] s2.core_states[overlap_core].is_map()){
+                                if (overlap_core == core) {} else {
+                                    
+                                    
+                                    assume(false);}
+                            }
+                        }
                 }
             },
             os::OSStep::MapOpStart { core } => {
