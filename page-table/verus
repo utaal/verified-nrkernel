@@ -1,4 +1,4 @@
 #! /bin/bash 
 
-~/Dokumente/Studium/Thesis/verus/source/target-verus/release/verus ~/Dokumente/Studium/Thesis//verified-nrkernel/page-table/lib.rs --crate-type=lib --multiple-errors 10 "$@"
+~/Documents/verus/source/target-verus/release/verus ~/Documents/verified-nrkernel/page-table/lib.rs --crate-type=lib --multiple-errors 10 "$@"
 

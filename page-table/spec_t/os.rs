@@ -311,7 +311,7 @@ impl OSVariables {
                             self.interp_pt_mem(),
                             self.core_states.remove(core).values(),
                             vaddr,
-                            pte,
+                            pte.frame.size,
                         )
                     },
                     _ => { true },
@@ -477,7 +477,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     pt: Map<nat, PageTableEntry>,
     inflightargs: Set<CoreState>,
     base: nat,
-    candidate: PageTableEntry,
+    candidate_size: nat,
 ) -> bool {
     exists|b: CoreState|
         #![auto]
@@ -488,23 +488,23 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                 | CoreState::MapExecuting { vaddr, pte, .. } => {
                     overlap(
                         MemRegion { base: vaddr, size: pte.frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
+                        MemRegion { base: base, size: candidate_size },
                     )
                 },
                 CoreState::UnmapWaiting { vaddr, .. }
                 | CoreState::UnmapOpExecuting { vaddr, .. } => {
-                    &&& pt.dom().contains(vaddr)
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pt.index(vaddr).frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
+                    let size = if pt.dom().contains(vaddr) {pt.index(vaddr).frame.size} else {0};
+                    overlap(
+                        MemRegion { base: vaddr, size: size  },
+                        MemRegion { base: base, size: candidate_size },
                     )
                 },
                 CoreState::UnmapOpDone { vaddr, pte, .. }
                 | CoreState::UnmapShootdownWaiting { vaddr, pte, .. } => {
-                    &&& pte is Some
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pte.unwrap().frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
+                    let size = if pte.is_some() {pte.unwrap().frame.size} else {0};
+                    overlap(
+                        MemRegion { base: vaddr, size: size },
+                        MemRegion { base: base, size: candidate_size },
                     )
                 },
                 _ => { false },
@@ -553,7 +553,7 @@ pub open spec fn step_Map_sound(
 ) -> bool {
     &&& !candidate_mapping_overlaps_existing_pmem(pt, pte)
     &&& !candidate_mapping_overlaps_inflight_pmem(pt, inflightargs, pte)
-    &&& !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte)
+    &&& !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte.frame.size)
 }
 
 pub open spec fn step_Map_enabled(
@@ -677,9 +677,9 @@ pub open spec fn step_Unmap_sound(
     pt: Map<nat, PageTableEntry>,
     inflightargs: Set<CoreState>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte_size: nat,
 ) -> bool {
-    !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte)
+    !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte_size)
 }
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
@@ -700,6 +700,7 @@ pub open spec fn step_Unmap_Start(
 ) -> bool {
     let pt = hardware::interp_pt_mem(s1.hw.global_pt);
     let core = c.ULT2core.index(ULT_id);
+    let pte_size = if pt.contains_key(vaddr) {pt.index(vaddr).frame.size} else {0};
     //enabling conditions
     &&& c.valid_ULT(ULT_id)
     &&& s1.core_states[core] is Idle
@@ -715,11 +716,11 @@ pub open spec fn step_Unmap_Start(
 
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ULT_id, vaddr })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.sound == s1.sound && (!pt.contains_key(vaddr) || step_Unmap_sound(
+    &&& s2.sound == s1.sound && (step_Unmap_sound(
         hardware::interp_pt_mem(s1.hw.global_pt),
         s1.core_states.values(),
         vaddr,
-        pt.index(vaddr),
+        pte_size,
     ))
 }
 

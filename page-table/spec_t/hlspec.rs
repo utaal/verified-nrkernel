@@ -137,7 +137,7 @@ pub open spec fn unsound_state(s1: AbstractVariables, s2: AbstractVariables) -> 
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     inflightargs: Set<AbstractArguments>,
     base: nat,
-    candidate: PageTableEntry,
+    candidate_size: nat,
 ) -> bool {
     &&& exists|b: AbstractArguments|
         #![auto]
@@ -147,14 +147,14 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                 AbstractArguments::Map { vaddr, pte } => {
                     overlap(
                         MemRegion { base: vaddr, size: pte.frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
+                        MemRegion { base: base, size: candidate_size },
                     )
                 },
                 AbstractArguments::Unmap { vaddr, pte } => {
-                    &&& pte.is_some()
-                    &&& overlap(
-                        MemRegion { base: vaddr, size: pte.unwrap().frame.size },
-                        MemRegion { base: base, size: candidate.frame.size },
+                    let size = if pte.is_some() {pte.unwrap().frame.size} else {0};
+                    overlap(
+                        MemRegion { base: vaddr, size: size },
+                        MemRegion { base: base, size: candidate_size },
                     )
                 },
                 _ => { false },
@@ -262,7 +262,7 @@ pub open spec fn step_Map_sound(
     vaddr: nat,
     pte: PageTableEntry,
 ) -> bool {
-    &&& !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte)
+    &&& !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte.frame.size)
     &&& !candidate_mapping_overlaps_existing_pmem(mappings, pte)
     &&& !candidate_mapping_overlaps_inflight_pmem(inflights, pte)
 }
@@ -344,9 +344,9 @@ pub open spec fn step_Map_end(
 pub open spec fn step_Unmap_sound(
     inflights: Set<AbstractArguments>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte_size: nat,
 ) -> bool {
-    !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte)
+    !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte_size)
 }
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
@@ -373,10 +373,15 @@ pub open spec fn step_Unmap_start(
     } else {
         Option::None
     };
+    let pte_size = if (pte is Some) {
+        pte.unwrap().frame.size
+    } else {
+       0
+    };
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === AbstractArguments::Empty
-    &&& if (pte is None || step_Unmap_sound(s1.thread_state.values(), vaddr, pte.unwrap())) {
+    &&& if step_Unmap_sound(s1.thread_state.values(), vaddr, pte_size) {
         &&& s2.thread_state === s1.thread_state.insert(
             thread_id,
             AbstractArguments::Unmap { vaddr, pte },
