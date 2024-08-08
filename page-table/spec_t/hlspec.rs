@@ -151,7 +151,11 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                     )
                 },
                 AbstractArguments::Unmap { vaddr, pte } => {
-                    let size = if pte.is_some() {pte.unwrap().frame.size} else {0};
+                    let size = if pte.is_some() {
+                        pte.unwrap().frame.size
+                    } else {
+                        0
+                    };
                     overlap(
                         MemRegion { base: vaddr, size: size },
                         MemRegion { base: base, size: candidate_size },
@@ -213,7 +217,6 @@ pub open spec fn step_ReadWrite(
                 base + pte.frame.size,
             )
             // .. and the result depends on the flags.
-
             &&& match op {
                 RWOp::Store { new_value, result } => {
                     if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor
@@ -243,7 +246,6 @@ pub open spec fn step_ReadWrite(
                 vmem_idx,
             )
             // .. and the result is always a Undefined and an unchanged memory.
-
             &&& s2.mem === s1.mem
             &&& match op {
                 RWOp::Store { new_value, result } => result is Undefined,
@@ -376,7 +378,7 @@ pub open spec fn step_Unmap_start(
     let pte_size = if (pte is Some) {
         pte.unwrap().frame.size
     } else {
-       0
+        0
     };
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
@@ -573,7 +575,6 @@ pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool {
         s.mappings,
     )
     //invariants needed to proof the former
-
     &&& inflight_map_no_overlap_pmem(s.thread_state.values(), s.mappings)
     &&& inflight_map_no_overlap_inflight_pmem(s.thread_state.values())
     &&& mappings_frame_sizes_over_zero(s.mappings)

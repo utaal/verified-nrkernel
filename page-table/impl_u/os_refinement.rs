@@ -814,8 +814,8 @@ proof fn step_Map_End_refines(
                         assert(s1.core_states[c.ULT2core[key]] === s2.core_states[c.ULT2core[key]]);
                         let Unmap_vaddr = s1.core_states[core_of_key]->UnmapWaiting_vaddr;
                         if (vaddr == Unmap_vaddr) {
-                            assume(false); //TODO overlapping inflight vmem, make an assert(false); here
-                        } 
+                            assume(false);  //TODO overlapping inflight vmem, make an assert(false); here
+                        }
                     } else {
                         assert(s1.core_states[core_of_key] == s2.core_states[core_of_key]);
                         assert(s1.core_states[c.ULT2core[key]] === s2.core_states[c.ULT2core[key]]);
@@ -833,19 +833,22 @@ proof fn step_Map_End_refines(
             //TODO think about this since an invalid unmap would be made valid by a map
             assume(hl_s2.mappings === hl_s1.mappings.insert(vaddr, pte));
             lemma_mem_domain_from_mappings(c.interp().phys_mem_size, hl_s1.mappings, vaddr, pte);
-            assert forall|idx: nat|
-                #![auto]
-                hl_s1.mem.dom().contains(idx) implies hl_s2.mem[idx] === hl_s1.mem[idx] by {
+            assert forall|idx: nat| #![auto] hl_s1.mem.dom().contains(idx) implies hl_s2.mem[idx]
+                === hl_s1.mem[idx] by {
+                assume(false);  // TODO overlapping mapped vmem
 
-                    assume(false); // TODO overlapping mapped vmem 
-
-                }            
-                assert(hl_s2.mem.dom() === hlspec::mem_domain_from_mappings(
+            }
+            assert(hl_s2.mem.dom() === hlspec::mem_domain_from_mappings(
                 hl_c.phys_mem_size,
                 hl_s2.mappings,
             ));
         } else {
-            lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(c, s1, vaddr, pte.frame.size);
+            lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
+                c,
+                s1,
+                vaddr,
+                pte.frame.size,
+            );
             assume(false);  //TODO vmem invariant assert false
         }
     }
@@ -876,17 +879,17 @@ proof fn step_Unmap_Start_refines(
     } else {
         Option::None
     };
-    let pte_size = if (pte is Some) {pte.unwrap().frame.size} else {0};
+    let pte_size = if (pte is Some) {
+        pte.unwrap().frame.size
+    } else {
+        0
+    };
     assert(hlspec::step_Unmap_enabled(vaddr));
     assert(hlspec::valid_thread(hl_c, ULT_id));
     assert(hl_s1.thread_state[ULT_id] === hlspec::AbstractArguments::Empty);
-    
+
     lemma_unmap_soundness_equality(c, s1, vaddr, pte_size);
-    if hlspec::step_Unmap_sound(
-        hl_s1.thread_state.values(),
-        vaddr,
-        pte_size,
-    ) {
+    if hlspec::step_Unmap_sound(hl_s1.thread_state.values(), vaddr, pte_size) {
         assert(hl_s1.sound == hl_s2.sound);
         assert forall|key| #[trigger]
             hl_s1.thread_state.dom().contains(key) implies hl_s1.thread_state.insert(
