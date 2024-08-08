@@ -852,11 +852,11 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
                 },
                 os::CoreState::UnmapWaiting { ULT_id, vaddr }
                 | os::CoreState::UnmapOpExecuting { ULT_id, vaddr } => {
-                    if (s.interp_pt_mem().dom().contains(vaddr)) {
                     assert(c.valid_ULT(ULT_id));
                     let thread_state = s.interp_thread_state(c)[ULT_id];
-                   assert(s.interp(c).thread_state.dom().contains(ULT_id));
-                    assert(s.interp(c).thread_state.values().contains(thread_state));
+                    assert(s.interp(c).thread_state.dom().contains(ULT_id));
+                     assert(s.interp(c).thread_state.values().contains(thread_state));
+                    if (s.interp_pt_mem().dom().contains(vaddr)) {
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Unmap {
                             vaddr: v_address,
@@ -870,30 +870,51 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
                         )
                     });
                 } else {
-                    assume(false);
+                    assert({
+                        &&& thread_state matches hlspec::AbstractArguments::Unmap {
+                            vaddr: v_address,
+                            pte: None,
+                        }
+                        &&& v_address === vaddr
+                        &&& overlap(
+                            MemRegion { base: v_address, size: 0 },
+                            MemRegion { base: base, size: candidate_size},
+                        )
+                    });
                 }},
                 os::CoreState::UnmapOpDone { ULT_id, vaddr, pte, .. }
                 | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, pte, .. } => {
-                    if (pte is Some) {
                     assert(c.valid_ULT(ULT_id));
                     let thread_state = s.interp_thread_state(c)[ULT_id];
                     assert(s.interp(c).thread_state.dom().contains(ULT_id));
                     assert(s.interp(c).thread_state.values().contains(thread_state));
+                    if (pte is Some) {
+                    
+                        assert({
+                            &&& thread_state matches hlspec::AbstractArguments::Unmap {
+                                vaddr: v_address,
+                                pte: Some(p_te),
+                            }
+                            &&& v_address === vaddr
+                            &&& pte === Some(p_te)
+                            &&& overlap(
+                                MemRegion { base: v_address, size: p_te.frame.size },
+                                MemRegion { base: base, size: candidate_size},
+                            )
+                        });
+                } else {
+
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Unmap {
                             vaddr: v_address,
-                            pte: Some(p_te),
+                            pte: None,
                         }
                         &&& v_address === vaddr
-                        &&& pte === Some(p_te)
                         &&& overlap(
-                            MemRegion { base: v_address, size: p_te.frame.size },
+                            MemRegion { base: v_address, size: 0 },
                             MemRegion { base: base, size: candidate_size},
                         )
                     });
-                } else {
-
-                    assume(false);
                 }},
                 _ => {},
             };
@@ -985,10 +1006,10 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
                 },
                 os::CoreState::UnmapWaiting { ULT_id: ult_id, vaddr }
                 | os::CoreState::UnmapOpExecuting { ULT_id: ult_id, vaddr } => {
-                    if s.interp_pt_mem().dom().contains(vaddr){
                     assert(ult_id == ULT_id);
+                    if s.interp_pt_mem().dom().contains(vaddr){
+                  
                     let pte = s.interp_pt_mem()[vaddr];
-                    assert(above_zero(pte.frame.size));
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Unmap {
                             vaddr: v_addr,
@@ -1002,12 +1023,21 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
                         MemRegion { base: base, size: candidate_size },
                     ));
                 } else {
-                    assume(false); 
+                    assert({
+                        &&& thread_state matches hlspec::AbstractArguments::Unmap {
+                            vaddr: v_addr,
+                            pte: None,
+                        }
+                        &&& vaddr === v_addr
+                    });
+                    assert(overlap(
+                        MemRegion { base: vaddr, size: 0 },
+                        MemRegion { base: base, size: candidate_size },
+                    ));
                 }},
                 os::CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, pte, .. }
                 | os::CoreState::UnmapShootdownWaiting { ULT_id: ult_id, vaddr, pte, .. } => {
                     if (pte.is_some()) { assert(ult_id == ULT_id);
-                    assert(above_zero(pte.unwrap().frame.size));
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Unmap {
                             vaddr: v_addr,
@@ -1021,7 +1051,17 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
                         MemRegion { base: base, size: candidate_size},
                     ));
                 } else {
-                    assume(false);
+                    assert({
+                        &&& thread_state matches hlspec::AbstractArguments::Unmap {
+                            vaddr: v_addr,
+                            pte: None,
+                        }
+                        &&& vaddr === v_addr
+                    });
+                    assert(overlap(
+                        MemRegion { base: vaddr, size: 0 },
+                        MemRegion { base: base, size: candidate_size},
+                    ));
 
                 }},
                 _ => {},
