@@ -1027,7 +1027,6 @@ proof fn step_Unmap_Start_refines(
     }
 }
 
-//TODO
 proof fn step_Unmap_Op_End_refines(
     c: os::OSConstants,
     s1: os::OSVariables,
@@ -1070,7 +1069,16 @@ proof fn step_Unmap_Op_End_refines(
             if (s1.core_states.index(core_of_key) is UnmapWaiting) {
                 let vaddr_of_key = s1.core_states[core_of_key]->UnmapWaiting_vaddr;
                 if (vaddr_of_key == vaddr) {
-                    assume(false);  //TODO show overlap, we have 2 different cores that both unmap the same vaddr
+                    assert (overlap(
+                        MemRegion {
+                            base: s2.core_states[core_of_key].vaddr(),
+                            size: s2.core_states[core_of_key].vmem_pte_size(s2.interp_pt_mem()),
+                        },
+                        MemRegion {
+                            base: s2.core_states[core].vaddr(),
+                            size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
+                        }));
+        
                 } else {
                 }
             } else {

@@ -93,6 +93,47 @@ impl CoreState {
     pub open spec fn is_idle(self) -> bool {
         self is Idle
     }
+
+    pub open spec fn vmem_pte_size(self, pt: Map<nat, PageTableEntry>) -> nat
+        recommends
+            !self.is_idle(),
+    {
+        match self {
+            CoreState::MapWaiting { pte, .. } | CoreState::MapExecuting { pte, .. } => {
+                pte.frame.size
+            },
+            CoreState::UnmapWaiting { vaddr, .. } | CoreState::UnmapOpExecuting { vaddr, .. } => {
+                if (pt.dom().contains(vaddr)) {
+                    pt.index(vaddr).frame.size
+                } else {
+                    0
+                }
+            },
+            CoreState::UnmapOpDone { pte, .. } | CoreState::UnmapShootdownWaiting { pte, .. } => {
+                if (pte is Some) {
+                    pte.unwrap().frame.size
+                } else {
+                    0
+                }
+            },
+            CoreState::Idle => arbitrary(),
+        }
+    }
+
+    pub open spec fn vaddr(self) -> nat
+        recommends
+            !self.is_idle(),
+    {
+        match self {
+            CoreState::MapWaiting { vaddr, .. }
+            | CoreState::MapExecuting { vaddr, .. }
+            | CoreState::UnmapWaiting { vaddr, .. }
+            | CoreState::UnmapOpExecuting { vaddr, .. }
+            | CoreState::UnmapOpDone { vaddr, .. }
+            | CoreState::UnmapShootdownWaiting { vaddr, .. } => { vaddr },
+            CoreState::Idle => arbitrary(),
+        }
+    }
 }
 
 impl OSConstants {
@@ -198,6 +239,7 @@ impl OSVariables {
         &&& self.basic_inv(c)
         //&&& self.tlb_inv(c)
         &&& self.overlapping_inv(c)
+        &&& self.overlapping_vmem_inv(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -318,10 +360,30 @@ impl OSVariables {
             }
     }
 
+    pub open spec fn inflight_map_no_overlap_inflight_vmem(self, c: OSConstants) -> bool {
+        forall|core1: Core, core2: Core|
+            (hardware::valid_core(c.hw, core1) && hardware::valid_core(c.hw, core2)
+                && !self.core_states[core1].is_idle() && !self.core_states[core2].is_idle()
+                && overlap(
+                MemRegion {
+                    base: self.core_states[core1].vaddr(),
+                    size: self.core_states[core1].vmem_pte_size(self.interp_pt_mem()),
+                },
+                MemRegion {
+                    base: self.core_states[core2].vaddr(),
+                    size: self.core_states[core2].vmem_pte_size(self.interp_pt_mem()),
+                },
+            )) ==> (core1 === core2)
+    }
+
     pub open spec fn overlapping_inv(self, c: OSConstants) -> bool {
         &&& self.sound_implies_inflight_map_no_overlap_inflight_pmem(c)
         &&& self.sound_implies_inflight_map_no_overlap_existing_pmem(c)
         &&& self.sound_implies_existing_map_no_overlap_existing_pmem(c)
+    }
+
+    pub open spec fn overlapping_vmem_inv(self, c: OSConstants) -> bool {
+        self.sound ==> { self.inflight_map_no_overlap_inflight_vmem(c) }
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
