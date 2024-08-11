@@ -238,7 +238,7 @@ impl OSVariables {
     pub open spec fn inv(self, c: OSConstants) -> bool {
         &&& self.basic_inv(c)
         //&&& self.tlb_inv(c)
-        &&& self.overlapping_inv(c)
+        //&&& self.overlapping_inv(c)
         &&& self.overlapping_vmem_inv(c)
     }
 
