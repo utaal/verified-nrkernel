@@ -129,8 +129,6 @@ pub proof fn map_values_contain_value_of_contained_key<A, B>(map: Map<A, B>, key
 {
 }
 
-
-
 proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
     requires
     ensures
@@ -817,17 +815,20 @@ proof fn step_Map_End_refines(
                         let Unmap_vaddr = s1.core_states[core_of_key]->UnmapWaiting_vaddr;
                         if (vaddr == Unmap_vaddr) {
                             assume(false);  //TODO overlapping inflight vmem, make an assert(false); here
-                            assert( !s2.core_states[core].is_idle() && !s2.core_states[core_of_key].is_idle()
-                        && overlap(
-                        MemRegion {
-                            base: s2.core_states[core].vaddr(),
-                            size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
-                        },
-                        MemRegion {
-                            base: s2.core_states[core_of_key].vaddr(),
-                            size: s2.core_states[core_of_key].vmem_pte_size(s2.interp_pt_mem()),
-                        },));
-                
+                            assert(!s2.core_states[core].is_idle()
+                                && !s2.core_states[core_of_key].is_idle() && overlap(
+                                MemRegion {
+                                    base: s2.core_states[core].vaddr(),
+                                    size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
+                                },
+                                MemRegion {
+                                    base: s2.core_states[core_of_key].vaddr(),
+                                    size: s2.core_states[core_of_key].vmem_pte_size(
+                                        s2.interp_pt_mem(),
+                                    ),
+                                },
+                            ));
+
                         }
                     } else {
                         assert(s1.core_states[core_of_key] == s2.core_states[core_of_key]);
@@ -930,16 +931,19 @@ proof fn step_Unmap_Start_refines(
                                 _ => false,
                             };
                         //overlap{};
-                        assert( !s2.core_states[core].is_idle() && !s2.core_states[overlap_core].is_idle()
-                        && overlap(
-                        MemRegion {
-                            base: s2.core_states[core].vaddr(),
-                            size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
-                        },
-                        MemRegion {
-                            base: s2.core_states[overlap_core].vaddr(),
-                            size: s2.core_states[overlap_core].vmem_pte_size(s2.interp_pt_mem()),
-                        },));
+                        assert(!s2.core_states[core].is_idle()
+                            && !s2.core_states[overlap_core].is_idle() && overlap(
+                            MemRegion {
+                                base: s2.core_states[core].vaddr(),
+                                size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
+                            },
+                            MemRegion {
+                                base: s2.core_states[overlap_core].vaddr(),
+                                size: s2.core_states[overlap_core].vmem_pte_size(
+                                    s2.interp_pt_mem(),
+                                ),
+                            },
+                        ));
                     }
                 }
             } else {
@@ -1031,44 +1035,59 @@ proof fn step_Unmap_Start_refines(
                 vaddr,
                 hl_s1.mappings.index(vaddr),
             );
-           // assert( hl_s1.mem.dom() =~= hl_s2.mem.dom());
+            // assert( hl_s1.mem.dom() =~= hl_s2.mem.dom());
             assert forall|idx: nat| #![auto] hl_s2.mem.dom().contains(idx) implies hl_s2.mem[idx]
                 === hl_s1.mem[idx] by {
-                if ( hl_s2.mem.dom().contains(idx)) {
-                    assert(hlspec::mem_domain_from_mappings_contains(hl_c.phys_mem_size, idx, hl_s2.mappings));
+                if (hl_s2.mem.dom().contains(idx)) {
+                    assert(hlspec::mem_domain_from_mappings_contains(
+                        hl_c.phys_mem_size,
+                        idx,
+                        hl_s2.mappings,
+                    ));
                     assert(hl_s1.mem.dom().contains(idx));
                     let vidx = (idx * WORD_SIZE as nat);
-                    let  (mem_base, mem_pte): (nat, PageTableEntry) = choose |base: nat, pte: PageTableEntry|
-                    {
-                    &&& #[trigger] hl_s2.mappings.contains_pair(base, pte)
-                    &&& hlspec::mem_domain_from_entry_contains(hl_c.phys_mem_size, vidx, base, pte)
-                    };
+                    let (mem_base, mem_pte): (nat, PageTableEntry) = choose|
+                        base: nat,
+                        pte: PageTableEntry,
+                    |
+                        {
+                            &&& #[trigger] hl_s2.mappings.contains_pair(base, pte)
+                            &&& hlspec::mem_domain_from_entry_contains(
+                                hl_c.phys_mem_size,
+                                vidx,
+                                base,
+                                pte,
+                            )
+                        };
                     let paddr = (mem_pte.frame.base + (vidx - mem_base)) as nat;
-                   
-                    assert( hl_s2.mappings.contains_pair(mem_base, mem_pte));
-                    assert( between(vidx, mem_base, mem_base + mem_pte.frame.size));
-                   
-                    assert forall | page, entry | hl_s1.mappings.contains_pair(page, entry) && between(
-                        vidx,
-                        page,
-                        page + entry.frame.size,
-                    ) implies (page == mem_base) && (entry == mem_pte)  by {
+
+                    assert(hl_s2.mappings.contains_pair(mem_base, mem_pte));
+                    assert(between(vidx, mem_base, mem_base + mem_pte.frame.size));
+
+                    assert forall|page, entry|
+                        hl_s1.mappings.contains_pair(page, entry) && between(
+                            vidx,
+                            page,
+                            page + entry.frame.size,
+                        ) implies (page == mem_base) && (entry == mem_pte) by {
                         if (hl_s1.mappings.contains_pair(page, entry) && between(
                             vidx,
                             page,
                             page + entry.frame.size,
-                        ) ) {
-                            //TODO existing vmem no overlap invariant assert false 
+                        )) {
+                            //TODO existing vmem no overlap invariant assert false
                             assume(false);
                         }
-                       
                     }
-                    assert forall | page, entry | hl_s2.mappings.contains_pair(page, entry) && between(
-                        vidx,
-                        page,
-                        page + entry.frame.size,
-                    ) implies (page == mem_base) && (entry == mem_pte)  by {
-                        assert(s2.effective_mappings().dom().subset_of(s1.effective_mappings().dom()));
+                    assert forall|page, entry|
+                        hl_s2.mappings.contains_pair(page, entry) && between(
+                            vidx,
+                            page,
+                            page + entry.frame.size,
+                        ) implies (page == mem_base) && (entry == mem_pte) by {
+                        assert(s2.effective_mappings().dom().subset_of(
+                            s1.effective_mappings().dom(),
+                        ));
                         assert(hl_s2.mappings.submap_of(hl_s1.mappings));
                         assert(hl_s1.mappings.contains_pair(page, entry) && between(
                             vidx,
@@ -1076,9 +1095,8 @@ proof fn step_Unmap_Start_refines(
                             page + entry.frame.size,
                         ));
                     }
-                   
-                    
-            }}
+                }
+            }
         }
     } else {
     }
@@ -1126,7 +1144,7 @@ proof fn step_Unmap_Op_End_refines(
             if (s1.core_states.index(core_of_key) is UnmapWaiting) {
                 let vaddr_of_key = s1.core_states[core_of_key]->UnmapWaiting_vaddr;
                 if (vaddr_of_key == vaddr) {
-                    assert (overlap(
+                    assert(overlap(
                         MemRegion {
                             base: s2.core_states[core_of_key].vaddr(),
                             size: s2.core_states[core_of_key].vmem_pte_size(s2.interp_pt_mem()),
@@ -1134,8 +1152,9 @@ proof fn step_Unmap_Op_End_refines(
                         MemRegion {
                             base: s2.core_states[core].vaddr(),
                             size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
-                        }));
-        
+                        },
+                    ));
+
                 } else {
                 }
             } else {
