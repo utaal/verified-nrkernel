@@ -352,6 +352,7 @@ pub proof fn Lemma_insert_idle_corestate_preserves_no_overlap(
     assert(no_overlap_vmem_values(c, core_states.insert(core, os::CoreState::Idle), pt));
 }
 
+//TODO add locks as precondition
 pub proof fn Lemma_insert_preserves_no_overlap(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,
