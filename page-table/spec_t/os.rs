@@ -12,7 +12,7 @@ use crate::spec_t::{hardware, hlspec, mem};
 //TODO move core to definitions
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
-    candidate_mapping_overlaps_existing_pmem, overlap, x86_arch_spec, HWLoadResult, HWRWOp,
+    candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, HWLoadResult, HWRWOp,
     HWStoreResult, LoadResult, MemRegion, PageTableEntry, RWOp, StoreResult, L1_ENTRY_SIZE,
     L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE,
 };
@@ -376,6 +376,33 @@ impl OSVariables {
             )) ==> (core1 === core2)
     }
 
+
+    pub open spec fn inflight_map_no_overlap_existing_vmem(
+        self,
+        c: OSConstants,
+    ) -> bool {
+        forall|core: Core|
+            (#[trigger] hardware::valid_core(c.hw, core) && self.core_states[core].is_map()
+                ==> !candidate_mapping_overlaps_existing_vmem(
+                self.interp_pt_mem(),
+                self.core_states[core].vaddr(),
+                self.core_states[core].map_pte(),
+            ))
+    }
+
+    pub open spec fn existing_map_no_overlap_existing_vmem(
+        self,
+        c: OSConstants,
+    ) -> bool {
+         forall|vaddr| #[trigger]
+            self.interp_pt_mem().dom().contains(vaddr)
+                ==> !candidate_mapping_overlaps_existing_vmem(
+                self.interp_pt_mem().remove(vaddr),
+                vaddr,
+                self.interp_pt_mem()[vaddr],
+            )
+    }
+
     pub open spec fn overlapping_inv(self, c: OSConstants) -> bool {
         &&& self.sound_implies_inflight_map_no_overlap_inflight_pmem(c)
         &&& self.sound_implies_inflight_map_no_overlap_existing_pmem(c)
@@ -383,7 +410,10 @@ impl OSVariables {
     }
 
     pub open spec fn overlapping_vmem_inv(self, c: OSConstants) -> bool {
-        self.sound ==> { self.inflight_map_no_overlap_inflight_vmem(c) }
+        self.sound ==> {
+            &&& self.inflight_map_no_overlap_inflight_vmem(c)
+            &&& self.existing_map_no_overlap_existing_vmem(c) 
+            }
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
