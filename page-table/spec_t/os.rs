@@ -272,7 +272,7 @@ impl OSVariables {
                 {
                     &&& exists|core: Core|
                         self.core_states.dom().contains(core) && match self.core_states[core] {
-                            CoreState::UnmapOpDone { vaddr, result, .. } 
+                            CoreState::UnmapOpDone { vaddr, result, .. }
                             | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
                                 (result is Ok) && (vaddr === v_address)
                             },
