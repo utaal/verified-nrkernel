@@ -93,6 +93,29 @@ pub proof fn init_implies_tlb_inv(c: os::OSConstants, s: os::OSVariables)
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 }
 
+/*
+    assert (s2.shootdown_cores_valid(c));
+    assert (s2.successful_IPI(c));
+    assert (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+
+
+    pub open spec fn Unmap_vaddr(self) -> Set<nat> {
+        Set::new(
+            |v_address: nat|
+                {
+                    &&& exists|core: Core|
+                        self.core_states.dom().contains(core) && match self.core_states[core] {
+                            CoreState::UnmapOpDone { vaddr, result, .. } 
+                            | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
+                                (result is Ok) && (vaddr === v_address)
+                            },
+                            _ => false,
+                        }
+                },
+        )
+    }
+*/
+
 pub proof fn next_step_preserves_tlb_inv(
     c: os::OSConstants,
     s1: os::OSVariables,
@@ -101,13 +124,99 @@ pub proof fn next_step_preserves_tlb_inv(
 )
     requires
         s1.tlb_inv(c),
-        s1.inv(c),
+        s1.basic_inv(c),
+        s2.basic_inv(c),
         os::next_step(c, s1, s2, step),
     ensures
         s2.tlb_inv(c),
 {
-    admit();
+        match step {
+            os::OSStep::HW { ULT_id, step } => {
+                assert (s2.shootdown_cores_valid(c));
+                assume (s2.successful_IPI(c));
+                assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+               
+            },
+            //Map steps
+            os::OSStep::MapStart { ULT_id, vaddr, pte } => {
+                assert (s2.shootdown_cores_valid(c));
+                assert (s2.successful_IPI(c));
+                assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+                
+            },
+            os::OSStep::MapOpStart { core } => {
+        
+                assume(s2.Unmap_vaddr() == Set::<nat>::empty());
+                assume(s1.Unmap_vaddr() == Set::<nat>::empty());
+                assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
+                assert (s2.shootdown_cores_valid(c));
+                assert (s2.successful_IPI(c));
+                assert (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+               
+            },
+            os::OSStep::MapEnd { core, result } => {
+                assert (s2.shootdown_cores_valid(c));
+                assume (s2.successful_IPI(c));
+                assume(s2.Unmap_vaddr() == Set::<nat>::empty());
+                assume(s1.Unmap_vaddr() == Set::<nat>::empty());
+                //assert(s1.interp_pt_mem().dom().subset_of(s2.interp_pt_mem().dom()));
+                assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+               
+            },
+            //Unmap steps
+            os::OSStep::UnmapStart { ULT_id, vaddr } => {
+                assert (s2.shootdown_cores_valid(c));
+    assert (s2.successful_IPI(c));
+    assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+                
+            },
+            os::OSStep::UnmapOpStart { core } => {
+                assert (s2.shootdown_cores_valid(c));
+    assert (s2.successful_IPI(c));
+    assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+               
+            },
+            os::OSStep::UnmapOpEnd { core, result } => {
+                assert (s2.shootdown_cores_valid(c));
+                assume (s2.successful_IPI(c));
+                assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+
+            },
+            os::OSStep::UnmapInitiateShootdown { core } => {
+                assert (s2.shootdown_cores_valid(c));
+                assume (s2.successful_IPI(c));
+                assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            },
+            os::OSStep::UnmapEnd { core } => {
+                assert (s2.shootdown_cores_valid(c));
+    assert (s2.successful_IPI(c));
+    assume (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+                
+            },
+            os::OSStep::AckShootdownIPI { core } => {
+                assert (s2.shootdown_cores_valid(c));
+    assume (s2.successful_IPI(c));
+    assert (s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+                
+            },
+        }
 }
+
+pub proof fn Lemma_if_element_in_unmap_vaddr_then_the_only_one(
+    c: os::OSConstants,
+    s: os::OSVariables,
+    element : nat,
+)
+    requires
+    s.basic_inv(c),
+    s.Unmap_vaddr().contains(element)
+    ensures 
+        s.Unmap_vaddr() === Set::<nat>::empty().insert(element)
+{
+    admit();
+
+}
+
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of overlapping virtual memory Invariants
@@ -284,6 +393,11 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
     }
 }
 
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Alternative Definition for inflight_map_no_overlap_inflight_vmem and Equivalence proof
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub open spec fn unique_CoreStates(map: Map<hardware::Core, os::CoreState>) -> bool {
     forall|a|
         #![auto]
@@ -358,6 +472,9 @@ pub proof fn Lemma_unique_and_overlap_values_implies_overlap_vmem(
     }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Lemmata to help proof inflight_map_no_overlap_inflight_vmem
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub proof fn Lemma_insert_idle_corestate_preserves_no_overlap(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,

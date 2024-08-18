@@ -580,6 +580,7 @@ proof fn step_ReadWrite_refines(
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
             let pmem_idx = mem::word_index_spec(paddr);
+            assert(!s1.inflight_unmap_vaddr().contains(base));
             assume(s1.interp_pt_mem().contains_pair(base, pte));
             assume(hl_s1.mappings.contains_pair(base, pte));
             assert(between(vaddr, base, base + pte.frame.size));

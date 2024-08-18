@@ -265,12 +265,29 @@ impl OSVariables {
             }
     }
 
+    //returns set with the vaddr that is currently unmapped.
+    pub open spec fn Unmap_vaddr(self) -> Set<nat> {
+        Set::new(
+            |v_address: nat|
+                {
+                    &&& exists|core: Core|
+                        self.core_states.dom().contains(core) && match self.core_states[core] {
+                            CoreState::UnmapOpDone { vaddr, result, .. } 
+                            | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
+                                (result is Ok) && (vaddr === v_address)
+                            },
+                            _ => false,
+                        }
+                },
+        )
+    }
+
     pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
                 #[trigger] hardware::valid_core(c.hw, core)
                     ==> self.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().subset_of(
-                    self.interp_pt_mem().dom().union(self.inflight_unmap_vaddr()),
+                    self.interp_pt_mem().dom().union(self.Unmap_vaddr()),
                 )
             }
     }
@@ -284,6 +301,7 @@ impl OSVariables {
     pub open spec fn tlb_inv(self, c: OSConstants) -> bool {
         &&& self.shootdown_cores_valid(c)
         &&& self.successful_IPI(c)
+        &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
