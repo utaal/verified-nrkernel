@@ -282,7 +282,6 @@ impl OSVariables {
         )
     }
 
-
     pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
@@ -345,7 +344,6 @@ impl OSVariables {
                 self.interp_pt_mem()[vaddr],
             )
     }
-
 
     pub open spec fn overlapping_vmem_inv(self, c: OSConstants) -> bool {
         self.sound ==> {

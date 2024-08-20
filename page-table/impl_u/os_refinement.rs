@@ -415,7 +415,7 @@ proof fn next_step_refines_hl_next_step(
 
 /*
     &&& match pte {
-        
+
         None => {
             // If pte is None, no mapping containing vaddr exists..
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(
@@ -530,7 +530,6 @@ proof fn step_ReadWrite_refines(
             result: LoadResult::Undefined,
         },
     };
-    
 
     let vmem_idx = mem::word_index_spec(vaddr);
     //let pmem_idx = mem::word_index_spec(paddr);
@@ -550,7 +549,7 @@ proof fn step_ReadWrite_refines(
                 assert(hl_s1.mappings.dom().contains(base));
                 assert(hl_s1.mappings.contains_pair(base, pte));
                 assert(between(vaddr, base, base + pte.frame.size));
-                assume (hl_c.phys_mem_size == s1.hw.mem.len());
+                assume(hl_c.phys_mem_size == s1.hw.mem.len());
                 match rwop {
                     RWOp::Store { new_value, result } => {
                         if (result is Ok) {
@@ -560,7 +559,7 @@ proof fn step_ReadWrite_refines(
                     },
                     RWOp::Load { is_exec, result } => {
                         assert(hl_s2.mem === hl_s1.mem);
-                        if( result is Value) {
+                        if (result is Value) {
                             assume(result->0 == hl_s1.mem.index(vmem_idx));
                         }
                     },
@@ -603,7 +602,7 @@ proof fn step_ReadWrite_refines(
                     hl_s1.mappings,
                 ).contains(vmem_idx));
             } else {
-                let (base, pte) = pte.unwrap(); 
+                let (base, pte) = pte.unwrap();
                 //assert(!s1.effective_mappings().dom().contains(vaddr));
                 assert(!s1.effective_mappings().dom().contains(base));
                 assert(!hl_s1.mappings.dom().contains(base));
@@ -611,11 +610,11 @@ proof fn step_ReadWrite_refines(
                     hl_c.phys_mem_size,
                     hl_s1.mappings,
                 ).contains(vmem_idx));
-                assume (hl_s2.mem === hl_s1.mem);
-                assert (match rwop {
-                RWOp::Store { new_value, result } => result is Undefined,
-                RWOp::Load { is_exec, result } => result is Undefined,
-            });
+                assume(hl_s2.mem === hl_s1.mem);
+                assert(match rwop {
+                    RWOp::Store { new_value, result } => result is Undefined,
+                    RWOp::Load { is_exec, result } => result is Undefined,
+                });
             }
         },
     }
