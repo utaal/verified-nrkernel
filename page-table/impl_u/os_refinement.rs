@@ -414,43 +414,8 @@ proof fn next_step_refines_hl_next_step(
 }
 
 /*
-
     &&& match pte {
-        Some((base, pte)) => {
-            let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = mem::word_index_spec(paddr);
-            // If pte is Some, it's an existing mapping that contains vaddr..
-            &&& s1.mappings.contains_pair(base, pte)
-            &&& between(
-                vaddr,
-                base,
-                base + pte.frame.size,
-            )
-            // .. and the result depends on the flags.
-
-            &&& match op {
-                RWOp::Store { new_value, result } => {
-                    if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor
-                        && pte.flags.is_writable {
-                        &&& result is Ok
-                        &&& s2.mem === s1.mem.insert(vmem_idx, new_value)
-                    } else {
-                        &&& result is Undefined
-                        &&& s2.mem === s1.mem
-                    }
-                },
-                RWOp::Load { is_exec, result } => {
-                    &&& s2.mem === s1.mem
-                    &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec
-                        ==> !pte.flags.disable_execute) {
-                        &&& result is Value
-                        &&& result->0 == s1.mem.index(vmem_idx)
-                    } else {
-                        &&& result is Undefined
-                    }
-                },
-            }
-        },
+        
         None => {
             // If pte is None, no mapping containing vaddr exists..
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(
@@ -466,7 +431,6 @@ proof fn next_step_refines_hl_next_step(
         },
     }
 }
-
 */
 
 //TODO
@@ -488,7 +452,7 @@ proof fn step_ReadWrite_refines(
     ensures
         ({
             let hl_pte = if (pte is None || (pte matches Some((base, _))
-                && s1.inflight_unmap_vaddr().contains(base))) {
+                && !s1.effective_mappings().dom().contains(base))) {
                 None
             } else {
                 pte
@@ -535,7 +499,7 @@ proof fn step_ReadWrite_refines(
     let hl_s2 = s2.interp(c);
 
     let hl_pte = if (pte is None || (pte matches Some((base, _))
-        && s1.inflight_unmap_vaddr().contains(base))) {
+        && !s1.effective_mappings().dom().contains(base))) {
         None
     } else {
         pte
@@ -566,6 +530,7 @@ proof fn step_ReadWrite_refines(
             result: LoadResult::Undefined,
         },
     };
+    
 
     let vmem_idx = mem::word_index_spec(vaddr);
     //let pmem_idx = mem::word_index_spec(paddr);
@@ -578,15 +543,32 @@ proof fn step_ReadWrite_refines(
     assert(hl_s2.thread_state === hl_s1.thread_state);
     match hl_pte {
         Some((base, pte)) => {
-            let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = mem::word_index_spec(paddr);
-            assert(!s1.inflight_unmap_vaddr().contains(base));
-            assume(s1.interp_pt_mem().contains_pair(base, pte));
-            assume(hl_s1.mappings.contains_pair(base, pte));
-            assert(between(vaddr, base, base + pte.frame.size));
-
-            assume(false);
-
+            assert(s1.effective_mappings().dom().contains(base));
+            if (!s1.Unmap_vaddr().contains(base)) {
+                assert(s1.interp_pt_mem().dom().contains(base));
+                assume(s1.interp_pt_mem().contains_pair(base, pte));
+                assert(hl_s1.mappings.dom().contains(base));
+                assert(hl_s1.mappings.contains_pair(base, pte));
+                assert(between(vaddr, base, base + pte.frame.size));
+                assume (hl_c.phys_mem_size == s1.hw.mem.len());
+                match rwop {
+                    RWOp::Store { new_value, result } => {
+                        if (result is Ok) {
+                            //assert( s2.hw.mem === s1.mem.hw.update(pmem_idx as int, new_value));
+                            assume(hl_s2.mem === hl_s1.mem.insert(vmem_idx, new_value));
+                        }
+                    },
+                    RWOp::Load { is_exec, result } => {
+                        assert(hl_s2.mem === hl_s1.mem);
+                        if( result is Value) {
+                            assume(result->0 == hl_s1.mem.index(vmem_idx));
+                        }
+                    },
+                }
+            } else {
+                assert(!s1.interp_pt_mem().dom().contains(base));
+                assert(false);
+            }
         },
         None => {
             if (pte is None) {
@@ -621,12 +603,19 @@ proof fn step_ReadWrite_refines(
                     hl_s1.mappings,
                 ).contains(vmem_idx));
             } else {
+                let (base, pte) = pte.unwrap(); 
                 //assert(!s1.effective_mappings().dom().contains(vaddr));
+                assert(!s1.effective_mappings().dom().contains(base));
+                assert(!hl_s1.mappings.dom().contains(base));
                 assume(!hlspec::mem_domain_from_mappings(
                     hl_c.phys_mem_size,
                     hl_s1.mappings,
                 ).contains(vmem_idx));
-                assume(false);
+                assume (hl_s2.mem === hl_s1.mem);
+                assert (match rwop {
+                RWOp::Store { new_value, result } => result is Undefined,
+                RWOp::Load { is_exec, result } => result is Undefined,
+            });
             }
         },
     }

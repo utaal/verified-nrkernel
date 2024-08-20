@@ -282,6 +282,7 @@ impl OSVariables {
         )
     }
 
+
     pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
@@ -319,65 +320,6 @@ impl OSVariables {
         }
     }
 
-    pub open spec fn sound_implies_inflight_map_no_overlap_inflight_pmem(
-        self,
-        c: OSConstants,
-    ) -> bool {
-        self.sound ==> forall|core: Core|
-            (hardware::valid_core(c.hw, core) && #[trigger] self.core_states[core].is_map()
-                ==> !candidate_mapping_overlaps_inflight_pmem(
-                self.interp_pt_mem(),
-                self.set_core_idle(c, core).core_states.values(),
-                self.core_states[core].map_pte(),
-            ))
-    }
-
-    pub open spec fn sound_implies_inflight_map_no_overlap_existing_pmem(
-        self,
-        c: OSConstants,
-    ) -> bool {
-        self.sound ==> forall|core: Core|
-            (#[trigger] hardware::valid_core(c.hw, core) && self.core_states[core].is_map()
-                ==> !candidate_mapping_overlaps_existing_pmem(
-                self.interp_pt_mem(),
-                self.core_states[core].map_pte(),
-            ))
-    }
-
-    pub open spec fn sound_implies_existing_map_no_overlap_existing_pmem(
-        self,
-        c: OSConstants,
-    ) -> bool {
-        self.sound ==> forall|vaddr| #[trigger]
-            self.interp_pt_mem().dom().contains(vaddr)
-                ==> !candidate_mapping_overlaps_existing_pmem(
-                self.interp_pt_mem().remove(vaddr),
-                self.interp_pt_mem()[vaddr],
-            )
-    }
-
-    pub open spec fn sound_implies_inflight_map_no_overlap_inflight_vmem(
-        self,
-        c: OSConstants,
-    ) -> bool {
-        forall|core: Core|
-            #![auto]
-            {
-                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                    CoreState::MapWaiting { vaddr, pte, .. }
-                    | CoreState::MapExecuting { vaddr, pte, .. } => {
-                        !candidate_mapping_overlaps_inflight_vmem(
-                            self.interp_pt_mem(),
-                            self.core_states.remove(core).values(),
-                            vaddr,
-                            pte.frame.size,
-                        )
-                    },
-                    _ => { true },
-                }
-            }
-    }
-
     pub open spec fn inflight_map_no_overlap_inflight_vmem(self, c: OSConstants) -> bool {
         forall|core1: Core, core2: Core|
             (hardware::valid_core(c.hw, core1) && hardware::valid_core(c.hw, core2)
@@ -394,16 +336,6 @@ impl OSVariables {
             )) ==> (core1 === core2)
     }
 
-    pub open spec fn inflight_map_no_overlap_existing_vmem(self, c: OSConstants) -> bool {
-        forall|core: Core|
-            (#[trigger] hardware::valid_core(c.hw, core) && self.core_states[core].is_map()
-                ==> !candidate_mapping_overlaps_existing_vmem(
-                self.interp_pt_mem(),
-                self.core_states[core].vaddr(),
-                self.core_states[core].map_pte(),
-            ))
-    }
-
     pub open spec fn existing_map_no_overlap_existing_vmem(self, c: OSConstants) -> bool {
         forall|vaddr| #[trigger]
             self.interp_pt_mem().dom().contains(vaddr)
@@ -414,11 +346,6 @@ impl OSVariables {
             )
     }
 
-    pub open spec fn overlapping_inv(self, c: OSConstants) -> bool {
-        &&& self.sound_implies_inflight_map_no_overlap_inflight_pmem(c)
-        &&& self.sound_implies_inflight_map_no_overlap_existing_pmem(c)
-        &&& self.sound_implies_existing_map_no_overlap_existing_pmem(c)
-    }
 
     pub open spec fn overlapping_vmem_inv(self, c: OSConstants) -> bool {
         self.sound ==> {
@@ -1004,7 +931,7 @@ impl OSStep {
             OSStep::HW { ULT_id, step } => match step {
                 hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, core } => {
                     let hl_pte = if pte is None || (pte matches Some((base, _))
-                        && s.inflight_unmap_vaddr().contains(base)) {
+                        && !s.effective_mappings().dom().contains(base)) {
                         None
                     } else {
                         pte
