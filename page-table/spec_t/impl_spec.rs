@@ -1,4 +1,4 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // trusted:
 // these are the interface specifications, they are part of the theorem
 
@@ -6,6 +6,7 @@ use vstd::prelude::*;
 use crate::definitions_t::{ PageTableEntryExec };
 use crate::impl_u::spec_pt;
 use crate::spec_t::mem;
+#[cfg(verus_keep_ghost)]
 use crate::extra::result_map_ok;
 
 verus! {

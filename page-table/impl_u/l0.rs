@@ -1,7 +1,10 @@
 use vstd::prelude::*;
 use vstd::map::*;
 use crate::extra;
-use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry };
+
+use crate::definitions_t::{ MemRegion, Arch, PageTableEntry };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{ overlap, between, aligned };
 
 verus! {
 

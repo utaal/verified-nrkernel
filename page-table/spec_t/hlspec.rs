@@ -1,12 +1,14 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // trusted:
 // this is the process-level specification of the kernel's behaviour
 
 use vstd::prelude::*;
-use crate::definitions_t::{ between, PageTableEntry, RWOp, aligned,
-candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
-candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
-L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE, MAX_PHYADDR };
+use crate::definitions_t::{PageTableEntry, RWOp};
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{between, aligned,
+    candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
+    candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
+    L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE, MAX_PHYADDR };
 use crate::spec_t::mem;
 
 verus! {

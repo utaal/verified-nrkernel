@@ -1,5 +1,6 @@
 use vstd::prelude::*;
 use crate::extra;
+#[cfg(verus_keep_ghost)]
 use crate::definitions_t::{ aligned, between, index_from_offset, index_from_base_and_addr, entry_base_from_index, next_entry_base_from_index };
 
 verus! {

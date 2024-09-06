@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "page-table/Cargo.toml",
+        "benchmarks/single-threaded/Cargo.toml"
+    ]
+}
+

@@ -1,11 +1,18 @@
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
 use crate::definitions_t::{new_seq};
+#[cfg(verus_keep_ghost)]
 use crate::definitions_u::{lemma_new_seq};
+#[cfg(verus_keep_ghost)]
 use crate::extra::{ self, result_map };
 use crate::impl_u::indexing;
 
-use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
+use crate::definitions_t::{ MemRegion, Arch, PageTableEntry, Flags };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{ overlap, between, aligned, };
+#[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ permissive_flags };
+#[cfg(verus_keep_ghost)]
 use crate::impl_u::l0::{ self, ambient_lemmas1 };
 
 verus! {

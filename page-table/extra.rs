@@ -1,5 +1,8 @@
 use vstd::prelude::*;
+
+#[cfg(verus_keep_ghost)]
 use crate::definitions_t::aligned;
+
 use vstd::map::*;
 
 

@@ -2,10 +2,12 @@ use vstd::prelude::*;
 
 use crate::spec_t::mem;
 use crate::spec_t::hardware;
-use crate::definitions_t::{ PageTableEntry, aligned, between,
-candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
-candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, PT_BOUND_HIGH, L3_ENTRY_SIZE,
-L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_PHYADDR, MAX_BASE };
+use crate::definitions_t::{PageTableEntry, PT_BOUND_HIGH, L3_ENTRY_SIZE, MAX_PHYADDR};
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{aligned, between,
+    candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_vmem,
+    candidate_mapping_overlaps_existing_pmem, PT_BOUND_LOW, 
+    L2_ENTRY_SIZE, L1_ENTRY_SIZE, MAX_BASE};
 
 
 // trusted: not trusted

@@ -1,6 +1,10 @@
 use vstd::prelude::*;
 
-use crate::definitions_t::{MAX_PHYADDR, axiom_max_phyaddr_width_facts, aligned, new_seq, Flags, ArchExec, ArchLayerExec};
+use crate::definitions_t::MAX_PHYADDR;
+use crate::definitions_t::{Arch, ArchLayer, ArchExec, ArchLayerExec};
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{axiom_max_phyaddr_width_facts, aligned, new_seq, Flags, x86_arch_spec, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES, X86_NUM_LAYERS};
+
 
 verus! {
 pub proof fn lemma_maxphyaddr_facts()
@@ -72,8 +76,6 @@ pub proof fn overflow_bounds()
 // [n0   #  n1  , n2  , n3  , n4  ] // number_of_entries
 // [     #  512 , 512 , 512 , 512 ]
 // [     #  9   , 9   , 9   , 9   , 12  ]
-
-use crate::definitions_t::{Arch, ArchLayer, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES, x86_arch_spec, X86_NUM_LAYERS};
 
 impl Clone for ArchLayerExec {
     fn clone(&self) -> Self {

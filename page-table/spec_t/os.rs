@@ -1,4 +1,4 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // trusted:
 // describes how the whole system behaves
 //
@@ -9,8 +9,11 @@ use vstd::prelude::*;
 
 use crate::spec_t::{ hardware, hlspec, mem };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, aligned,
-L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
+
+use crate::definitions_t::{ MemRegion, PageTableEntry, };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{ between, overlap, aligned,
+    L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
 
 verus! {
 

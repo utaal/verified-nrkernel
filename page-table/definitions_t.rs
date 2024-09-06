@@ -1,4 +1,4 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 
 // trusted: these are used in trusted definitions
 // 
@@ -27,7 +27,7 @@ pub const X86_NUM_ENTRIES: usize = 512;
 
 // The maximum physical address width is between 32 and 52 bits.
 #[verifier(external_body)]
-pub const MAX_PHYADDR_WIDTH: u64 = unimplemented!();
+pub const MAX_PHYADDR_WIDTH: u64 = 52;
 
 #[verifier(external_body)]
 pub proof fn axiom_max_phyaddr_width_facts()
@@ -38,7 +38,9 @@ pub proof fn axiom_max_phyaddr_width_facts()
 pub spec const MAX_PHYADDR_SPEC: u64 = ((1u64 << MAX_PHYADDR_WIDTH) - 1u64) as u64;
 #[verifier::when_used_as_spec(MAX_PHYADDR_SPEC)]
 pub exec const MAX_PHYADDR: u64 ensures MAX_PHYADDR == MAX_PHYADDR_SPEC {
-    axiom_max_phyaddr_width_facts();
+    proof {
+        axiom_max_phyaddr_width_facts();
+    }
     assert(1u64 << 32 == 0x100000000) by (compute);
     assert(forall|m:u64,n:u64|  n < m < 64 ==> 1u64 << n < 1u64 << m) by (bit_vector);
     (1u64 << MAX_PHYADDR_WIDTH) - 1u64
@@ -178,6 +180,7 @@ proof fn overlap_sanity_check() {
             MemRegion { base: 8192, size: 16384 }));
 }
 
+#[derive(Clone)]
 pub struct MemRegionExec { pub base: usize, pub size: usize }
 
 impl MemRegionExec {
@@ -189,6 +192,7 @@ impl MemRegionExec {
     }
 }
 
+#[derive(Clone)]
 pub struct Flags {
     pub is_writable: bool,
     pub is_supervisor: bool,
@@ -205,6 +209,7 @@ pub struct PageTableEntry {
     pub flags: Flags,
 }
 
+#[derive(Clone)]
 pub struct PageTableEntryExec {
     pub frame: MemRegionExec,
     pub flags: Flags,
@@ -319,62 +324,18 @@ pub struct ArchLayerExec {
 }
 
 pub struct ArchExec {
-    // TODO: This could probably be an array, once we have support for that
-    pub layers: Vec<ArchLayerExec>,
+    pub layers: [ArchLayerExec; 4],
 }
 
-// Why does this exec_spec function even exist:
-// - In some places we need to refer to the `Exec` versions of the structs in spec mode.
-// - We can't make x86_arch_exec a const because Verus panics if we initialize the vec directly,
-//   i.e. we need to push to a mut vec instead. (Does rust even support vecs in a const? Otherwise
-//   would need arrays.)
-// - Since x86_arch_exec is a function it has to have a mode, i.e. we need a version for exec usage
-//   and a version for spec usage. In the spec version we can't initialize the vec (same problem as
-//   above and can't use mut), i.e. we have to axiomatize their equivalence.
-// - We can't even have a proof function axiom because we need to show
-//   `x86_arch_exec_spec() == x86_arch_exec()`, where the second function call is an exec function.
-//   Thus the axiom is an assumed postcondition on the exec function itself.
-// - In addition to adding the postcondition, we also need a separate axiom to show that the view
-//   of x86_arch_exec_spec is the same as x86_arch_spec. This is provable but only with the
-//   postconditions on x86_arch_exec, which is an exec function. Consequently we can't use that
-//   postcondition in proof mode.
-// - All this mess should go away as soon as we can make that exec function the constant it ought
-//   to be.
-pub open spec fn x86_arch_exec_spec() -> ArchExec;
-
-#[verifier(external_body)]
-pub proof fn axiom_x86_arch_exec_spec()
-    ensures
-        x86_arch_exec_spec()@ == x86_arch_spec;
-
-pub exec fn x86_arch_exec() -> (res: ArchExec)
-    ensures
-        res.layers@ == seq![
-            ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
-            ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
-        ],
-        res@ === x86_arch_spec,
-        res === x86_arch_exec_spec(),
-{
-    // Can we somehow just initialize an immutable vec directly? Verus panics when I try do so
-    // (unless the function is external_body).
-    let mut v = Vec::new();
-    v.push(ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 });
-    v.push(ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 });
-    v.push(ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 });
-    v.push(ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 });
-    let res = ArchExec {
-        layers: v,
-    };
-    proof {
-        assert(res@.layers =~= x86_arch_spec.layers);
-        // This is an axiom to establish the equivalence with x86_arch_exec_spec; See comments
-        // further up for explanation why this workaround is necessary.
-        assume(res === x86_arch_exec_spec());
-    }
-    res
+pub exec const x86_arch_exec: ArchExec ensures x86_arch_exec@ == x86_arch_spec {
+    let layers = [
+        ArchLayerExec { entry_size: L0_ENTRY_SIZE, num_entries: 512 },
+        ArchLayerExec { entry_size: L1_ENTRY_SIZE, num_entries: 512 },
+        ArchLayerExec { entry_size: L2_ENTRY_SIZE, num_entries: 512 },
+        ArchLayerExec { entry_size: L3_ENTRY_SIZE, num_entries: 512 },
+    ];
+    assert(x86_arch_spec.layers =~= layers@.map(|n,e:ArchLayerExec| e@));
+    ArchExec { layers }
 }
 
 pub spec const x86_arch_spec: Arch = Arch {

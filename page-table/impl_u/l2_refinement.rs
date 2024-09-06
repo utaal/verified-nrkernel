@@ -1,12 +1,18 @@
 use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_BASE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, aligned, new_seq, bitmask_inc };
+
+use crate::definitions_t::{ Flags,  L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,  bitmask_inc };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{ x86_arch_spec, MAX_BASE, aligned, new_seq };
 use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MemRegion};
 use crate::spec_t::impl_spec;
 use crate::spec_t::mem;
-use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GhostPageDirectoryEntry, nat_to_u64 };
+use crate::spec_t::hardware::{ GhostPageDirectoryEntry };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::hardware::{ interp_pt_mem,  valid_pt_walk, read_entry, l0_bits, l1_bits, l2_bits, l3_bits, nat_to_u64 };
 
+#[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
 use crate::impl_u::l2_impl::{ PT, PTDir };
@@ -554,7 +560,6 @@ impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
         lemma_new_seq::<Option<PTDir>>(512, Option::None);
         assert(PT::inv(mem, pt)) by {
             x86_arch_inv();
-            axiom_x86_arch_exec_spec();
             PT::lemma_zeroed_page_implies_empty_at(mem, pt, 0, mem.cr3_spec().base);
         };
         lemma_no_entries_implies_interp_at_aux_no_entries(*mem, pt, 0, mem.cr3_spec().base, 0, seq![]);

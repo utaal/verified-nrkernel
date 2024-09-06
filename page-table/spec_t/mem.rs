@@ -1,4 +1,4 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // trusted:
 // these are wrappers for the interface with the memory
 // `check_overflow` is a proof to harden the specification, it reduces the overall
@@ -7,8 +7,10 @@
 
 use vstd::prelude::*;
 
-use crate::definitions_t::{ MemRegion, MemRegionExec, overlap, aligned, new_seq, PageTableEntry,
-WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
+use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry,
+    WORD_SIZE, PAGE_SIZE, MAX_PHYADDR };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{ overlap, aligned, new_seq };
 
 verus! {
 
@@ -54,6 +56,8 @@ pub struct PageTableMemory {
     /// `phys_mem_ref` is the starting address of the physical memory linear mapping
     phys_mem_ref: *mut u64,
     cr3: u64,
+    alloc: alloc::boxed::Box<dyn FnMut() -> usize>,
+    dealloc: alloc::boxed::Box<dyn FnMut(usize) -> ()>,
 }
 
 impl PageTableMemory {
@@ -106,7 +110,11 @@ impl PageTableMemory {
             self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
             self.inv(),
     {
-        unimplemented!()
+        let base = (self.alloc)();
+        MemRegionExec {
+            base: base,
+            size: 4096,
+        }
     }
 
     /// Deallocates a page
@@ -122,7 +130,7 @@ impl PageTableMemory {
             self.phys_mem_ref_as_usize_spec() == old(self).phys_mem_ref_as_usize_spec(),
             self.inv(),
     {
-        unimplemented!()
+        (self.dealloc)(r.base)
     }
 
     #[verifier(external_body)]
@@ -221,4 +229,14 @@ impl PageTableMemory {
     }
 }
 
+}
+
+pub fn new_page_table_memory_wrapper(
+    phys_mem_ref: *mut u64,
+    cr3: u64,
+    alloc: alloc::boxed::Box<dyn FnMut() -> usize>,
+    dealloc: alloc::boxed::Box<dyn FnMut(usize) -> ()>
+    ) -> PageTableMemory
+{
+    PageTableMemory { phys_mem_ref, cr3, alloc, dealloc }
 }

@@ -2,9 +2,12 @@ use vstd::prelude::*;
 
 use crate::spec_t::{ hardware, hlspec };
 use crate::impl_u::spec_pt;
-use crate::definitions_t::{ between, MemRegion, overlap, PageTableEntry, RWOp,
-aligned, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem,
-L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
+use crate::definitions_t::{MemRegion, PageTableEntry, RWOp};
+#[cfg(verus_keep_ghost)]
+use crate::definitions_t::{between, overlap,
+    aligned, candidate_mapping_overlaps_existing_vmem, candidate_mapping_overlaps_existing_pmem,
+    L3_ENTRY_SIZE, L2_ENTRY_SIZE, L1_ENTRY_SIZE, WORD_SIZE };
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mem::{ word_index_spec };
 use crate::extra;
 use crate::spec_t::os::*;
