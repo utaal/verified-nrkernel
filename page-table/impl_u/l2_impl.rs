@@ -2206,6 +2206,7 @@ pub fn unmap(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize
 }
 
 #[cfg(feature = "noreclaim")]
+#[verus::line_count::ignore]
 #[verifier(external_body)]
 fn unmap_noreclaim_aux(mem: &mut mem::PageTableMemory, layer: usize, ptr: usize, base: usize, vaddr: usize)
     -> (res: Result<(),()>)
@@ -2233,6 +2234,7 @@ fn unmap_noreclaim_aux(mem: &mut mem::PageTableMemory, layer: usize, ptr: usize,
 /// An unverified version of the unmap function that doesn't reclaim empty directories. For
 /// benchmarking purposes.
 #[cfg(feature = "noreclaim")]
+#[verus::line_count::ignore]
 #[verifier(external_body)]
 pub fn unmap_noreclaim(mem: &mut mem::PageTableMemory, vaddr: usize) -> Result<(),()> {
     unmap_noreclaim_aux(mem, 0, mem.cr3().base, 0, vaddr)
