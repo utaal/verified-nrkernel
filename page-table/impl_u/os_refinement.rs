@@ -15,6 +15,7 @@ use crate::spec_t::os_invariant::{
     lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl, next_step_preserves_inv,
 };
 use crate::spec_t::{hardware, hlspec, mem, os};
+use crate::extra::result_map_ok;
 
 verus! {
 
@@ -65,7 +66,7 @@ proof fn lemma_inflight_vaddr_equals_hl_unmap(c: os::OSConstants, s: os::OSVaria
         //assert(hardware::valid_core(c.hw, core));
         match s.core_states[core] {
             os::CoreState::UnmapWaiting { ULT_id, vaddr }
-            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
             | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
             | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                 assert(s.interp_thread_state(c).dom().contains(ULT_id));
@@ -213,7 +214,7 @@ proof fn lemma_map_soundness_equality(
                     let core = choose|core|
                         s.core_states.dom().contains(core) && match s.core_states[core] {
                             os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                 vaddr === base
@@ -297,7 +298,7 @@ proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem(
                     let core = choose|core|
                         s.core_states.dom().contains(core) && match s.core_states[core] {
                             os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                 vaddr === base
@@ -397,10 +398,14 @@ proof fn next_step_refines_hl_next_step(
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::UnmapOpEnd { core, result } => {
-            if (s1.sound) {
-                step_Unmap_Op_End_refines(c, s1, s2, core, result);
+        os::OSStep::UnmapOpChange { core, result } => {
+            if s1.sound {
+                step_Unmap_Op_Change_refines(c, s1, s2, core, result);
             }
+        }
+        os::OSStep::UnmapOpEnd { core } => {
+            assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
+            lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
         os::OSStep::UnmapInitiateShootdown { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
@@ -878,7 +883,7 @@ proof fn step_Map_End_refines(
                             s1.core_states.dom().contains(unmap_core)
                                 && match s1.core_states[unmap_core] {
                                 os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                                 | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                                 | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                     vaddr === idx
@@ -904,7 +909,7 @@ proof fn step_Map_End_refines(
                             s2.core_states.dom().contains(unmap_core)
                                 && match s1.core_states[unmap_core] {
                                 os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                                 | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                                 | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                     vaddr === idx
@@ -1048,7 +1053,7 @@ proof fn step_Map_End_refines(
                 let unmap_core = choose|core|
                     s1.core_states.dom().contains(core) && match s1.core_states[core] {
                         os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                        | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                        | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                         | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                         | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                             vaddr === os_overlap_vaddr
@@ -1137,7 +1142,7 @@ proof fn step_Unmap_Start_refines(
                         let overlap_core = choose|core|
                             s1.core_states.dom().contains(core) && match s1.core_states[core] {
                                 os::CoreState::UnmapWaiting { ULT_id, vaddr: v }
-                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr: v }
+                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr: v, .. }
                                 | os::CoreState::UnmapOpDone { ULT_id, vaddr: v, .. }
                                 | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr: v, .. } => {
                                     vaddr === v
@@ -1180,7 +1185,7 @@ proof fn step_Unmap_Start_refines(
                     let unmap_core = choose|cr|
                         s1.core_states.dom().contains(cr) && match s1.core_states[cr] {
                             os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                 vaddr === ids
@@ -1224,7 +1229,7 @@ proof fn step_Unmap_Start_refines(
                         let unmap_core = choose|cr|
                             s1.core_states.dom().contains(cr) && match s1.core_states[cr] {
                                 os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                                | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                                 | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                                 | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                     vaddr === ids
@@ -1320,18 +1325,18 @@ proof fn step_Unmap_Start_refines(
     }
 }
 
-proof fn step_Unmap_Op_End_refines(
+proof fn step_Unmap_Op_Change_refines(
     c: os::OSConstants,
     s1: os::OSVariables,
     s2: os::OSVariables,
     core: hardware::Core,
-    result: Result<(), ()>,
+    result: Result<PageTableEntry, ()>
 )
     requires
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_Unmap_Op_End(c, s1, s2, core, result),
+        os::step_Unmap_Op_Change(c, s1, s2, core, result),
     ensures
         hlspec::step_Stutter(c.interp(), s1.interp(c), s2.interp(c)),
 {
@@ -1344,15 +1349,14 @@ proof fn step_Unmap_Op_End_refines(
 
     assert(hl_s1.thread_state.dom() === hl_s2.thread_state.dom());
     assert forall|key| #[trigger]
-        hl_s1.thread_state.dom().contains(key) implies hl_s1.thread_state[key]
-        == hl_s2.thread_state[key] by {
+        hl_s1.thread_state.contains_key(key) implies hl_s1.thread_state[key] == hl_s2.thread_state[key] by {
         assert(c.valid_ULT(key));
         assert(hl_s2.thread_state.dom().contains(key));
         let core_of_key = c.ULT2core[key];
         assert(hardware::valid_core(c.hw, core));
         assert(s1.core_states[core].holds_lock());
         assert(hardware::valid_core(c.hw, core_of_key));
-        if (s1.core_states[core_of_key].holds_lock()) {
+        if s1.core_states[core_of_key].holds_lock() {
             assert(core_of_key === core);
         } else {
             assert(!(core_of_key === core));
@@ -1396,7 +1400,7 @@ proof fn step_Unmap_Op_End_refines(
                     let unmap_core = choose|cr|
                         s1.core_states.dom().contains(cr) && match s1.core_states[cr] {
                             os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                            | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                             | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                                 vaddr === ids
@@ -1424,7 +1428,7 @@ proof fn step_Unmap_Op_End_refines(
                 let unmap_core = choose|cr|
                     s1.core_states.dom().contains(cr) && match s1.core_states[cr] {
                         os::CoreState::UnmapWaiting { ULT_id, vaddr }
-                        | os::CoreState::UnmapOpExecuting { ULT_id, vaddr }
+                        | os::CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                         | os::CoreState::UnmapOpDone { ULT_id, vaddr, .. }
                         | os::CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
                             vaddr === ids
@@ -1454,22 +1458,22 @@ proof fn step_Unmap_End_refines(
     ensures
         ({
             &&& s1.core_states[core] matches os::CoreState::UnmapOpDone { result, ULT_id, .. }
-            &&& hlspec::step_Unmap_end(c.interp(), s1.interp(c), s2.interp(c), ULT_id, result)
+            &&& hlspec::step_Unmap_end(c.interp(), s1.interp(c), s2.interp(c), ULT_id, result_map_ok(result, |r| ()))
         } || {
             &&& s1.core_states[core] matches os::CoreState::UnmapShootdownWaiting {
                 ULT_id,
                 result,
                 ..
             }
-            &&& hlspec::step_Unmap_end(c.interp(), s1.interp(c), s2.interp(c), ULT_id, result)
+            &&& hlspec::step_Unmap_end(c.interp(), s1.interp(c), s2.interp(c), ULT_id, result_map_ok(result, |r| ()))
         }),
 {
     let hl_c = c.interp();
     let hl_s1 = s1.interp(c);
     let hl_s2 = s2.interp(c);
     match s1.core_states[core] {
-        os::CoreState::UnmapShootdownWaiting { ULT_id, result, vaddr, pte, .. }
-        | os::CoreState::UnmapOpDone { result, ULT_id, vaddr, pte, .. } => {
+        os::CoreState::UnmapShootdownWaiting { ULT_id, result, vaddr, .. }
+        | os::CoreState::UnmapOpDone { result, ULT_id, vaddr, .. } => {
             assert(hlspec::valid_thread(hl_c, ULT_id));
             assert(hl_s2.sound == hl_s1.sound);
             assert(hl_s2.thread_state === hl_s1.thread_state.insert(

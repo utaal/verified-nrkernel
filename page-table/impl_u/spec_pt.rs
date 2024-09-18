@@ -20,6 +20,21 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub struct PageTableVariables {
     pub pt_mem: mem::PageTableMemory,
+    pub thread_state: ThreadState,
+}
+
+// Assume `ViewStutter` is any write, that doesn't change the view of the page table memory.
+// Then, mapping an entry is a sequence that matches: `(Read | ViewStutter)* Write`
+// (Reading, inserting empty directories and finally mapping the entry with a view-affecting write)
+// and unmapping an entry is a sequence that matches: `Read* (Write (Read | ViewStutter)*)?`
+// (Reading to traverse the tree, then if the entry exists, unmapping it with a view-affecting
+// write and unmapping zero or more, now-empty directories)
+pub enum ThreadState {
+    Idle,
+    Mapping,
+    /// `result` is `Some`, as soon as the "main" step of unmapping has happened, i.e. either
+    /// removal of the mapped frame, or determination that result is an error
+    Unmapping { result: Option<Result<PageTableEntry, ()>> },
 }
 
 impl PageTableVariables {
@@ -32,9 +47,12 @@ impl PageTableVariables {
 #[allow(inconsistent_fields)]
 pub enum PageTableStep {
     MapStart { vaddr: nat, pte: PageTableEntry },
+    MapStutter,
     MapEnd { vaddr: nat, pte: PageTableEntry, result: Result<(), ()> },
     UnmapStart { vaddr: nat },
-    UnmapEnd { vaddr: nat, result: Result<(), ()> },
+    UnmapChange { vaddr: nat, result: Result<PageTableEntry, ()> },
+    UnmapStutter,
+    UnmapEnd,
     Stutter,
 }
 
@@ -47,7 +65,18 @@ pub open spec fn step_Map_Start(
     vaddr: nat,
     pte: PageTableEntry,
 ) -> bool {
-    &&& s1 == s2
+    &&& s1.thread_state is Idle
+    &&& s2.interp() == s1.interp()
+    &&& s2.thread_state == ThreadState::Mapping
+}
+
+pub open spec fn step_Map_Stutter(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+) -> bool {
+    &&& s1.thread_state is Mapping
+    &&& s2.thread_state == s1.thread_state
+    &&& s2.interp() == s1.interp()
 }
 
 pub open spec fn step_Map_End(
@@ -57,13 +86,15 @@ pub open spec fn step_Map_End(
     pte: PageTableEntry,
     result: Result<(), ()>,
 ) -> bool {
-    if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
+    &&& s1.thread_state is Mapping
+    &&& if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
         &&& result is Err
         &&& s2.interp() == s1.interp()
     } else {
         &&& result is Ok
         &&& s2.interp() == s1.interp().insert(vaddr, pte)
     }
+    &&& s2.thread_state == ThreadState::Idle
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -74,22 +105,46 @@ pub open spec fn step_Unmap_Start(
     s2: PageTableVariables,
     vaddr: nat,
 ) -> bool {
-    &&& s1 == s2
+    &&& s1.thread_state is Idle
+    &&& s2.interp() == s1.interp()
+    &&& s2.thread_state == ThreadState::Unmapping { result: None }
 }
 
-pub open spec fn step_Unmap_End(
+pub open spec fn step_Unmap_Change(
     s1: PageTableVariables,
     s2: PageTableVariables,
     vaddr: nat,
-    result: Result<(), ()>,
+    result: Result<PageTableEntry, ()>,
 ) -> bool {
-    if s1.interp().dom().contains(vaddr) {
+    &&& s1.thread_state matches ThreadState::Unmapping { result: None }
+    &&& s2.thread_state == ThreadState::Unmapping { result: Some(result) }
+    &&& if s1.interp().dom().contains(vaddr) {
         &&& result is Ok
         &&& s2.interp() == s1.interp().remove(vaddr)
     } else {
         &&& result is Err
         &&& s2.interp() == s1.interp()
     }
+}
+
+pub open spec fn step_Unmap_Stutter(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+) -> bool {
+    &&& s1.thread_state matches ThreadState::Unmapping { result }
+    &&& result is Some
+    &&& s2.thread_state == s1.thread_state
+    &&& s2.interp() == s1.interp()
+}
+
+pub open spec fn step_Unmap_End(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+) -> bool {
+    &&& s1.thread_state matches ThreadState::Unmapping { result }
+    &&& result is Some
+    &&& s2.pt_mem == s1.pt_mem
+    &&& s2.thread_state == ThreadState::Idle
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -118,11 +173,14 @@ pub open spec fn next_step(
     step: PageTableStep,
 ) -> bool {
     match step {
-        PageTableStep::MapStart { vaddr, pte } => step_Map_Start(s1, s2, vaddr, pte),
+        PageTableStep::MapStart { vaddr, pte }       => step_Map_Start(s1, s2, vaddr, pte),
+        PageTableStep::MapStutter                    => step_Map_Stutter(s1, s2),
         PageTableStep::MapEnd { vaddr, pte, result } => step_Map_End(s1, s2, vaddr, pte, result),
-        PageTableStep::UnmapStart { vaddr } => step_Unmap_Start(s1, s2, vaddr),
-        PageTableStep::UnmapEnd { vaddr, result } => step_Unmap_End(s1, s2, vaddr, result),
-        PageTableStep::Stutter => step_Stutter(s1, s2),
+        PageTableStep::UnmapStart { vaddr }          => step_Unmap_Start(s1, s2, vaddr),
+        PageTableStep::UnmapChange { vaddr, result } => step_Unmap_Change(s1, s2, vaddr, result),
+        PageTableStep::UnmapStutter                  => step_Unmap_Stutter(s1, s2),
+        PageTableStep::UnmapEnd                      => step_Unmap_End(s1, s2),
+        PageTableStep::Stutter                       => step_Stutter(s1, s2),
     }
 }
 

@@ -81,7 +81,7 @@ proof fn program_1() {
     assert(next_step(c, s2, s3, OSStep::MapOpStart { core: core1 }));
 
     assert(!crate::definitions_t::candidate_mapping_overlaps_existing_vmem(
-        s3.pt_variables().interp(),
+        s3.pt_variables(core1).interp(),
         4096 * 3,
         pte1,
     ));
@@ -166,7 +166,7 @@ proof fn program_1() {
     let s8 = OSVariables {
         core_states: s7.core_states.insert(
             core1,
-            CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3 },
+            CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3, result: None },
         ),
         ..s7
     };
@@ -175,25 +175,34 @@ proof fn program_1() {
 
     let global_pt3: mem::PageTableMemory;
     assume(hw::interp_pt_mem(global_pt3) == hw::interp_pt_mem(global_pt2).remove(4096 * 3));
-    let s9 = OSVariables {
+    let s9a = OSVariables {
         core_states: s8.core_states.insert(
             core1,
-            CoreState::UnmapOpDone { ULT_id: 1, vaddr: 4096 * 3, result: Ok(()), pte: Some(pte1) },
+            CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3, result: Some(Ok(pte1)) },
         ),
         hw: hw::HWVariables { global_pt: global_pt3, ..s8.hw },
         ..s8
     };
 
-    assert(next_step(c, s8, s9, OSStep::UnmapOpEnd { core: core1, result: Ok(()) }));
+    assert(next_step(c, s8, s9a, OSStep::UnmapOpChange { core: core1, result: Ok(pte1) }));
+
+    let s9b = OSVariables {
+        core_states: s9a.core_states.insert(
+            core1,
+            CoreState::UnmapOpDone { ULT_id: 1, vaddr: 4096 * 3, result: Ok(pte1) },
+        ),
+        ..s9a
+    };
+
+    assert(next_step(c, s9a, s9b, OSStep::UnmapOpEnd { core: core1 }));
 
     let s10 = OSVariables {
-        core_states: s9.core_states.insert(
+        core_states: s9b.core_states.insert(
             core1,
             CoreState::UnmapShootdownWaiting {
                 ULT_id: 1,
                 vaddr: 4096 * 3,
-                result: Ok(()),
-                pte: Some(pte1),
+                result: Ok(pte1),
             },
         ),
         TLB_Shootdown: ShootdownVector {
@@ -206,12 +215,12 @@ proof fn program_1() {
                 core3,
             ],
         },
-        ..s9
+        ..s9b
     };
 
     assert(Set::new(|core: hw::Core| hw::valid_core(c.hw, core))
         =~= s10.TLB_Shootdown.open_requests);
-    assert(next_step(c, s9, s10, OSStep::UnmapInitiateShootdown { core: core1 }));
+    assert(next_step(c, s9b, s10, OSStep::UnmapInitiateShootdown { core: core1 }));
 
     let s11 = OSVariables {
         TLB_Shootdown: ShootdownVector {
