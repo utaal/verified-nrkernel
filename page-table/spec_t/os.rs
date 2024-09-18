@@ -560,7 +560,7 @@ pub open spec fn step_HW(
     let core = c.ULT2core.index(ULT_id);
     //enabling conditions
     &&& c.valid_ULT(ULT_id)
-    &&& s1.core_states[core] is Idle
+    &&& s1.core_states[core] is Idle || system_step is TLBFill || system_step is TLBEvict
     &&& !(system_step is PTMemOp)
     &&& !(system_step is Stutter)
     //hw/spec_pt-statemachine steps
