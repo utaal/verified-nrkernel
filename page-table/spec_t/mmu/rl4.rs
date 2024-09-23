@@ -61,15 +61,16 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
 
 // ---- Translation caching ----
 
-pub open spec fn step_CacheFill(pre: State, post: State, core: Core, e: PTWalk, lbl: Lbl) -> bool {
+pub open spec fn step_CacheFill(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
-    &&& pre.walks[core].contains(e)
+    &&& pre.walks[core].contains(walk)
+    &&& walk is Partial1 || walk is Partial2 || walk is Partial3
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache.insert(core, pre.cache[core].insert(e.as_cache_entry()))
+    &&& post.cache == pre.cache.insert(core, pre.cache[core].insert(walk.as_cache_entry()))
 }
 
 pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
@@ -97,7 +98,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
 
 // ---- Non-atomic page table walks ----
 
-pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize,  lbl: Lbl) -> bool {
+pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl: Lbl) -> bool {
     let l0e = PageDirectoryEntry {
         entry: pre.pt_mem@[add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize)] as u64,
         layer: Ghost(0),
@@ -120,7 +121,7 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize,  lbl
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
 }
 
-pub open spec fn step_Walk2(pre: State, post: State, walk: PTWalk, core: Core, lbl: Lbl) -> bool {
+pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial1(va, l0e, flags) = walk else { arbitrary() };
     let l1e = PageDirectoryEntry {
         entry: pre.pt_mem@[add(l0e@->Directory_addr, l1_bits!(va as u64) as usize)] as u64,
@@ -314,29 +315,44 @@ pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.walks == pre.walks
 }
 
-//#[allow(non_camel_case_types)]
-//pub enum Step {
-//    PTMemChange       { },
-//    CacheFill         { va: VA, l0e: PTE },
-//    CacheEvict        { va: VA },
-//    PTWalk_Init       { va: VA },
-//    PTWalk_From_Cache { },
-//    PTWalk_Read1      { l0e: PTE },
-//    PTWalk_Read_Done  { },
-//    Invalidate     { },
-//}
-//
-//pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
-//    match step {
-//        Step::PTMemChange { }       => step_PTMemChange(pre, post, lbl),
-//        Step::CacheFill { va, l0e } => step_CacheFill(pre, post, va, l0e, lbl),
-//        Step::CacheEvict { va }     => step_CacheEvict(pre, post, va, lbl),
-//        Step::PTWalk_Init { va }    => step_PTWalk_Init(pre, post, va, lbl),
-//        Step::PTWalk_From_Cache { } => step_PTWalk_From_Cache(pre, post, lbl),
-//        Step::PTWalk_Read1 { l0e }  => step_PTWalk_Read1(pre, post, l0e, lbl),
-//        Step::PTWalk_Read_Done { }  => step_PTWalk_Read_Done(pre, post, lbl),
-//        Step::Invalidate { }     => step_Invalidate(pre, post, lbl),
-//    }
-//}
+pub enum Step {
+    // Mixed
+    Invlpg { },
+    // Translation caching
+    CacheFill { core: Core, walk: PTWalk },
+    CacheUse { core: Core, e: CacheEntry },
+    CacheEvict { core: Core, e: CacheEntry },
+    // Non-atomic page table walks
+    Walk1 { core: Core, va: usize },
+    Walk2 { core: Core, walk: PTWalk },
+    Walk3 { core: Core, walk: PTWalk },
+    Walk4 { core: Core, walk: PTWalk },
+    WalkCancel { core: Core, walk: PTWalk },
+    Walk { },
+    // TSO
+    Write { },
+    Writeback { core: Core },
+    Read { },
+    Barrier { },
+}
+
+pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
+    match step {
+        Step::Invlpg { }                => step_Invlpg(pre, post, lbl),
+        Step::CacheFill { core, walk }  => step_CacheFill(pre, post, core, walk, lbl),
+        Step::CacheUse { core, e }      => step_CacheUse(pre, post, core, e, lbl),
+        Step::CacheEvict { core, e }    => step_CacheEvict(pre, post, core, e, lbl),
+        Step::Walk1 { core, va }        => step_Walk1(pre, post, core, va, lbl),
+        Step::Walk2 { core, walk }      => step_Walk2(pre, post, core, walk, lbl),
+        Step::Walk3 { core, walk }      => step_Walk3(pre, post, core, walk, lbl),
+        Step::Walk4 { core, walk }      => step_Walk4(pre, post, core, walk, lbl),
+        Step::WalkCancel { core, walk } => step_WalkCancel(pre, post, core, walk, lbl),
+        Step::Walk { }                  => step_Walk(pre, post, lbl),
+        Step::Write { }                 => step_Write(pre, post, lbl),
+        Step::Writeback { core }        => step_Writeback(pre, post, core, lbl),
+        Step::Read { }                  => step_Read(pre, post, lbl),
+        Step::Barrier { }               => step_Barrier(pre, post, lbl),
+    }
+}
 
 } // verus!

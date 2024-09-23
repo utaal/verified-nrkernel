@@ -14,20 +14,31 @@ pub enum PTWalk {
 }
 
 pub enum CacheEntry {
-    Partial1(usize, usize), // TODO
-    Partial2(usize, usize), // TODO
-    Partial3(usize, usize), // TODO
+    Partial1(usize, PageDirectoryEntry, Flags),
+    Partial2(usize, PageDirectoryEntry, PageDirectoryEntry, Flags),
+    Partial3(usize, PageDirectoryEntry, PageDirectoryEntry, PageDirectoryEntry, Flags),
 }
 
 impl PTWalk {
-    pub open spec fn as_cache_entry(self) -> CacheEntry {
-        arbitrary() // TODO:
+    pub open spec fn as_cache_entry(self) -> CacheEntry
+        recommends self is Partial1 || self is Partial2 || self is Partial3
+    {
+        match self {
+            PTWalk::Partial1(va, l0e, flags)           => CacheEntry::Partial1(va, l0e, flags),
+            PTWalk::Partial2(va, l0e, l1e, flags)      => CacheEntry::Partial2(va, l0e, l1e, flags),
+            PTWalk::Partial3(va, l0e, l1e, l2e, flags) => CacheEntry::Partial3(va, l0e, l1e, l2e, flags),
+            _                                          => arbitrary(),
+        }
     }
 }
 
 impl CacheEntry {
     pub open spec fn as_ptwalk(self) -> PTWalk {
-        arbitrary() // TODO:
+        match self {
+            CacheEntry::Partial1(va, l0e, flags)           => PTWalk::Partial1(va, l0e, flags),
+            CacheEntry::Partial2(va, l0e, l1e, flags)      => PTWalk::Partial2(va, l0e, l1e, flags),
+            CacheEntry::Partial3(va, l0e, l1e, l2e, flags) => PTWalk::Partial3(va, l0e, l1e, l2e, flags),
+        }
     }
 }
 
@@ -48,6 +59,22 @@ pub enum Lbl {
     Invlpg(Core, usize),
     /// Serializing instruction
     Barrier(Core),
+}
+
+pub trait MMU: Sized {
+    spec fn init(self) -> bool;
+    spec fn next(pre: Self, post: Self, lbl: Lbl) -> bool;
+    spec fn inv(self) -> bool;
+    proof fn init_implies_inv(self)
+        requires self.init()
+        ensures self.inv()
+    ;
+    proof fn next_preserves_inv(pre: Self, post: Self, lbl: Lbl)
+        requires
+            pre.inv(),
+            Self::next(pre, post, lbl)
+        ensures post.inv()
+    ;
 }
 
 }
