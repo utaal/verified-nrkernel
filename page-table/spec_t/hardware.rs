@@ -382,6 +382,21 @@ impl PageDirectoryEntry {
     }
 }
 
+impl Flags {
+    pub open spec fn from_GPDE(pde: GhostPageDirectoryEntry) -> Flags
+        recommends !(pde is Empty)
+    {
+        match pde {
+            GhostPageDirectoryEntry::Directory { flag_RW, flag_US, flag_XD, .. } =>
+                Flags::from_bits(flag_RW, flag_US, flag_XD),
+            GhostPageDirectoryEntry::Page { flag_RW, flag_US, flag_XD, .. } =>
+                Flags::from_bits(flag_RW, flag_US, flag_XD),
+            _ => arbitrary(),
+        }
+    }
+}
+
+
 #[allow(unused_macros)]
 macro_rules! l0_bits {
     ($addr:expr) => { ($addr & bitmask_inc!(39u64,47u64)) >> 39u64 }
@@ -436,6 +451,9 @@ pub open spec fn read_entry(
 /// make more restrictive settings in the frame mappings. (Ensured in the invariant, see conjunct
 /// `directories_have_flags` in refinement layers 1 and 2.) But in the hardware model we still
 /// define the full, correct semantics to ensure the implementation sets the flags correctly.
+///
+/// Note that `valid_pt_walk` is only true for the base address of a mapping. E.g. if a 4k entry is
+/// mapped at address 0, then we have `valid_pt_walk(.., 0, ..)` but not `valid_pt_walk(.., 1, ..)`.
 pub open spec fn valid_pt_walk(
     pt_mem: mem::PageTableMemory,
     addr: u64,

@@ -249,6 +249,24 @@ impl PageTableEntryExec {
     }
 }
 
+impl Flags {
+    pub open spec fn from_bits(flag_RW: bool, flag_US: bool, flag_XD: bool) -> Flags {
+        Flags {
+            is_writable: flag_RW,
+            is_supervisor: !flag_US,
+            disable_execute: flag_XD,
+        }
+    }
+
+    pub open spec fn combine(self, other: Flags) -> Flags {
+        Flags {
+            is_writable: self.is_writable && other.is_writable,
+            is_supervisor: self.is_supervisor || other.is_supervisor,
+            disable_execute: self.disable_execute || other.disable_execute,
+        }
+    }
+}
+
 pub ghost struct ArchLayer {
     /// Address space size mapped by a single entry at this layer
     pub entry_size: nat,
