@@ -20,6 +20,15 @@ pub struct State {
     pub sbuf: Map<Core, Seq<(usize, usize)>>,
 }
 
+impl State {
+    pub open spec fn read_from_mem_tso(self, core: Core, addr: usize) -> usize {
+        match get_first(self.sbuf[core], addr) {
+            Some(v) => v,
+            None    => self.pt_mem@[addr],
+        }
+    }
+}
+
 // TODO:
 // invariant on walks and cache:
 // - The PDEs stored in `Partial*` walks are always directories
@@ -100,7 +109,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
 
 pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl: Lbl) -> bool {
     let l0e = PageDirectoryEntry {
-        entry: pre.pt_mem@[add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize)] as u64,
+        entry: pre.read_from_mem_tso(core, add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize)) as u64,
         layer: Ghost(0),
     };
     let flags = Flags::from_GPDE(l0e@);
@@ -124,7 +133,7 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl:
 pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial1(va, l0e, flags) = walk else { arbitrary() };
     let l1e = PageDirectoryEntry {
-        entry: pre.pt_mem@[add(l0e@->Directory_addr, l1_bits!(va as u64) as usize)] as u64,
+        entry: pre.read_from_mem_tso(core, add(l0e@->Directory_addr, l1_bits!(va as u64) as usize)) as u64,
         layer: Ghost(1),
     };
     let new_walk = match l1e@ {
@@ -154,7 +163,7 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
 pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial2(va, l0e, l1e, flags) = walk else { arbitrary() };
     let l2e = PageDirectoryEntry {
-        entry: pre.pt_mem@[add(l1e@->Directory_addr, l2_bits!(va as u64) as usize)] as u64,
+        entry: pre.read_from_mem_tso(core, add(l1e@->Directory_addr, l2_bits!(va as u64) as usize)) as u64,
         layer: Ghost(2),
     };
     let new_walk = match l2e@ {
@@ -184,7 +193,7 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
 pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial3(va, l0e, l1e, l2e, flags) = walk else { arbitrary() };
     let l3e = PageDirectoryEntry {
-        entry: pre.pt_mem@[add(l2e@->Directory_addr, l3_bits!(va as u64) as usize)] as u64,
+        entry: pre.read_from_mem_tso(core, add(l2e@->Directory_addr, l3_bits!(va as u64) as usize)) as u64,
         layer: Ghost(3),
     };
     let new_walk = match l3e@ {
@@ -269,32 +278,11 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.walks == pre.walks
 }
 
-pub open spec fn get_first_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<B>
-    decreases s.len() - i
-{
-    if i >= s.len() {
-        None
-    } else {
-        if s[i].0 == a {
-            Some(s[i].1)
-        } else {
-            get_first_aux(s, i + 1, a)
-        }
-    }
-}
-
-pub open spec fn get_first<A,B>(s: Seq<(A, B)>, a: A) -> Option<B> {
-    get_first_aux(s, 0, a)
-}
-
 pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
     &&& aligned(addr as nat, 8)
-    &&& value == match get_first(pre.sbuf[core], addr) {
-        Some(v) => v,
-        None    => pre.pt_mem@[addr],
-    }
+    &&& value == pre.read_from_mem_tso(core, addr)
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -353,6 +341,25 @@ pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> boo
         Step::Read { }                  => step_Read(pre, post, lbl),
         Step::Barrier { }               => step_Barrier(pre, post, lbl),
     }
+}
+
+
+pub open spec fn get_first_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<B>
+    decreases s.len() - i
+{
+    if i >= s.len() {
+        None
+    } else {
+        if s[i].0 == a {
+            Some(s[i].1)
+        } else {
+            get_first_aux(s, i + 1, a)
+        }
+    }
+}
+
+pub open spec fn get_first<A,B>(s: Seq<(A, B)>, a: A) -> Option<B> {
+    get_first_aux(s, 0, a)
 }
 
 } // verus!
