@@ -20,7 +20,6 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub struct PageTableVariables {
     pub pt_mem: mem::PageTableMemory,
-    pub thread_state: ThreadState,
 }
 
 // Assume `ViewStutter` is any write, that doesn't change the view of the page table memory.
@@ -47,11 +46,10 @@ impl PageTableVariables {
 #[allow(inconsistent_fields)]
 pub enum PageTableStep {
     MapStart { vaddr: nat, pte: PageTableEntry },
-    MapStutter,
     MapEnd { vaddr: nat, pte: PageTableEntry, result: Result<(), ()> },
-    UnmapStart { vaddr: nat, result: Result<PageTableEntry, ()> },
-    UnmapStutter,
+    UnmapStart { vaddr: nat, result: Result<(), ()> },
     UnmapEnd,
+    ViewStutter,
     Stutter,
 }
 
@@ -64,18 +62,7 @@ pub open spec fn step_Map_Start(
     vaddr: nat,
     pte: PageTableEntry,
 ) -> bool {
-    &&& s1.thread_state is Idle
-    &&& s2.interp() == s1.interp()
-    &&& s2.thread_state == ThreadState::Mapping
-}
-
-pub open spec fn step_Map_Stutter(
-    s1: PageTableVariables,
-    s2: PageTableVariables,
-) -> bool {
-    &&& s1.thread_state is Mapping
-    &&& s2.thread_state == s1.thread_state
-    &&& s2.interp() == s1.interp()
+    &&& s2 == s1
 }
 
 pub open spec fn step_Map_End(
@@ -85,15 +72,13 @@ pub open spec fn step_Map_End(
     pte: PageTableEntry,
     result: Result<(), ()>,
 ) -> bool {
-    &&& s1.thread_state is Mapping
-    &&& if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
+    if candidate_mapping_overlaps_existing_vmem(s1.interp(), vaddr, pte) {
         &&& result is Err
         &&& s2.interp() == s1.interp()
     } else {
         &&& result is Ok
         &&& s2.interp() == s1.interp().insert(vaddr, pte)
     }
-    &&& s2.thread_state == ThreadState::Idle
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -103,35 +88,22 @@ pub open spec fn step_Unmap_Start(
     s1: PageTableVariables,
     s2: PageTableVariables,
     vaddr: nat,
-    result: Result<PageTableEntry, ()>,
+    result: Result<(), ()>,
 ) -> bool {
-    &&& s1.thread_state is Idle
-    &&& if s1.interp().dom().contains(vaddr) {
+    if s1.interp().dom().contains(vaddr) {
         &&& result is Ok
         &&& s2.interp() == s1.interp().remove(vaddr)
     } else {
         &&& result is Err
         &&& s2.interp() == s1.interp()
     }
-    &&& s2.thread_state == ThreadState::Unmapping { result }
-}
-
-pub open spec fn step_Unmap_Stutter(
-    s1: PageTableVariables,
-    s2: PageTableVariables,
-) -> bool {
-    &&& s1.thread_state matches ThreadState::Unmapping { result }
-    &&& s2.thread_state == s1.thread_state
-    &&& s2.interp() == s1.interp()
 }
 
 pub open spec fn step_Unmap_End(
     s1: PageTableVariables,
     s2: PageTableVariables,
 ) -> bool {
-    &&& s1.thread_state matches ThreadState::Unmapping { result }
-    &&& s2.pt_mem == s1.pt_mem
-    &&& s2.thread_state == ThreadState::Idle
+    &&& s2 == s1
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -139,6 +111,13 @@ pub open spec fn step_Unmap_End(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Stutter(s1: PageTableVariables, s2: PageTableVariables) -> bool {
     s1 == s2
+}
+
+pub open spec fn step_View_Stutter(
+    s1: PageTableVariables,
+    s2: PageTableVariables,
+) -> bool {
+    &&& s2.interp() == s1.interp()
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -161,11 +140,10 @@ pub open spec fn next_step(
 ) -> bool {
     match step {
         PageTableStep::MapStart { vaddr, pte }       => step_Map_Start(s1, s2, vaddr, pte),
-        PageTableStep::MapStutter                    => step_Map_Stutter(s1, s2),
         PageTableStep::MapEnd { vaddr, pte, result } => step_Map_End(s1, s2, vaddr, pte, result),
         PageTableStep::UnmapStart { vaddr, result }  => step_Unmap_Start(s1, s2, vaddr, result),
-        PageTableStep::UnmapStutter                  => step_Unmap_Stutter(s1, s2),
         PageTableStep::UnmapEnd                      => step_Unmap_End(s1, s2),
+        PageTableStep::ViewStutter                   => step_View_Stutter(s1, s2),
         PageTableStep::Stutter                       => step_Stutter(s1, s2),
     }
 }

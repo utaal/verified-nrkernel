@@ -184,7 +184,7 @@ proof fn program_1() {
         ..s7
     };
 
-    assert(next_step(c, s7, s8, OSStep::UnmapOpStart { core: core1, result: Ok(pte1) }));
+    assert(next_step(c, s7, s8, OSStep::UnmapOpStart { core: core1, result: Ok(()) }));
 
     let s9b = OSVariables {
         core_states: s8.core_states.insert(

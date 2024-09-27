@@ -153,9 +153,6 @@ pub proof fn next_step_preserves_tlb_inv(
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::MapOpStutter { core } => {
-            assume(false);
-        },
         os::OSStep::MapEnd { core, result } => {
             assert(s2.shootdown_cores_valid(c));
             assume(s2.successful_IPI(c));
@@ -173,9 +170,6 @@ pub proof fn next_step_preserves_tlb_inv(
 
         },
         os::OSStep::UnmapOpStart { core, result } => {
-            assume(false);
-        },
-        os::OSStep::UnmapOpStutter { .. } => {
             assume(false);
         },
         os::OSStep::UnmapOpEnd { core } => {
@@ -200,6 +194,9 @@ pub proof fn next_step_preserves_tlb_inv(
             assume(s2.successful_IPI(c));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
+        },
+        os::OSStep::ViewStutter { .. } => {
+            assume(false);
         },
     }
 }
@@ -316,6 +313,10 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
             os::OSStep::UnmapOpStart { core, result } => {
                 let vaddr = s1.core_states[core]->UnmapWaiting_vaddr;
                 let ULT_id = s1.core_states[core]->UnmapWaiting_ULT_id;
+                let result = match result {
+                    Ok(_) => Ok(s1.interp_pt_mem()[vaddr]),
+                    Err(_) => Err(()),
+                };
                 let corestate = os::CoreState::UnmapOpExecuting { ULT_id, vaddr, result };
                 Lemma_insert_preserves_no_overlap(
                     c,

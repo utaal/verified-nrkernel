@@ -1326,7 +1326,7 @@ proof fn step_Unmap_Op_Start_refines(
     s1: os::OSVariables,
     s2: os::OSVariables,
     core: hardware::Core,
-    result: Result<PageTableEntry, ()>
+    result: Result<(), ()>
 )
     requires
         s1.inv(c),
