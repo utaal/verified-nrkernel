@@ -163,38 +163,38 @@ proof fn program_1() {
 
     assert(next_step(c, s6, s7, OSStep::UnmapStart { ULT_id: 1, vaddr: 4096 * 3 }));
 
-    let s8 = OSVariables {
-        core_states: s7.core_states.insert(
-            core1,
-            CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3, result: None },
-        ),
-        ..s7
-    };
-
-    assert(next_step(c, s7, s8, OSStep::UnmapOpStart { core: core1 }));
+    //let s8 = OSVariables {
+    //    core_states: s7.core_states.insert(
+    //        core1,
+    //        CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3, result: None },
+    //    ),
+    //    ..s7
+    //};
+    //
+    //assert(next_step(c, s7, s8, OSStep::UnmapOpStart { core: core1 }));
 
     let global_pt3: mem::PageTableMemory;
     assume(hw::interp_pt_mem(global_pt3) == hw::interp_pt_mem(global_pt2).remove(4096 * 3));
-    let s9a = OSVariables {
-        core_states: s8.core_states.insert(
+    let s8 = OSVariables {
+        core_states: s7.core_states.insert(
             core1,
-            CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3, result: Some(Ok(pte1)) },
+            CoreState::UnmapOpExecuting { ULT_id: 1, vaddr: 4096 * 3, result: Ok(pte1) },
         ),
-        hw: hw::HWVariables { global_pt: global_pt3, ..s8.hw },
-        ..s8
+        hw: hw::HWVariables { global_pt: global_pt3, ..s7.hw },
+        ..s7
     };
 
-    assert(next_step(c, s8, s9a, OSStep::UnmapOpChange { core: core1, result: Ok(pte1) }));
+    assert(next_step(c, s7, s8, OSStep::UnmapOpStart { core: core1, result: Ok(pte1) }));
 
     let s9b = OSVariables {
-        core_states: s9a.core_states.insert(
+        core_states: s8.core_states.insert(
             core1,
             CoreState::UnmapOpDone { ULT_id: 1, vaddr: 4096 * 3, result: Ok(pte1) },
         ),
-        ..s9a
+        ..s8
     };
 
-    assert(next_step(c, s9a, s9b, OSStep::UnmapOpEnd { core: core1 }));
+    assert(next_step(c, s8, s9b, OSStep::UnmapOpEnd { core: core1 }));
 
     let s10 = OSVariables {
         core_states: s9b.core_states.insert(

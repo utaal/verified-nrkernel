@@ -50,7 +50,7 @@ pub enum CoreState {
     MapWaiting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
     MapExecuting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
     UnmapWaiting { ULT_id: nat, vaddr: nat },
-    UnmapOpExecuting { ULT_id: nat, vaddr: nat, result: Option<Result<PageTableEntry, ()>> },
+    UnmapOpExecuting { ULT_id: nat, vaddr: nat, result: Result<PageTableEntry, ()> },
     UnmapOpDone { ULT_id: nat, vaddr: nat, result: Result<PageTableEntry, ()> },
     UnmapShootdownWaiting {
         ULT_id: nat,
@@ -81,14 +81,14 @@ impl CoreState {
             CoreState::MapWaiting { pte, .. } | CoreState::MapExecuting { pte, .. } => {
                 pte.frame.size
             },
-            CoreState::UnmapWaiting { vaddr, .. } | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+            CoreState::UnmapWaiting { vaddr, .. } => {
                 if pt.dom().contains(vaddr) {
                     pt.index(vaddr).frame.size
                 } else {
                     0
                 }
             },
-            CoreState::UnmapOpExecuting { result: Some(result), .. }
+            CoreState::UnmapOpExecuting { result, .. }
             | CoreState::UnmapOpDone { result, .. }
             | CoreState::UnmapShootdownWaiting { result, .. } => {
                 if result is Ok {
@@ -166,13 +166,12 @@ impl OSVariables {
                 hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
                     CoreState::MapWaiting { vaddr, pte, .. }
                     | CoreState::MapExecuting { vaddr, pte, .. } => { above_zero(pte.frame.size) },
-                    CoreState::UnmapWaiting { vaddr, .. }
-                    | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+                    CoreState::UnmapWaiting { vaddr, .. } => {
                         self.interp_pt_mem().dom().contains(vaddr) ==> above_zero(
                             self.interp_pt_mem()[vaddr].frame.size,
                         )
                     }
-                    CoreState::UnmapOpExecuting { result: Some(result), .. }
+                    CoreState::UnmapOpExecuting { result, .. }
                     | CoreState::UnmapOpDone { result, .. }
                     | CoreState::UnmapShootdownWaiting { result, .. } => {
                         result is Ok ==> above_zero(result.get_Ok_0().frame.size)
@@ -186,7 +185,7 @@ impl OSVariables {
         forall|core: Core|
             {
                 hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                    CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
+                    CoreState::UnmapOpExecuting { vaddr, .. }
                     | CoreState::UnmapOpDone { vaddr, .. }
                     | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
                         !self.interp_pt_mem().dom().contains(vaddr)
@@ -421,8 +420,7 @@ impl OSVariables {
                                 hlspec::AbstractArguments::Empty
                             }
                         },
-                        CoreState::UnmapWaiting { ULT_id, vaddr }
-                        | CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None } => {
+                        CoreState::UnmapWaiting { ULT_id, vaddr } => {
                             let pte = if self.interp_pt_mem().dom().contains(vaddr) {
                                 Some(self.interp_pt_mem().index(vaddr))
                             } else {
@@ -434,7 +432,7 @@ impl OSVariables {
                                 hlspec::AbstractArguments::Empty
                             }
                         },
-                        CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result) }
+                        CoreState::UnmapOpExecuting { ULT_id, vaddr, result }
                         | CoreState::UnmapOpDone { ULT_id, vaddr, result }
                         | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result } => {
                             if ULT_id == ult_id {
@@ -480,12 +478,11 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
                 | CoreState::MapExecuting { vaddr, pte, .. } => {
                     overlap(candidate.frame, pte.frame)
                 },
-                CoreState::UnmapWaiting { ULT_id, vaddr }
-                | CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None, .. } => {
+                CoreState::UnmapWaiting { ULT_id, vaddr } => {
                     &&& pt.dom().contains(vaddr)
                     &&& overlap(candidate.frame, pt.index(vaddr).frame)
                 },
-                CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result), .. }
+                CoreState::UnmapOpExecuting { ULT_id, vaddr, result, .. }
                 | CoreState::UnmapOpDone { ULT_id, vaddr, result, .. }
                 | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result, .. } => {
                     &&& result is Ok
@@ -514,8 +511,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                         MemRegion { base: base, size: candidate_size },
                     )
                 },
-                CoreState::UnmapWaiting { vaddr, .. }
-                | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+                CoreState::UnmapWaiting { vaddr, .. } => {
                     let size = if pt.dom().contains(vaddr) {
                         pt.index(vaddr).frame.size
                     } else {
@@ -526,7 +522,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                         MemRegion { base: base, size: candidate_size },
                     )
                 },
-                CoreState::UnmapOpExecuting { vaddr, result: Some(result), .. }
+                CoreState::UnmapOpExecuting { vaddr, result, .. }
                 | CoreState::UnmapOpDone { vaddr, result, .. }
                 | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
                     let size = if result is Ok {
@@ -776,41 +772,15 @@ pub open spec fn step_Unmap_Op_Start(
     s1: OSVariables,
     s2: OSVariables,
     core: Core,
+    result: Result<PageTableEntry, ()>,
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] matches CoreState::UnmapWaiting { ULT_id, vaddr }
     &&& s1.kernel_lock(c) is None
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& spec_pt::step_Unmap_Start(
-        s1.pt_variables(core),
-        s2.pt_variables(core),
-        vaddr,
-    )
-    //new state
-    &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None })
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.sound == s1.sound
-}
-
-pub open spec fn step_Unmap_Op_Change(
-    c: OSConstants,
-    s1: OSVariables,
-    s2: OSVariables,
-    core: Core,
-    result: Result<PageTableEntry, ()>,
-) -> bool {
-    //enabling conditions
-    &&& hardware::valid_core(c.hw, core)
-    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
-        ULT_id,
-        vaddr,
-        result: None
-    }
-    //hw/spec_pt-statemachine steps
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
-    &&& spec_pt::step_Unmap_Change(
+    &&& spec_pt::step_Unmap_Start(
         s1.pt_variables(core),
         s2.pt_variables(core),
         vaddr,
@@ -823,13 +793,13 @@ pub open spec fn step_Unmap_Op_Change(
             CoreState::UnmapOpExecuting {
                 ULT_id,
                 vaddr,
-                result: Some(Ok(s1.interp_pt_mem()[vaddr])),
+                result: Ok(s1.interp_pt_mem()[vaddr]),
             },
         )
     } else {
         s2.core_states == s1.core_states.insert(
             core,
-            CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(Err(())) },
+            CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Err(()) },
         )
     }
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -847,7 +817,7 @@ pub open spec fn step_Unmap_Op_Stutter(
     &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
         ULT_id,
         vaddr,
-        result: Some(res)
+        result,
     }
     //hw/spec_pt-statemachine steps
     &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
@@ -872,7 +842,7 @@ pub open spec fn step_Unmap_Op_End(
     &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
         ULT_id,
         vaddr,
-        result: Some(res)
+        result,
     }
     //hw/spec_pt-statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
@@ -883,7 +853,7 @@ pub open spec fn step_Unmap_Op_End(
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapOpDone { ULT_id, vaddr, result: res },
+        CoreState::UnmapOpDone { ULT_id, vaddr, result },
     )
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
@@ -987,8 +957,7 @@ pub enum OSStep {
     MapEnd { core: Core, result: Result<(), ()> },
     //unmap
     UnmapStart { ULT_id: nat, vaddr: nat },
-    UnmapOpStart { core: Core },
-    UnmapOpChange { core: Core, result: Result<PageTableEntry, ()> },
+    UnmapOpStart { core: Core, result: Result<PageTableEntry, ()> },
     UnmapOpStutter { core: Core },
     UnmapOpEnd { core: Core },
     UnmapInitiateShootdown { core: Core },
@@ -1065,7 +1034,6 @@ impl OSStep {
                 hlspec::AbstractStep::UnmapStart { thread_id: ULT_id, vaddr }
             },
             OSStep::UnmapOpStart { .. } => hlspec::AbstractStep::Stutter,
-            OSStep::UnmapOpChange { .. } => hlspec::AbstractStep::Stutter,
             OSStep::UnmapOpStutter { .. } => hlspec::AbstractStep::Stutter,
             OSStep::UnmapOpEnd { .. } => hlspec::AbstractStep::Stutter,
             OSStep::UnmapInitiateShootdown { .. } => hlspec::AbstractStep::Stutter,
@@ -1095,8 +1063,7 @@ pub open spec fn next_step(c: OSConstants, s1: OSVariables, s2: OSVariables, ste
         OSStep::MapEnd { core, result }         => step_Map_End(c, s1, s2, core, result),
         //Unmap steps
         OSStep::UnmapStart { ULT_id, vaddr }    => step_Unmap_Start(c, s1, s2, ULT_id, vaddr),
-        OSStep::UnmapOpStart { core }           => step_Unmap_Op_Start(c, s1, s2, core),
-        OSStep::UnmapOpChange { core, result }  => step_Unmap_Op_Change(c, s1, s2, core, result),
+        OSStep::UnmapOpStart { core, result }   => step_Unmap_Op_Start(c, s1, s2, core, result),
         OSStep::UnmapOpStutter { core }         => step_Unmap_Op_Stutter(c, s1, s2, core),
         OSStep::UnmapOpEnd { core }             => step_Unmap_Op_End(c, s1, s2, core),
         OSStep::UnmapInitiateShootdown { core } => step_Unmap_Initiate_Shootdown(c, s1, s2, core),

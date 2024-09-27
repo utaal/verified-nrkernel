@@ -394,15 +394,11 @@ proof fn next_step_refines_hl_next_step(
                 step_Unmap_Start_refines(c, s1, s2, ULT_id, vaddr);
             }
         },
-        os::OSStep::UnmapOpStart { core } => {
-            assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
-            lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-        },
-        os::OSStep::UnmapOpChange { core, result } => {
+        os::OSStep::UnmapOpStart { core, result } => {
             if s1.sound {
-                step_Unmap_Op_Change_refines(c, s1, s2, core, result);
+                step_Unmap_Op_Start_refines(c, s1, s2, core, result);
             }
-        }
+        },
         os::OSStep::UnmapOpEnd { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
@@ -1325,7 +1321,7 @@ proof fn step_Unmap_Start_refines(
     }
 }
 
-proof fn step_Unmap_Op_Change_refines(
+proof fn step_Unmap_Op_Start_refines(
     c: os::OSConstants,
     s1: os::OSVariables,
     s2: os::OSVariables,
@@ -1336,7 +1332,7 @@ proof fn step_Unmap_Op_Change_refines(
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_Unmap_Op_Change(c, s1, s2, core, result),
+        os::step_Unmap_Op_Start(c, s1, s2, core, result),
     ensures
         hlspec::step_Stutter(c.interp(), s1.interp(c), s2.interp(c)),
 {
@@ -1344,8 +1340,8 @@ proof fn step_Unmap_Op_Change_refines(
     let hl_s1 = s1.interp(c);
     let hl_s2 = s2.interp(c);
 
-    assert(s1.core_states[core] is UnmapOpExecuting);
-    let vaddr = s1.core_states[core]->UnmapOpExecuting_vaddr;
+    assert(s1.core_states[core] is UnmapWaiting);
+    let vaddr = s1.core_states[core]->UnmapWaiting_vaddr;
 
     assert(hl_s1.thread_state.dom() === hl_s2.thread_state.dom());
     assert forall|key| #[trigger]
@@ -1354,9 +1350,9 @@ proof fn step_Unmap_Op_Change_refines(
         assert(hl_s2.thread_state.dom().contains(key));
         let core_of_key = c.ULT2core[key];
         assert(hardware::valid_core(c.hw, core));
-        assert(s1.core_states[core].holds_lock());
+        assert(s2.core_states[core].holds_lock());
         assert(hardware::valid_core(c.hw, core_of_key));
-        if s1.core_states[core_of_key].holds_lock() {
+        if s2.core_states[core_of_key].holds_lock() {
             assert(core_of_key === core);
         } else {
             assert(!(core_of_key === core));
