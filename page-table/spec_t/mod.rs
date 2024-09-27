@@ -5,5 +5,6 @@ pub mod os;
 //pub mod impl_spec;
 pub mod hlproof;
 pub mod mem;
-pub mod os_invariant;
+//pub mod os_invariant;
 pub mod mmu;
+pub mod map_sm;

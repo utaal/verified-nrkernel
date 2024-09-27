@@ -37,9 +37,9 @@ pub struct PTMem {
 
 impl PTMem {
     /// The view of the memory is byte-indexed but stores full words. Only 8-byte aligned indices
-    /// are meaningful. This way we get to store full words without breaking them down and worrying
-    /// about endianness but unlike if we kept a word-indexed memory, we also don't have to convert
-    /// back and forth between u64- and byte-indexed.
+    /// are meaningful. This way we get to store full words without breaking them down into bytes
+    /// and worrying about endianness but unlike if we kept a word-indexed memory, we also don't
+    /// have to convert back and forth between u64- and byte-indexed.
     /// TODO: unaligned addresses probably just shouldn't be in domain? make an invariant to that effect probably.
     pub open spec fn view(self) -> Map<usize,usize>;
 

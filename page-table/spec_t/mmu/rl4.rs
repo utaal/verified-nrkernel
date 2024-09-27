@@ -1,5 +1,5 @@
 use vstd::prelude::*;
-use crate::spec_t::mmu::common::*;
+use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::{ PTMem };
 use crate::spec_t::hardware::{ Core, PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
 use crate::definitions_t::{ aligned, Flags, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc };

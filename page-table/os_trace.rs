@@ -6,6 +6,7 @@ use crate::definitions_t::{
 };
 use crate::spec_t::hardware as hw;
 use crate::spec_t::mem;
+use crate::spec_t::mmu::DummyAtomicMMU;
 use crate::spec_t::os::*;
 
 use crate::hlspec_user::lemma_max_phyaddr_at_least;
@@ -37,6 +38,7 @@ proof fn program_1() {
             mem: mem,
             NUMAs: Map::new(|i: nat| i < c.hw.NUMA_no, |i| numa_state),
             global_pt: global_pt,
+            mmu: DummyAtomicMMU {}
         },
         core_states: Map::new(
             |core: hw::Core| core.NUMA_id < c.hw.NUMA_no && core.core_id < c.hw.core_no,

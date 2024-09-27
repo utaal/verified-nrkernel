@@ -8,14 +8,14 @@ use crate::definitions_t::{
 use crate::impl_u::os_refinement::{
     lemma_map_insert_values_equality, map_values_contain_value_of_contained_key,
 };
-use crate::spec_t::{hardware, hlspec, os};
+use crate::spec_t::{hardware, hlspec, os, mmu};
 
 verus! {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of Invariant
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn init_implies_inv(c: os::OSConstants, s: os::OSVariables)
+pub proof fn init_implies_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
     requires
         os::init(c, s),
     ensures
@@ -25,7 +25,7 @@ pub proof fn init_implies_inv(c: os::OSConstants, s: os::OSVariables)
     init_implies_tlb_inv(c, s);
 }
 
-pub proof fn next_preserves_inv(c: os::OSConstants, s1: os::OSVariables, s2: os::OSVariables)
+pub proof fn next_preserves_inv<M: mmu::MMU>(c: os::OSConstants, s1: os::OSVariables<M>, s2: os::OSVariables<M>)
     requires
         s1.inv(c),
         os::next(c, s1, s2),
@@ -36,10 +36,10 @@ pub proof fn next_preserves_inv(c: os::OSConstants, s1: os::OSVariables, s2: os:
     next_step_preserves_inv(c, s1, s2, step);
 }
 
-pub proof fn next_step_preserves_inv(
+pub proof fn next_step_preserves_inv<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     step: os::OSStep,
 )
     requires
@@ -75,7 +75,7 @@ pub proof fn next_step_preserves_inv(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of TLB Invariants
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn init_implies_tlb_inv(c: os::OSConstants, s: os::OSVariables)
+pub proof fn init_implies_tlb_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
     requires
         os::init(c, s),
     ensures
@@ -116,10 +116,10 @@ pub proof fn init_implies_tlb_inv(c: os::OSConstants, s: os::OSVariables)
     }
 */
 
-pub proof fn next_step_preserves_tlb_inv(
+pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     step: os::OSStep,
 )
     requires
@@ -216,10 +216,10 @@ pub proof fn next_step_preserves_tlb_inv(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of overlapping virtual memory Invariants
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn next_step_preserves_overlap_vmem_inv(
+pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     step: os::OSStep,
 )
     requires
@@ -455,9 +455,9 @@ pub open spec fn no_overlap_vmem_values(
         ) ==> state1 == state2
 }
 
-pub proof fn Lemma_overlapping_inv_implies_unique_and_overlap_values(
+pub proof fn Lemma_overlapping_inv_implies_unique_and_overlap_values<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
 )
     requires
         s.basic_inv(c),
@@ -468,9 +468,9 @@ pub proof fn Lemma_overlapping_inv_implies_unique_and_overlap_values(
 {
 }
 
-pub proof fn Lemma_unique_and_overlap_values_implies_overlap_vmem(
+pub proof fn Lemma_unique_and_overlap_values_implies_overlap_vmem<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
 )
     requires
         unique_CoreStates(s.core_states),
@@ -747,9 +747,9 @@ pub proof fn Lemma_submap_preserves_no_overlap(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // soundness lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
+pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     base: nat,
     candidate_size: nat,
 )
@@ -919,9 +919,9 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
     };
 }
 
-pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
+pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     base: nat,
     candidate_size: nat,
 )
@@ -1075,9 +1075,9 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
 
 }
 
-pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
+pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     candidate: PageTableEntry,
 )
     requires
@@ -1192,9 +1192,9 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
     };
 }
 
-pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
+pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     candidate: PageTableEntry,
 )
     requires

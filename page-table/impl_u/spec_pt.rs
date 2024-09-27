@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 
 use crate::definitions_t::{candidate_mapping_overlaps_existing_vmem, PageTableEntry};
-use crate::spec_t::hardware;
+//use crate::spec_t::hardware;
 use crate::spec_t::mem;
 
 // trusted: not trusted
@@ -40,7 +40,9 @@ pub enum ThreadState {
 impl PageTableVariables {
     /// Interpretation of the memory according to the MMU's semantics.
     pub open spec fn interp(self) -> Map<nat, PageTableEntry> {
-        hardware::interp_pt_mem(self.pt_mem)
+        // TODO:
+        arbitrary()
+        //hardware::interp_pt_mem(self.pt_mem)
     }
 }
 

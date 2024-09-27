@@ -14,7 +14,7 @@ use crate::spec_t::os_invariant::{
     lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os,
     lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl, next_step_preserves_inv,
 };
-use crate::spec_t::{hardware, hlspec, mem, os};
+use crate::spec_t::{hardware, hlspec, mem, os, mmu};
 use crate::extra::result_map_ok;
 
 verus! {
@@ -22,7 +22,7 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-proof fn lemma_inflight_vaddr_equals_hl_unmap(c: os::OSConstants, s: os::OSVariables)
+proof fn lemma_inflight_vaddr_equals_hl_unmap<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
     requires
         s.basic_inv(c),
     ensures
@@ -101,10 +101,10 @@ proof fn lemma_inflight_vaddr_equals_hl_unmap(c: os::OSConstants, s: os::OSVaria
 
 }
 
-proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(
+proof fn lemma_effective_mappings_unaffected_if_thread_state_constant<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
 )
     requires
         s1.basic_inv(c),
@@ -169,9 +169,9 @@ pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, valu
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // soundness lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-proof fn lemma_map_soundness_equality(
+proof fn lemma_map_soundness_equality<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     vaddr: nat,
     pte: PageTableEntry,
 )
@@ -235,9 +235,9 @@ proof fn lemma_map_soundness_equality(
     }
 }
 
-proof fn lemma_unmap_soundness_equality(
+proof fn lemma_unmap_soundness_equality<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     vaddr: nat,
     pte_size: nat,
 )
@@ -251,9 +251,9 @@ proof fn lemma_unmap_soundness_equality(
     lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(c, s, vaddr, pte_size);
 }
 
-proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem(
+proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem<M: mmu::MMU>(
     c: os::OSConstants,
-    s: os::OSVariables,
+    s: os::OSVariables<M>,
     vaddr: nat,
     pte: PageTableEntry,
 )
@@ -324,7 +324,7 @@ proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Refinement proof
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-proof fn os_init_refines_hl_init(c: os::OSConstants, s: os::OSVariables)
+proof fn os_init_refines_hl_init<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
     requires
         os::init(c, s),
     ensures
@@ -344,7 +344,7 @@ proof fn os_init_refines_hl_init(c: os::OSConstants, s: os::OSVariables)
     assert(abs_s.mappings === Map::empty());
 }
 
-proof fn os_next_refines_hl_next(c: os::OSConstants, s1: os::OSVariables, s2: os::OSVariables)
+proof fn os_next_refines_hl_next<M: mmu::MMU>(c: os::OSConstants, s1: os::OSVariables<M>, s2: os::OSVariables<M>)
     requires
         os::next(c, s1, s2),
         s1.inv(c),
@@ -355,10 +355,10 @@ proof fn os_next_refines_hl_next(c: os::OSConstants, s1: os::OSVariables, s2: os
     next_step_refines_hl_next_step(c, s1, s2, step);
 }
 
-proof fn next_step_refines_hl_next_step(
+proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     step: os::OSStep,
 )
     requires
@@ -439,10 +439,10 @@ proof fn next_step_refines_hl_next_step(
 */
 
 //TODO
-proof fn step_ReadWrite_refines(
+proof fn step_ReadWrite_refines<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     ULT_id: nat,
     vaddr: nat,
     paddr: nat,
@@ -587,7 +587,7 @@ proof fn step_ReadWrite_refines(
                         )
                     });
                 assert(hl_s1.mappings.submap_of(s1.interp_pt_mem()));
-                assert(forall|key, value|
+                assert(forall|key, value| #![auto]
                     !s1.interp_pt_mem().contains_pair(key, value) ==> !hl_s1.mappings.contains_pair(
                         key,
                         value,
@@ -625,10 +625,10 @@ proof fn step_ReadWrite_refines(
     }
 }
 
-proof fn step_Map_Start_refines(
+proof fn step_Map_Start_refines<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     ULT_id: nat,
     vaddr: nat,
     pte: PageTableEntry,
@@ -702,10 +702,10 @@ proof fn step_Map_Start_refines(
     };
 }
 
-proof fn step_Map_End_refines(
+proof fn step_Map_End_refines<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     core: hardware::Core,
     result: Result<(), ()>,
 )
@@ -1087,10 +1087,10 @@ proof fn step_Map_End_refines(
     }
 }
 
-proof fn step_Unmap_Start_refines(
+proof fn step_Unmap_Start_refines<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     ULT_id: nat,
     vaddr: nat,
 )
@@ -1325,10 +1325,10 @@ proof fn step_Unmap_Start_refines(
     }
 }
 
-proof fn step_Unmap_Op_Change_refines(
+proof fn step_Unmap_Op_Change_refines<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     core: hardware::Core,
     result: Result<PageTableEntry, ()>
 )
@@ -1445,10 +1445,10 @@ proof fn step_Unmap_Op_Change_refines(
     assert(s1.effective_mappings() =~= s2.effective_mappings())
 }
 
-proof fn step_Unmap_End_refines(
+proof fn step_Unmap_End_refines<M: mmu::MMU>(
     c: os::OSConstants,
-    s1: os::OSVariables,
-    s2: os::OSVariables,
+    s1: os::OSVariables<M>,
+    s2: os::OSVariables<M>,
     core: hardware::Core,
 )
     requires

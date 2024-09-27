@@ -5,11 +5,13 @@
 
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, HWRWOp, MemRegion,
-    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_BASE, MAX_PHYADDR_WIDTH,
+    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR_WIDTH,
     PAGE_SIZE,
 };
 use crate::spec_t::mem::{self, word_index_spec};
 use vstd::prelude::*;
+use crate::spec_t::mmu;
+use crate::spec_t::mmu::{MemoryTypePlaceholder};
 
 verus! {
 
@@ -20,13 +22,13 @@ pub struct HWConstants {
     //optionally: core_nos: Map<nat, nat>,
 }
 
-//TODO add invariant
-pub struct HWVariables {
+pub struct HWVariables<M: mmu::MMU> {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
     pub NUMAs: Map<nat, NUMAVariables>,
     //one global page_table , handled by spec_pt, unconstrained by hw state
-    pub global_pt: mem::PageTableMemory,
+    //pub global_pt: mem::PageTableMemory,
+    pub mmu: M,
 }
 
 pub struct NUMAVariables {
@@ -44,6 +46,7 @@ pub struct Core {
 
 #[allow(inconsistent_fields)]
 pub enum HWStep {
+    MMUStep { lbl: mmu::Lbl },
     ReadWrite {
         vaddr: nat,
         paddr: nat,
@@ -51,8 +54,7 @@ pub enum HWStep {
         pte: Option<(nat, PageTableEntry)>,
         core: Core,
     },
-    PTMemOp,
-    TLBFill { vaddr: nat, pte: PageTableEntry, core: Core },
+    TLBFill { vaddr: usize, pte: PageTableEntry, core: Core },
     TLBEvict { vaddr: nat, core: Core },
     Stutter,
 }
@@ -566,21 +568,24 @@ pub open spec fn nat_to_u64(n: nat) -> u64
 }
 
 /// Page table walker interpretation of the page table memory
-pub open spec fn interp_pt_mem(pt_mem: mem::PageTableMemory) -> Map<nat, PageTableEntry> {
-    Map::new(
-        |addr: nat|
-            addr
-                < MAX_BASE
-            // Casting addr to u64 is okay since addr < MAX_BASE < u64::MAX
-             && exists|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
-        |addr: nat| choose|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
-    )
+pub open spec fn interp_pt_mem(pt_mem: MemoryTypePlaceholder) -> Map<nat, PageTableEntry> {
+    // TODO:
+    arbitrary()
+    //Map::new(
+    //    |addr: nat|
+    //        addr
+    //            < MAX_BASE
+    //        // Casting addr to u64 is okay since addr < MAX_BASE < u64::MAX
+    //         && exists|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
+    //    |addr: nat| choose|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
+    //)
 }
 
-pub open spec fn init(c: HWConstants, s: HWVariables) -> bool {
+pub open spec fn init<M: mmu::MMU>(c: HWConstants, s: HWVariables<M>) -> bool {
     &&& c.NUMA_no > 0
     &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) == s.NUMAs.contains_key(id)
     &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) ==> NUMA_init(c, s.NUMAs[id])
+    &&& s.mmu.init()
 }
 
 pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
@@ -589,12 +594,20 @@ pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==> n.cores[id].tlb.dom() === Set::empty()
 }
 
+pub open spec fn step_MMUStep<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, lbl: mmu::Lbl) -> bool {
+    &&& !(lbl is Walk)
+    &&& M::next(s1.mmu, s2.mmu, lbl)
+
+    &&& s2.mem === s1.mem
+    &&& s2.NUMAs === s1.NUMAs
+}
+
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
-pub open spec fn step_ReadWrite(
+pub open spec fn step_ReadWrite<M: mmu::MMU>(
     c: HWConstants,
-    s1: HWVariables,
-    s2: HWVariables,
+    s1: HWVariables<M>,
+    s2: HWVariables<M>,
     vaddr: nat,
     paddr: nat,
     op: HWRWOp,
@@ -641,11 +654,10 @@ pub open spec fn step_ReadWrite(
         },
         None => {
             // If pte is None, no mapping containing vaddr exists..
-            &&& (!exists|base, pte|
-                {
-                    &&& interp_pt_mem(s1.global_pt).contains_pair(base, pte)
+            &&& !exists|base, pte| {
+                    &&& interp_pt_mem(s1.mmu.mem_view()).contains_pair(base, pte)
                     &&& between(vaddr, base, base + pte.frame.size)
-                })
+                }
             // .. and the result is always a Undefined and an unchanged memory.
 
             &&& s2.mem === s1.mem
@@ -657,20 +669,10 @@ pub open spec fn step_ReadWrite(
     }
 }
 
-//TODO Why submap?
-//need some more explanation on this one
-pub open spec fn step_PTMemOp(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
-    &&& s2.mem === s1.mem
-    &&& forall|core: Core|
-        valid_core(c, core) ==> forall|base: nat, pte: PageTableEntry|
-            s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
-                ==> s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
-}
-
-pub open spec fn other_NUMAs_and_cores_unchanged(
+pub open spec fn other_NUMAs_and_cores_unchanged<M: mmu::MMU>(
     c: HWConstants,
-    s1: HWVariables,
-    s2: HWVariables,
+    s1: HWVariables<M>,
+    s2: HWVariables<M>,
     core: Core,
 ) -> bool
     recommends
@@ -701,47 +703,46 @@ pub open spec fn valid_core_id(c: HWConstants, id: nat) -> bool {
     id < c.core_no
 }
 
-//TODO this
 pub open spec fn valid_core(c: HWConstants, core: Core) -> bool {
     &&& valid_NUMA_id(c, core.NUMA_id)
     &&& valid_core_id(c, core.core_id)
 }
 
-pub open spec fn step_TLBFill(
+pub open spec fn step_TLBFill<M: mmu::MMU>(
     c: HWConstants,
-    s1: HWVariables,
-    s2: HWVariables,
-    vaddr: nat,
-    pte: PageTableEntry,
+    s1: HWVariables<M>,
+    s2: HWVariables<M>,
     core: Core,
+    vaddr: usize,
+    pte: PageTableEntry,
 ) -> bool {
     &&& valid_core(c, core)
-    &&& interp_pt_mem(s1.global_pt).contains_pair(vaddr, pte)
+    &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, vaddr, Some(pte)))
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
-        === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vaddr, pte)
+        == s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vaddr as nat, pte)
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
 }
 
-pub open spec fn step_TLBEvict(
+pub open spec fn step_TLBEvict<M: mmu::MMU>(
     c: HWConstants,
-    s1: HWVariables,
-    s2: HWVariables,
+    s1: HWVariables<M>,
+    s2: HWVariables<M>,
     vaddr: nat,
     core: Core,
 ) -> bool {
     &&& valid_core(c, core)
-    &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(vaddr)
+    &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_key(vaddr)
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
         === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.remove(vaddr)
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
 }
 
-pub open spec fn step_Stutter(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
+pub open spec fn step_Stutter<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>) -> bool {
     &&& s2.mem == s1.mem
     &&& s2.NUMAs == s1.NUMAs
 }
 
-pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, step: HWStep) -> bool {
+pub open spec fn next_step<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, step: HWStep) -> bool {
     match step {
         HWStep::Stutter => step_Stutter(c, s1, s2),
         HWStep::ReadWrite { vaddr, paddr, op, pte, core } => step_ReadWrite(
@@ -754,13 +755,13 @@ pub open spec fn next_step(c: HWConstants, s1: HWVariables, s2: HWVariables, ste
             pte,
             core,
         ),
-        HWStep::PTMemOp => step_PTMemOp(c, s1, s2),
-        HWStep::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, vaddr, pte, core),
+        HWStep::MMUStep { lbl } => step_MMUStep(c, s1, s2, lbl),
+        HWStep::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, core, vaddr, pte),
         HWStep::TLBEvict { vaddr, core } => step_TLBEvict(c, s1, s2, vaddr, core),
     }
 }
 
-pub open spec fn next(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool {
+pub open spec fn next<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>) -> bool {
     exists|step: HWStep| next_step(c, s1, s2, step)
 }
 
@@ -785,7 +786,7 @@ pub open spec fn next(c: HWConstants, s1: HWVariables, s2: HWVariables) -> bool 
 //     let step = choose|step: HWStep| next_step(s1, s2, step);
 //     match step {
 //         HWStep::ReadWrite { vaddr, paddr, op , pte} => (),
-//         HWStep::PTMemOp                             => (),
+//         HWStep::PTWrite                             => (),
 //         HWStep::TLBFill  { vaddr, pte }             => (),
 //         HWStep::TLBEvict { vaddr }                  => (),
 //     }
