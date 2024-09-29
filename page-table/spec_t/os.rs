@@ -548,7 +548,6 @@ pub open spec fn step_HW(
     &&& c.valid_ULT(ULT_id)
     &&& s1.core_states[core] is Idle || system_step is TLBFill || system_step is TLBEvict
     &&& !(system_step is PTMemOp)
-    &&& !(system_step is Stutter)
     //hw/spec_pt-statemachine steps
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
     &&& spec_pt::step_Stutter(
@@ -610,7 +609,7 @@ pub open spec fn step_Map_Start(
         pte,
     )
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -638,7 +637,7 @@ pub open spec fn step_Map_op_Start(
     &&& s1.core_states[core] matches CoreState::MapWaiting { ULT_id, vaddr, pte }
     &&& s1.kernel_lock(c) is None
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Map_Start(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -723,7 +722,7 @@ pub open spec fn step_Unmap_Start(
     &&& s1.core_states[core] is Idle
     &&& step_Unmap_enabled(vaddr)
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -792,7 +791,7 @@ pub open spec fn step_Unmap_Op_End(
         result,
     }
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Unmap_End(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -817,7 +816,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
     &&& s1.core_states[core] matches CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, result }
     &&& result is Ok
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -850,7 +849,7 @@ pub open spec fn step_Ack_Shootdown_IPI(
         s1.TLB_Shootdown.vaddr,
     )
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -880,7 +879,7 @@ pub open spec fn step_Unmap_End(
         _ => false,
     }
     //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
+    &&& hardware::step_PTMemOp(c.hw, s1.hw, s2.hw)
     &&& spec_pt::step_Stutter(
         s1.pt_variables(core),
         s2.pt_variables(core),
@@ -980,7 +979,6 @@ impl OSStep {
                 hardware::HWStep::PTMemOp => arbitrary(),
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,
-                hardware::HWStep::Stutter => arbitrary(),
             },
             //Map steps
             OSStep::MapStart { ULT_id, vaddr, pte } => {
