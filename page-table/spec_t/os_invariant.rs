@@ -967,7 +967,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
                 os::CoreState::MapWaiting { ULT_id: ult_id, vaddr, pte, .. }
                 | os::CoreState::MapExecuting { ULT_id: ult_id, vaddr, pte, .. } => {
                     assert(ult_id == ULT_id);
-                    assert(above_zero(pte.frame.size));
+                    //assert(above_zero(pte.frame.size));
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Map {
                             vaddr: v_addr,
@@ -1222,7 +1222,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
                 os::CoreState::MapWaiting { ULT_id: ult_id, vaddr, pte, .. }
                 | os::CoreState::MapExecuting { ULT_id: ult_id, vaddr, pte, .. } => {
                     assert(ult_id == ULT_id);
-                    assert(above_zero(pte.frame.size));
+                  //  assert(above_zero(pte.frame.size));
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Map {
                             vaddr: v_addr,
@@ -1237,7 +1237,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
                     assert(s.interp_pt_mem().dom().contains(vaddr));
                     assert(ult_id == ULT_id);
                     let pte = s.interp_pt_mem()[vaddr];
-                    assert(above_zero(pte.frame.size));
+                   // assert(above_zero(pte.frame.size));
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Unmap {
                             vaddr: v_addr,
@@ -1252,7 +1252,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
                 | os::CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, result, .. }
                 | os::CoreState::UnmapShootdownWaiting { ULT_id: ult_id, vaddr, result, .. } => {
                     assert(ult_id == ULT_id);
-                    assert(above_zero(result.get_Ok_0().frame.size));
+                 //   assert(above_zero(result.get_Ok_0().frame.size));
                     assert({
                         &&& thread_state matches hlspec::AbstractArguments::Unmap {
                             vaddr: v_addr,

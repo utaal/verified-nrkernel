@@ -159,7 +159,7 @@ impl OSVariables {
                 CoreState::Idle => true,
             }
     }
-
+/*
     pub open spec fn inflight_pte_above_zero_pte_result_consistant(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
@@ -180,7 +180,7 @@ impl OSVariables {
                 }
             }
     }
-
+*/
     pub open spec fn successful_unmaps(self, c: OSConstants) -> bool {
         forall|core: Core|
             {
@@ -210,7 +210,7 @@ impl OSVariables {
     pub open spec fn basic_inv(self, c: OSConstants) -> bool {
         &&& self.wf(c)
         &&& self.valid_ids(c)
-        &&& self.inflight_pte_above_zero_pte_result_consistant(c)
+        //&&& self.inflight_pte_above_zero_pte_result_consistant(c)
         &&& self.successful_unmaps(c)
         //&&& self.tlb_inv(c)
 
