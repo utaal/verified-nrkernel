@@ -35,13 +35,31 @@ pub struct PTMem {
     pml4: usize,
 }
 
+pub enum MType {
+    PDir0,
+    PDir1,
+    PDir2,
+    PTable,
+    User,
+    Untyped,
+}
+
+impl MType {
+    pub open spec fn is_page_type(self) -> bool {
+        match self {
+            MType::PDir0 | MType::PDir1 | MType::PDir2 | MType::PTable => true,
+            MType::User | MType::Untyped => false,
+        }
+    }
+}
+
 impl PTMem {
     /// The view of the memory is byte-indexed but stores full words. Only 8-byte aligned indices
     /// are meaningful. This way we get to store full words without breaking them down into bytes
     /// and worrying about endianness but unlike if we kept a word-indexed memory, we also don't
     /// have to convert back and forth between u64- and byte-indexed.
     /// TODO: unaligned addresses probably just shouldn't be in domain? make an invariant to that effect probably.
-    pub open spec fn view(self) -> Map<usize,usize>;
+    pub open spec fn view(self) -> Map<usize, usize>;
 
     pub open spec fn pml4(self) -> usize;
 

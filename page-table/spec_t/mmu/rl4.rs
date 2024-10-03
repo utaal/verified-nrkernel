@@ -2,12 +2,14 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::{ PTMem };
 use crate::spec_t::hardware::{ Core, PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ aligned, Flags, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc };
+use crate::definitions_t::{ aligned, Flags, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, bit };
 
 verus! {
 
 // This file contains refinement layer 4 of the MMU. This is the most concrete MMU model, i.e. the
 // behavior we assume of the hardware.
+//
+// TODO: valid_core thing
 
 pub struct State {
     /// Page table memory
@@ -18,6 +20,9 @@ pub struct State {
     pub cache: Map<Core, Set<CacheEntry>>,
     /// Store buffers
     pub sbuf: Map<Core, Seq<(usize, usize)>>,
+    /// Addresses that have been used in a page table walk
+    /// TODO: This can probably be at least partially reset in invlpg.
+    pub used_addrs: Set<usize>,
 }
 
 impl State {
@@ -26,6 +31,10 @@ impl State {
             Some(v) => v,
             None    => self.pt_mem@[addr],
         }
+    }
+
+    pub open spec fn init(self) -> bool {
+        arbitrary()
     }
 }
 
@@ -65,6 +74,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
+    &&& post.used_addrs == pre.used_addrs
 }
 
 
@@ -80,6 +90,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, core: Core, walk: PTWal
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache.insert(core, pre.cache[core].insert(walk.as_cache_entry()))
+    &&& post.used_addrs == pre.used_addrs
 }
 
 pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
@@ -91,6 +102,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntr
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(e.as_ptwalk()))
+    &&& post.used_addrs == pre.used_addrs
 }
 
 pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
@@ -102,14 +114,16 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache.insert(core, pre.cache[core].remove(e))
     &&& post.walks == pre.walks
+    &&& post.used_addrs == pre.used_addrs
 }
 
 
 // ---- Non-atomic page table walks ----
 
 pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl: Lbl) -> bool {
+    let addr = add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize);
     let l0e = PageDirectoryEntry {
-        entry: pre.read_from_mem_tso(core, add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize)) as u64,
+        entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(0),
     };
     let flags = Flags::from_GPDE(l0e@);
@@ -128,12 +142,14 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl:
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
+    &&& post.used_addrs == pre.used_addrs.insert(addr)
 }
 
 pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial1(va, l0e, flags) = walk else { arbitrary() };
+    let addr = add(l0e@->Directory_addr, l1_bits!(va as u64) as usize);
     let l1e = PageDirectoryEntry {
-        entry: pre.read_from_mem_tso(core, add(l0e@->Directory_addr, l1_bits!(va as u64) as usize)) as u64,
+        entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(1),
     };
     let new_walk = match l1e@ {
@@ -157,13 +173,15 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(new_walk))
+    &&& post.used_addrs == pre.used_addrs.insert(addr)
 }
 
 pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial2(va, l0e, l1e, flags) = walk else { arbitrary() };
+    let addr = add(l1e@->Directory_addr, l2_bits!(va as u64) as usize);
     let l2e = PageDirectoryEntry {
-        entry: pre.read_from_mem_tso(core, add(l1e@->Directory_addr, l2_bits!(va as u64) as usize)) as u64,
+        entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(2),
     };
     let new_walk = match l2e@ {
@@ -187,13 +205,15 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(new_walk))
+    &&& post.used_addrs == pre.used_addrs.insert(addr)
 }
 
 pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     let PTWalk::Partial3(va, l0e, l1e, l2e, flags) = walk else { arbitrary() };
+    let addr = add(l2e@->Directory_addr, l3_bits!(va as u64) as usize);
     let l3e = PageDirectoryEntry {
-        entry: pre.read_from_mem_tso(core, add(l2e@->Directory_addr, l3_bits!(va as u64) as usize)) as u64,
+        entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(3),
     };
     let new_walk = match l3e@ {
@@ -215,7 +235,8 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(new_walk))
+    &&& post.used_addrs == pre.used_addrs.insert(addr)
 }
 
 pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
@@ -227,10 +248,9 @@ pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWa
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk))
+    &&& post.used_addrs == pre.used_addrs
 }
 
-/// We model page table walks such that the result of a walk can be used multiple times, i.e.
-/// "completing" the walk multiple times.
 pub open spec fn step_Walk(pre: State, post: State, lbl: Lbl) -> bool {
     let walk = match lbl {
         Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid(va, pte),
@@ -244,14 +264,14 @@ pub open spec fn step_Walk(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
-    &&& post.walks == pre.walks
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk))
+    &&& post.used_addrs == pre.used_addrs
 }
 
 
 // ---- TSO ----
 // Our modeling of TSO with store buffers is adapted from the one in the paper "A Better x86 Memory
 // Model: x86-TSO".
-// TODO: Double-check to make sure it's a faithful adaptation
 // TODO: we don't model atomics, so technically the user-space threads cannot synchronize
 // TODO: max physical size?
 /// Write to core's local store buffer.
@@ -264,6 +284,7 @@ pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
+    &&& post.used_addrs == pre.used_addrs
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -> bool {
@@ -276,18 +297,31 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
+    &&& post.used_addrs == pre.used_addrs
 }
+
+// TODO: double check this mask
+/// All bits except bit 5 and 6 (dirty, access) set to 1
+pub const MASK_DIRTY_ACCESS: usize = (((-1i64) as u64) ^ bit!(5) ^ bit!(6)) as usize;
 
 pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
     &&& aligned(addr as nat, 8)
-    &&& value == pre.read_from_mem_tso(core, addr)
+    &&& {
+        let val = pre.read_from_mem_tso(core, addr);
+        if pre.used_addrs.contains(addr) {
+            value & MASK_DIRTY_ACCESS == val & MASK_DIRTY_ACCESS
+        } else {
+            value == val
+        }
+    }
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
+    &&& post.used_addrs == pre.used_addrs
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -301,11 +335,12 @@ pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
+    &&& post.used_addrs == pre.used_addrs
 }
 
 pub enum Step {
     // Mixed
-    Invlpg { },
+    Invlpg,
     // Translation caching
     CacheFill { core: Core, walk: PTWalk },
     CacheUse { core: Core, e: CacheEntry },
@@ -316,17 +351,19 @@ pub enum Step {
     Walk3 { core: Core, walk: PTWalk },
     Walk4 { core: Core, walk: PTWalk },
     WalkCancel { core: Core, walk: PTWalk },
-    Walk { },
+    Walk,
     // TSO
-    Write { },
+    Write,
     Writeback { core: Core },
-    Read { },
-    Barrier { },
+    Read,
+    Barrier,
+    // Typing
+    //AssignType,
 }
 
 pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg { }                => step_Invlpg(pre, post, lbl),
+        Step::Invlpg                    => step_Invlpg(pre, post, lbl),
         Step::CacheFill { core, walk }  => step_CacheFill(pre, post, core, walk, lbl),
         Step::CacheUse { core, e }      => step_CacheUse(pre, post, core, e, lbl),
         Step::CacheEvict { core, e }    => step_CacheEvict(pre, post, core, e, lbl),
@@ -335,12 +372,16 @@ pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> boo
         Step::Walk3 { core, walk }      => step_Walk3(pre, post, core, walk, lbl),
         Step::Walk4 { core, walk }      => step_Walk4(pre, post, core, walk, lbl),
         Step::WalkCancel { core, walk } => step_WalkCancel(pre, post, core, walk, lbl),
-        Step::Walk { }                  => step_Walk(pre, post, lbl),
-        Step::Write { }                 => step_Write(pre, post, lbl),
+        Step::Walk                      => step_Walk(pre, post, lbl),
+        Step::Write                     => step_Write(pre, post, lbl),
         Step::Writeback { core }        => step_Writeback(pre, post, core, lbl),
-        Step::Read { }                  => step_Read(pre, post, lbl),
-        Step::Barrier { }               => step_Barrier(pre, post, lbl),
+        Step::Read                      => step_Read(pre, post, lbl),
+        Step::Barrier                   => step_Barrier(pre, post, lbl),
     }
+}
+
+pub open spec fn next(pre: State, post: State, lbl: Lbl) -> bool {
+    exists|step| next_step(pre, post, step, lbl)
 }
 
 

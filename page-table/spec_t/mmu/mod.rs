@@ -1,3 +1,4 @@
+//pub mod rl3;
 pub mod rl4;
 pub mod pt_mem;
 
@@ -7,7 +8,8 @@ use crate::definitions_t::{ PageTableEntry, Flags };
 
 verus! {
 
-
+// partial(usize, Seq<PageDirectoryEntry>, Option<(Flags, PageTableEntry)>)
+// ?
 pub enum PTWalk {
     Partial1(usize, PageDirectoryEntry, Flags),
     Partial2(usize, PageDirectoryEntry, PageDirectoryEntry, Flags),
