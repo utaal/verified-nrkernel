@@ -26,11 +26,18 @@ pub struct State {
 }
 
 impl State {
+    /// Returns an arbitrary usize dependent on the arguments. Used in `read_from_mem_tso`.
+    pub open spec fn arbitrary(self, core: Core, addr: usize) -> usize;
+
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize) -> usize {
-        match get_first(self.sbuf[core], addr) {
+        let val = match get_first(self.sbuf[core], addr) {
             Some(v) => v,
             None    => self.pt_mem@[addr],
-        }
+        };
+        let arb_bits = self.arbitrary(core, addr) & MASK_DIRTY_ACCESS;
+        // If this address has been used in a page table walk before, we randomize the access and
+        // dirty bit.
+        if self.used_addrs.contains(addr) { val ^ arb_bits } else { val }
     }
 
     pub open spec fn init(self) -> bool {
@@ -308,14 +315,7 @@ pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
     &&& aligned(addr as nat, 8)
-    &&& {
-        let val = pre.read_from_mem_tso(core, addr);
-        if pre.used_addrs.contains(addr) {
-            value & MASK_DIRTY_ACCESS == val & MASK_DIRTY_ACCESS
-        } else {
-            value == val
-        }
-    }
+    &&& value == pre.read_from_mem_tso(core, addr)
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
