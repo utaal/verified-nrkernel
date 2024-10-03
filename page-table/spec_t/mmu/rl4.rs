@@ -6,6 +6,9 @@ use crate::definitions_t::{ aligned, Flags, MemRegion, PageTableEntry, L1_ENTRY_
 
 verus! {
 
+/// Bits 5 and 6 (dirty, access) set to 1
+pub const MASK_DIRTY_ACCESS: usize = (bit!(5) | bit!(6)) as usize;
+
 // This file contains refinement layer 4 of the MMU. This is the most concrete MMU model, i.e. the
 // behavior we assume of the hardware.
 //
@@ -306,10 +309,6 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.walks == pre.walks
     &&& post.used_addrs == pre.used_addrs
 }
-
-// TODO: double check this mask
-/// All bits except bit 5 and 6 (dirty, access) set to 1
-pub const MASK_DIRTY_ACCESS: usize = (((-1i64) as u64) ^ bit!(5) ^ bit!(6)) as usize;
 
 pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
