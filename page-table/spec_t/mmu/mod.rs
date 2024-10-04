@@ -1,3 +1,4 @@
+pub mod rl2;
 pub mod rl3;
 pub mod rl4;
 pub mod pt_mem;
@@ -69,64 +70,62 @@ impl PTWalk {
         } else { arbitrary() }
     }
 
-    pub open spec fn prefixes(self) -> Set<PTWalk> {
-        match self {
-            PTWalk::Partial { va, path }    => {
-                if path.len() == 1 {
-                    set![self]
-                } else if path.len() == 2 {
-                    set![
-                        PTWalk::Partial { va, path: seq![path[0]] },
-                        self,
-                    ]
-                } else if path.len() == 3 {
-                    set![
-                        PTWalk::Partial { va, path: seq![path[0]] },
-                        PTWalk::Partial { va, path: seq![path[0], path[1]] },
-                        self,
-                    ]
-                } else { arbitrary() }
-            },
-            PTWalk::Invalid { va }          => set![self],
-            PTWalk::Valid { va, path } => {
-                if path.len() == 2 {
-                    set![
-                        PTWalk::Partial { va, path: seq![path[0]] },
-                        self,
-                    ]
-                } else if path.len() == 3 {
-                    set![
-                        PTWalk::Partial { va, path: seq![path[0]] },
-                        PTWalk::Partial { va, path: seq![path[0], path[1]] },
-                        self,
-                    ]
-                } else if path.len() == 4 {
-                    set![
-                        PTWalk::Partial { va, path: seq![path[0]] },
-                        PTWalk::Partial { va, path: seq![path[0], path[1]] },
-                        PTWalk::Partial { va, path: seq![path[0], path[1], path[2]] },
-                        self,
-                    ]
-                } else { arbitrary() }
-            },
-        }
-    }
+    //pub open spec fn prefixes(self) -> Set<PTWalk> {
+    //    match self {
+    //        PTWalk::Partial { va, path }    => {
+    //            if path.len() == 1 {
+    //                set![self]
+    //            } else if path.len() == 2 {
+    //                set![
+    //                    PTWalk::Partial { va, path: seq![path[0]] },
+    //                    self,
+    //                ]
+    //            } else if path.len() == 3 {
+    //                set![
+    //                    PTWalk::Partial { va, path: seq![path[0]] },
+    //                    PTWalk::Partial { va, path: seq![path[0], path[1]] },
+    //                    self,
+    //                ]
+    //            } else { arbitrary() }
+    //        },
+    //        PTWalk::Invalid { va }          => set![self],
+    //        PTWalk::Valid { va, path } => {
+    //            if path.len() == 2 {
+    //                set![
+    //                    PTWalk::Partial { va, path: seq![path[0]] },
+    //                    self,
+    //                ]
+    //            } else if path.len() == 3 {
+    //                set![
+    //                    PTWalk::Partial { va, path: seq![path[0]] },
+    //                    PTWalk::Partial { va, path: seq![path[0], path[1]] },
+    //                    self,
+    //                ]
+    //            } else if path.len() == 4 {
+    //                set![
+    //                    PTWalk::Partial { va, path: seq![path[0]] },
+    //                    PTWalk::Partial { va, path: seq![path[0], path[1]] },
+    //                    PTWalk::Partial { va, path: seq![path[0], path[1], path[2]] },
+    //                    self,
+    //                ]
+    //            } else { arbitrary() }
+    //        },
+    //    }
+    //}
 
     pub open spec fn pte(self) -> PageTableEntry
         recommends self is Valid
     {
-        let va = self->Valid_va as nat;
         let path = self->Valid_path;
-        let size = if path.len() == 2 {
-            L1_ENTRY_SIZE
+        let (base, size) = if path.len() == 2 {
+            (path[1].1@->Page_addr, L1_ENTRY_SIZE)
         } else if path.len() == 3 {
-            L2_ENTRY_SIZE
+            (path[2].1@->Page_addr, L2_ENTRY_SIZE)
         } else if path.len() == 4 {
-            L3_ENTRY_SIZE
-        } else { arbitrary() } as nat;
-        let base = (va - (va % size)) as nat;
+            (path[3].1@->Page_addr, L3_ENTRY_SIZE)
+        } else { arbitrary() };
         PageTableEntry {
-            frame: MemRegion { base, size },
+            frame: MemRegion { base: base as nat, size: size as nat },
             flags: self.flags(),
         }
     }

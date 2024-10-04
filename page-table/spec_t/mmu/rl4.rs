@@ -11,8 +11,6 @@ pub const MASK_DIRTY_ACCESS: usize = (bit!(5) | bit!(6)) as usize;
 
 // This file contains refinement layer 4 of the MMU. This is the most concrete MMU model, i.e. the
 // behavior we assume of the hardware.
-//
-// TODO: valid_core thing
 
 pub struct State {
     /// Page table memory
@@ -57,9 +55,8 @@ impl State {
     }
 
     pub open spec fn inv(self) -> bool {
-        // something something valid cores
+        // TODO: something something valid cores
         forall|core| self.walks[core].subset_of(#[trigger] self.hist.walks[core])
-        //arbitrary()
     }
 }
 
@@ -148,10 +145,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
 
 pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev: usize, lbl: Lbl) -> bool {
     let addr = add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize);
-    let l0e = (addr, PageDirectoryEntry {
-        entry: l0ev as u64,
-        layer: Ghost(0),
-    });
+    let l0e = (addr, PageDirectoryEntry { entry: l0ev as u64, layer: Ghost(0) });
     let walk = match l0e.1@ {
         GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e] },
         GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
@@ -177,14 +171,11 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     let PTWalk::Partial { va, path } = walk else { arbitrary() };
     let l0e = path[0];
     let addr = add(l0e.1@->Directory_addr, l1_bits!(va as u64) as usize);
-    let l1e = (addr, PageDirectoryEntry {
-        entry: l1ev as u64,
-        layer: Ghost(1),
-    });
+    let l1e = (addr, PageDirectoryEntry { entry: l1ev as u64, layer: Ghost(1) });
     let new_walk = match l1e.1@ {
-        GhostPageDirectoryEntry::Directory { .. }  => PTWalk::Partial { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Page { addr, .. } => PTWalk::Valid { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Empty             => PTWalk::Invalid { va },
+        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e, l1e] },
+        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid { va, path: seq![l0e, l1e] },
+        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
     };
     &&& lbl is Tau
 
@@ -206,14 +197,11 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     let PTWalk::Partial { va, path } = walk else { arbitrary() };
     let l0e = path[0]; let l1e = path[1];
     let addr = add(l1e.1@->Directory_addr, l2_bits!(va as u64) as usize);
-    let l2e = (addr, PageDirectoryEntry {
-        entry: l2ev as u64,
-        layer: Ghost(2),
-    });
+    let l2e = (addr, PageDirectoryEntry { entry: l2ev as u64, layer: Ghost(2) });
     let new_walk = match l2e.1@ {
-        GhostPageDirectoryEntry::Directory { .. }  => PTWalk::Partial { va, path: seq![l0e, l1e, l2e] },
-        GhostPageDirectoryEntry::Page { addr, .. } => PTWalk::Valid { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Empty             => PTWalk::Invalid { va },
+        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e, l1e, l2e] },
+        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid { va, path: seq![l0e, l1e, l2e] },
+        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
     };
     &&& lbl is Tau
 
@@ -235,12 +223,9 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     let PTWalk::Partial { va, path } = walk else { arbitrary() };
     let l0e = path[0]; let l1e = path[1]; let l2e = path[2];
     let addr = add(l2e.1@->Directory_addr, l3_bits!(va as u64) as usize);
-    let l3e = (addr, PageDirectoryEntry {
-        entry: l3ev as u64,
-        layer: Ghost(3),
-    });
+    let l3e = (addr, PageDirectoryEntry { entry: l3ev as u64, layer: Ghost(3) });
     let new_walk = match l3e.1@ {
-        GhostPageDirectoryEntry::Page { addr, .. } => PTWalk::Valid { va, path: seq![l0e, l1e, l2e] },
+        GhostPageDirectoryEntry::Page { .. } => PTWalk::Valid { va, path: seq![l0e, l1e, l2e, l3e] },
         GhostPageDirectoryEntry::Directory { .. }
         | GhostPageDirectoryEntry::Empty => PTWalk::Invalid { va },
     };
@@ -274,6 +259,7 @@ pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWa
     &&& post.hist.walks == pre.hist.walks
 }
 
+// FIXME: this should make sure the alignment of va fits with the PTE
 pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
     let walk = match lbl {
         Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid { va, path },
