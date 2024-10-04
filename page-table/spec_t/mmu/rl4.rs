@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::{ PTMem };
 use crate::spec_t::hardware::{ Core, PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ aligned, Flags, MemRegion, PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, bit };
+use crate::definitions_t::{ aligned, bitmask_inc, bit };
 
 verus! {
 
@@ -50,18 +50,11 @@ impl State {
 
 // TODO:
 // invariant on walks and cache:
-// - The PDEs stored in `Partial*` walks are always directories
-
-// TODO: Probably add transition that arbitrarily changes dirty/accessed bits
-// oh no
-// this requires knowledge of which memory addresses might be used as paging structure
-// and not just reachability from cr3 but from the translation caches and inflight walks too
-//
-// Problem with separating page table memory and other memory by construction:
-// It could happen that we deallocate a frame but it's still used as paging structure (e.g.
-// inflight walk or cached). That would mean the accessed and dirty bits can randomly change, if
-// that memory was reused for something else. (not entirely true if we really have fully disjoint
-// regions)
+// - The PDEs stored in `Partial` walks are always directories
+// - Length of paths in `Partial` walks in `walks` is always 1, 2 or 3
+// - Length of paths in `Valid` walks in `walks` is always 2, 3 or 4
+// - `Valid` walks always have a path made of directories, with a final page entry
+// - Length of paths in cache entries in `cache` is always 1, 2 or 3
 
 // ---- Mixed (relevant to multiple of TSO/Cache/Non-Atomic) ----
 
@@ -94,7 +87,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, core: Core, walk: PTWal
     &&& lbl is Tau
 
     &&& pre.walks[core].contains(walk)
-    &&& walk is Partial1 || walk is Partial2 || walk is Partial3
+    &&& walk is Partial
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
@@ -132,14 +125,13 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
 
 pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl: Lbl) -> bool {
     let addr = add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize);
-    let l0e = PageDirectoryEntry {
+    let l0e = (addr, PageDirectoryEntry {
         entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(0),
-    };
-    let flags = Flags::from_GPDE(l0e@);
-    let walk = match l0e@ {
-        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial1(va, l0e, flags),
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid(va),
+    });
+    let walk = match l0e.1@ {
+        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e] },
+        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
         _                                         => arbitrary(), // No page mappings here
     };
     &&& lbl is Tau
@@ -156,29 +148,23 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, lbl:
 }
 
 pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
-    let PTWalk::Partial1(va, l0e, flags) = walk else { arbitrary() };
-    let addr = add(l0e@->Directory_addr, l1_bits!(va as u64) as usize);
-    let l1e = PageDirectoryEntry {
+    let PTWalk::Partial { va, path } = walk else { arbitrary() };
+    let l0e = path[0];
+    let addr = add(l0e.1@->Directory_addr, l1_bits!(va as u64) as usize);
+    let l1e = (addr, PageDirectoryEntry {
         entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(1),
-    };
-    let new_walk = match l1e@ {
-        GhostPageDirectoryEntry::Directory { .. } => {
-            PTWalk::Partial2(va, l0e, l1e, flags.combine(Flags::from_GPDE(l1e@)))
-        },
-        GhostPageDirectoryEntry::Page { addr, .. } => {
-            let pte = PageTableEntry {
-                frame: MemRegion { base: addr as nat, size: L1_ENTRY_SIZE as nat },
-                flags: flags.combine(Flags::from_GPDE(l1e@)),
-            };
-            PTWalk::Valid(va, pte)
-        },
-        GhostPageDirectoryEntry::Empty => PTWalk::Invalid(va),
+    });
+    let new_walk = match l1e.1@ {
+        GhostPageDirectoryEntry::Directory { .. }  => PTWalk::Partial { va, path: seq![l0e, l1e] },
+        GhostPageDirectoryEntry::Page { addr, .. } => PTWalk::Valid { va, path: seq![l0e, l1e] },
+        GhostPageDirectoryEntry::Empty             => PTWalk::Invalid { va },
     };
     &&& lbl is Tau
 
     &&& pre.walks[core].contains(walk)
-    &&& walk is Partial1
+    &&& walk is Partial
+    &&& path.len() == 1
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -188,29 +174,23 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
 }
 
 pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
-    let PTWalk::Partial2(va, l0e, l1e, flags) = walk else { arbitrary() };
-    let addr = add(l1e@->Directory_addr, l2_bits!(va as u64) as usize);
-    let l2e = PageDirectoryEntry {
+    let PTWalk::Partial { va, path } = walk else { arbitrary() };
+    let l0e = path[0]; let l1e = path[1];
+    let addr = add(l1e.1@->Directory_addr, l2_bits!(va as u64) as usize);
+    let l2e = (addr, PageDirectoryEntry {
         entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(2),
-    };
-    let new_walk = match l2e@ {
-        GhostPageDirectoryEntry::Directory { .. } => {
-            PTWalk::Partial3(va, l0e, l1e, l2e, flags.combine(Flags::from_GPDE(l2e@)))
-        },
-        GhostPageDirectoryEntry::Page { addr, .. } => {
-            let pte = PageTableEntry {
-                frame: MemRegion { base: addr as nat, size: L2_ENTRY_SIZE as nat },
-                flags: flags.combine(Flags::from_GPDE(l2e@)),
-            };
-            PTWalk::Valid(va, pte)
-        },
-        GhostPageDirectoryEntry::Empty => PTWalk::Invalid(va),
+    });
+    let new_walk = match l2e.1@ {
+        GhostPageDirectoryEntry::Directory { .. }  => PTWalk::Partial { va, path: seq![l0e, l1e, l2e] },
+        GhostPageDirectoryEntry::Page { addr, .. } => PTWalk::Valid { va, path: seq![l0e, l1e] },
+        GhostPageDirectoryEntry::Empty             => PTWalk::Invalid { va },
     };
     &&& lbl is Tau
 
     &&& pre.walks[core].contains(walk)
-    &&& walk is Partial2
+    &&& walk is Partial
+    &&& path.len() == 2
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -220,27 +200,23 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
 }
 
 pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
-    let PTWalk::Partial3(va, l0e, l1e, l2e, flags) = walk else { arbitrary() };
-    let addr = add(l2e@->Directory_addr, l3_bits!(va as u64) as usize);
-    let l3e = PageDirectoryEntry {
+    let PTWalk::Partial { va, path } = walk else { arbitrary() };
+    let l0e = path[0]; let l1e = path[1]; let l2e = path[2];
+    let addr = add(l2e.1@->Directory_addr, l3_bits!(va as u64) as usize);
+    let l3e = (addr, PageDirectoryEntry {
         entry: pre.read_from_mem_tso(core, addr) as u64,
         layer: Ghost(3),
-    };
-    let new_walk = match l3e@ {
-        GhostPageDirectoryEntry::Page { addr, .. } => {
-            let pte = PageTableEntry {
-                frame: MemRegion { base: addr as nat, size: L3_ENTRY_SIZE as nat },
-                flags: flags.combine(Flags::from_GPDE(l3e@)),
-            };
-            PTWalk::Valid(va, pte)
-        },
+    });
+    let new_walk = match l3e.1@ {
+        GhostPageDirectoryEntry::Page { addr, .. } => PTWalk::Valid { va, path: seq![l0e, l1e, l2e] },
         GhostPageDirectoryEntry::Directory { .. }
-        | GhostPageDirectoryEntry::Empty => PTWalk::Invalid(va),
+        | GhostPageDirectoryEntry::Empty => PTWalk::Invalid { va },
     };
     &&& lbl is Tau
 
     &&& pre.walks[core].contains(walk)
-    &&& walk is Partial3
+    &&& walk is Partial
+    &&& path.len() == 3
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -261,15 +237,16 @@ pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWa
     &&& post.used_addrs == pre.used_addrs
 }
 
-pub open spec fn step_Walk(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
     let walk = match lbl {
-        Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid(va, pte),
-        Lbl::Walk(_, va, None) => PTWalk::Invalid(va),
+        Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid { va, path },
+        Lbl::Walk(_, va, None) => PTWalk::Invalid { va },
         _ => arbitrary(),
     };
     &&& lbl matches Lbl::Walk(core, va, pte)
 
     &&& pre.walks[core].contains(walk)
+    &&& (pte matches Some(pte) ==> pte == walk.pte())
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -350,14 +327,12 @@ pub enum Step {
     Walk3 { core: Core, walk: PTWalk },
     Walk4 { core: Core, walk: PTWalk },
     WalkCancel { core: Core, walk: PTWalk },
-    Walk,
+    Walk { path: Seq<(usize, PageDirectoryEntry)> },
     // TSO
     Write,
     Writeback { core: Core },
     Read,
     Barrier,
-    // Typing
-    //AssignType,
 }
 
 pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
@@ -371,7 +346,7 @@ pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> boo
         Step::Walk3 { core, walk }      => step_Walk3(pre, post, core, walk, lbl),
         Step::Walk4 { core, walk }      => step_Walk4(pre, post, core, walk, lbl),
         Step::WalkCancel { core, walk } => step_WalkCancel(pre, post, core, walk, lbl),
-        Step::Walk                      => step_Walk(pre, post, lbl),
+        Step::Walk { path }             => step_Walk(pre, post, path, lbl),
         Step::Write                     => step_Write(pre, post, lbl),
         Step::Writeback { core }        => step_Writeback(pre, post, core, lbl),
         Step::Read                      => step_Read(pre, post, lbl),
@@ -382,7 +357,6 @@ pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> boo
 pub open spec fn next(pre: State, post: State, lbl: Lbl) -> bool {
     exists|step| next_step(pre, post, step, lbl)
 }
-
 
 pub open spec fn get_first_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<B>
     decreases s.len() - i

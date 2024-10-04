@@ -4,46 +4,137 @@ pub mod pt_mem;
 
 use vstd::prelude::*;
 use crate::spec_t::hardware::{ Core, PageDirectoryEntry };
-use crate::definitions_t::{ PageTableEntry, Flags };
+use crate::definitions_t::{ PageTableEntry, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion };
 
 verus! {
 
 // partial(usize, Seq<PageDirectoryEntry>, Option<(Flags, PageTableEntry)>)
 // ?
 pub enum PTWalk {
-    Partial1(usize, PageDirectoryEntry, Flags),
-    Partial2(usize, PageDirectoryEntry, PageDirectoryEntry, Flags),
-    Partial3(usize, PageDirectoryEntry, PageDirectoryEntry, PageDirectoryEntry, Flags),
-    Invalid(usize),
-    Valid(usize, PageTableEntry),
+    Partial {
+        va: usize,
+        path: Seq<(usize, PageDirectoryEntry)>,
+    },
+    Invalid {
+        va: usize
+    },
+    Valid {
+        va: usize,
+        path: Seq<(usize, PageDirectoryEntry)>,
+    },
 }
 
-pub enum CacheEntry {
-    Partial1(usize, PageDirectoryEntry, Flags),
-    Partial2(usize, PageDirectoryEntry, PageDirectoryEntry, Flags),
-    Partial3(usize, PageDirectoryEntry, PageDirectoryEntry, PageDirectoryEntry, Flags),
+pub struct CacheEntry {
+    pub va: usize,
+    pub path: Seq<(usize, PageDirectoryEntry)>,
 }
 
 impl PTWalk {
     pub open spec fn as_cache_entry(self) -> CacheEntry
-        recommends self is Partial1 || self is Partial2 || self is Partial3
+        recommends self is Partial
     {
         match self {
-            PTWalk::Partial1(va, l0e, flags)           => CacheEntry::Partial1(va, l0e, flags),
-            PTWalk::Partial2(va, l0e, l1e, flags)      => CacheEntry::Partial2(va, l0e, l1e, flags),
-            PTWalk::Partial3(va, l0e, l1e, l2e, flags) => CacheEntry::Partial3(va, l0e, l1e, l2e, flags),
-            _                                          => arbitrary(),
+            PTWalk::Partial { va, path } => CacheEntry { va, path },
+            _ => arbitrary(),
+        }
+    }
+
+    pub open spec fn path(self) -> Seq<(usize, PageDirectoryEntry)>
+        recommends self is Partial || self is Valid
+    {
+        match self {
+            PTWalk::Partial { path, .. } => path,
+            PTWalk::Valid { path, .. }   => path,
+            _                            => arbitrary(),
+        }
+    }
+
+    pub open spec fn flags(self) -> Flags
+        recommends
+            self is Partial || self is Valid,
+            0 < self.path().len() <= 3,
+    {
+        let flags0 = Flags::from_GPDE(self.path()[0].1@);
+        let flags1 = flags0.combine(Flags::from_GPDE(self.path()[1].1@));
+        let flags2 = flags1.combine(Flags::from_GPDE(self.path()[2].1@));
+        let flags3 = flags2.combine(Flags::from_GPDE(self.path()[3].1@));
+        if self.path().len() == 1 {
+            flags0
+        } else if self.path().len() == 2 {
+            flags1
+        } else if self.path().len() == 3 {
+            flags2
+        } else if self.path().len() == 4 {
+            flags3
+        } else { arbitrary() }
+    }
+
+    pub open spec fn prefixes(self) -> Set<PTWalk> {
+        match self {
+            PTWalk::Partial { va, path }    => {
+                if path.len() == 1 {
+                    set![self]
+                } else if path.len() == 2 {
+                    set![
+                        PTWalk::Partial { va, path: seq![path[0]] },
+                        self,
+                    ]
+                } else if path.len() == 3 {
+                    set![
+                        PTWalk::Partial { va, path: seq![path[0]] },
+                        PTWalk::Partial { va, path: seq![path[0], path[1]] },
+                        self,
+                    ]
+                } else { arbitrary() }
+            },
+            PTWalk::Invalid { va }          => set![self],
+            PTWalk::Valid { va, path } => {
+                if path.len() == 2 {
+                    set![
+                        PTWalk::Partial { va, path: seq![path[0]] },
+                        self,
+                    ]
+                } else if path.len() == 3 {
+                    set![
+                        PTWalk::Partial { va, path: seq![path[0]] },
+                        PTWalk::Partial { va, path: seq![path[0], path[1]] },
+                        self,
+                    ]
+                } else if path.len() == 4 {
+                    set![
+                        PTWalk::Partial { va, path: seq![path[0]] },
+                        PTWalk::Partial { va, path: seq![path[0], path[1]] },
+                        PTWalk::Partial { va, path: seq![path[0], path[1], path[2]] },
+                        self,
+                    ]
+                } else { arbitrary() }
+            },
+        }
+    }
+
+    pub open spec fn pte(self) -> PageTableEntry
+        recommends self is Valid
+    {
+        let va = self->Valid_va as nat;
+        let path = self->Valid_path;
+        let size = if path.len() == 2 {
+            L1_ENTRY_SIZE
+        } else if path.len() == 3 {
+            L2_ENTRY_SIZE
+        } else if path.len() == 4 {
+            L3_ENTRY_SIZE
+        } else { arbitrary() } as nat;
+        let base = (va - (va % size)) as nat;
+        PageTableEntry {
+            frame: MemRegion { base, size },
+            flags: self.flags(),
         }
     }
 }
 
 impl CacheEntry {
     pub open spec fn as_ptwalk(self) -> PTWalk {
-        match self {
-            CacheEntry::Partial1(va, l0e, flags)           => PTWalk::Partial1(va, l0e, flags),
-            CacheEntry::Partial2(va, l0e, l1e, flags)      => PTWalk::Partial2(va, l0e, l1e, flags),
-            CacheEntry::Partial3(va, l0e, l1e, l2e, flags) => PTWalk::Partial3(va, l0e, l1e, l2e, flags),
-        }
+        PTWalk::Partial { va: self.va, path: self.path }
     }
 }
 
