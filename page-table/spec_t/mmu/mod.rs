@@ -1,4 +1,4 @@
-//pub mod rl3;
+pub mod rl3;
 pub mod rl4;
 pub mod pt_mem;
 
@@ -142,7 +142,8 @@ pub enum Lbl {
     /// Internal event
     Tau,
     /// Completion of a page table walk.
-    /// Core, virtual address, Some(pte) if valid, None if invalid
+    /// Core, virtual address, Some(pte) if valid, None if invalid. If the walk is successful
+    /// (Some), the virtual address should always be aligned to the size of the mapped region.
     Walk(Core, usize, Option<PageTableEntry>),
     /// Write to physical memory.
     /// Core, physical address, written value
