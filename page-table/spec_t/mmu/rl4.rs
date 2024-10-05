@@ -32,6 +32,8 @@ pub struct State {
 pub struct History {
     /// All partial and complete page table walks since the last invlpg
     pub walks: Map<Core, Set<PTWalk>>,
+    /// All writes that happened since the most recent invlpg.
+    pub writes: Set<usize>,
 }
 
 impl State {
@@ -92,6 +94,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks.insert(core, set![])
+    &&& post.hist.writes === set![]
 }
 
 
@@ -110,6 +113,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, core: Core, walk: PTWal
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
@@ -124,6 +128,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntr
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
@@ -138,6 +143,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 
@@ -165,6 +171,7 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev
     &&& post.used_addrs == pre.used_addrs.insert(addr)
 
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk))
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l1ev: usize, lbl: Lbl) -> bool {
@@ -191,6 +198,7 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.used_addrs == pre.used_addrs.insert(addr)
 
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(new_walk))
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l2ev: usize, lbl: Lbl) -> bool {
@@ -217,6 +225,7 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.used_addrs == pre.used_addrs.insert(addr)
 
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(new_walk))
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l3ev: usize, lbl: Lbl) -> bool {
@@ -243,6 +252,7 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.used_addrs == pre.used_addrs.insert(addr)
 
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(new_walk))
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
@@ -257,6 +267,7 @@ pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWa
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 // FIXME: this should make sure the alignment of va fits with the PTE
@@ -278,6 +289,7 @@ pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirect
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 
@@ -299,6 +311,7 @@ pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes.insert(addr)
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -> bool {
@@ -314,6 +327,7 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
@@ -329,6 +343,7 @@ pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -345,6 +360,7 @@ pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
+    &&& post.hist.writes === pre.hist.writes
 }
 
 pub enum Step {

@@ -20,6 +20,13 @@ pub struct State {
     /// Addresses that have been used in a page table walk
     /// TODO: This can probably be at least partially reset in invlpg.
     pub used_addrs: Set<usize>,
+    /// History variables.
+    pub hist: History,
+}
+
+pub struct History {
+    /// All writes that happened since the most recent invlpg.
+    pub writes: Set<usize>,
 }
 
 impl State {
@@ -51,6 +58,8 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.used_addrs == pre.used_addrs
+
+    &&& post.hist.writes === set![]
 }
 
 
@@ -75,6 +84,8 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
     &&& post.used_addrs == pre.used_addrs.insert(addr)
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l1ev: usize, lbl: Lbl) -> bool {
@@ -98,6 +109,8 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
     &&& post.used_addrs == pre.used_addrs.insert(addr)
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l2ev: usize, lbl: Lbl) -> bool {
@@ -121,6 +134,8 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
     &&& post.used_addrs == pre.used_addrs.insert(addr)
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l3ev: usize, lbl: Lbl) -> bool {
@@ -144,17 +159,8 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
     &&& post.used_addrs == pre.used_addrs.insert(addr)
-}
 
-pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walks: Set<PTWalk>, lbl: Lbl) -> bool {
-    &&& lbl is Tau
-
-    &&& forall|walk| #[trigger] walks.contains(walk) ==> pre.walks[core].contains(walk)
-
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].difference(walks))
-    &&& post.used_addrs == pre.used_addrs
+    &&& post.hist.writes == pre.hist.writes
 }
 
 pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
@@ -172,6 +178,8 @@ pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirect
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
     &&& post.used_addrs == pre.used_addrs
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 
@@ -190,6 +198,8 @@ pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.used_addrs == pre.used_addrs
+
+    &&& post.hist.writes == pre.hist.writes.insert(addr)
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -> bool {
@@ -202,6 +212,8 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.walks == pre.walks
     &&& post.used_addrs == pre.used_addrs
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
@@ -214,6 +226,8 @@ pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
     &&& post.used_addrs == pre.used_addrs
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -227,6 +241,8 @@ pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
     &&& post.used_addrs == pre.used_addrs
+
+    &&& post.hist.writes == pre.hist.writes
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, lbl: Lbl) -> bool {
@@ -242,7 +258,6 @@ pub enum Step {
     Walk2 { core: Core, walk: PTWalk, l1ev: usize },
     Walk3 { core: Core, walk: PTWalk, l2ev: usize },
     Walk4 { core: Core, walk: PTWalk, l3ev: usize },
-    WalkCancel { core: Core, walks: Set<PTWalk> },
     Walk { path: Seq<(usize, PageDirectoryEntry)> },
     // TSO
     Write,
@@ -259,7 +274,6 @@ pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> boo
         Step::Walk2 { core, walk, l1ev } => step_Walk2(pre, post, core, walk, l1ev, lbl),
         Step::Walk3 { core, walk, l2ev } => step_Walk3(pre, post, core, walk, l2ev, lbl),
         Step::Walk4 { core, walk, l3ev } => step_Walk4(pre, post, core, walk, l3ev, lbl),
-        Step::WalkCancel { core, walks } => step_WalkCancel(pre, post, core, walks, lbl),
         Step::Walk { path }              => step_Walk(pre, post, path, lbl),
         Step::Write                      => step_Write(pre, post, lbl),
         Step::Writeback { core }         => step_Writeback(pre, post, core, lbl),
@@ -286,6 +300,7 @@ mod refinement {
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
                 used_addrs: self.used_addrs,
+                hist: rl3::History { writes: self.hist.writes },
             }
         }
     }

@@ -60,38 +60,38 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
 
 // ---- Atomic page table walks ----
 
-// FIXME: probably take a `path` argument instead of all this
 pub open spec fn valid_walk(
     state: State,
     core: Core,
     va: usize,
     pte: Option<PageTableEntry>,
-    l0addr: usize,
-    l0ev: usize,
-    l1addr: usize,
-    l1ev: usize,
-    l2addr: usize,
-    l2ev: usize,
-    l3addr: usize,
-    l3ev: usize,
+    path: Seq<(usize, usize)>,
     ) -> bool
 {
+    let (l0addr, l0ev) = path[0];
     let l0e = (l0addr, PageDirectoryEntry { entry: l0ev as u64, layer: Ghost(0) });
+    &&& path.len() >= 1
     &&& l0addr == add(state.pt_mem.pml4(), l0_bits!(va as u64) as usize)
     &&& state.read_from_mem_tso(core, l0addr, l0ev)
     &&& match l0e.1@ {
         GhostPageDirectoryEntry::Directory { addr, .. } => {
+            let (l1addr, l1ev) = path[1];
             let l1e = (l1addr, PageDirectoryEntry { entry: l1ev as u64, layer: Ghost(1) });
+            &&& path.len() >= 2
             &&& l1addr == add(addr, l1_bits!(va as u64) as usize)
             &&& state.read_from_mem_tso(core, l1addr, l1ev)
             &&& match l1e.1@ {
                 GhostPageDirectoryEntry::Directory { addr, .. } => {
+                    let (l2addr, l2ev) = path[2];
                     let l2e = (l2addr, PageDirectoryEntry { entry: l2ev as u64, layer: Ghost(2) });
+                    &&& path.len() >= 3
                     &&& l2addr == add(addr, l2_bits!(va as u64) as usize)
                     &&& state.read_from_mem_tso(core, l2addr, l2ev)
                     &&& match l2e.1@ {
                         GhostPageDirectoryEntry::Directory { addr, .. } => {
+                            let (l3addr, l3ev) = path[3];
                             let l3e = (l3addr, PageDirectoryEntry { entry: l3ev as u64, layer: Ghost(3) });
+                            &&& path.len() == 4
                             &&& l3addr == add(addr, l3_bits!(va as u64) as usize)
                             &&& state.read_from_mem_tso(core, l3addr, l3ev)
                             &&& match l3e.1@ {
@@ -122,12 +122,11 @@ pub open spec fn valid_walk(
     }
 }
 
-pub open spec fn step_Walk(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, usize)>, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, va, pte)
 
     //  (walk doesn't access any addresses in pre.writes) implies (pte can be determined atomically from TSO reads)
-
-    //&&& arbitrary() ==> pte == arbitrary()
+    &&& path.to_set().map(|e:(usize,usize)| e.0).disjoint(pre.writes) ==> valid_walk(pre, core, va, pte, path)
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -195,7 +194,7 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Atomic page table walks
-    Walk,
+    Walk { path: Seq<(usize, usize)> },
     // TSO
     Write,
     Writeback { core: Core },
@@ -207,7 +206,7 @@ pub enum Step {
 pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
     match step {
         Step::Invlpg             => step_Invlpg(pre, post, lbl),
-        Step::Walk               => step_Walk(pre, post, lbl),
+        Step::Walk { path }      => step_Walk(pre, post, path, lbl),
         Step::Write              => step_Write(pre, post, lbl),
         Step::Writeback { core } => step_Writeback(pre, post, core, lbl),
         Step::Read               => step_Read(pre, post, lbl),
@@ -222,98 +221,81 @@ pub open spec fn next(pre: State, post: State, lbl: Lbl) -> bool {
 
 
 mod refinement {
-    //use crate::spec_t::mmu::*;
-    //use crate::spec_t::mmu::rl3;
-    //use crate::spec_t::mmu::rl4;
-    //
-    //impl rl4::State {
-    //    pub open spec fn interp(self) -> rl3::State {
-    //        rl3::State {
-    //            pt_mem: self.pt_mem,
-    //            walks: self.hist.walks,
-    //            sbuf: self.sbuf,
-    //            used_addrs: self.used_addrs,
-    //        }
-    //    }
-    //}
-    //
-    //impl rl4::Step {
-    //    pub open spec fn interp(self) -> rl3::Step {
-    //        match self {
-    //            rl4::Step::Invlpg                     => rl3::Step::Invlpg,
-    //            rl4::Step::CacheFill { core, walk }   => rl3::Step::Stutter,
-    //            rl4::Step::CacheUse { core, e }       => rl3::Step::Stutter,
-    //            rl4::Step::CacheEvict { core, e }     => rl3::Step::Stutter,
-    //            rl4::Step::Walk1 { core, va, l0ev }   => rl3::Step::Walk1 { core, va, l0ev },
-    //            rl4::Step::Walk2 { core, walk, l1ev } => rl3::Step::Walk2 { core, walk, l1ev },
-    //            rl4::Step::Walk3 { core, walk, l2ev } => rl3::Step::Walk3 { core, walk, l2ev },
-    //            rl4::Step::Walk4 { core, walk, l3ev } => rl3::Step::Walk4 { core, walk, l3ev },
-    //            rl4::Step::WalkCancel { core, walk }  => rl3::Step::Stutter,
-    //            rl4::Step::Walk { path }              => rl3::Step::Walk { path },
-    //            rl4::Step::Write                      => rl3::Step::Write,
-    //            rl4::Step::Writeback { core }         => rl3::Step::Writeback { core },
-    //            rl4::Step::Read                       => rl3::Step::Read,
-    //            rl4::Step::Barrier                    => rl3::Step::Barrier,
-    //        }
-    //    }
-    //}
-    //
-    //proof fn next_refines(pre: rl4::State, post: rl4::State, step: rl4::Step, lbl: Lbl)
-    //    requires rl4::next_step(pre, post, step, lbl)
-    //    ensures rl3::next_step(pre.interp(), post.interp(), step.interp(), lbl)
-    //{
-    //    match step {
-    //        rl4::Step::Invlpg => {
-    //            assert(rl3::step_Invlpg(pre.interp(), post.interp(), lbl));
-    //        },
-    //        rl4::Step::CacheFill { core, walk }  => {
-    //            assert(rl3::step_Stutter(pre.interp(), post.interp(), lbl));
-    //        },
-    //        rl4::Step::CacheUse { core, e }      => {
-    //            assert(rl3::step_Stutter(pre.interp(), post.interp(), lbl));
-    //        },
-    //        rl4::Step::CacheEvict { core, e }    => {
-    //            assert(rl3::step_Stutter(pre.interp(), post.interp(), lbl));
-    //        },
-    //        rl4::Step::Walk1 { core, va, l0ev }        => {
-    //            assert(rl3::step_Walk1(pre.interp(), post.interp(), core, va, l0ev, lbl));
-    //        },
-    //        rl4::Step::Walk2 { core, walk, l1ev }      => {
-    //            assume(pre.walks[core].subset_of(pre.hist.walks[core]));
-    //            assert(rl3::step_Walk2(pre.interp(), post.interp(), core, walk, l1ev, lbl));
-    //        },
-    //        rl4::Step::Walk3 { core, walk, l2ev }      => {
-    //            assume(pre.walks[core].subset_of(pre.hist.walks[core]));
-    //            assert(rl3::step_Walk3(pre.interp(), post.interp(), core, walk, l2ev, lbl));
-    //        },
-    //        rl4::Step::Walk4 { core, walk, l3ev }      => {
-    //            assume(pre.walks[core].subset_of(pre.hist.walks[core]));
-    //            assert(rl3::step_Walk4(pre.interp(), post.interp(), core, walk, l3ev, lbl));
-    //        },
-    //        rl4::Step::WalkCancel { core, walk } => {
-    //            assert(rl3::step_Stutter(pre.interp(), post.interp(), lbl));
-    //
-    //        },
-    //        rl4::Step::Walk { path } => {
-    //            let core = lbl->Walk_0;
-    //            //assume(pre.walks.contains_key(core));
-    //            assume(pre.walks[core].subset_of(pre.hist.walks[core]));
-    //            assert(rl3::step_Walk(pre.interp(), post.interp(), path, lbl));
-    //        },
-    //        rl4::Step::Write                     => {
-    //            assert(rl3::step_Write(pre.interp(), post.interp(), lbl));
-    //        },
-    //        rl4::Step::Writeback { core }        => {
-    //            assert(rl3::step_Writeback(pre.interp(), post.interp(), core, lbl));
-    //        },
-    //        rl4::Step::Read                      => {
-    //            assert(rl3::step_Read(pre.interp(), post.interp(), lbl));
-    //        },
-    //        rl4::Step::Barrier                   => {
-    //            assert(rl3::step_Barrier(pre.interp(), post.interp(), lbl));
-    //        },
-    //    }
-    //}
+    use crate::spec_t::mmu::*;
+    use crate::spec_t::mmu::rl2;
+    use crate::spec_t::mmu::rl3;
+
+    impl rl3::State {
+        pub open spec fn interp(self) -> rl2::State {
+            rl2::State {
+                pt_mem: self.pt_mem,
+                sbuf: self.sbuf,
+                used_addrs: self.used_addrs,
+                writes: self.hist.writes,
+            }
+        }
+    }
+
+    impl rl3::Step {
+        pub open spec fn interp(self) -> rl2::Step {
+            match self {
+                rl3::Step::Invlpg                     => rl2::Step::Invlpg,
+                rl3::Step::Walk1 { core, va, l0ev }   => rl2::Step::Stutter,
+                rl3::Step::Walk2 { core, walk, l1ev } => rl2::Step::Stutter,
+                rl3::Step::Walk3 { core, walk, l2ev } => rl2::Step::Stutter,
+                rl3::Step::Walk4 { core, walk, l3ev } => rl2::Step::Stutter,
+                rl3::Step::Walk { path }              => {
+                    let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
+                    rl2::Step::Walk { path }
+                },
+                rl3::Step::Write                      => rl2::Step::Write,
+                rl3::Step::Writeback { core }         => rl2::Step::Writeback { core },
+                rl3::Step::Read                       => rl2::Step::Read,
+                rl3::Step::Barrier                    => rl2::Step::Barrier,
+                rl3::Step::Stutter                    => rl2::Step::Stutter,
+            }
+        }
+    }
+
+    proof fn next_refines(pre: rl3::State, post: rl3::State, step: rl3::Step, lbl: Lbl)
+        requires rl3::next_step(pre, post, step, lbl)
+        ensures rl2::next_step(pre.interp(), post.interp(), step.interp(), lbl)
+    {
+        // TODO:
+        // - consider changing valid_walk to accept the same path type I have on the lower layer
+        //   (or possibly change the lower layer?)
+        // - probably need some sort of history variable for used_addrs to prove the WalkN steps
+        let pre_i = pre.interp();
+        let post_i = post.interp();
+        match step {
+            rl3::Step::Invlpg => {
+                assert(rl2::step_Invlpg(pre_i, post_i, lbl));
+            },
+            rl3::Step::Walk1 { core, va, l0ev }   => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
+            rl3::Step::Walk2 { core, walk, l1ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
+            rl3::Step::Walk3 { core, walk, l2ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
+            rl3::Step::Walk4 { core, walk, l3ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
+            rl3::Step::Walk { path }              => {
+                let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
+                assume(rl2::step_Walk(pre_i, post_i, path, lbl));
+            },
+            rl3::Step::Write => {
+                assert(rl2::step_Write(pre_i, post_i, lbl));
+            },
+            rl3::Step::Writeback { core } => {
+                assert(rl2::step_Writeback(pre_i, post_i, core, lbl));
+            },
+            rl3::Step::Read => {
+                assert(rl2::step_Read(pre_i, post_i, lbl));
+            },
+            rl3::Step::Barrier => {
+                assert(rl2::step_Barrier(pre_i, post_i, lbl));
+            },
+            rl3::Step::Stutter => {
+                assert(rl2::step_Stutter(pre_i, post_i, lbl));
+            },
+        }
+    }
 }
 
 } // verus!
