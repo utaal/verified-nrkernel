@@ -38,6 +38,10 @@ impl State {
     pub open spec fn init(self) -> bool {
         arbitrary()
     }
+
+    pub open spec fn inv(self) -> bool {
+        arbitrary()
+    }
 }
 
 // ---- Mixed (relevant to multiple of TSO/Non-Atomic) ----

@@ -43,6 +43,18 @@ impl State {
     pub open spec fn init(self) -> bool {
         arbitrary()
     }
+
+    pub open spec fn inv_unchanged_walks_match_memory(self) -> bool {
+        forall|addr, value, walk, core1, core2|
+            #[trigger] self.walks[core1].contains(walk)
+            && walk.path().to_set().contains((addr, value))
+            && !self.hist.writes.contains(addr)
+                ==> #[trigger] self.read_from_mem_tso(core2, addr, value.entry as usize)
+    }
+
+    pub open spec fn inv(self) -> bool {
+        &&& self.inv_unchanged_walks_match_memory()
+    }
 }
 
 // ---- Mixed (relevant to multiple of TSO/Non-Atomic) ----
@@ -70,7 +82,7 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev
     let l0e = (addr, PageDirectoryEntry { entry: l0ev as u64, layer: Ghost(0) });
     let walk = match l0e.1@ {
         GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e] },
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
+        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va, path: seq![l0e] },
         _                                         => arbitrary(), // No page mappings here
     };
     &&& lbl is Tau
@@ -95,8 +107,8 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     let l1e = (addr, PageDirectoryEntry { entry: l1ev as u64, layer: Ghost(1) });
     let new_walk = match l1e.1@ {
         GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
+        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid   { va, path: seq![l0e, l1e] },
+        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va, path: seq![l0e, l1e] },
     };
     &&& lbl is Tau
 
@@ -120,8 +132,8 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     let l2e = (addr, PageDirectoryEntry { entry: l2ev as u64, layer: Ghost(2) });
     let new_walk = match l2e.1@ {
         GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e, l1e, l2e] },
-        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid { va, path: seq![l0e, l1e, l2e] },
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va },
+        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid   { va, path: seq![l0e, l1e, l2e] },
+        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va, path: seq![l0e, l1e, l2e] },
     };
     &&& lbl is Tau
 
@@ -146,7 +158,7 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     let new_walk = match l3e.1@ {
         GhostPageDirectoryEntry::Page { .. } => PTWalk::Valid { va, path: seq![l0e, l1e, l2e, l3e] },
         GhostPageDirectoryEntry::Directory { .. }
-        | GhostPageDirectoryEntry::Empty => PTWalk::Invalid { va },
+        | GhostPageDirectoryEntry::Empty => PTWalk::Invalid { va, path: seq![l0e, l1e, l2e, l3e] },
     };
     &&& lbl is Tau
 
@@ -166,7 +178,7 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
 pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
     let walk = match lbl {
         Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid { va, path },
-        Lbl::Walk(_, va, None) => PTWalk::Invalid { va },
+        Lbl::Walk(_, va, None) => PTWalk::Invalid { va, path },
         _ => arbitrary(),
     };
     &&& lbl matches Lbl::Walk(core, va, pte)

@@ -17,7 +17,8 @@ pub enum PTWalk {
         path: Seq<(usize, PageDirectoryEntry)>,
     },
     Invalid {
-        va: usize
+        va: usize,
+        path: Seq<(usize, PageDirectoryEntry)>,
     },
     Valid {
         va: usize,
@@ -37,16 +38,6 @@ impl PTWalk {
         match self {
             PTWalk::Partial { va, path } => CacheEntry { va, path },
             _ => arbitrary(),
-        }
-    }
-
-    pub open spec fn path(self) -> Seq<(usize, PageDirectoryEntry)>
-        recommends self is Partial || self is Valid
-    {
-        match self {
-            PTWalk::Partial { path, .. } => path,
-            PTWalk::Valid { path, .. }   => path,
-            _                            => arbitrary(),
         }
     }
 
@@ -127,6 +118,14 @@ impl PTWalk {
         PageTableEntry {
             frame: MemRegion { base: base as nat, size: size as nat },
             flags: self.flags(),
+        }
+    }
+
+    pub open spec fn path(self) -> Seq<(usize, PageDirectoryEntry)> {
+        match self {
+            PTWalk::Partial { path, .. } => path,
+            PTWalk::Valid   { path, .. } => path,
+            PTWalk::Invalid { path, .. } => path,
         }
     }
 }
