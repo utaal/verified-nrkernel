@@ -65,39 +65,39 @@ pub open spec fn valid_walk(
     core: Core,
     va: usize,
     pte: Option<PageTableEntry>,
-    path: Seq<(usize, usize)>,
+    path: Seq<(usize, PageDirectoryEntry)>,
     ) -> bool
 {
-    let (l0addr, l0ev) = path[0];
-    let l0e = (l0addr, PageDirectoryEntry { entry: l0ev as u64, layer: Ghost(0) });
+    let (l0addr, l0e) = path[0];
     &&& path.len() >= 1
+    &&& l0e.layer@ == 0
     &&& l0addr == add(state.pt_mem.pml4(), l0_bits!(va as u64) as usize)
-    &&& state.read_from_mem_tso(core, l0addr, l0ev)
-    &&& match l0e.1@ {
+    &&& state.read_from_mem_tso(core, l0addr, l0e.entry as usize)
+    &&& match l0e@ {
         GhostPageDirectoryEntry::Directory { addr, .. } => {
-            let (l1addr, l1ev) = path[1];
-            let l1e = (l1addr, PageDirectoryEntry { entry: l1ev as u64, layer: Ghost(1) });
+            let (l1addr, l1e) = path[1];
             &&& path.len() >= 2
+            &&& l1e.layer@ == 1
             &&& l1addr == add(addr, l1_bits!(va as u64) as usize)
-            &&& state.read_from_mem_tso(core, l1addr, l1ev)
-            &&& match l1e.1@ {
+            &&& state.read_from_mem_tso(core, l1addr, l1e.entry as usize)
+            &&& match l1e@ {
                 GhostPageDirectoryEntry::Directory { addr, .. } => {
-                    let (l2addr, l2ev) = path[2];
-                    let l2e = (l2addr, PageDirectoryEntry { entry: l2ev as u64, layer: Ghost(2) });
+                    let (l2addr, l2e) = path[2];
                     &&& path.len() >= 3
+                    &&& l2e.layer@ == 2
                     &&& l2addr == add(addr, l2_bits!(va as u64) as usize)
-                    &&& state.read_from_mem_tso(core, l2addr, l2ev)
-                    &&& match l2e.1@ {
+                    &&& state.read_from_mem_tso(core, l2addr, l2e.entry as usize)
+                    &&& match l2e@ {
                         GhostPageDirectoryEntry::Directory { addr, .. } => {
-                            let (l3addr, l3ev) = path[3];
-                            let l3e = (l3addr, PageDirectoryEntry { entry: l3ev as u64, layer: Ghost(3) });
+                            let (l3addr, l3e) = path[3];
                             &&& path.len() == 4
+                            &&& l3e.layer@ == 3
                             &&& l3addr == add(addr, l3_bits!(va as u64) as usize)
-                            &&& state.read_from_mem_tso(core, l3addr, l3ev)
-                            &&& match l3e.1@ {
+                            &&& state.read_from_mem_tso(core, l3addr, l3e.entry as usize)
+                            &&& match l3e@ {
                                 GhostPageDirectoryEntry::Page { addr, .. } => {
                                     &&& aligned(va as nat, L3_ENTRY_SIZE as nat)
-                                    &&& pte == Some(PTWalk::Valid { va, path: seq![l0e, l1e, l2e, l3e] }.pte())
+                                    &&& pte == Some(PTWalk::Valid { va, path }.pte())
                                 },
                                 GhostPageDirectoryEntry::Directory { .. }
                                 | GhostPageDirectoryEntry::Empty => pte is None,
@@ -105,28 +105,39 @@ pub open spec fn valid_walk(
                         },
                         GhostPageDirectoryEntry::Page { addr, .. } => {
                             &&& aligned(va as nat, L2_ENTRY_SIZE as nat)
-                            &&& pte == Some(PTWalk::Valid { va, path: seq![l0e, l1e, l2e] }.pte())
+                            &&& path.len() == 3
+                            &&& pte == Some(PTWalk::Valid { va, path }.pte())
                         },
-                        GhostPageDirectoryEntry::Empty => pte is None,
+                        GhostPageDirectoryEntry::Empty => {
+                            &&& path.len() == 3
+                            &&& pte is None
+                        },
                     }
                 },
                 GhostPageDirectoryEntry::Page { addr, .. } => {
                     &&& aligned(va as nat, L1_ENTRY_SIZE as nat)
-                    &&& pte == Some(PTWalk::Valid { va, path: seq![l0e, l1e] }.pte())
+                    &&& path.len() == 2
+                    &&& pte == Some(PTWalk::Valid { va, path }.pte())
                 },
-                GhostPageDirectoryEntry::Empty => pte is None,
+                GhostPageDirectoryEntry::Empty => {
+                    &&& path.len() == 2
+                    &&& pte is None
+                },
             }
         },
-        GhostPageDirectoryEntry::Empty => pte is None,
-        GhostPageDirectoryEntry::Page { .. } => arbitrary(), // No page mappings here
+        GhostPageDirectoryEntry::Empty => {
+            &&& path.len() == 2
+            &&& pte is None
+        },
+        GhostPageDirectoryEntry::Page { .. } => false, // No page mappings here
     }
 }
 
-pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, usize)>, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, va, pte)
 
-    //  (walk doesn't access any addresses in pre.writes) implies (pte can be determined atomically from TSO reads)
-    &&& path.to_set().map(|e:(usize,usize)| e.0).disjoint(pre.writes) ==> valid_walk(pre, core, va, pte, path)
+    //  (walk doesn't use any addresses in pre.writes) implies (pte can be determined atomically from TSO reads)
+    &&& path.to_set().map(|e:(usize,PageDirectoryEntry)| e.0).disjoint(pre.writes) ==> valid_walk(pre, core, va, pte, path)
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
@@ -194,7 +205,7 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Atomic page table walks
-    Walk { path: Seq<(usize, usize)> },
+    Walk { path: Seq<(usize, PageDirectoryEntry)> },
     // TSO
     Write,
     Writeback { core: Core },
@@ -245,7 +256,7 @@ mod refinement {
                 rl3::Step::Walk3 { core, walk, l2ev } => rl2::Step::Stutter,
                 rl3::Step::Walk4 { core, walk, l3ev } => rl2::Step::Stutter,
                 rl3::Step::Walk { path }              => {
-                    let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
+                    //let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
                     rl2::Step::Walk { path }
                 },
                 rl3::Step::Write                      => rl2::Step::Write,
@@ -262,9 +273,9 @@ mod refinement {
         ensures rl2::next_step(pre.interp(), post.interp(), step.interp(), lbl)
     {
         // TODO:
-        // - consider changing valid_walk to accept the same path type I have on the lower layer
-        //   (or possibly change the lower layer?)
         // - probably need some sort of history variable for used_addrs to prove the WalkN steps
+        //   - i might actually need more than that, maybe a phantom walk transition or something
+        //     that can add "eligible" addresses to `used_addrs`
         let pre_i = pre.interp();
         let post_i = post.interp();
         match step {
@@ -276,7 +287,7 @@ mod refinement {
             rl3::Step::Walk3 { core, walk, l2ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
             rl3::Step::Walk4 { core, walk, l3ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
             rl3::Step::Walk { path }              => {
-                let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
+                //let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
                 assume(rl2::step_Walk(pre_i, post_i, path, lbl));
             },
             rl3::Step::Write => {

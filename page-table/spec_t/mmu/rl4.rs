@@ -44,6 +44,15 @@ impl State {
     /// of the dirty and accessed bits. We could make an arbitrary choice for the bits in this
     /// function but that approach causes problems with the refinement, since the arbitrary choice
     /// must depend on the state, address and core.
+    ///
+    /// FIXME: I changed this to always keep dirty/accessed bits nondeterministic rather than
+    /// making it depend on `used_addrs`. If we keep the assumption that page table memory and user
+    /// memory are disjoint, this is fine, otherwise we need to change it.
+    /// Changing it shouldn't be too hard but it's probably worth first thinking a bit more about
+    /// whether or not to give up that assumption. If we keep it, we need to discuss what exactly
+    /// things mean. Currently the idea of the MMU state machines is that they model accesses to
+    /// physical memory. We'd have to think about how to link different labels. (might not actually
+    /// be an issue but should think it through)
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
         let val = match get_first(self.sbuf[core], addr) {
             Some(v) => v,
