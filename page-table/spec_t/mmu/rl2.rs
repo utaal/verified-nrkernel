@@ -12,6 +12,10 @@ verus! {
 // This file contains refinement layer 2 of the MMU, which defines an atomic semantics for page
 // table walks.
 
+pub struct Constants {
+    pub cores: Set<Core>,
+}
+
 pub struct State {
     /// Page table memory
     pub pt_mem: PTMem,
@@ -39,16 +43,27 @@ impl State {
         arbitrary()
     }
 
-    pub open spec fn inv(self) -> bool {
-        arbitrary()
+    pub open spec fn wf(self, c: Constants) -> bool {
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
+    }
+
+    pub open spec fn inv(self, c: Constants) -> bool {
+        &&& self.wf(c)
+    }
+}
+
+impl Constants {
+    pub open spec fn valid_core(self, core: Core) -> bool {
+        self.cores.contains(core)
     }
 }
 
 // ---- Mixed (relevant to multiple of TSO/Non-Atomic) ----
 
-pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Invlpg(core, va)
 
+    &&& c.valid_core(core)
     // Invlpg is a serializing instruction, ..
     &&& pre.sbuf[core].len() == 0
 
@@ -137,9 +152,10 @@ pub open spec fn valid_walk(
     }
 }
 
-pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, va, pte)
 
+    &&& c.valid_core(core)
     //  (walk doesn't use any addresses in pre.writes) implies (pte can be determined atomically from TSO reads)
     &&& path.to_set().map(|e:(usize,PageDirectoryEntry)| e.0).disjoint(pre.writes) ==> valid_walk(pre, core, va, pte, path)
 
@@ -155,9 +171,10 @@ pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirect
 // TODO: we don't model atomics, so technically the user-space threads cannot synchronize
 // TODO: max physical size?
 /// Write to core's local store buffer.
-pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
+    &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
     &&& post.pt_mem == pre.pt_mem
@@ -166,10 +183,11 @@ pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.writes == pre.writes.insert(addr)
 }
 
-pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -> bool {
+pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
     let (addr, value) = pre.sbuf[core][0];
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& 0 < pre.sbuf[core].len()
 
     &&& post.pt_mem@ == pre.pt_mem@.insert(addr, value)
@@ -177,9 +195,10 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.used_addrs == pre.used_addrs
 }
 
-pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
+    &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.read_from_mem_tso(core, addr, value)
 
@@ -190,9 +209,10 @@ pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
 /// `mfence` and `iret`.
-pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
+    &&& c.valid_core(core)
     &&& pre.sbuf[core].len() == 0
 
     &&& post.pt_mem == pre.pt_mem
@@ -200,7 +220,7 @@ pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.used_addrs == pre.used_addrs
 }
 
-pub open spec fn step_Stutter(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl is Tau
     &&& post == pre
 }
@@ -218,20 +238,20 @@ pub enum Step {
     Stutter,
 }
 
-pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
+pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg             => step_Invlpg(pre, post, lbl),
-        Step::Walk { path }      => step_Walk(pre, post, path, lbl),
-        Step::Write              => step_Write(pre, post, lbl),
-        Step::Writeback { core } => step_Writeback(pre, post, core, lbl),
-        Step::Read               => step_Read(pre, post, lbl),
-        Step::Barrier            => step_Barrier(pre, post, lbl),
-        Step::Stutter            => step_Stutter(pre, post, lbl),
+        Step::Invlpg             => step_Invlpg(pre, post, c, lbl),
+        Step::Walk { path }      => step_Walk(pre, post, c, path, lbl),
+        Step::Write              => step_Write(pre, post, c, lbl),
+        Step::Writeback { core } => step_Writeback(pre, post, c, core, lbl),
+        Step::Read               => step_Read(pre, post, c, lbl),
+        Step::Barrier            => step_Barrier(pre, post, c, lbl),
+        Step::Stutter            => step_Stutter(pre, post, c, lbl),
     }
 }
 
-pub open spec fn next(pre: State, post: State, lbl: Lbl) -> bool {
-    exists|step| next_step(pre, post, step, lbl)
+pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    exists|step| next_step(pre, post, c, step, lbl)
 }
 
 
@@ -247,6 +267,14 @@ mod refinement {
                 sbuf: self.sbuf,
                 used_addrs: self.used_addrs,
                 writes: self.hist.writes,
+            }
+        }
+    }
+
+    impl rl3::Constants {
+        pub open spec fn interp(self) -> rl2::Constants {
+            rl2::Constants {
+                cores: self.cores,
             }
         }
     }
@@ -272,9 +300,9 @@ mod refinement {
         }
     }
 
-    proof fn next_refines(pre: rl3::State, post: rl3::State, step: rl3::Step, lbl: Lbl)
-        requires rl3::next_step(pre, post, step, lbl)
-        ensures rl2::next_step(pre.interp(), post.interp(), step.interp(), lbl)
+    proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, step: rl3::Step, lbl: Lbl)
+        requires rl3::next_step(pre, post, c, step, lbl)
+        ensures rl2::next_step(pre.interp(), post.interp(), c.interp(), step.interp(), lbl)
     {
         // TODO:
         // - probably need some sort of history variable for used_addrs to prove the WalkN steps
@@ -282,32 +310,33 @@ mod refinement {
         //     that can add "eligible" addresses to `used_addrs`
         let pre_i = pre.interp();
         let post_i = post.interp();
+        let c_i = c.interp();
         match step {
             rl3::Step::Invlpg => {
-                assert(rl2::step_Invlpg(pre_i, post_i, lbl));
+                assert(rl2::step_Invlpg(pre_i, post_i, c_i, lbl));
             },
-            rl3::Step::Walk1 { core, va, l0ev }   => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
-            rl3::Step::Walk2 { core, walk, l1ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
-            rl3::Step::Walk3 { core, walk, l2ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
-            rl3::Step::Walk4 { core, walk, l3ev } => assume(rl2::step_Stutter(pre_i, post_i, lbl)),
+            rl3::Step::Walk1 { core, va, l0ev }   => assume(rl2::step_Stutter(pre_i, post_i, c_i, lbl)),
+            rl3::Step::Walk2 { core, walk, l1ev } => assume(rl2::step_Stutter(pre_i, post_i, c_i, lbl)),
+            rl3::Step::Walk3 { core, walk, l2ev } => assume(rl2::step_Stutter(pre_i, post_i, c_i, lbl)),
+            rl3::Step::Walk4 { core, walk, l3ev } => assume(rl2::step_Stutter(pre_i, post_i, c_i, lbl)),
             rl3::Step::Walk { path }              => {
                 //let path = path.map_values(|e:(usize, PageDirectoryEntry)| (e.0, e.1.entry as usize));
-                assume(rl2::step_Walk(pre_i, post_i, path, lbl));
+                assume(rl2::step_Walk(pre_i, post_i, c_i, path, lbl));
             },
             rl3::Step::Write => {
-                assert(rl2::step_Write(pre_i, post_i, lbl));
+                assert(rl2::step_Write(pre_i, post_i, c_i, lbl));
             },
             rl3::Step::Writeback { core } => {
-                assert(rl2::step_Writeback(pre_i, post_i, core, lbl));
+                assert(rl2::step_Writeback(pre_i, post_i, c_i, core, lbl));
             },
             rl3::Step::Read => {
-                assert(rl2::step_Read(pre_i, post_i, lbl));
+                assert(rl2::step_Read(pre_i, post_i, c_i, lbl));
             },
             rl3::Step::Barrier => {
-                assert(rl2::step_Barrier(pre_i, post_i, lbl));
+                assert(rl2::step_Barrier(pre_i, post_i, c_i, lbl));
             },
             rl3::Step::Stutter => {
-                assert(rl2::step_Stutter(pre_i, post_i, lbl));
+                assert(rl2::step_Stutter(pre_i, post_i, c_i, lbl));
             },
         }
     }

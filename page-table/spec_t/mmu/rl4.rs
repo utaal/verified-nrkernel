@@ -12,6 +12,10 @@ pub const MASK_DIRTY_ACCESS: usize = (bit!(5) | bit!(6)) as usize;
 // This file contains refinement layer 4 of the MMU. This is the most concrete MMU model, i.e. the
 // behavior we assume of the hardware.
 
+pub struct Constants {
+    pub cores: Set<Core>,
+}
+
 pub struct State {
     /// Page table memory
     pub pt_mem: PTMem,
@@ -65,25 +69,47 @@ impl State {
         arbitrary()
     }
 
-    pub open spec fn inv(self) -> bool {
-        // TODO: something something valid cores
-        forall|core| self.walks[core].subset_of(#[trigger] self.hist.walks[core])
+    pub open spec fn wf(self, c: Constants) -> bool {
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.cache.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.walks.contains_key(core)
+    }
+
+    pub open spec fn inv_walks_subset_of_hist_walks(self, c: Constants) -> bool {
+        forall|core| #[trigger] c.valid_core(core) ==> self.walks[core].subset_of(self.hist.walks[core])
+    }
+
+    pub open spec fn inv_cache_subset_of_hist_walks(self, c: Constants) -> bool {
+        forall|core,e| c.valid_core(core) ==> #[trigger] self.cache[core].contains(e) ==> self.hist.walks[core].contains(e.as_ptwalk())
+    }
+
+    pub open spec fn inv(self, c: Constants) -> bool {
+        // TODO:
+        // invariant on walks and cache:
+        // - The PDEs stored in `Partial` walks are always directories
+        // - Length of paths in `Partial` walks in `walks` is always 1, 2 or 3
+        // - Length of paths in `Valid` walks in `walks` is always 2, 3 or 4
+        // - `Valid` walks always have a path made of directories, with a final page entry
+        // - Length of paths in cache entries in `cache` is always 1, 2 or 3
+        &&& self.wf(c)
+        &&& self.inv_walks_subset_of_hist_walks(c)
+        &&& self.inv_cache_subset_of_hist_walks(c)
     }
 }
 
-// TODO:
-// invariant on walks and cache:
-// - The PDEs stored in `Partial` walks are always directories
-// - Length of paths in `Partial` walks in `walks` is always 1, 2 or 3
-// - Length of paths in `Valid` walks in `walks` is always 2, 3 or 4
-// - `Valid` walks always have a path made of directories, with a final page entry
-// - Length of paths in cache entries in `cache` is always 1, 2 or 3
+impl Constants {
+    pub open spec fn valid_core(self, core: Core) -> bool {
+        self.cores.contains(core)
+    }
+}
 
 // ---- Mixed (relevant to multiple of TSO/Cache/Non-Atomic) ----
 
-pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Invlpg(core, va)
 
+    &&& c.valid_core(core)
     // Invlpg is a serializing instruction, ..
     &&& pre.sbuf[core].len() == 0
     // .. evicts corresponding entries from the translation caches, ..
@@ -91,10 +117,8 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
     // "INVLPG also invalidates all entries in all paging-structure caches associated with the
     // current PCID, regardless of the linear addresses to which they correspond."
     &&& pre.cache[core].is_empty()
-    // .. and cancels inflight walks.
+    // .. and waits for inflight walks to complete.
     &&& pre.walks[core].is_empty()
-    // We assume that INVLPG has the same behavior on inflight walks as on paging-structure caches.
-    // TODO: Is this a reasonable assumption? Maybe not.
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
@@ -109,9 +133,10 @@ pub open spec fn step_Invlpg(pre: State, post: State, lbl: Lbl) -> bool {
 
 // ---- Translation caching ----
 
-pub open spec fn step_CacheFill(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
+pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& walk is Partial
 
@@ -125,9 +150,10 @@ pub open spec fn step_CacheFill(pre: State, post: State, core: Core, walk: PTWal
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
+pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.cache[core].contains(e)
 
     &&& post.pt_mem == pre.pt_mem
@@ -140,9 +166,10 @@ pub open spec fn step_CacheUse(pre: State, post: State, core: Core, e: CacheEntr
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
+pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Core, e: CacheEntry, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.cache[core].contains(e)
 
     &&& post.pt_mem == pre.pt_mem
@@ -158,7 +185,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, core: Core, e: CacheEn
 
 // ---- Non-atomic page table walks ----
 
-pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev: usize, lbl: Lbl) -> bool {
+pub open spec fn step_Walk1(pre: State, post: State, c: Constants, core: Core, va: usize, l0ev: usize, lbl: Lbl) -> bool {
     let addr = add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize);
     let l0e = (addr, PageDirectoryEntry { entry: l0ev as u64, layer: Ghost(0) });
     let walk = match l0e.1@ {
@@ -168,6 +195,7 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev
     };
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     // FIXME: What about bits in the virtual address above the indices? Do they need to be zero or
     // can we just ignore them?
     &&& arbitrary() // TODO: conditions on va? max vaddr?
@@ -183,7 +211,7 @@ pub open spec fn step_Walk1(pre: State, post: State, core: Core, va: usize, l0ev
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l1ev: usize, lbl: Lbl) -> bool {
+pub open spec fn step_Walk2(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, l1ev: usize, lbl: Lbl) -> bool {
     let PTWalk::Partial { va, path } = walk else { arbitrary() };
     let l0e = path[0];
     let addr = add(l0e.1@->Directory_addr, l1_bits!(va as u64) as usize);
@@ -195,6 +223,7 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     };
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& walk is Partial
     &&& path.len() == 1
@@ -210,7 +239,7 @@ pub open spec fn step_Walk2(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l2ev: usize, lbl: Lbl) -> bool {
+pub open spec fn step_Walk3(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, l2ev: usize, lbl: Lbl) -> bool {
     let PTWalk::Partial { va, path } = walk else { arbitrary() };
     let l0e = path[0]; let l1e = path[1];
     let addr = add(l1e.1@->Directory_addr, l2_bits!(va as u64) as usize);
@@ -222,6 +251,7 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     };
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& walk is Partial
     &&& path.len() == 2
@@ -237,7 +267,7 @@ pub open spec fn step_Walk3(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l3ev: usize, lbl: Lbl) -> bool {
+pub open spec fn step_Walk4(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, l3ev: usize, lbl: Lbl) -> bool {
     let PTWalk::Partial { va, path } = walk else { arbitrary() };
     let l0e = path[0]; let l1e = path[1]; let l2e = path[2];
     let addr = add(l2e.1@->Directory_addr, l3_bits!(va as u64) as usize);
@@ -249,6 +279,7 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     };
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& walk is Partial
     &&& path.len() == 3
@@ -264,9 +295,10 @@ pub open spec fn step_Walk4(pre: State, post: State, core: Core, walk: PTWalk, l
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
+pub open spec fn step_WalkCancel(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
 
     &&& post.pt_mem == pre.pt_mem
@@ -280,7 +312,7 @@ pub open spec fn step_WalkCancel(pre: State, post: State, core: Core, walk: PTWa
 }
 
 // FIXME: this should make sure the alignment of va fits with the PTE
-pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
     let walk = match lbl {
         Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid { va, path },
         Lbl::Walk(_, va, None) => PTWalk::Invalid { va, path },
@@ -288,6 +320,7 @@ pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirect
     };
     &&& lbl matches Lbl::Walk(core, va, pte)
 
+    &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& (pte matches Some(pte) ==> pte == walk.pte())
 
@@ -308,9 +341,10 @@ pub open spec fn step_Walk(pre: State, post: State, path: Seq<(usize, PageDirect
 // TODO: we don't model atomics, so technically the user-space threads cannot synchronize
 // TODO: max physical size?
 /// Write to core's local store buffer.
-pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
+    &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
     &&& post.pt_mem == pre.pt_mem
@@ -323,10 +357,11 @@ pub open spec fn step_Write(pre: State, post: State, lbl: Lbl) -> bool {
     &&& post.hist.writes === pre.hist.writes.insert(addr)
 }
 
-pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -> bool {
+pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
     let (addr, value) = pre.sbuf[core][0];
     &&& lbl is Tau
 
+    &&& c.valid_core(core)
     &&& 0 < pre.sbuf[core].len()
 
     &&& post.pt_mem@ == pre.pt_mem@.insert(addr, value)
@@ -339,9 +374,10 @@ pub open spec fn step_Writeback(pre: State, post: State, core: Core, lbl: Lbl) -
     &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
+    &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.read_from_mem_tso(core, addr, value)
 
@@ -357,9 +393,10 @@ pub open spec fn step_Read(pre: State, post: State, lbl: Lbl) -> bool {
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
 /// `mfence` and `iret`.
-pub open spec fn step_Barrier(pre: State, post: State, lbl: Lbl) -> bool {
+pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
+    &&& c.valid_core(core)
     &&& pre.sbuf[core].len() == 0
 
     &&& post.pt_mem == pre.pt_mem
@@ -393,74 +430,71 @@ pub enum Step {
     Barrier,
 }
 
-pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
+pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg                     => step_Invlpg(pre, post, lbl),
-        Step::CacheFill { core, walk }   => step_CacheFill(pre, post, core, walk, lbl),
-        Step::CacheUse { core, e }       => step_CacheUse(pre, post, core, e, lbl),
-        Step::CacheEvict { core, e }     => step_CacheEvict(pre, post, core, e, lbl),
-        Step::Walk1 { core, va, l0ev }   => step_Walk1(pre, post, core, va, l0ev, lbl),
-        Step::Walk2 { core, walk, l1ev } => step_Walk2(pre, post, core, walk, l1ev, lbl),
-        Step::Walk3 { core, walk, l2ev } => step_Walk3(pre, post, core, walk, l2ev, lbl),
-        Step::Walk4 { core, walk, l3ev } => step_Walk4(pre, post, core, walk, l3ev, lbl),
-        Step::WalkCancel { core, walk }  => step_WalkCancel(pre, post, core, walk, lbl),
-        Step::Walk { path }              => step_Walk(pre, post, path, lbl),
-        Step::Write                      => step_Write(pre, post, lbl),
-        Step::Writeback { core }         => step_Writeback(pre, post, core, lbl),
-        Step::Read                       => step_Read(pre, post, lbl),
-        Step::Barrier                    => step_Barrier(pre, post, lbl),
+        Step::Invlpg                     => step_Invlpg(pre, post, c, lbl),
+        Step::CacheFill { core, walk }   => step_CacheFill(pre, post, c, core, walk, lbl),
+        Step::CacheUse { core, e }       => step_CacheUse(pre, post, c, core, e, lbl),
+        Step::CacheEvict { core, e }     => step_CacheEvict(pre, post, c, core, e, lbl),
+        Step::Walk1 { core, va, l0ev }   => step_Walk1(pre, post, c, core, va, l0ev, lbl),
+        Step::Walk2 { core, walk, l1ev } => step_Walk2(pre, post, c, core, walk, l1ev, lbl),
+        Step::Walk3 { core, walk, l2ev } => step_Walk3(pre, post, c, core, walk, l2ev, lbl),
+        Step::Walk4 { core, walk, l3ev } => step_Walk4(pre, post, c, core, walk, l3ev, lbl),
+        Step::WalkCancel { core, walk }  => step_WalkCancel(pre, post, c, core, walk, lbl),
+        Step::Walk { path }              => step_Walk(pre, post, c, path, lbl),
+        Step::Write                      => step_Write(pre, post, c, lbl),
+        Step::Writeback { core }         => step_Writeback(pre, post, c, core, lbl),
+        Step::Read                       => step_Read(pre, post, c, lbl),
+        Step::Barrier                    => step_Barrier(pre, post, c, lbl),
     }
 }
 
-pub open spec fn next(pre: State, post: State, lbl: Lbl) -> bool {
-    exists|step| next_step(pre, post, step, lbl)
+pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    exists|step| next_step(pre, post, c, step, lbl)
 }
 
-proof fn init_implies_inv(pre: State)
+proof fn init_implies_inv(pre: State, c: Constants)
     requires pre.init()
-    ensures pre.inv()
+    ensures pre.inv(c)
 { admit(); }
 
-proof fn next_step_preserves_inv(pre: State, post: State, step: Step, lbl: Lbl)
+proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
-        pre.inv(),
-        next_step(pre, post, step, lbl),
-    ensures post.inv()
+        pre.inv(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv(c)
 {
-    // TODO: this needs the whole valid_core stuff to work.
-    admit();
-    //match step {
-    //    Step::Invlpg                     => {
-    //        admit();
-    //        assert(post.inv());
-    //        assert(post.inv());
-    //    },
-    //    Step::CacheFill { core, walk }   => assert(post.inv()),
-    //    Step::CacheUse { core, e }       => assume(post.inv()),
-    //    Step::CacheEvict { core, e }     => assert(post.inv()),
-    //    Step::Walk1 { core, va, l0ev }   => assume(post.inv()),
-    //    Step::Walk2 { core, walk, l1ev } => assume(post.inv()),
-    //    Step::Walk3 { core, walk, l2ev } => assume(post.inv()),
-    //    Step::Walk4 { core, walk, l3ev } => assume(post.inv()),
-    //    Step::WalkCancel { core, walk }  => assume(post.inv()),
-    //    Step::Walk { path }              => {
-    //        let core = lbl->Walk_0;
-    //        assert forall|core_| post.walks[core_].subset_of(#[trigger] post.hist.walks[core_]) by {
-    //            if pre.walks.contains_key(core_) {
-    //                assert(post.walks[core_].subset_of(post.hist.walks[core_]));
-    //            } else {
-    //                assert(post.walks[core_].subset_of(post.hist.walks[core_]));
-    //            }
-    //        };
-    //        //assert(post.walks[core].subset_of(post.hist.walks[core]));
-    //        //assert(forall|corep| corep != core ==> post.walks[corep] == pre.walks[corep]);
-    //        assert(post.inv());
-    //    },
-    //    Step::Write                      => assert(post.inv()),
-    //    Step::Writeback { core }         => assert(post.inv()),
-    //    Step::Read                       => assert(post.inv()),
-    //    Step::Barrier                    => assert(post.inv()),
-    //}
+    match step {
+        Step::Invlpg                     => {
+            let core = lbl->Invlpg_0;
+            assert(c.valid_core(core));
+            assert(post.walks[core].is_empty());
+            // TODO: Verus sets have some serious problems. How do I not know that a set with len 0
+            // is the empty set..?
+            // Really don't want to add finiteness invariants everywhere.
+            assume(post.walks[core].finite());
+            assume(post.cache[core].finite());
+            assert(post.walks[core] === set![]);
+            assert(post.hist.walks[core] =~= set![]);
+            assert(post.inv(c))
+        },
+        Step::CacheFill { core, walk }   => assert(post.inv(c)),
+        Step::CacheUse { core, e }       => {
+            assume(post.walks[core].finite());
+            assert(post.inv(c))
+        },
+        Step::CacheEvict { core, e }     => assert(post.inv(c)),
+        Step::Walk1 { core, va, l0ev }   => assert(post.inv(c)),
+        Step::Walk2 { core, walk, l1ev } => assert(post.inv(c)),
+        Step::Walk3 { core, walk, l2ev } => assert(post.inv(c)),
+        Step::Walk4 { core, walk, l3ev } => assert(post.inv(c)),
+        Step::WalkCancel { core, walk }  => assert(post.inv(c)),
+        Step::Walk { path }              => assert(post.inv(c)),
+        Step::Write                      => assert(post.inv(c)),
+        Step::Writeback { core }         => assert(post.inv(c)),
+        Step::Read                       => assert(post.inv(c)),
+        Step::Barrier                    => assert(post.inv(c)),
+    }
 }
 
 
