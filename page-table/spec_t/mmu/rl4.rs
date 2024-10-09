@@ -36,8 +36,9 @@ pub struct State {
 pub struct History {
     /// All partial and complete page table walks since the last invlpg
     pub walks: Map<Core, Set<PTWalk>>,
-    /// All writes that happened since the most recent invlpg.
-    pub writes: Set<usize>,
+    /// All writes that may still be in store buffers. Gets reset for the executing core on invlpg
+    /// and barrier.
+    pub writes: Set<(Core, usize)>,
 }
 
 impl State {
@@ -127,7 +128,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks.insert(core, set![])
-    &&& post.hist.writes === set![]
+    &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
 }
 
 
@@ -354,7 +355,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes === pre.hist.writes.insert(addr)
+    &&& post.hist.writes === pre.hist.writes.insert((core, addr))
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -406,7 +407,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
 }
 
 pub enum Step {
