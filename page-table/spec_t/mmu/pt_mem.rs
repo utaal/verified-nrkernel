@@ -63,6 +63,16 @@ impl PTMem {
 
     pub open spec fn pml4(self) -> usize;
 
+    pub open spec fn write(self, addr: usize, value: usize) -> PTMem;
+    
+    /// Describes the effect of performing a write on the PTMem.
+    pub proof fn axiom_write(self, addr: usize, value: usize) -> (res: PTMem)
+        ensures res@ == self@.insert(addr, value)
+    {
+        admit();
+        self.write(addr, value)
+    }
+
     //pub spec fn regions(self) -> Set<MemRegion>;
     //
     //pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
