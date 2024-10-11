@@ -1,5 +1,7 @@
 use vstd::prelude::*;
 
+use crate::spec_t::hardware::{ PageDirectoryEntry, GhostPageDirectoryEntry };
+
 use crate::definitions_t::{
     aligned, WORD_SIZE,
 };
@@ -35,23 +37,26 @@ pub struct PTMem {
     pml4: usize,
 }
 
-pub enum MType {
-    PDir0,
-    PDir1,
-    PDir2,
-    PTable,
-    User,
-    Untyped,
-}
+//pub enum MType {
+//    PDir0,
+//    PDir1,
+//    PDir2,
+//    PTable,
+//    User,
+//    Untyped,
+//}
+//
+//impl MType {
+//    pub open spec fn is_page_type(self) -> bool {
+//        match self {
+//            MType::PDir0 | MType::PDir1 | MType::PDir2 | MType::PTable => true,
+//            MType::User | MType::Untyped => false,
+//        }
+//    }
+//}
 
-impl MType {
-    pub open spec fn is_page_type(self) -> bool {
-        match self {
-            MType::PDir0 | MType::PDir1 | MType::PDir2 | MType::PTable => true,
-            MType::User | MType::Untyped => false,
-        }
-    }
-}
+// TODO: define this, prove some stuff and add it to vstd
+pub open spec fn flatten<A>(s: Set<Set<A>>) -> Set<A>;
 
 impl PTMem {
     /// The view of the memory is byte-indexed but stores full words. Only 8-byte aligned indices
@@ -71,6 +76,36 @@ impl PTMem {
     {
         admit();
         self.write(addr, value)
+    }
+
+    /// All addresses that may be used in a page table walk.
+    pub open spec fn page_addrs(self) -> Set<usize> {
+        let l0_addrs = self.page_addrs_aux(set![self.pml4()], 0);
+        let l1_addrs = self.page_addrs_aux(l0_addrs, 1);
+        let l2_addrs = self.page_addrs_aux(l1_addrs, 2);
+        let l3_addrs = self.page_addrs_aux(l2_addrs, 3);
+        flatten(set![l0_addrs, l1_addrs, l2_addrs, l3_addrs])
+    }
+
+    /// Takes all addresses pointing to layer N entries and returns a set of all entries pointing
+    /// to layer N+1 entries.
+    pub open spec fn page_addrs_aux(self, addrs: Set<usize>, layer: nat) -> Set<usize> {
+        flatten(addrs.map(|prev_addr| {
+            let pde = PageDirectoryEntry {
+                entry: self@[prev_addr] as u64,
+                layer: Ghost(layer),
+            };
+            if self@.contains_key(prev_addr) && !(pde@ is Empty) {
+                let next_base = match pde@ {
+                    GhostPageDirectoryEntry::Directory { addr, .. } => addr,
+                    GhostPageDirectoryEntry::Page      { addr, .. } => addr,
+                    GhostPageDirectoryEntry::Empty                  => arbitrary(),
+                };
+                Set::new(|next_addr: usize| next_base <= next_addr < next_base + 4096 && aligned(next_addr as nat, 8))
+            } else {
+                set![]
+            }
+        }))
     }
 
     //pub spec fn regions(self) -> Set<MemRegion>;

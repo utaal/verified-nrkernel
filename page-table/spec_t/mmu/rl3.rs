@@ -2,29 +2,22 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::rl4::{ get_first, MASK_DIRTY_ACCESS };
 use crate::spec_t::mmu::pt_mem::{ PTMem };
-use crate::spec_t::hardware::{ Core, PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ aligned, bitmask_inc };
+use crate::spec_t::hardware::{ Core };
+use crate::definitions_t::{ aligned };
 
 verus! {
 
 // This file contains refinement layer 3 of the MMU, which expresses translation caching and
 // non-atomicity of page walks as a single concept.
 
-pub struct Constants {
-    pub cores: Set<Core>,
-}
-
 pub struct State {
     pub happy: bool,
     /// Page table memory
     pub pt_mem: PTMem,
     /// In-progress page table walks
-    pub walks: Map<Core, Set<PTWalk>>,
+    pub walks: Map<Core, Set<Walk>>,
     /// Store buffers
     pub sbuf: Map<Core, Seq<(usize, usize)>>,
-    ///// Addresses that have been used in a page table walk
-    ///// TODO: This can probably be at least partially reset in invlpg.
-    //pub used_addrs: Set<usize>,
     /// History variables
     pub hist: History,
     //pub proph: Prophecy,
@@ -68,12 +61,14 @@ impl State {
     /// Is true if only this core's store buffer is non-empty.
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
-        //self.writer_cores() === set![] || self.writer_cores() === set![core] 
-        //forall|core2| #[trigger] c.valid_core(core2) && self.sbuf[core2].len() > 0 ==> core2 == core1
     }
 
     pub open spec fn writer_cores(self) -> Set<Core> {
         self.hist.writes.map(|x:(_,_)| x.0)
+    }
+
+    pub open spec fn write_addrs(self) -> Set<usize> {
+        self.hist.writes.map(|x:(_,_)| x.1)
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -82,25 +77,9 @@ impl State {
         &&& forall|core,value| #[trigger] self.hist.writes.contains((core,value)) ==> c.valid_core(core)
     }
 
-    // This invariant is wrong. Memory used in walks might change but not in a way that changes the
-    // result.
-    ///// Some `core` accessed memory as part of a pt walk, at address `addr` and resulting in value
-    ///// `value`. If no other core wrote to `address`, then reading from memory will still return
-    ///// `value`.
-    //pub open spec fn inv_unchanged_walks_match_memory(self, c: Constants) -> bool {
-    //    //self.single_writer() ==>
-    //    forall|addr, value, walk, core1|
-    //           c.valid_core(core1)
-    //        && #[trigger] self.walks[core1].contains(walk)
-    //        && walk.path().to_set().contains((addr, value))
-    //        && (forall|core2| #![auto] !self.hist.writes.contains((core2, addr)))
-    //            ==> #[trigger] self.read_from_mem_tso(core1, addr, value.entry as usize)
-    //}
-
     pub open spec fn inv_sbuf_subset_writes(self, c: Constants) -> bool {
-        forall|core: Core, addr: usize, value: usize| #![auto]
-            c.valid_core(core) && self.sbuf[core].to_set().contains((addr, value))
-                ==> self.hist.writes.contains((core, addr))
+        forall|core: Core, addr: usize, value: usize|
+            !self.hist.writes.contains((core, addr)) ==> !self.sbuf[core].to_set().contains((addr, value))
     }
 
     pub open spec fn inv_writer_cores(self, c: Constants) -> bool {
@@ -118,12 +97,6 @@ impl State {
     }
 }
 
-impl Constants {
-    pub open spec fn valid_core(self, core: Core) -> bool {
-        self.cores.contains(core)
-    }
-}
-
 // ---- Mixed (relevant to multiple of TSO/Non-Atomic) ----
 
 pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -138,7 +111,6 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.walks == pre.walks.insert(core, set![])
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf
-    //&&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
     //&&& post.proph.pt_mems == pre.proph.pt_mems
@@ -147,145 +119,82 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
 // ---- Non-atomic page table walks ----
 
-pub open spec fn step_Walk1(pre: State, post: State, c: Constants, core: Core, va: usize, l0ev: usize, lbl: Lbl) -> bool {
-    let addr = add(pre.pt_mem.pml4(), l0_bits!(va as u64) as usize);
-    let l0e = (addr, PageDirectoryEntry { entry: l0ev as u64, layer: Ghost(0) });
-    let walk = match l0e.1@ {
-        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e] },
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va, path: seq![l0e] },
-        _                                         => arbitrary(), // No page mappings here
-    };
+// FIXME: this should make sure the alignment of va fits with the PTE
+pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, va: usize, lbl: Lbl) -> bool {
+    let walk = Walk { va, path: seq![] };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     // FIXME: What about bits in the virtual address above the indices? Do they need to be zero or
     // can we just ignore them?
     &&& arbitrary() // TODO: conditions on va? max vaddr?
-    &&& pre.read_from_mem_tso(core, addr, l0ev)
 
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
-    //&&& post.used_addrs == pre.used_addrs.insert(addr)
 
-    &&& post.hist.writes == pre.hist.writes
-    //&&& post.proph.pt_mems == pre.proph.pt_mems
+    &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_Walk2(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, l1ev: usize, lbl: Lbl) -> bool {
-    let PTWalk::Partial { va, path } = walk else { arbitrary() };
-    let l0e = path[0];
-    let addr = add(l0e.1@->Directory_addr, l1_bits!(va as u64) as usize);
-    let l1e = (addr, PageDirectoryEntry { entry: l1ev as u64, layer: Ghost(1) });
-    let new_walk = match l1e.1@ {
-        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid   { va, path: seq![l0e, l1e] },
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va, path: seq![l0e, l1e] },
-    };
+pub open spec fn step_WalkStep(
+    pre: State,
+    post: State,
+    c: Constants,
+    core: Core,
+    walk: Walk,
+    value: usize,
+    lbl: Lbl
+    ) -> bool
+{
+    let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
-    &&& walk is Partial
-    &&& path.len() == 1
-    &&& pre.read_from_mem_tso(core, addr, l1ev)
+    &&& pre.read_from_mem_tso(core, addr, value)
+    &&& res is Incomplete
 
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
-    //&&& post.used_addrs == pre.used_addrs.insert(addr)
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(res.walk()))
 
-    &&& post.hist.writes == pre.hist.writes
-    //&&& post.proph.pt_mems == pre.proph.pt_mems
+    &&& post.hist.writes === pre.hist.writes
 }
 
-pub open spec fn step_Walk3(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, l2ev: usize, lbl: Lbl) -> bool {
-    let PTWalk::Partial { va, path } = walk else { arbitrary() };
-    let l0e = path[0]; let l1e = path[1];
-    let addr = add(l1e.1@->Directory_addr, l2_bits!(va as u64) as usize);
-    let l2e = (addr, PageDirectoryEntry { entry: l2ev as u64, layer: Ghost(2) });
-    let new_walk = match l2e.1@ {
-        GhostPageDirectoryEntry::Directory { .. } => PTWalk::Partial { va, path: seq![l0e, l1e, l2e] },
-        GhostPageDirectoryEntry::Page { .. }      => PTWalk::Valid   { va, path: seq![l0e, l1e, l2e] },
-        GhostPageDirectoryEntry::Empty            => PTWalk::Invalid { va, path: seq![l0e, l1e, l2e] },
-    };
-    &&& lbl is Tau
-
-    &&& c.valid_core(core)
-    &&& pre.walks[core].contains(walk)
-    &&& walk is Partial
-    &&& path.len() == 2
-    &&& pre.read_from_mem_tso(core, addr, l2ev)
-
-    &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
-    &&& post.sbuf == pre.sbuf
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
-    //&&& post.used_addrs == pre.used_addrs.insert(addr)
-
-    &&& post.hist.writes == pre.hist.writes
-    //&&& post.proph.pt_mems == pre.proph.pt_mems
-}
-
-pub open spec fn step_Walk4(pre: State, post: State, c: Constants, core: Core, walk: PTWalk, l3ev: usize, lbl: Lbl) -> bool {
-    let PTWalk::Partial { va, path } = walk else { arbitrary() };
-    let l0e = path[0]; let l1e = path[1]; let l2e = path[2];
-    let addr = add(l2e.1@->Directory_addr, l3_bits!(va as u64) as usize);
-    let l3e = (addr, PageDirectoryEntry { entry: l3ev as u64, layer: Ghost(3) });
-    let new_walk = match l3e.1@ {
-        GhostPageDirectoryEntry::Page { .. } => PTWalk::Valid { va, path: seq![l0e, l1e, l2e, l3e] },
-        GhostPageDirectoryEntry::Directory { .. }
-        | GhostPageDirectoryEntry::Empty => PTWalk::Invalid { va, path: seq![l0e, l1e, l2e, l3e] },
-    };
-    &&& lbl is Tau
-
-    &&& c.valid_core(core)
-    &&& pre.walks[core].contains(walk)
-    &&& walk is Partial
-    &&& path.len() == 3
-    &&& pre.read_from_mem_tso(core, addr, l3ev)
-
-    &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
-    &&& post.sbuf == pre.sbuf
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(new_walk))
-    //&&& post.used_addrs == pre.used_addrs.insert(addr)
-
-    &&& post.hist.writes == pre.hist.writes
-    //&&& post.proph.pt_mems == pre.proph.pt_mems
-}
-
-pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
-    let walk = match lbl {
-        Lbl::Walk(_, va, Some(pte)) => PTWalk::Valid { va, path },
-        Lbl::Walk(_, va, None) => PTWalk::Invalid { va, path },
-        _ => arbitrary(),
-    };
+pub open spec fn step_WalkDone(
+    pre: State,
+    post: State,
+    c: Constants,
+    walk: Walk,
+    value: usize,
+    lbl: Lbl
+    ) -> bool
+{
+    let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
     &&& lbl matches Lbl::Walk(core, va, pte)
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
-    &&& (pte matches Some(pte) ==> pte == walk.pte())
+    &&& walk.va == va
+    &&& walk.pte() == pte
+    &&& pre.read_from_mem_tso(core, addr, value)
+    &&& !(res is Incomplete)
 
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
-    //&&& post.used_addrs == pre.used_addrs
 
-    &&& post.hist.writes == pre.hist.writes
-    //&&& post.proph.pt_mems == pre.proph.pt_mems
+    &&& post.hist.writes === pre.hist.writes
 }
 
 
 // ---- TSO ----
 // Our modeling of TSO with store buffers is adapted from the one in the paper "A Better x86 Memory
 // Model: x86-TSO".
-// TODO: we don't model atomics, so technically the user-space threads cannot synchronize
-// TODO: max physical size?
-/// Write to core's local store buffer.
+
 pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
@@ -296,7 +205,6 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
-    //&&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.writes == pre.hist.writes.insert((core, addr))
     //&&& post.proph.pt_mems == pre.proph.pt_mems.push(proph)
@@ -317,7 +225,6 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.pt_mem == pre.pt_mem.write(addr, value)
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.walks == pre.walks
-    //&&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.writes == pre.hist.writes
     //&&& post.proph.pt_mems == pre.proph.pt_mems.drop_first()
@@ -334,14 +241,11 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
-    //&&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.writes == pre.hist.writes
     //&&& post.proph.pt_mems == pre.proph.pt_mems
 }
 
-/// The `step_Barrier` transition corresponds to any serializing instruction. This includes
-/// `mfence` and `iret`.
 pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
@@ -352,7 +256,6 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
-    //&&& post.used_addrs == pre.used_addrs
 
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
     //&&& post.proph.pt_mems == pre.proph.pt_mems
@@ -367,11 +270,9 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Non-atomic page table walks
-    Walk1 { core: Core, va: usize, l0ev: usize },
-    Walk2 { core: Core, walk: PTWalk, l1ev: usize },
-    Walk3 { core: Core, walk: PTWalk, l2ev: usize },
-    Walk4 { core: Core, walk: PTWalk, l3ev: usize },
-    Walk { path: Seq<(usize, PageDirectoryEntry)> },
+    WalkInit { core: Core, va: usize },
+    WalkStep { core: Core, walk: Walk, value: usize },
+    WalkDone { walk: Walk, value: usize },
     // TSO
     Write,
     Writeback { core: Core },
@@ -382,17 +283,15 @@ pub enum Step {
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg                     => step_Invlpg(pre, post, c, lbl),
-        Step::Walk1 { core, va, l0ev }   => step_Walk1(pre, post, c, core, va, l0ev, lbl),
-        Step::Walk2 { core, walk, l1ev } => step_Walk2(pre, post, c, core, walk, l1ev, lbl),
-        Step::Walk3 { core, walk, l2ev } => step_Walk3(pre, post, c, core, walk, l2ev, lbl),
-        Step::Walk4 { core, walk, l3ev } => step_Walk4(pre, post, c, core, walk, l3ev, lbl),
-        Step::Walk { path }              => step_Walk(pre, post, c, path, lbl),
-        Step::Write                      => step_Write(pre, post, c, lbl),
-        Step::Writeback { core }         => step_Writeback(pre, post, c, core, lbl),
-        Step::Read                       => step_Read(pre, post, c, lbl),
-        Step::Barrier                    => step_Barrier(pre, post, c, lbl),
-        Step::Stutter                    => step_Stutter(pre, post, c, lbl),
+        Step::Invlpg                         => step_Invlpg(pre, post, c, lbl),
+        Step::WalkInit { core, va }          => step_WalkInit(pre, post, c, core, va, lbl),
+        Step::WalkStep { core, walk, value } => step_WalkStep(pre, post, c, core, walk, value, lbl),
+        Step::WalkDone { walk, value }       => step_WalkDone(pre, post, c, walk, value, lbl),
+        Step::Write                          => step_Write(pre, post, c, lbl),
+        Step::Writeback { core }             => step_Writeback(pre, post, c, core, lbl),
+        Step::Read                           => step_Read(pre, post, c, lbl),
+        Step::Barrier                        => step_Barrier(pre, post, c, lbl),
+        Step::Stutter                        => step_Stutter(pre, post, c, lbl),
     }
 }
 
@@ -414,35 +313,43 @@ proof fn next_step_preserves_inv_sbuf_subset_writes(pre: State, post: State, c: 
     ensures post.inv_sbuf_subset_writes(c)
 {
     match step {
-        rl3::Step::Invlpg => assert(post.inv_sbuf_subset_writes(c)),
-        rl3::Step::Walk1 { core, va, l0ev }   => assert(post.inv_sbuf_subset_writes(c)),
-        rl3::Step::Walk2 { core, walk, l1ev } => assert(post.inv_sbuf_subset_writes(c)),
-        rl3::Step::Walk3 { core, walk, l2ev } => assert(post.inv_sbuf_subset_writes(c)),
-        rl3::Step::Walk4 { core, walk, l3ev } => assert(post.inv_sbuf_subset_writes(c)),
-        rl3::Step::Walk { path } => {
-            assert(post.inv_sbuf_subset_writes(c));
-        },
-        rl3::Step::Write => {
+        Step::Invlpg => assert(post.inv_sbuf_subset_writes(c)),
+        Step::WalkInit { core, va } => assert(post.inv_sbuf_subset_writes(c)),
+        Step::WalkStep { core, walk, value } => assert(post.inv_sbuf_subset_writes(c)),
+        Step::WalkDone { walk, value } => assert(post.inv_sbuf_subset_writes(c)),
+        Step::Write => {
             let core = lbl->Write_0;
-            assert forall|core2: Core, addr: usize, value: usize| #![auto]
-                c.valid_core(core2) && post.sbuf[core2].to_set().contains((addr, value))
-                    implies post.hist.writes.contains((core2, addr))
+            let addr = lbl->Write_1;
+            //assert forall|core2: Core, addr: usize, value: usize| #![auto]
+            //    c.valid_core(core2) && post.sbuf[core2].to_set().contains((addr, value))
+            //        implies post.hist.writes.contains((core2, addr))
+            //by {
+            //    if core2 == core && pre.sbuf[core].to_set().contains((addr, value)) { }
+            //};
+            assert forall|core2: Core, addr2: usize, value: usize|
+                !post.hist.writes.contains((core2, addr2))
+                implies !post.sbuf[core2].to_set().contains((addr2, value))
             by {
-                if core2 == core && pre.sbuf[core].to_set().contains((addr, value)) { }
+                admit();
+                assert(c.valid_core(core2));
+                if core2 == core && addr2 == addr {
+                } else {
+                    assert(!post.hist.writes.contains((core2, addr2)));
+                }
             };
             assert(post.inv_sbuf_subset_writes(c))
         },
-        rl3::Step::Writeback { core } => {
+        Step::Writeback { core } => {
             // should be easy
             assume(post.inv_sbuf_subset_writes(c));
         },
-        rl3::Step::Read => {
+        Step::Read => {
             assert(post.inv_sbuf_subset_writes(c));
         },
-        rl3::Step::Barrier => {
+        Step::Barrier => {
             assert(post.inv_sbuf_subset_writes(c));
         },
-        rl3::Step::Stutter => {
+        Step::Stutter => {
             assert(post.inv_sbuf_subset_writes(c));
         },
     }
@@ -456,7 +363,7 @@ proof fn next_step_preserves_inv_writer_cores(pre: State, post: State, c: Consta
     ensures post.happy ==> post.inv_writer_cores(c)
 {
     match step {
-        rl3::Step::Invlpg => {
+        Step::Invlpg => {
             let core = lbl->Invlpg_0;
             assert(pre.writer_cores().len() <= 1);
             lemma_writer_cores_filter(pre.hist.writes, core);
@@ -476,14 +383,10 @@ proof fn next_step_preserves_inv_writer_cores(pre: State, post: State, c: Consta
             };
             assert(post.inv_writer_cores(c));
         },
-        rl3::Step::Walk1 { core, va, l0ev }   => assert(post.inv_writer_cores(c)),
-        rl3::Step::Walk2 { core, walk, l1ev } => assert(post.inv_writer_cores(c)),
-        rl3::Step::Walk3 { core, walk, l2ev } => assert(post.inv_writer_cores(c)),
-        rl3::Step::Walk4 { core, walk, l3ev } => assert(post.inv_writer_cores(c)),
-        rl3::Step::Walk { path } => {
-            assert(post.inv_writer_cores(c));
-        },
-        rl3::Step::Write => {
+        Step::WalkInit { core, va } => assert(post.inv_writer_cores(c)),
+        Step::WalkStep { core, walk, value } => assert(post.inv_writer_cores(c)),
+        Step::WalkDone { walk, value } => assert(post.inv_writer_cores(c)),
+        Step::Write => {
             let core = lbl->Write_0;
             broadcast use lemma_writer_cores_insert;
             assert(pre.writer_cores() === set![] || pre.writer_cores() === set![core]);
@@ -499,13 +402,13 @@ proof fn next_step_preserves_inv_writer_cores(pre: State, post: State, c: Consta
             //    assert(post.inv_writer_cores(c))
             //}
         },
-        rl3::Step::Writeback { core } => {
+        Step::Writeback { core } => {
             assert(post.inv_writer_cores(c));
         },
-        rl3::Step::Read => {
+        Step::Read => {
             assert(post.inv_writer_cores(c));
         },
-        rl3::Step::Barrier => {
+        Step::Barrier => {
             let core = lbl->Barrier_0;
             assert(pre.writer_cores().len() <= 1);
             lemma_writer_cores_filter(pre.hist.writes, core);
@@ -513,7 +416,7 @@ proof fn next_step_preserves_inv_writer_cores(pre: State, post: State, c: Consta
             admit();
             assert(post.inv_writer_cores(c));
         },
-        rl3::Step::Stutter => {
+        Step::Stutter => {
             assert(post.inv_writer_cores(c));
         },
     }
@@ -532,115 +435,18 @@ proof fn lemma_writer_cores_filter(s: Set<(Core, usize)>, core: Core)
 broadcast proof fn lemma_writer_cores_insert(s: Set<(Core, usize)>, core: Core, addr: usize)
     // probably need finite
     //requires s.finite()
-    ensures
-        (#[trigger] s.insert((core, addr))).map(|x:(_,_)| x.0) == s.map(|x:(_,_)| x.0).insert(core)
+    ensures (#[trigger] s.insert((core, addr))).map(|x:(_,_)| x.0) == s.map(|x:(_,_)| x.0).insert(core)
 {
     admit();
 }
 
-
-//proof fn next_step_preserves_inv_unchanged_walks_match_memory(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
-//    requires
-//        pre.inv(c),
-//        next_step(pre, post, c, step, lbl),
-//    ensures post.inv_unchanged_walks_match_memory(c)
-//{
-//    admit(); // XXX: This invariant isn't true
-//    match step {
-//        rl3::Step::Invlpg => {
-//            let core = lbl->Invlpg_0;
-//
-//            // TODO: two concerns:
-//            // other processors might still see outdated walks because inflight walks on other
-//            // processors aren't canceled?
-//            //
-//            // "The read of a paging-structure entry in translating an address being used to fetch
-//            // an instruction may appear to execute before an earlier write to that
-//            // paging-structure entry if there is no serializing instruction between the write and
-//            // the instruction fetch. Note that the invalidating instructions identified in Section
-//            // 4.10.4.1 are all serializing instructions."
-//
-//            assert forall|addr, value, walk, core1|
-//                   c.valid_core(core1)
-//                && #[trigger] post.walks[core1].contains(walk)
-//                && walk.path().to_set().contains((addr, value))
-//                && (forall|core2| #![auto] !post.hist.writes.contains((core2, addr)))
-//                    implies #[trigger] post.read_from_mem_tso(core1, addr, value.entry as usize)
-//            by {
-//                assert(c.valid_core(core1));
-//                assert(post.walks[core1].contains(walk));
-//                assert(walk.path().to_set().contains((addr, value)));
-//                assert(forall|core2| #![auto] !post.hist.writes.contains((core2, addr)));
-//
-//                assert(pre.walks[core1].contains(walk));
-//
-//                if forall|core2| #![auto] !pre.hist.writes.contains((core2, addr)) {
-//                    assert(forall|core2| #![auto] !pre.hist.writes.contains((core2, addr)));
-//                    assert(pre.read_from_mem_tso(core1, addr, value.entry as usize));
-//                    assert(post.read_from_mem_tso(core1, addr, value.entry as usize));
-//                } else {
-//                    let core2 = choose|core2| #![auto] pre.hist.writes.contains((core2, addr));
-//                    assert(pre.hist.writes.contains((core2, addr)));
-//                    assert(!post.hist.writes.contains((core2, addr)));
-//                    assert(core2 == core);
-//                    assert(pre.sbuf[core] =~= seq![]);
-//                    assert(core != core1);
-//                    assert(post.sbuf[core1] =~= pre.sbuf[core1]);
-//                    //assert(pre.read_from_mem_tso(core1, addr, value.entry as usize));
-//
-//                    assert(post.read_from_mem_tso(core1, addr, value.entry as usize));
-//                }
-//            };
-//            assert(post.inv_unchanged_walks_match_memory(c));
-//        },
-//        rl3::Step::Walk1 { core, va, l0ev }   => assume(post.inv(c)),
-//        rl3::Step::Walk2 { core, walk, l1ev } => assume(post.inv(c)),
-//        rl3::Step::Walk3 { core, walk, l2ev } => assume(post.inv(c)),
-//        rl3::Step::Walk4 { core, walk, l3ev } => assume(post.inv(c)),
-//        rl3::Step::Walk { path } => {
-//            assert(post.inv(c));
-//        },
-//        rl3::Step::Write => {
-//            assume(post.inv(c))
-//        },
-//        rl3::Step::Writeback { core } => {
-//            assume(post.inv(c));
-//        },
-//        rl3::Step::Read => {
-//            assert(post.inv(c));
-//        },
-//        rl3::Step::Barrier => {
-//            assume(post.inv(c));
-//        },
-//        rl3::Step::Stutter => {
-//            assert(post.inv(c));
-//        },
-//    }
-//}
-
-//proof fn lemma_read_from_mem_tso_empty_sbuf(s1: State, s2: State, core1: Core, core2: Core, addr: usize, value: usize)
-//    requires
-//        s1.read_from_mem_tso(core1, addr, value),
-//        s2.pt_mem@ == s1.pt_mem@,
-//        s2.sbuf[core1] == s1.sbuf[core],
-//    ensures s2.read_from_mem_tso(core2, addr, value)
-//{
-//}
-
-//proof fn lemma_read_from_mem_tso(s1: State, s2: State, core: Core, addr: usize, value: usize)
-//    requires
-//        s1.read_from_mem_tso(core, addr, value),
-//        s2.pt_mem@ == s1.pt_mem@,
-//        s2.sbuf[core] == s1.sbuf[core],
-//    ensures s2.read_from_mem_tso(core, addr, value)
-//{
-//}
 
 mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::pt_mem::{ PTMem };
     use crate::spec_t::mmu::rl2;
     use crate::spec_t::mmu::rl3;
+    use crate::spec_t::mmu::rl4::{ get_first };
 
     impl rl3::State {
         pub open spec fn interp(self, c: rl3::Constants) -> rl2::State {
@@ -663,28 +469,18 @@ mod refinement {
         }
     }
 
-    impl rl3::Constants {
-        pub open spec fn interp(self) -> rl2::Constants {
-            rl2::Constants {
-                cores: self.cores,
-            }
-        }
-    }
-
     impl rl3::Step {
         pub open spec fn interp(self) -> rl2::Step {
             match self {
-                rl3::Step::Invlpg                     => rl2::Step::Invlpg,
-                rl3::Step::Walk1 { core, va, l0ev }   => rl2::Step::Walk1 { core, va, l0ev },
-                rl3::Step::Walk2 { core, walk, l1ev } => rl2::Step::Walk2 { core, walk, l1ev },
-                rl3::Step::Walk3 { core, walk, l2ev } => rl2::Step::Walk3 { core, walk, l2ev },
-                rl3::Step::Walk4 { core, walk, l3ev } => rl2::Step::Walk4 { core, walk, l3ev },
-                rl3::Step::Walk { path }              => rl2::Step::Walk { path },
-                rl3::Step::Write                      => rl2::Step::Write,
-                rl3::Step::Writeback { core }         => rl2::Step::Stutter,
-                rl3::Step::Read                       => rl2::Step::Read,
-                rl3::Step::Barrier                    => rl2::Step::Barrier,
-                rl3::Step::Stutter                    => rl2::Step::Stutter,
+                rl3::Step::Invlpg                         => rl2::Step::Invlpg,
+                rl3::Step::WalkInit { core, va }          => rl2::Step::WalkInit { core, va },
+                rl3::Step::WalkStep { core, walk, value } => rl2::Step::WalkStep { core, walk, value },
+                rl3::Step::WalkDone { walk, value }       => rl2::Step::WalkDone { walk, value },
+                rl3::Step::Write                          => rl2::Step::Write,
+                rl3::Step::Writeback { core }             => rl2::Step::Stutter,
+                rl3::Step::Read                           => rl2::Step::Read,
+                rl3::Step::Barrier                        => rl2::Step::Barrier,
+                rl3::Step::Stutter                        => rl2::Step::Stutter,
             }
         }
     }
@@ -694,52 +490,51 @@ mod refinement {
             pre.happy,
             pre.inv(c),
             rl3::next_step(pre, post, c, step, lbl),
-        ensures rl2::next_step(pre.interp(c), post.interp(c), c.interp(), step.interp(), lbl)
+        ensures rl2::next_step(pre.interp(c), post.interp(c), c, step.interp(), lbl)
     {
         match step {
             rl3::Step::Invlpg => {
-                assert(rl2::step_Invlpg(pre.interp(c), post.interp(c), c.interp(), lbl));
+                assert(rl2::step_Invlpg(pre.interp(c), post.interp(c), c, lbl));
             },
-            rl3::Step::Walk1 { core, va, l0ev }        => {
-                admit();
-                assert(rl2::step_Walk1(pre.interp(c), post.interp(c), c.interp(), core, va, l0ev, lbl));
+            rl3::Step::WalkInit { core, va } => {
+                assert(rl2::step_WalkInit(pre.interp(c), post.interp(c), c, core, va, lbl));
             },
-            rl3::Step::Walk2 { core, walk, l1ev }      => {
+            rl3::Step::WalkStep { core, walk, value } => {
                 admit();
-                assert(rl2::step_Walk2(pre.interp(c), post.interp(c), c.interp(), core, walk, l1ev, lbl));
+                assert(rl2::step_WalkStep(pre.interp(c), post.interp(c), c, core, walk, value, lbl));
             },
-            rl3::Step::Walk3 { core, walk, l2ev }      => {
+            rl3::Step::WalkDone { walk, value } => {
                 admit();
-                assert(rl2::step_Walk3(pre.interp(c), post.interp(c), c.interp(), core, walk, l2ev, lbl));
-            },
-            rl3::Step::Walk4 { core, walk, l3ev }      => {
-                admit();
-                assert(rl2::step_Walk4(pre.interp(c), post.interp(c), c.interp(), core, walk, l3ev, lbl));
-            },
-            rl3::Step::Walk { path } => {
-                admit();
-                let core = lbl->Walk_0;
-                assert(rl2::step_Walk(pre.interp(c), post.interp(c), c.interp(), path, lbl));
+                assert(rl2::step_WalkDone(pre.interp(c), post.interp(c), c, walk, value, lbl));
             },
             rl3::Step::Write => {
+                // TODO: This doesn't refine in the case where (pre.happy && !post.happy)
                 admit();
-                assert(rl2::step_Write(pre.interp(c), post.interp(c), c.interp(), lbl));
+                assert(rl2::step_Write(pre.interp(c), post.interp(c), c, lbl));
             },
             rl3::Step::Writeback { core } => {
                 admit();
                 assert(pre.no_other_writers(core));
                 lemma_pt_mem_fold_writeback(pre, post, c, core);
-                assert(rl2::step_Stutter(pre.interp(c), post.interp(c), c.interp(), lbl));
+                assert(rl2::step_Stutter(pre.interp(c), post.interp(c), c, lbl));
             },
-            rl3::Step::Read                      => {
-                admit();
-                assert(rl2::step_Read(pre.interp(c), post.interp(c), c.interp(), lbl));
+            rl3::Step::Read => {
+                let Lbl::Read(core, addr, value) = lbl else { arbitrary() };
+                if pre.no_other_writers(core) {
+                    assert(pre.interp(c).no_other_writers(core));
+                    lemma_rl3_read_from_mem_tso_conditions2(pre, c, core, addr);
+                    assert(rl2::step_Read(pre.interp(c), post.interp(c), c, lbl));
+                } else if !pre.write_addrs().contains(addr) {
+                    lemma_rl3_read_from_mem_tso_conditions1(pre, c, core, addr);
+                    assert(rl2::step_Read(pre.interp(c), post.interp(c), c, lbl));
+                }
+                assert(rl2::step_Read(pre.interp(c), post.interp(c), c, lbl));
             },
             rl3::Step::Barrier                   => {
-                assert(rl2::step_Barrier(pre.interp(c), post.interp(c), c.interp(), lbl));
+                assert(rl2::step_Barrier(pre.interp(c), post.interp(c), c, lbl));
             },
             rl3::Step::Stutter                   => {
-                assert(rl2::step_Stutter(pre.interp(c), post.interp(c), c.interp(), lbl));
+                assert(rl2::step_Stutter(pre.interp(c), post.interp(c), c, lbl));
             },
         }
     }
@@ -749,7 +544,7 @@ mod refinement {
             pre.inv(c),
             rl3::next(pre, post, c),
         ensures
-            rl2::next(pre.interp(c), post.interp(c), c.interp()),
+            rl2::next(pre.interp(c), post.interp(c), c),
     {
         if pre.happy {
             // TODO: ...
@@ -774,6 +569,43 @@ mod refinement {
                 == pre.sbuf[core].fold_left(post.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
     {
         admit();
+    }
+
+    proof fn lemma_rl3_read_from_mem_tso_conditions1(state: rl3::State, c: rl3::Constants, core: Core, addr: usize)
+        requires
+            state.happy,
+            state.inv(c),
+            !state.write_addrs().contains(addr),
+            c.valid_core(core),
+        ensures get_first(state.sbuf[core], addr) is None
+    {
+        admit();
+        assert(get_first(state.sbuf[core], addr) is None);
+    }
+
+    proof fn lemma_rl3_read_from_mem_tso_conditions2(state: rl3::State, c: rl3::Constants, core: Core, addr: usize)
+        requires
+            state.happy,
+            state.inv(c),
+            state.no_other_writers(core),
+            c.valid_core(core),
+        ensures
+            match get_first(state.sbuf[core], addr) {
+                Some(v) => v,
+                None    => state.pt_mem@[addr],
+            } == state.interp(c).pt_mem@[addr]
+    {
+        let wcore = state.writer_cores().choose();
+        assume(wcore == core);
+        assume(state.writer_cores().len() == 1);
+        // Should follow trivially from previous two
+        assume(state.interp(c).pt_mem == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1)));
+        //match get_first(state.sbuf[core], addr) {
+        //    Some(v) => v,
+        //    None    => state.pt_mem@[addr],
+        //} == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))@[addr]
+        admit();
+        assert(get_first(state.sbuf[core], addr) is None);
     }
 
 }
