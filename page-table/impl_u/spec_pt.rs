@@ -1,3 +1,4 @@
+#![verus::trusted]
 use vstd::prelude::*;
 
 use crate::definitions_t::{candidate_mapping_overlaps_existing_vmem, PageTableEntry};

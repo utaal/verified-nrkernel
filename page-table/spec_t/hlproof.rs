@@ -1,4 +1,3 @@
-#![verus::trusted]
 use crate::definitions_t::{
     above_zero, between, candidate_mapping_overlaps_existing_pmem, overlap, MemRegion,
     PageTableEntry, WORD_SIZE,

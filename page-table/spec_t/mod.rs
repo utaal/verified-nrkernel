@@ -6,4 +6,5 @@ pub mod os;
 pub mod hlproof;
 pub mod mem;
 pub mod os_invariant;
+#[cfg(feature = "more")]
 pub mod atomic_mmu;

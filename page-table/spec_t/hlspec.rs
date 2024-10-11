@@ -498,7 +498,7 @@ pub open spec fn next(c: AbstractConstants, s1: AbstractVariables, s2: AbstractV
     exists|step: AbstractStep| next_step(c, s1, s2, step)
 }
 
-pub open spec fn pmem_no_overlap(mappings: Map<nat, PageTableEntry>) -> bool {
+pub open spec fn pmem_no_overlap(mappings: Map<nat, PageTableEntry>) -> bool { // $line_count$${$
     forall|bs1: nat, bs2: nat|
         mappings.dom().contains(bs1) && mappings.dom().contains(bs2) && overlap(
             mappings.index(bs1).frame,
@@ -581,8 +581,9 @@ pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool {
     &&& inflight_mem_size_over_zero(s.thread_state.values())
     &&& inflight_maps_unique(s.thread_state)
 }
+// $line_count$}$
 
-pub proof fn init_implies_inv(c: AbstractConstants, s: AbstractVariables)
+pub proof fn init_implies_inv(c: AbstractConstants, s: AbstractVariables) // $line_count$${$
     requires
         init(c, s),
     ensures
@@ -629,6 +630,7 @@ pub proof fn next_step_preserves_inv(
     } else {
         assert(!s2.sound);
     }
+    // $line_count$$}$
 }
 
 } // verus!

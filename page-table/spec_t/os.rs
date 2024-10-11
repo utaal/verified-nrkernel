@@ -144,7 +144,7 @@ impl OSVariables {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Invariant and WF
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn valid_ids(self, c: OSConstants) -> bool {
+    pub open spec fn valid_ids(self, c: OSConstants) -> bool { // $line_count$Spec${$
         forall|core: Core|
             hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
                 CoreState::MapWaiting { ULT_id, .. }
@@ -159,6 +159,7 @@ impl OSVariables {
                 CoreState::Idle => true,
             }
     }
+    // $line_count$}$
 /*
     pub open spec fn inflight_pte_above_zero_pte_result_consistant(self, c: OSConstants) -> bool {
         forall|core: Core|
@@ -207,31 +208,32 @@ impl OSVariables {
                 && self.core_states[core2].holds_lock()) ==> core1 === core2
     }
 
-    pub open spec fn basic_inv(self, c: OSConstants) -> bool {
+    pub open spec fn basic_inv(self, c: OSConstants) -> bool { // $line_count$Spec${$
         &&& self.wf(c)
         &&& self.valid_ids(c)
         //&&& self.inflight_pte_above_zero_pte_result_consistant(c)
         &&& self.successful_unmaps(c)
         //&&& self.tlb_inv(c)
-
     }
+    // $line_count$}$
 
-    pub open spec fn inv(self, c: OSConstants) -> bool {
+    pub open spec fn inv(self, c: OSConstants) -> bool { // $line_count$Spec${$
         &&& self.basic_inv(c)
         //&&& self.tlb_inv(c)
         //&&& self.overlapping_inv(c)
         &&& self.overlapping_vmem_inv(c)
     }
+    // $line_count$}$
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about the TLB
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn shootdown_cores_valid(self, c: OSConstants) -> bool {
+    pub open spec fn shootdown_cores_valid(self, c: OSConstants) -> bool { // $line_count$Spec${$
         forall|core| #[trigger]
             self.TLB_Shootdown.open_requests.contains(core) ==> hardware::valid_core(c.hw, core)
     }
 
-    pub open spec fn successful_IPI(self, c: OSConstants) -> bool {
+    pub open spec fn successful_IPI(self, c: OSConstants) -> bool { // $line_count$Spec${$
         forall|dispatcher: Core|
             {
                 hardware::valid_core(c.hw, dispatcher) ==> match self.core_states[dispatcher] {
@@ -273,22 +275,22 @@ impl OSVariables {
             }
     }
 
-    pub open spec fn shootdown_exists(self, c: OSConstants) -> bool {
-        !(self.TLB_Shootdown.open_requests === Set::<Core>::empty()) ==> exists|core|
-            hardware::valid_core(c.hw, core)
-                && self.core_states[core] matches (CoreState::UnmapShootdownWaiting { vaddr, .. })
-    }
+    // pub open spec fn shootdown_exists(self, c: OSConstants) -> bool {
+    //     !(self.TLB_Shootdown.open_requests === Set::<Core>::empty()) ==> exists|core|
+    //         hardware::valid_core(c.hw, core)
+    //             && self.core_states[core] matches (CoreState::UnmapShootdownWaiting { vaddr, .. })
+    // }
 
     pub open spec fn tlb_inv(self, c: OSConstants) -> bool {
         &&& self.shootdown_cores_valid(c)
         &&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
-    }
+    } // $line_count$}$
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about overlapping
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn set_core_idle(self, c: OSConstants, core: Core) -> OSVariables
+    pub open spec fn set_core_idle(self, c: OSConstants, core: Core) -> OSVariables // $line_count$Spec${$
         recommends
             hardware::valid_core(c.hw, core),
     {
@@ -332,11 +334,12 @@ impl OSVariables {
             &&& self.existing_map_no_overlap_existing_vmem(c)
         }
     }
+    // $line_count$}$
 
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Interpretation functions
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn pt_variables(self, core: Core) -> spec_pt::PageTableVariables {
+    pub open spec fn pt_variables(self, core: Core) -> spec_pt::PageTableVariables { // $line_count$Spec${$
         spec_pt::PageTableVariables { pt_mem: self.hw.global_pt }
     }
 
@@ -452,6 +455,7 @@ impl OSVariables {
         let sound: bool = self.sound;
         hlspec::AbstractVariables { mem, mappings, thread_state, sound }
     }
+    // $line_count$}$
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

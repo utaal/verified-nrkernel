@@ -15,5 +15,7 @@ global size_of usize == 8;
 
 }
 
+#[cfg(feature = "more")]
 pub mod hlspec_user;
+#[cfg(feature = "more")]
 pub mod os_trace;
