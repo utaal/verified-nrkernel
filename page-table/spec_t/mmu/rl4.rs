@@ -6,6 +6,10 @@ use crate::definitions_t::{ aligned, bit };
 
 verus! {
 
+// TODO: Should prove some basic liveness stuff, like: We can always make progress on an inflight
+// partial walk.
+// (forall walk in pre.walks. exists post. step_WalkStep(pre, post, walk, ..)
+
 /// Bits 5 and 6 (dirty, access) set to 1
 pub const MASK_DIRTY_ACCESS: usize = (bit!(5) | bit!(6)) as usize;
 

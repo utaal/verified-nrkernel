@@ -11,6 +11,74 @@ verus! {
 
 // This file contains refinement layer 1 of the MMU, which expresses page table walks as atomic
 // operations on the global memory.
+//
+// Under which circumstances can we know that the result of a page table walk is the same as if it
+// had happened atomically on the global memory?
+//
+// There are two sources of non-atomicity:
+// 1. TSO.
+//    If the walk uses an address, whose value is (on the core doing the walk) non-deterministic
+//    because another core has written to it, then we can't say for sure what the result of the
+//    walk is. The write first goes to the store buffer and then gets written back. We don't know
+//    if the walk used the old or new value. In particular, it may have used the old value and then
+//    the writeback happens, meaning it doesn't appear to be atomic. (Technically, we can drop this
+//    condition if it's the last read of the walk, as it appears atomic then. But it wouldn't be
+//    useful because we still don't know if the walk used the old or new value.)
+//
+//    A serializing instruction on the core that executed the write(s) guarantees that for
+//    subsequent walks using the written-to address(es), this is not a problem. I.e. after a map or
+//    unmap we need a serializing instruction on the core that did the operation.
+//
+//    **Note that here the non-determinism originates from things happening on the writer core
+//    (store buffering) and an action (serializing instruction) needs to be executed by that core
+//    to restore deterministic semantics for all other cores in the system.**
+//
+// 2. Translation caches and non-atomicity.
+//    Even when TSO is not a problem, a core's inflight page table walk may have read an old value
+//    before the newly written value was guaranteed to be visible.
+//
+//    **Unlike with TSO, the non-determinism here is caused by actions of the cores reading the
+//    addresses to which another core is writing. Consequently, ensuring the absence of this type
+//    of non-determinism can't be done by the writer core, only by actions on each reader core
+//    (specifically, executing invlpg).**
+//
+//    However, we can differentiate between different kinds of writes. Only some of them induce
+//    non-determinism in page table walks. Consider the set of all addresses reachable from the
+//    page table's root address.
+//    E.g. define S inductively. For root address `pml4`: (Implemented in function `page_addrs`)
+//
+//    1. {pml4, pml4 + 8, .., pml4 + 4088} subset S
+//    2. If S contains `addr` and the value stored at `addr` is a valid entry pointing to a
+//       directory stored at `addr2` then:
+//       {addr2, addr2 + 8, .., addr2 + 4088} subset S
+//
+//    Whenever a write to some `addr` happens, there are three possibilities:
+//    1. `addr` is not reachable from PML4
+//       --> Neither caching nor non-atomicity could cause a page walk to depend on the current value
+//           stored at `addr`. No non-determinism/non-atomicity is introduced (except through TSO
+//           combined with a later write that would make `addr` reachable.).
+//
+//    2. `addr` is reachable from PML4. The old value stored at `addr` has P=0, i.e. is not a valid
+//       paging entry.
+//       --> Whenever a page walk encounters this entry, it terminates immediately. I.e. no
+//           inflight walks rely on the old value. The entry also cannot be cached. No
+//           non-determinism/non-atomicity.
+//
+//    3. `addr` is reachable from PML4. The old value stored at `addr` has P=1, i.e. is a valid entry
+//       --> Any subsequent page table walk completions using `addr` have non-atomic semantics, as
+//           they may depend on the old value. Executing an invlpg restores atomic semantics on
+//           the core executing it.
+//
+//
+//  Very interesting thing I just realized:
+//  If a page table implementation doesn't reclaim directories eagerly when unmapping, it may see
+//  the following situation: When mapping a huge page entry, it encounters an empty directory,
+//  reclaims it and maps the huge page instead. After this, a shootdown is necessary. Otherwise
+//  page table walks may still use the empty directory, causing a page fault rather than a
+//  successful translation. Only caused by non-atomicity though. Translation caches cannot cache
+//  prefixes of invalid walks. This may technically be a bug in NrOS.
+
+
 
 pub struct State {
     pub happy: bool,
@@ -19,6 +87,21 @@ pub struct State {
     /// All writes that may still be in store buffers. Gets reset for the executing core on invlpg
     /// and barrier.
     pub writes: Set<(Core, usize)>,
+    /// "Negative writes" (P=1)->(P=?)
+    /// Maps each core to a set of addresses. Each of the addresses was written to while reachable
+    /// from PML4 with P=1 and the core did not yet execute an invlpg since that write.
+    /// I.e. the old value at that address may still affect the results of future page table walks,
+    /// through non-atomicity and partial translation caching.
+    ///
+    /// Note that `neg_writes` doesn't map each core to a set of writes executed *by that core* but
+    /// to a set of writes whose effect this core may or may not yet observe.
+    pub neg_writes: Map<Core, Set<usize>>,
+    ///// "Positive writes" (P=0)->(P=1)
+    ///// Maps each core to a set of addresses. Each of the addresses was written to while reachable
+    ///// from PML4 with P=0.
+    ///// The old value was invalid, thus cannot be present in any non-atomic or partially cached
+    ///// translations.
+    //pub pos_writes: Map<Core, Set<usize>>,
     ///// History variables.
     //pub hist: History,
 }
@@ -27,7 +110,7 @@ pub struct History { }
 
 impl State {
     pub open spec fn stutter(pre: State, post: State) -> bool {
-        let State { happy, pt_mem, writes } = post;
+        let State { happy, pt_mem, writes, neg_writes } = post;
         &&& happy == pre.happy
         &&& pt_mem@ == pre.pt_mem@
         &&& writes == pre.writes
@@ -44,11 +127,19 @@ impl State {
         arbitrary()
     }
 
+    pub open spec fn is_walk_atomic(self, core: Core, path: Seq<(usize, PageDirectoryEntry)>) -> bool {
+        let addrs = path.to_set().map(|x:(_,_)| x.0);
+        forall|addr| #[trigger] addrs.contains(addr) ==> {
+            // No TSO non-determinism:
+            &&& !self.write_addrs().contains(addr)
+            // No cache/partial-walk non-determinism:
+            &&& !self.neg_writes[core].contains(addr)
+        }
+    }
+
     /// Is true if only this core's store buffer is non-empty.
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
-        //self.writer_cores() === set![] || self.writer_cores() === set![core] 
-        //forall|core2| #[trigger] c.valid_core(core2) && self.sbuf[core2].len() > 0 ==> core2 == core1
     }
 
     pub open spec fn writer_cores(self) -> Set<Core> {
@@ -61,6 +152,7 @@ impl State {
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|core,value| #[trigger] self.writes.contains((core,value)) ==> c.valid_core(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.neg_writes.contains_key(core)
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
@@ -80,6 +172,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.writes === pre.writes.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.neg_writes == pre.neg_writes.insert(core, set![])
 }
 
 
@@ -164,17 +257,16 @@ pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usi
     &&& lbl matches Lbl::Walk(core, va, pte)
 
     &&& c.valid_core(core)
-    //  (walk doesn't use any addresses in pre.writes) implies (pte can be determined atomically from TSO reads)
-    //&&& pre.is_walk_atomic(path) ==> valid_walk(pre, core, va, pte, path)
+    &&& pre.is_walk_atomic(core, path) ==> valid_walk(pre, c, core, va, pte, path)
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.writes == pre.writes
+    &&& post.neg_writes == pre.neg_writes
 }
 
 
 // ---- TSO ----
 
-/// Write to core's local store buffer.
 pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
@@ -184,6 +276,11 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.happy == pre.happy && pre.no_other_writers(core)
     &&& post.pt_mem == pre.pt_mem.write(addr, value)
     &&& post.writes == pre.writes.insert((core, addr))
+    &&& post.neg_writes ==
+        if pre.pt_mem.page_addrs().contains_key(addr)
+            && !(pre.pt_mem.page_addrs()[addr] is Empty)
+        { pre.neg_writes.map_values(|ws:Set<_>| ws.insert(addr)) }
+        else { pre.neg_writes }
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -196,10 +293,9 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.writes == pre.writes
+    &&& post.neg_writes == pre.neg_writes
 }
 
-/// The `step_Barrier` transition corresponds to any serializing instruction. This includes
-/// `mfence` and `iret`.
 pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
@@ -208,6 +304,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.writes === pre.writes.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.neg_writes == pre.neg_writes
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -216,11 +313,9 @@ pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -
 }
 
 pub enum Step {
-    // Mixed
     Invlpg,
-    // Atomic page table walks
+    // TODO: maybe just make path part of the label
     Walk { path: Seq<(usize, PageDirectoryEntry)> },
-    // TSO
     Write,
     Read,
     Barrier,
