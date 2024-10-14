@@ -5,14 +5,14 @@ pub mod rl4;
 pub mod pt_mem;
 
 use vstd::prelude::*;
-use crate::spec_t::hardware::{ PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
+use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 use crate::definitions_t::{ PageTableEntry, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize };
 
 verus! {
 
 pub struct Walk {
     pub va: usize,
-    pub path: Seq<(usize, PageDirectoryEntry)>,
+    pub path: Seq<(usize, PDE)>,
 }
 
 pub enum Res {
@@ -59,12 +59,12 @@ impl Walk {
             add(path.last().0, l3_bits!(va as u64) as usize)
         } else { arbitrary() };
 
-        let entry = PageDirectoryEntry { entry: value as u64, layer: Ghost(path.len()) };
+        let entry = PDE { entry: value as u64, layer: Ghost(path.len()) };
         let walk = Walk { va, path: path.push((addr, entry)) };
         (match entry@ {
-            GhostPageDirectoryEntry::Directory { .. } => Res::Incomplete(walk),
-            GhostPageDirectoryEntry::Page { .. }      => Res::Valid(walk),
-            GhostPageDirectoryEntry::Empty            => Res::Invalid(walk),
+            GPDE::Directory { .. } => Res::Incomplete(walk),
+            GPDE::Page { .. }      => Res::Valid(walk),
+            GPDE::Empty            => Res::Invalid(walk),
         }, addr)
     }
 

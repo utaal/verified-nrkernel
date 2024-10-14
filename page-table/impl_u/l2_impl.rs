@@ -10,7 +10,7 @@ use crate::impl_u::l1;
 use crate::impl_u::l0::{ambient_arith};
 use crate::impl_u::indexing;
 use crate::spec_t::mem;
-use crate::spec_t::hardware::{PageDirectoryEntry,GhostPageDirectoryEntry, MASK_FLAG_P,
+use crate::spec_t::hardware::{PDE,GPDE, MASK_FLAG_P,
 MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR,
 MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS, MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR,
 MASK_L3_PG_ADDR};
@@ -103,9 +103,9 @@ pub open spec fn addr_is_zero_padded(layer: nat, addr: u64, is_page: bool) -> bo
     }
 }
 
-// PageDirectoryEntry is defined in crate::spec_t::hardware to define the page table walk
+// PDE is defined in crate::spec_t::hardware to define the page table walk
 // semantics. Here we reuse it for the implementation and add exec functions to it.
-impl PageDirectoryEntry {
+impl PDE {
     // PAT flag is set to zero for huge pages and super pages
     pub open spec fn hp_pat_is_zero(self) -> bool {
         &&& self@.is_Page() && self.layer == 1 ==> self.entry & MASK_PG_FLAG_PAT == 0
@@ -120,7 +120,7 @@ impl PageDirectoryEntry {
     {
         let e = self.entry; let mw = MAX_PHYADDR_WIDTH;
         axiom_max_phyaddr_width_facts();
-        reveal(PageDirectoryEntry::all_mb0_bits_are_zero);
+        reveal(PDE::all_mb0_bits_are_zero);
         if self.layer() == 1 {
             assert(e & bitmask_inc!(12u64, mw - 1) == e & bitmask_inc!(30u64, mw - 1)) by (bit_vector)
                 requires e & bit!(12u64) == 0, e & bitmask_inc!(13u64,29u64) == 0, 32 <= mw <= 52;
@@ -139,7 +139,7 @@ impl PageDirectoryEntry {
             self.all_mb0_bits_are_zero(),
     {
         assert(forall|a: u64| 0 & a == 0) by (bit_vector);
-        reveal(PageDirectoryEntry::all_mb0_bits_are_zero);
+        reveal(PDE::all_mb0_bits_are_zero);
         assert(1u64 << 0 == 1) by (bit_vector);
         assert(0u64 & 1 == 0) by (bit_vector);
     }
@@ -168,7 +168,7 @@ impl PageDirectoryEntry {
                 | if is_writethrough       { MASK_FLAG_PWT }      else { 0 }
                 | if disable_cache         { MASK_FLAG_PCD }      else { 0 }
                 | if disable_execute       { MASK_FLAG_XD }       else { 0 };
-               (PageDirectoryEntry { entry: e, layer: Ghost(layer as nat) }).all_mb0_bits_are_zero()
+               (PDE { entry: e, layer: Ghost(layer as nat) }).all_mb0_bits_are_zero()
             }),
     {
         let or1 = MASK_FLAG_P;
@@ -204,7 +204,7 @@ impl PageDirectoryEntry {
             requires
                 address & bitmask_inc!(12u64, mw - 1) == address,
                 32 <= mw <= 52;
-        PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+        PDE::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
         if layer == 0 {
             assert(!is_page);
             assert(e & bit!(7u64) == 0);
@@ -233,8 +233,8 @@ impl PageDirectoryEntry {
             assert(e & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0);
         } else { assert(false); }
 
-        let pde = PageDirectoryEntry { entry: e, layer: Ghost(layer as nat) };
-        reveal(PageDirectoryEntry::all_mb0_bits_are_zero);
+        let pde = PDE { entry: e, layer: Ghost(layer as nat) };
+        reveal(PDE::all_mb0_bits_are_zero);
         assert(pde.all_mb0_bits_are_zero());
     }
 
@@ -329,13 +329,13 @@ impl PageDirectoryEntry {
             r.entry & MASK_FLAG_P == MASK_FLAG_P,
             (r.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS) == (layer != 3),
             (r.entry & MASK_FLAG_RW == MASK_FLAG_RW) == pte.flags.is_writable,
-            r@.get_Page_flag_RW() == pte.flags.is_writable,
+            r@.get_Page_RW() == pte.flags.is_writable,
             (r.entry & MASK_FLAG_US == MASK_FLAG_US) == !pte.flags.is_supervisor,
-            r@.get_Page_flag_US() == !pte.flags.is_supervisor,
+            r@.get_Page_US() == !pte.flags.is_supervisor,
             r.entry & MASK_FLAG_PWT != MASK_FLAG_PWT,
             r.entry & MASK_FLAG_PCD != MASK_FLAG_PCD,
             (r.entry & MASK_FLAG_XD == MASK_FLAG_XD) == pte.flags.disable_execute,
-            r@.get_Page_flag_XD() == pte.flags.disable_execute,
+            r@.get_Page_XD() == pte.flags.disable_execute,
     {
         Self::new_entry(layer, pte.frame.base as u64, true, pte.flags.is_writable, pte.flags.is_supervisor, false, false, pte.flags.disable_execute)
     }
@@ -350,9 +350,9 @@ impl PageDirectoryEntry {
             r@.is_Directory(),
             r.layer@ == layer,
             r@.get_Directory_addr() == address,
-            r@.get_Directory_flag_RW(),
-            r@.get_Directory_flag_US(),
-            !r@.get_Directory_flag_XD(),
+            r@.get_Directory_RW(),
+            r@.get_Directory_US(),
+            !r@.get_Directory_XD(),
     {
         Self::new_entry(
             layer,
@@ -374,7 +374,7 @@ impl PageDirectoryEntry {
         is_writethrough: bool,
         disable_cache: bool,
         disable_execute: bool,
-        ) -> (r: PageDirectoryEntry)
+        ) -> (r: PDE)
         requires
             layer <= 3,
             if is_page { 0 < layer } else { layer < 3 },
@@ -395,7 +395,7 @@ impl PageDirectoryEntry {
             (r.entry & MASK_FLAG_XD == MASK_FLAG_XD) == disable_execute,
     {
         let e =
-        PageDirectoryEntry {
+        PDE {
             entry: {
                 address
                 | MASK_FLAG_P
@@ -410,8 +410,8 @@ impl PageDirectoryEntry {
         };
 
         proof {
-            PageDirectoryEntry::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
-            PageDirectoryEntry::lemma_new_entry_mb0_bits_are_zero(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+            PDE::lemma_new_entry_addr_mask_is_address(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
+            PDE::lemma_new_entry_mb0_bits_are_zero(layer, address, is_page, is_writable, is_supervisor, is_writethrough, disable_cache, disable_execute);
             if is_page { e.lemma_addr_mask_when_hp_pat_is_zero(); }
         }
         e
@@ -442,16 +442,16 @@ impl PageDirectoryEntry {
             !self@.is_Empty(),
         ensures
             res as usize == match self@ {
-                GhostPageDirectoryEntry::Page { addr, .. }      => addr,
-                GhostPageDirectoryEntry::Directory { addr, .. } => addr,
-                GhostPageDirectoryEntry::Empty                  => arbitrary(),
+                GPDE::Page { addr, .. }      => addr,
+                GPDE::Directory { addr, .. } => addr,
+                GPDE::Empty                  => arbitrary(),
             }
     {
         proof {
             match self@ {
-                GhostPageDirectoryEntry::Page { addr, .. }      => self.lemma_addr_mask_when_hp_pat_is_zero(),
-                GhostPageDirectoryEntry::Directory { addr, .. } => { },
-                GhostPageDirectoryEntry::Empty                  => { },
+                GPDE::Page { addr, .. }      => self.lemma_addr_mask_when_hp_pat_is_zero(),
+                GPDE::Directory { addr, .. } => { },
+                GPDE::Empty                  => { },
             }
         }
         self.entry & MASK_ADDR
@@ -520,23 +520,23 @@ pub open spec(checked) fn inv(mem: &mem::PageTableMemory, pt: PTDir) -> bool {
 }
 
 /// Get the view of the entry at address ptr + i * WORD_SIZE
-pub open spec fn entry_at_spec(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, i: nat) -> PageDirectoryEntry {
-    PageDirectoryEntry {
+pub open spec fn entry_at_spec(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, i: nat) -> PDE {
+    PDE {
         entry: mem.spec_read(i, pt.region),
         layer: Ghost(layer),
     }
 }
 
 /// Get the view of the entry at address ptr + i * WORD_SIZE
-pub open spec fn view_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, i: nat) -> GhostPageDirectoryEntry {
-    PageDirectoryEntry {
+pub open spec fn view_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, i: nat) -> GPDE {
+    PDE {
         entry: mem.spec_read(i, pt.region),
         layer: Ghost(layer),
     }@
 }
 
 /// Get the entry at address ptr + i * WORD_SIZE
-fn entry_at(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, i: usize) -> (res: PageDirectoryEntry)
+fn entry_at(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, i: usize) -> (res: PDE)
     requires
         i < 512,
         inv_at(mem, pt, layer as nat, ptr),
@@ -553,7 +553,7 @@ fn entry_at(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, p
     };
     // triggering
     proof { let _ = entry_at_spec(mem, pt, layer as nat, ptr, i as nat); }
-    PageDirectoryEntry {
+    PDE {
         entry: mem.read(ptr, i, Ghost(pt.region)),
         layer: Ghost(layer as nat),
     }
@@ -612,7 +612,7 @@ pub open spec(checked) fn inv_at(mem: &mem::PageTableMemory, pt: PTDir, layer: n
 pub open spec fn directories_have_flags(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| i < X86_NUM_ENTRIES ==> {
         let entry = #[trigger] view_at(mem, pt, layer, ptr, i);
-        entry.is_Directory() ==> entry.get_Directory_flag_RW() && entry.get_Directory_flag_US() && !entry.get_Directory_flag_XD()
+        entry.is_Directory() ==> entry.get_Directory_RW() && entry.get_Directory_US() && !entry.get_Directory_XD()
     }
 }
 
@@ -674,21 +674,21 @@ pub open spec fn interp_at_entry(mem: &mem::PageTableMemory, pt: PTDir, layer: n
 {
     decreases_when(inv_at(mem, pt, layer, ptr));
     match view_at(mem, pt, layer, ptr, idx) {
-        GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+        GPDE::Directory { addr: dir_addr, .. } => {
             let entry_base = x86_arch_spec.entry_base(layer, base_vaddr, idx);
             l1::NodeEntry::Directory(interp_at(mem, pt.entries[idx as int].get_Some_0(), layer + 1, dir_addr, entry_base))
         },
-        GhostPageDirectoryEntry::Page { addr, flag_RW, flag_US, flag_XD, .. } =>
+        GPDE::Page { addr, RW, US, XD, .. } =>
             l1::NodeEntry::Page(
                 PageTableEntry {
                     frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(layer) },
                     flags: Flags {
-                        is_writable:     flag_RW,
-                        is_supervisor:   !flag_US,
-                        disable_execute: flag_XD,
+                        is_writable:     RW,
+                        is_supervisor:   !US,
+                        disable_execute: XD,
                     },
                 }),
-        GhostPageDirectoryEntry::Empty =>
+        GPDE::Empty =>
             l1::NodeEntry::Empty(),
     }
 }
@@ -755,7 +755,7 @@ proof fn lemma_interp_at_entry_different_memory(mem1: &mem::PageTableMemory, pt1
     decreases X86_NUM_LAYERS - layer
 {
     match view_at(mem1, pt1, layer, ptr, idx) {
-        GhostPageDirectoryEntry::Directory { addr: dir_addr, .. } => {
+        GPDE::Directory { addr: dir_addr, .. } => {
             let e_base = x86_arch_spec.entry_base(layer, base, idx);
             let dir_pt = pt1.entries[idx as int].get_Some_0();
             assert(directories_obey_invariant_at(mem1, pt1, layer, ptr));
@@ -810,12 +810,12 @@ pub proof fn lemma_interp_at_facts_entries(mem: &mem::PageTableMemory, pt: PTDir
     ensures
         ({ let res = interp_at(mem, pt, layer, ptr, base_vaddr);
             match view_at(mem, pt, layer, ptr, i) {
-                GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                GPDE::Directory { addr: dir_addr, .. }  => {
                     &&& res.entries[i as int].is_Directory()
                     &&& res.entries[i as int].get_Directory_0() == interp_at(mem, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, i))
                 },
-                GhostPageDirectoryEntry::Page { addr, .. } => res.entries[i as int].is_Page() && res.entries[i as int].get_Page_0().frame.base == addr,
-                GhostPageDirectoryEntry::Empty             => res.entries[i as int].is_Empty(),
+                GPDE::Page { addr, .. } => res.entries[i as int].is_Page() && res.entries[i as int].get_Page_0().frame.base == addr,
+                GPDE::Empty             => res.entries[i as int].is_Empty(),
             } })
 { lemma_interp_at_aux_facts(mem, pt, layer, ptr, base_vaddr, seq![]); }
 
@@ -829,12 +829,12 @@ proof fn lemma_interp_at_aux_facts(mem: &mem::PageTableMemory, pt: PTDir, layer:
                 #![trigger res[j as int]]
                 init.len() <= j && j < res.len() ==>
                 match view_at(mem, pt, layer, ptr, j) {
-                    GhostPageDirectoryEntry::Directory { addr: dir_addr, .. }  => {
+                    GPDE::Directory { addr: dir_addr, .. }  => {
                         &&& res[j as int].is_Directory()
                         &&& res[j as int].get_Directory_0() == interp_at(mem, pt.entries[j as int].get_Some_0(), (layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, j))
                     },
-                    GhostPageDirectoryEntry::Page { addr, .. } => res[j as int].is_Page() && res[j as int].get_Page_0().frame.base == addr,
-                    GhostPageDirectoryEntry::Empty             => res[j as int].is_Empty(),
+                    GPDE::Page { addr, .. } => res[j as int].is_Page() && res[j as int].get_Page_0().frame.base == addr,
+                    GPDE::Empty             => res[j as int].is_Empty(),
                 })
             &&& (forall|j: nat| init.len() <= j && j < res.len() ==> res[j as int] == #[trigger] interp_at_entry(mem, pt, layer, ptr, base_vaddr, j))
         }),
@@ -1266,7 +1266,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                     lemma_aligned_addr_mask_facts(frame_base);
                 };
             }
-            let new_page_entry = PageDirectoryEntry::new_page_entry(layer, pte);
+            let new_page_entry = PDE::new_page_entry(layer, pte);
             let pwmem: Ghost<mem::PageTableMemory> = Ghost(*mem);
 
             mem.write(ptr, idx, Ghost(pt.region), new_page_entry.entry);
@@ -1735,7 +1735,7 @@ fn is_directory_empty(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer
 
 /// Allocates and inserts an empty directory at the given index.
 fn insert_empty_directory(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, base: usize, idx: usize)
-    -> (res: (Ghost<PTDir> /* pt_res */, MemRegionExec /* new_dir_region */, PageDirectoryEntry /* new_dir_entry */))
+    -> (res: (Ghost<PTDir> /* pt_res */, MemRegionExec /* new_dir_region */, PDE /* new_dir_entry */))
     requires
         inv_at(&*old(mem), pt, layer as nat, ptr),
         interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).inv(),
@@ -1780,7 +1780,7 @@ fn insert_empty_directory(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir
     assert(new_dir_ptr_u64 & MASK_DIR_ADDR == new_dir_ptr_u64) by {
         lemma_page_aligned_implies_mask_dir_addr_is_identity();
     };
-    let new_dir_entry = PageDirectoryEntry::new_dir_entry(layer, new_dir_ptr_u64);
+    let new_dir_entry = PDE::new_dir_entry(layer, new_dir_ptr_u64);
     mem.write(ptr, idx, Ghost(pt.region), new_dir_entry.entry);
 
     let pt_res: Ghost<PTDir> = Ghost(

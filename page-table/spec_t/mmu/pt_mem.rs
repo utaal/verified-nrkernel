@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 
-use crate::spec_t::hardware::{ GhostPageDirectoryEntry };
+use crate::spec_t::hardware::{ GPDE };
 
 use crate::definitions_t::{
     aligned, WORD_SIZE,
@@ -78,7 +78,7 @@ impl PTMem {
         self.write(addr, value)
     }
 
-    pub open spec fn page_addrs(self) -> Map<usize, GhostPageDirectoryEntry> {
+    pub open spec fn page_addrs(self) -> Map<usize, GPDE> {
         arbitrary() // TODO: the thing below but as Map
     }
     ///// All addresses that may be used in a page table walk.
@@ -94,15 +94,15 @@ impl PTMem {
     ///// to layer N+1 entries.
     //pub open spec fn page_addrs_aux(self, addrs: Set<usize>, layer: nat) -> Set<usize> {
     //    flatten(addrs.map(|prev_addr| {
-    //        let pde = PageDirectoryEntry {
+    //        let pde = PDE {
     //            entry: self@[prev_addr] as u64,
     //            layer: Ghost(layer),
     //        };
     //        if self@.contains_key(prev_addr) && !(pde@ is Empty) {
     //            let next_base = match pde@ {
-    //                GhostPageDirectoryEntry::Directory { addr, .. } => addr,
-    //                GhostPageDirectoryEntry::Page      { addr, .. } => addr,
-    //                GhostPageDirectoryEntry::Empty                  => arbitrary(),
+    //                GPDE::Directory { addr, .. } => addr,
+    //                GPDE::Page      { addr, .. } => addr,
+    //                GPDE::Empty                  => arbitrary(),
     //            };
     //            Set::new(|next_addr: usize| next_base <= next_addr < next_base + 4096 && aligned(next_addr as nat, 8))
     //        } else {

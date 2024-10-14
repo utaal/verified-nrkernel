@@ -57,51 +57,51 @@ pub enum HWStep {
 // FIXME: Including is_variant conditionally to avoid the warning when not building impl. But this
 // should disappear completely when I find the time to migrate to the new syntax.
 #[cfg_attr(feature = "impl", is_variant)]
-pub ghost enum GhostPageDirectoryEntry {
+pub ghost enum GPDE {
     Directory {
         addr: usize,
         /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
+        P: bool,
         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
+        RW: bool,
         /// User/supervisor; user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
+        US: bool,
         /// Page-level write-through
-        flag_PWT: bool,
+        PWT: bool,
         /// Page-level cache disable
-        flag_PCD: bool,
+        PCD: bool,
         /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
+        A: bool,
         /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
         /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
+        XD: bool,
     },
     Page {
         addr: usize,
         /// Present; must be 1 to map a page or reference a directory
-        flag_P: bool,
+        P: bool,
         /// Read/write; if 0, writes may not be allowed to the page controlled by this entry
-        flag_RW: bool,
+        RW: bool,
         /// User/supervisor; if 0, user-mode accesses are not allowed to the page controlled by this entry
-        flag_US: bool,
+        US: bool,
         /// Page-level write-through
-        flag_PWT: bool,
+        PWT: bool,
         /// Page-level cache disable
-        flag_PCD: bool,
+        PCD: bool,
         /// Accessed; indicates whether software has accessed the page referenced by this entry
-        flag_A: bool,
+        A: bool,
         /// Dirty; indicates whether software has written to the page referenced by this entry
-        flag_D: bool,
+        D: bool,
         // /// Page size; must be 1 (otherwise, this entry references a directory)
-        // flag_PS: Option<bool>,
+        // PS: Option<bool>,
         // PS is entirely determined by the Page variant and the layer
         /// Global; if CR4.PGE = 1, determines whether the translation is global; ignored otherwise
-        flag_G: bool,
+        G: bool,
         /// Indirectly determines the memory type used to access the page referenced by this entry
-        flag_PAT: bool,
+        PAT: bool,
         /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
         /// the page controlled by this entry); otherwise, reserved (must be 0)
-        flag_XD: bool,
+        XD: bool,
     },
     /// An `Empty` entry is an entry that does not contain a valid mapping. I.e. the entry is
     /// either empty or has a bit set that the intel manual designates as must-be-zero. Both empty
@@ -208,123 +208,60 @@ pub exec const MASK_DIR_ADDR: u64
 #[allow(repr_transparent_external_private_fields)]
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
 #[repr(transparent)]
-pub struct PageDirectoryEntry {
+pub struct PDE {
     pub entry: u64,
     pub layer: Ghost<nat>,
 }
 
 // This impl defines everything necessary for the page table walk semantics.
-// PageDirectoryEntry is reused in the implementation, which has an additional impl block for it in
+// PDE is reused in the implementation, which has an additional impl block for it in
 // `impl_u::l2_impl`.
-impl PageDirectoryEntry {
-    pub open spec fn view(self) -> GhostPageDirectoryEntry {
+impl PDE {
+    pub open spec fn view(self) -> GPDE {
         let v = self.entry;
-        let flag_P = v & MASK_FLAG_P == MASK_FLAG_P;
-        let flag_RW = v & MASK_FLAG_RW == MASK_FLAG_RW;
-        let flag_US = v & MASK_FLAG_US == MASK_FLAG_US;
-        let flag_PWT = v & MASK_FLAG_PWT == MASK_FLAG_PWT;
-        let flag_PCD = v & MASK_FLAG_PCD == MASK_FLAG_PCD;
-        let flag_A = v & MASK_FLAG_A == MASK_FLAG_A;
-        let flag_XD = v & MASK_FLAG_XD == MASK_FLAG_XD;
-        let flag_D = v & MASK_PG_FLAG_D == MASK_PG_FLAG_D;
-        let flag_G = v & MASK_PG_FLAG_G == MASK_PG_FLAG_G;
+        let P   = v & MASK_FLAG_P    == MASK_FLAG_P;
+        let RW  = v & MASK_FLAG_RW   == MASK_FLAG_RW;
+        let US  = v & MASK_FLAG_US   == MASK_FLAG_US;
+        let PWT = v & MASK_FLAG_PWT  == MASK_FLAG_PWT;
+        let PCD = v & MASK_FLAG_PCD  == MASK_FLAG_PCD;
+        let A   = v & MASK_FLAG_A    == MASK_FLAG_A;
+        let XD  = v & MASK_FLAG_XD   == MASK_FLAG_XD;
+        let D   = v & MASK_PG_FLAG_D == MASK_PG_FLAG_D;
+        let G   = v & MASK_PG_FLAG_G == MASK_PG_FLAG_G;
         if self.layer@ <= 3 {
             if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
                 if self.layer == 0 {
                     let addr = (v & MASK_ADDR) as usize;
-                    GhostPageDirectoryEntry::Directory {
-                        addr,
-                        flag_P,
-                        flag_RW,
-                        flag_US,
-                        flag_PWT,
-                        flag_PCD,
-                        flag_A,
-                        flag_XD,
-                    }
+                    GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
                 } else if self.layer == 1 {
                     if v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
                         // super page mapping
                         let addr = (v & MASK_L1_PG_ADDR) as usize;
-                        let flag_PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
-                        GhostPageDirectoryEntry::Page {
-                            addr,
-                            flag_P,
-                            flag_RW,
-                            flag_US,
-                            flag_PWT,
-                            flag_PCD,
-                            flag_A,
-                            flag_D,
-                            flag_G,
-                            flag_PAT,
-                            flag_XD,
-                        }
+                        let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
+                        GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
                     } else {
                         let addr = (v & MASK_ADDR) as usize;
-                        GhostPageDirectoryEntry::Directory {
-                            addr,
-                            flag_P,
-                            flag_RW,
-                            flag_US,
-                            flag_PWT,
-                            flag_PCD,
-                            flag_A,
-                            flag_XD,
-                        }
+                        GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
                     }
                 } else if self.layer == 2 {
                     if v & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
                         // huge page mapping
                         let addr = (v & MASK_L2_PG_ADDR) as usize;
-                        let flag_PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
-                        GhostPageDirectoryEntry::Page {
-                            addr,
-                            flag_P,
-                            flag_RW,
-                            flag_US,
-                            flag_PWT,
-                            flag_PCD,
-                            flag_A,
-                            flag_D,
-                            flag_G,
-                            flag_PAT,
-                            flag_XD,
-                        }
+                        let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
+                        GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
                     } else {
                         let addr = (v & MASK_ADDR) as usize;
-                        GhostPageDirectoryEntry::Directory {
-                            addr,
-                            flag_P,
-                            flag_RW,
-                            flag_US,
-                            flag_PWT,
-                            flag_PCD,
-                            flag_A,
-                            flag_XD,
-                        }
+                        GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
                     }
                 } else {
                     // TODO: uncomment when we have inline proofs
                     // assert(self.layer == 3);
                     let addr = (v & MASK_L3_PG_ADDR) as usize;
-                    let flag_PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
-                    GhostPageDirectoryEntry::Page {
-                        addr,
-                        flag_P,
-                        flag_RW,
-                        flag_US,
-                        flag_PWT,
-                        flag_PCD,
-                        flag_A,
-                        flag_D,
-                        flag_G,
-                        flag_PAT,
-                        flag_XD,
-                    }
+                    let PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
+                    GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
                 }
             } else {
-                GhostPageDirectoryEntry::Empty
+                GPDE::Empty
             }
         } else {
             arbitrary()
@@ -380,14 +317,14 @@ impl PageDirectoryEntry {
 }
 
 impl Flags {
-    pub open spec fn from_GPDE(pde: GhostPageDirectoryEntry) -> Flags
+    pub open spec fn from_GPDE(pde: GPDE) -> Flags
         recommends !(pde is Empty)
     {
         match pde {
-            GhostPageDirectoryEntry::Directory { flag_RW, flag_US, flag_XD, .. } =>
-                Flags::from_bits(flag_RW, flag_US, flag_XD),
-            GhostPageDirectoryEntry::Page { flag_RW, flag_US, flag_XD, .. } =>
-                Flags::from_bits(flag_RW, flag_US, flag_XD),
+            GPDE::Directory { RW, US, XD, .. } =>
+                Flags::from_bits(RW, US, XD),
+            GPDE::Page { RW, US, XD, .. } =>
+                Flags::from_bits(RW, US, XD),
             _ => arbitrary(),
         }
     }
@@ -427,9 +364,9 @@ pub open spec fn read_entry(
     dir_addr: nat,
     layer: nat,
     idx: nat,
-) -> GhostPageDirectoryEntry {
+) -> GPDE {
     let region = MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat };
-    PageDirectoryEntry { entry: pt_mem.spec_read(idx, region), layer: Ghost(layer) }@
+    PDE { entry: pt_mem.spec_read(idx, region), layer: Ghost(layer) }@
 }
 
 /// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics,
@@ -461,21 +398,9 @@ pub open spec fn valid_pt_walk(
     let l2_idx: nat = l2_bits!(addr) as nat;
     let l3_idx: nat = l3_bits!(addr) as nat;
     match read_entry(pt_mem, pt_mem.cr3_spec()@.base, 0, l0_idx) {
-        GhostPageDirectoryEntry::Directory {
-            addr: dir_addr,
-            flag_RW: l0_RW,
-            flag_US: l0_US,
-            flag_XD: l0_XD,
-            ..
-        } => {
+        GPDE::Directory { addr: dir_addr, RW: l0_RW, US: l0_US, XD: l0_XD, .. } => {
             match read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
-                GhostPageDirectoryEntry::Page {
-                    addr: page_addr,
-                    flag_RW: l1_RW,
-                    flag_US: l1_US,
-                    flag_XD: l1_XD,
-                    ..
-                } => {
+                GPDE::Page { addr: page_addr, RW: l1_RW, US: l1_US, XD: l1_XD, .. } => {
                     aligned(addr as nat, L1_ENTRY_SIZE as nat) && pte == PageTableEntry {
                         frame: MemRegion { base: page_addr as nat, size: L1_ENTRY_SIZE as nat },
                         flags: Flags {
@@ -485,21 +410,9 @@ pub open spec fn valid_pt_walk(
                         },
                     }
                 },
-                GhostPageDirectoryEntry::Directory {
-                    addr: dir_addr,
-                    flag_RW: l1_RW,
-                    flag_US: l1_US,
-                    flag_XD: l1_XD,
-                    ..
-                } => {
+                GPDE::Directory { addr: dir_addr, RW: l1_RW, US: l1_US, XD: l1_XD, .. } => {
                     match read_entry(pt_mem, dir_addr as nat, 2, l2_idx) {
-                        GhostPageDirectoryEntry::Page {
-                            addr: page_addr,
-                            flag_RW: l2_RW,
-                            flag_US: l2_US,
-                            flag_XD: l2_XD,
-                            ..
-                        } => {
+                        GPDE::Page { addr: page_addr, RW: l2_RW, US: l2_US, XD: l2_XD, .. } => {
                             aligned(addr as nat, L2_ENTRY_SIZE as nat) && pte == PageTableEntry {
                                 frame: MemRegion {
                                     base: page_addr as nat,
@@ -512,21 +425,9 @@ pub open spec fn valid_pt_walk(
                                 },
                             }
                         },
-                        GhostPageDirectoryEntry::Directory {
-                            addr: dir_addr,
-                            flag_RW: l2_RW,
-                            flag_US: l2_US,
-                            flag_XD: l2_XD,
-                            ..
-                        } => {
+                        GPDE::Directory { addr: dir_addr, RW: l2_RW, US: l2_US, XD: l2_XD, .. } => {
                             match read_entry(pt_mem, dir_addr as nat, 3, l3_idx) {
-                                GhostPageDirectoryEntry::Page {
-                                    addr: page_addr,
-                                    flag_RW: l3_RW,
-                                    flag_US: l3_US,
-                                    flag_XD: l3_XD,
-                                    ..
-                                } => {
+                                GPDE::Page { addr: page_addr, RW: l3_RW, US: l3_US, XD: l3_XD, .. } => {
                                     aligned(addr as nat, L3_ENTRY_SIZE as nat) && pte
                                         == PageTableEntry {
                                         frame: MemRegion {
@@ -540,14 +441,14 @@ pub open spec fn valid_pt_walk(
                                         },
                                     }
                                 },
-                                GhostPageDirectoryEntry::Directory { .. } => false,
-                                GhostPageDirectoryEntry::Empty => false,
+                                GPDE::Directory { .. } => false,
+                                GPDE::Empty => false,
                             }
                         },
-                        GhostPageDirectoryEntry::Empty => false,
+                        GPDE::Empty => false,
                     }
                 },
-                GhostPageDirectoryEntry::Empty => false,
+                GPDE::Empty => false,
             }
         },
         _ => false,

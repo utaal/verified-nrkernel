@@ -5,7 +5,7 @@ use crate::definitions_t::{ Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_
 use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MemRegion};
 use crate::spec_t::impl_spec;
 use crate::spec_t::mem;
-use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GhostPageDirectoryEntry, nat_to_u64 };
+use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GPDE, nat_to_u64 };
 
 use crate::definitions_u::{ lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
@@ -82,8 +82,8 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
         let interp_l0_entry = PT::interp_at_entry(&mem, pt, 0, mem.cr3_spec().base, 0, l0_idx);
         interp_l0_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l0_idx);
         match read_entry(mem, mem.cr3_spec()@.base, 0, l0_idx) {
-            GhostPageDirectoryEntry::Directory {
-                addr: l0_dir_addr, flag_RW: l0_RW, flag_US: l0_US, flag_XD: l0_XD, ..
+            GPDE::Directory {
+                addr: l0_dir_addr, RW: l0_RW, US: l0_US, XD: l0_XD, ..
             } => {
                 assert(interp_l0_entry.is_Directory());
                 let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
@@ -97,8 +97,8 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                 let interp_l1_entry = PT::interp_at_entry(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr, l1_idx);
                 interp_l1_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l1_idx);
                 match read_entry(mem, l0_dir_addr as nat, 1, l1_idx) {
-                    GhostPageDirectoryEntry::Page {
-                        addr: page_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
+                    GPDE::Page {
+                        addr: page_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                     } => {
                         assert(aligned(addr as nat, L1_ENTRY_SIZE as nat));
                         assert(pte == PageTableEntry {
@@ -126,8 +126,8 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                         assert(interp_l0_dir.interp().map.contains_pair(addr as nat, pte));
                         assert(m2.contains_pair(addr as nat, pte));
                     },
-                    GhostPageDirectoryEntry::Directory {
-                        addr: l1_dir_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
+                    GPDE::Directory {
+                        addr: l1_dir_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                     } => {
                         assert(interp_l1_entry.is_Directory());
                         let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
@@ -139,8 +139,8 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                         let interp_l2_entry = PT::interp_at_entry(&mem, l1_dir_ghost_pt, 2, l1_dir_addr, l2_base_vaddr, l2_idx);
                         interp_l2_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l2_idx);
                         match read_entry(mem, l1_dir_addr as nat, 2, l2_idx) {
-                            GhostPageDirectoryEntry::Page {
-                                addr: page_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
+                            GPDE::Page {
+                                addr: page_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                             } => {
                                 assert(aligned(addr as nat, L2_ENTRY_SIZE as nat));
                                 assert(pte == PageTableEntry {
@@ -176,8 +176,8 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                                 assert(interp_l0_dir.interp().map.contains_pair(addr as nat, pte));
                                 assert(m2.contains_pair(addr as nat, pte));
                             },
-                            GhostPageDirectoryEntry::Directory {
-                                addr: l2_dir_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
+                            GPDE::Directory {
+                                addr: l2_dir_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                             } => {
                                 assert(interp_l2_entry.is_Directory());
                                 let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
@@ -189,8 +189,8 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                                 let interp_l3_entry = PT::interp_at_entry(&mem, l2_dir_ghost_pt, 3, l2_dir_addr, l3_base_vaddr, l3_idx);
                                 interp_l3_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l3_idx);
                                 match read_entry(mem, l2_dir_addr as nat, 3, l3_idx) {
-                                    GhostPageDirectoryEntry::Page {
-                                        addr: page_addr, flag_RW: l3_RW, flag_US: l3_US, flag_XD: l3_XD, ..
+                                    GPDE::Page {
+                                        addr: page_addr, RW: l3_RW, US: l3_US, XD: l3_XD, ..
                                     } => {
                                         assert(aligned(addr as nat, L3_ENTRY_SIZE as nat));
                                         assert(pte == PageTableEntry {
@@ -230,14 +230,14 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                                         assert(interp_l0_dir.interp().map.contains_pair(addr as nat, pte));
                                         assert(m1.contains_pair(addr as nat, pte));
                                     },
-                                    GhostPageDirectoryEntry::Directory { .. } => assert(false),
-                                    GhostPageDirectoryEntry::Empty => assert(false),
+                                    GPDE::Directory { .. } => assert(false),
+                                    GPDE::Empty => assert(false),
                                 }
                             },
-                            GhostPageDirectoryEntry::Empty => assert(false),
+                            GPDE::Empty => assert(false),
                         }
                     },
-                    GhostPageDirectoryEntry::Empty => assert(false),
+                    GPDE::Empty => assert(false),
                 }
             },
             _ => assert(false),
@@ -293,8 +293,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                 let interp_l0_entry = PT::interp_at_entry(&mem, pt, 0, mem.cr3_spec().base, 0, l0_idx);
                 interp_l0_dir.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(l0_idx);
                 match read_entry(mem, mem.cr3_spec()@.base, 0, l0_idx) {
-                    GhostPageDirectoryEntry::Directory {
-                        addr: l0_dir_addr, flag_RW: l0_RW, flag_US: l0_US, flag_XD: l0_XD, ..
+                    GPDE::Directory {
+                        addr: l0_dir_addr, RW: l0_RW, US: l0_US, XD: l0_XD, ..
                     } => {
                         assert(interp_l0_entry.is_Directory());
                         let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
@@ -324,8 +324,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                 addr < mul(512u64, mul(512, mul(512, mul(512, 4096)))),
                                 low_bits == addr % mul(512, mul(512, 4096));
                         match read_entry(mem, l0_dir_addr as nat, 1, l1_idx) {
-                            GhostPageDirectoryEntry::Page {
-                                addr: page_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
+                            GPDE::Page {
+                                addr: page_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                             } => {
                                 assert_by_contradiction!(!aligned(addr as nat, L1_ENTRY_SIZE as nat), {
                                     let pte = PageTableEntry {
@@ -343,8 +343,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                 assert(!interp_l0_dir.interp().map.contains_key(addr as nat));
                                 assert(!m2.contains_key(addr as nat));
                             }
-                            GhostPageDirectoryEntry::Directory {
-                                addr: l1_dir_addr, flag_RW: l1_RW, flag_US: l1_US, flag_XD: l1_XD, ..
+                            GPDE::Directory {
+                                addr: l1_dir_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                             } => {
                                 assert(interp_l1_entry.is_Directory());
                                 let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
@@ -376,8 +376,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                         addr < mul(512u64, mul(512, mul(512, mul(512, 4096)))),
                                         low_bits == addr % mul(512, 4096);
                                 match read_entry(mem, l1_dir_addr as nat, 2, l2_idx) {
-                                    GhostPageDirectoryEntry::Page {
-                                        addr: page_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
+                                    GPDE::Page {
+                                        addr: page_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                                     } => {
                                         assert_by_contradiction!(!aligned(addr as nat, L2_ENTRY_SIZE as nat), {
                                             let pte = PageTableEntry {
@@ -397,8 +397,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                         assert(!interp_l0_dir.interp().map.contains_key(addr as nat));
                                         assert(!m2.contains_key(addr as nat));
                                     },
-                                    GhostPageDirectoryEntry::Directory {
-                                        addr: l2_dir_addr, flag_RW: l2_RW, flag_US: l2_US, flag_XD: l2_XD, ..
+                                    GPDE::Directory {
+                                        addr: l2_dir_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                                     } => {
                                         assert(interp_l2_entry.is_Directory());
                                         let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
@@ -433,8 +433,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                                 addr < mul(512u64, mul(512, mul(512, mul(512, 4096)))),
                                                 low_bits == addr % 4096;
                                         match read_entry(mem, l2_dir_addr as nat, 3, l3_idx) {
-                                            GhostPageDirectoryEntry::Page {
-                                                addr: page_addr, flag_RW: l3_RW, flag_US: l3_US, flag_XD: l3_XD, ..
+                                            GPDE::Page {
+                                                addr: page_addr, RW: l3_RW, US: l3_US, XD: l3_XD, ..
                                             } => {
                                                 assert_by_contradiction!(!aligned(addr as nat, L3_ENTRY_SIZE as nat), {
                                                     let pte = PageTableEntry {
@@ -456,8 +456,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                                 assert(!interp_l0_dir.interp().map.contains_key(addr as nat));
                                                 assert(!m2.contains_key(addr as nat));
                                             },
-                                            GhostPageDirectoryEntry::Directory { .. } => assert(false),
-                                            GhostPageDirectoryEntry::Empty => {
+                                            GPDE::Directory { .. } => assert(false),
+                                            GPDE::Empty => {
                                                 assert(!interp_l3_dir.interp_of_entry(l3_idx).map.contains_key(addr as nat));
                                                 assert(!interp_l3_dir.interp().map.contains_key(addr as nat));
                                                 assert(!interp_l2_dir.interp_of_entry(l2_idx).map.contains_key(addr as nat));
@@ -469,7 +469,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                             }
                                         }
                                     },
-                                    GhostPageDirectoryEntry::Empty => {
+                                    GPDE::Empty => {
                                         assert(!interp_l2_dir.interp_of_entry(l2_idx).map.contains_key(addr as nat));
                                         assert(!interp_l2_dir.interp().map.contains_key(addr as nat));
                                         assert(!interp_l1_dir.interp_of_entry(l1_idx).map.contains_key(addr as nat));
@@ -479,7 +479,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                     },
                                 }
                             },
-                            GhostPageDirectoryEntry::Empty => {
+                            GPDE::Empty => {
                                 assert(!interp_l1_dir.interp_of_entry(l1_idx).map.contains_key(addr as nat));
                                 assert(!interp_l1_dir.interp().map.contains_key(addr as nat));
                                 assert(!interp_l0_dir.interp().map.contains_key(addr as nat));
@@ -487,8 +487,8 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                             },
                         }
                     },
-                    GhostPageDirectoryEntry::Page { .. } => assert(false),
-                    GhostPageDirectoryEntry::Empty => {
+                    GPDE::Page { .. } => assert(false),
+                    GPDE::Empty => {
                         let low_bits: u64 = addr % (L0_ENTRY_SIZE as u64);
                         // This assert proves: ... == l0_idx_u64 * L0_ENTRY_SIZE + low_bits
                         assert((l0_idx_u64 << 39u64) | low_bits
