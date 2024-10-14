@@ -9,14 +9,12 @@ use vstd::prelude::*;
 
 //use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem, mmu};
-//TODO move core to definitions
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
     x86_arch_spec, HWLoadResult, HWRWOp, HWStoreResult, LoadResult, MemRegion, PageTableEntry,
-    RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE,
+    RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core,
 };
-use crate::spec_t::hardware::Core;
 use crate::extra::result_map_ok;
 
 verus! {
@@ -348,7 +346,7 @@ impl<M: mmu::MMU> OSVariables<M> {
     //}
 
     pub open spec fn interp_pt_mem(self) -> Map<nat, PageTableEntry> {
-        hardware::interp_pt_mem(self.hw.mmu.mem_view())
+        hardware::interp_pt_mem(self.hw.mmu.pt_mem())
     }
 
     pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {

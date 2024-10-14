@@ -2,8 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::rl4::{ MASK_DIRTY_ACCESS };
 use crate::spec_t::mmu::pt_mem::{ PTMem };
-use crate::spec_t::hardware::{ Core };
-use crate::definitions_t::{ aligned };
+use crate::definitions_t::{ aligned, Core };
 
 verus! {
 

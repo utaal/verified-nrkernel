@@ -1,8 +1,7 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::{ PTMem };
-use crate::spec_t::hardware::{ Core };
-use crate::definitions_t::{ aligned, bit };
+use crate::definitions_t::{ aligned, bit, Core };
 
 verus! {
 

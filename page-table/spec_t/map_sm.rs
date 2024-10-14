@@ -19,7 +19,7 @@ pub enum ThreadState {
 
 impl<M: mmu::MMU> State<M> {
     pub open spec fn interp_pt_mem(self) -> Map<nat, PageTableEntry> {
-        hardware::interp_pt_mem(self.mmu.mem_view())
+        hardware::interp_pt_mem(self.mmu.pt_mem())
     }
 }
 

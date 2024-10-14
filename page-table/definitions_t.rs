@@ -142,6 +142,11 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     }
 }
 
+pub struct Core {
+    pub NUMA_id: nat,
+    pub core_id: nat,
+}
+
 //for Highlevel read write operations
 pub enum LoadResult {
     Undefined,

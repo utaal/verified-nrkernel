@@ -4,8 +4,8 @@ use crate::spec_t::mmu::rl4::{ MASK_DIRTY_ACCESS };
 use crate::spec_t::mmu::pt_mem::{ PTMem };
 //use crate::spec_t::hardware::{ Core, PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
 //use crate::definitions_t::{ aligned, bitmask_inc };
-use crate::spec_t::hardware::{ Core, PageDirectoryEntry };
-use crate::definitions_t::{ aligned };
+use crate::spec_t::hardware::{ PageDirectoryEntry };
+use crate::definitions_t::{ aligned, Core };
 
 verus! {
 

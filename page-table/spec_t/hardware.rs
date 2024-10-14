@@ -6,12 +6,12 @@
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, HWRWOp, MemRegion,
     PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR_WIDTH,
-    PAGE_SIZE,
+    PAGE_SIZE, Core,
 };
 use crate::spec_t::mem::{self, word_index_spec};
 use vstd::prelude::*;
 use crate::spec_t::mmu;
-use crate::spec_t::mmu::{MemoryTypePlaceholder};
+use crate::spec_t::mmu::pt_mem;
 
 verus! {
 
@@ -37,11 +37,6 @@ pub struct NUMAVariables {
 
 pub struct CoreVariables {
     pub tlb: Map<nat, PageTableEntry>,
-}
-
-pub struct Core {
-    pub NUMA_id: nat,
-    pub core_id: nat,
 }
 
 #[allow(inconsistent_fields)]
@@ -568,7 +563,7 @@ pub open spec fn nat_to_u64(n: nat) -> u64
 }
 
 /// Page table walker interpretation of the page table memory
-pub open spec fn interp_pt_mem(pt_mem: MemoryTypePlaceholder) -> Map<nat, PageTableEntry> {
+pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<nat, PageTableEntry> {
     // TODO:
     arbitrary()
     //Map::new(
@@ -655,7 +650,7 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
         None => {
             // If pte is None, no mapping containing vaddr exists..
             &&& !exists|base, pte| {
-                    &&& interp_pt_mem(s1.mmu.mem_view()).contains_pair(base, pte)
+                    &&& interp_pt_mem(s1.mmu.pt_mem()).contains_pair(base, pte)
                     &&& between(vaddr, base, base + pte.frame.size)
                 }
             // .. and the result is always a Undefined and an unchanged memory.
