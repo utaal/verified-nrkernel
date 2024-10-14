@@ -947,10 +947,7 @@ pub open spec fn step_Ack_Shootdown_IPI<M: mmu::MMU>(
     //TODO discuss: only valid cores are in the open_requests
     &&& s1.TLB_Shootdown.open_requests.contains(core)
     &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(s1.TLB_Shootdown.vaddr)
-    // TODO: Why do we have this enabling condition?
-    &&& !s1.interp_pt_mem().contains_key(
-        s1.TLB_Shootdown.vaddr,
-    )
+    &&& !s1.interp_pt_mem().contains_key(s1.TLB_Shootdown.vaddr)
     //hw/spec_pt-statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
     &&& arbitrary()
