@@ -10,7 +10,7 @@ use crate::definitions_t::{
 };
 use crate::spec_t::mem::{self, word_index_spec};
 use vstd::prelude::*;
-use crate::spec_t::mmu;
+use crate::spec_t::mmu::{self, WalkResult};
 use crate::spec_t::mmu::pt_mem;
 
 verus! {
@@ -46,7 +46,7 @@ pub enum HWStep {
         vaddr: nat,
         paddr: nat,
         op: HWRWOp,
-        pte: Option<(nat, PageTableEntry)>,
+        walk_result: WalkResult,
         core: Core,
     },
     TLBFill { vaddr: usize, pte: PageTableEntry, core: Core },
@@ -606,22 +606,22 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
     vaddr: nat,
     paddr: nat,
     op: HWRWOp,
-    pte: Option<(nat, PageTableEntry)>,
+    walk_result: WalkResult,
     core: Core,
 ) -> bool {
     &&& aligned(vaddr, 8)
-    //page tables and TLBs stay the same
 
+    //page tables and TLBs stay the same
     &&& s2.NUMAs === s1.NUMAs
     &&& valid_core(c, core)
-    &&& match pte {
-        Some((base, pte)) => {
+    &&& match walk_result {
+        WalkResult::Valid { vbase, pte } => {
             let pmem_idx = word_index_spec(paddr);
-            // If pte is Some, it's a cached mapping that maps vaddr to paddr..
-            &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(base, pte)
-            &&& between(vaddr, base, base + pte.frame.size)
-            &&& paddr === (pte.frame.base + (vaddr
-                - base)) as nat
+            &&& s2.mmu == s1.mmu
+            // If we have a `Valid` walk result, it must be a TLB-cached mapping that maps vaddr to paddr..
+            &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(vbase as nat, pte)
+            &&& between(vaddr, vbase as nat, vbase as nat + pte.frame.size)
+            &&& paddr === (pte.frame.base + (vaddr - vbase)) as nat
             // .. and the result depends on the flags.
 
             &&& match op {
@@ -647,14 +647,13 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
                 },
             }
         },
-        None => {
-            // If pte is None, no mapping containing vaddr exists..
-            &&& !exists|base, pte| {
-                    &&& interp_pt_mem(s1.mmu.pt_mem()).contains_pair(base, pte)
-                    &&& between(vaddr, base, base + pte.frame.size)
-                }
-            // .. and the result is always a Undefined and an unchanged memory.
+        WalkResult::Invalid { vbase, size } => {
+            // If the walk result is `Invalid`, this transition must coincide with a "completed"
+            // invalid page table walk with this result and the region must include vaddr.
+            &&& vbase <= vaddr < vbase + size
+            &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, walk_result))
 
+            // .. and the result is always a page fault and an unchanged memory.
             &&& s2.mem === s1.mem
             &&& match op {
                 HWRWOp::Store { new_value, result } => result is Pagefault,
@@ -670,8 +669,7 @@ pub open spec fn other_NUMAs_and_cores_unchanged<M: mmu::MMU>(
     s2: HWVariables<M>,
     core: Core,
 ) -> bool
-    recommends
-        valid_core(c, core),
+    recommends valid_core(c, core),
 {
     //Memory stays the same
     &&& s2.mem === s1.mem
@@ -679,15 +677,11 @@ pub open spec fn other_NUMAs_and_cores_unchanged<M: mmu::MMU>(
     //all NUMA states are the same besides the one of NUMA_id
 
     &&& s2.NUMAs.dom() === s1.NUMAs.dom()
-    &&& s2.NUMAs.remove(core.NUMA_id) === s1.NUMAs.remove(
-        core.NUMA_id,
-    )
+    &&& s2.NUMAs.remove(core.NUMA_id) === s1.NUMAs.remove(core.NUMA_id)
     //all cores_states of NUMA_id stay the same besides core_id
 
     &&& s2.NUMAs[core.NUMA_id].cores.dom() === s1.NUMAs[core.NUMA_id].cores.dom()
-    &&& s2.NUMAs[core.NUMA_id].cores.remove(core.core_id) === s1.NUMAs[core.NUMA_id].cores.remove(
-        core.core_id,
-    )
+    &&& s2.NUMAs[core.NUMA_id].cores.remove(core.core_id) == s1.NUMAs[core.NUMA_id].cores.remove(core.core_id)
 }
 
 pub open spec fn valid_NUMA_id(c: HWConstants, id: nat) -> bool {
@@ -708,13 +702,13 @@ pub open spec fn step_TLBFill<M: mmu::MMU>(
     s1: HWVariables<M>,
     s2: HWVariables<M>,
     core: Core,
-    vaddr: usize,
+    vbase: usize,
     pte: PageTableEntry,
 ) -> bool {
     &&& valid_core(c, core)
-    &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, vaddr, Some(pte)))
+    &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, WalkResult::Valid { vbase, pte }))
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
-        == s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vaddr as nat, pte)
+        == s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vbase as nat, pte)
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
 }
 
@@ -739,20 +733,12 @@ pub open spec fn step_Stutter<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s
 
 pub open spec fn next_step<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, step: HWStep) -> bool {
     match step {
-        HWStep::Stutter => step_Stutter(c, s1, s2),
-        HWStep::ReadWrite { vaddr, paddr, op, pte, core } => step_ReadWrite(
-            c,
-            s1,
-            s2,
-            vaddr,
-            paddr,
-            op,
-            pte,
-            core,
-        ),
-        HWStep::MMUStep { lbl } => step_MMUStep(c, s1, s2, lbl),
+        HWStep::Stutter                      => step_Stutter(c, s1, s2),
+        HWStep::ReadWrite { vaddr, paddr, op, walk_result, core }
+                                             => step_ReadWrite(c, s1, s2, vaddr, paddr, op, walk_result, core),
+        HWStep::MMUStep { lbl }              => step_MMUStep(c, s1, s2, lbl),
         HWStep::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, core, vaddr, pte),
-        HWStep::TLBEvict { vaddr, core } => step_TLBEvict(c, s1, s2, vaddr, core),
+        HWStep::TLBEvict { vaddr, core }     => step_TLBEvict(c, s1, s2, vaddr, core),
     }
 }
 

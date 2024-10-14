@@ -263,10 +263,11 @@ pub open spec fn valid_walk(
 }
 
 pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, PageDirectoryEntry)>, lbl: Lbl) -> bool {
-    &&& lbl matches Lbl::Walk(core, va, pte)
+    &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
-    &&& pre.is_walk_atomic(core, path) ==> valid_walk(pre, c, core, va, pte, path)
+    // TODO:
+    //&&& pre.is_walk_atomic(core, path) ==> valid_walk(pre, c, core, va, pte, path)
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.writes == pre.writes

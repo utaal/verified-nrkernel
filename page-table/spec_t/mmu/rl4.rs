@@ -73,7 +73,6 @@ impl State {
         arbitrary()
     }
 
-    /// Is true if only this core's store buffer is non-empty.
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
         //self.writer_cores() === set![] || self.writer_cores() === set![core] 
@@ -264,12 +263,12 @@ pub open spec fn step_WalkDone(
     ) -> bool
 {
     let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
-    &&& lbl matches Lbl::Walk(core, va, pte)
+    &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
-    &&& walk.va == va
-    &&& walk.pte() == pte
+    //&&& walk.va == va
+    &&& walk.pte() == walk_result
     &&& pre.read_from_mem_tso(core, addr, value)
     &&& !(res is Incomplete)
 

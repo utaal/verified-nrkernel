@@ -9,6 +9,7 @@ use vstd::prelude::*;
 
 //use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem, mmu};
+use crate::spec_t::mmu::WalkResult;
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
@@ -1019,12 +1020,18 @@ impl OSStep {
     pub open spec fn interp<M: mmu::MMU>(self, c: OSConstants, s: OSVariables<M>) -> hlspec::AbstractStep {
         match self {
             OSStep::HW { ULT_id, step } => match step {
-                hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, core } => {
-                    let hl_pte = if pte is None || (pte matches Some((base, _))
-                        && !s.effective_mappings().dom().contains(base)) {
-                        None
-                    } else {
-                        pte
+                hardware::HWStep::ReadWrite { vaddr, paddr, op, walk_result, core } => {
+                    let hl_pte = match walk_result {
+                        WalkResult::Valid { vbase, pte } => {
+                            if s.effective_mappings().dom().contains(vbase as nat) {
+                                Some((vbase as nat, pte))
+                            } else {
+                                None
+                            }
+                        },
+                        WalkResult::Invalid { vbase, size } => {
+                            None
+                        },
                     };
                     let rwop = match (op, hl_pte) {
                         (

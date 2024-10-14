@@ -6,7 +6,7 @@ pub mod pt_mem;
 
 use vstd::prelude::*;
 use crate::spec_t::hardware::{ PageDirectoryEntry, GhostPageDirectoryEntry, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PageTableEntry, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core };
+use crate::definitions_t::{ PageTableEntry, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize };
 
 verus! {
 
@@ -29,6 +29,19 @@ impl Res {
             Res::Invalid(walk)    => walk,
         }
     }
+}
+
+pub enum WalkResult {
+    Valid {
+        vbase: usize,
+        pte: PageTableEntry,
+    },
+    /// A `WalkResult::Invalid { .. }` indicates that the the range `[base..(base + size)]` has no
+    /// existing valid translation (according to the result of a page table walk).
+    Invalid {
+        vbase: usize,
+        size: usize,
+    },
 }
 
 impl Walk {
@@ -55,25 +68,40 @@ impl Walk {
         }, addr)
     }
 
-    /// If the walk's result is valid, returns `Some(pte)`, otherwise `None`.
-    pub open spec fn pte(self) -> Option<PageTableEntry>
+    /// If the walk's result is valid, returns `Valid { .. }`, otherwise `Invalid { .. }`.
+    ///
+    /// TODO: rename this function to "result" or something like that
+    pub open spec fn pte(self) -> WalkResult
         recommends self.path.len() > 0 && !(self.path.last().1@ is Directory)
     {
         let path = self.path;
         if path.last().1@ is Page {
-            let (base, size) = if path.len() == 2 {
-                (path[1].1@->Page_addr, L1_ENTRY_SIZE)
+            let (vbase, base, size) = if path.len() == 2 {
+                (align_to_usize(self.va, L1_ENTRY_SIZE), path[1].1@->Page_addr, L1_ENTRY_SIZE)
             } else if path.len() == 3 {
-                (path[2].1@->Page_addr, L2_ENTRY_SIZE)
+                (align_to_usize(self.va, L2_ENTRY_SIZE), path[2].1@->Page_addr, L2_ENTRY_SIZE)
             } else if path.len() == 4 {
-                (path[3].1@->Page_addr, L3_ENTRY_SIZE)
+                (align_to_usize(self.va, L3_ENTRY_SIZE), path[3].1@->Page_addr, L3_ENTRY_SIZE)
             } else { arbitrary() };
-            Some(PageTableEntry {
-                frame: MemRegion { base: base as nat, size: size as nat },
-                flags: self.flags(),
-            })
+            WalkResult::Valid {
+                vbase,
+                pte: PageTableEntry {
+                    frame: MemRegion { base: base as nat, size: size as nat },
+                    flags: self.flags(),
+                }
+            }
+        } else if path.last().1@ is Empty {
+            // FIXME: this is wrong, needs to be vaddr aligned to entry size
+            let (vbase, size) = if path.len() == 1 {
+                (align_to_usize(self.va, L1_ENTRY_SIZE), L1_ENTRY_SIZE)
+            } else if path.len() == 2 {
+                (align_to_usize(self.va, L2_ENTRY_SIZE), L2_ENTRY_SIZE)
+            } else if path.len() == 3 {
+                (align_to_usize(self.va, L3_ENTRY_SIZE), L3_ENTRY_SIZE)
+            } else { arbitrary() };
+            WalkResult::Invalid { vbase, size }
         } else {
-            None
+            arbitrary()
         }
     }
 
@@ -111,7 +139,7 @@ pub enum Lbl {
     /// Completion of a page table walk.
     /// Core, virtual address, Some(pte) if valid, None if invalid. If the walk is successful
     /// (Some), the virtual address should always be aligned to the size of the mapped region.
-    Walk(Core, usize, Option<PageTableEntry>),
+    Walk(Core, WalkResult),
     /// Write to physical memory.
     /// Core, physical address, written value
     Write(Core, usize, usize),

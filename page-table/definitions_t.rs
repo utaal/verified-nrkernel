@@ -124,6 +124,10 @@ pub open spec fn candidate_mapping_overlaps_existing_pmem(
         }
 }
 
+pub open spec(checked) fn align_to_usize(a: usize, b: usize) -> usize {
+    sub(a, a % b)
+}
+
 pub open spec(checked) fn aligned(addr: nat, size: nat) -> bool {
     addr % size == 0
 }

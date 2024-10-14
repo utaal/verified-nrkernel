@@ -230,8 +230,7 @@ pub open spec fn step_ReadWrite(
                 },
                 RWOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
-                    &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec
-                        ==> !pte.flags.disable_execute) {
+                    &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result is Value
                         &&& result->0 == s1.mem.index(vmem_idx)
                     } else {
