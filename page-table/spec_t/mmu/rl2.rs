@@ -35,15 +35,20 @@ impl State {
         &&& writes == pre.writes
     }
 
-    /// For the active writer core, the memory always behaves like a Map. For other cores this is
-    /// only true for addresses that haven't been written to.
+    pub open spec fn init(self) -> bool {
+        arbitrary()
+    }
+
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
-        self.no_other_writers(core) || !self.write_addrs().contains(addr)
+        self.is_tso_read_deterministic(core, addr)
             ==> value & MASK_DIRTY_ACCESS == self.pt_mem@[addr] & MASK_DIRTY_ACCESS
     }
 
-    pub open spec fn init(self) -> bool {
-        arbitrary()
+    /// For the active writer core, the memory always behaves like a Map. For other cores this is
+    /// only true for addresses that haven't been written to.
+    pub open spec fn is_tso_read_deterministic(self, core: Core, addr: usize) -> bool {
+        ||| self.no_other_writers(core)
+        ||| !self.write_addrs().contains(addr)
     }
 
     /// Is true if only this core's store buffer is non-empty.

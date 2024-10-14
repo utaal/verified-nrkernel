@@ -116,22 +116,27 @@ impl State {
         &&& writes == pre.writes
     }
 
-    /// For the active writer core, the memory always behaves like a Map. For other cores this is
-    /// only true for addresses that haven't been written to.
-    pub open spec fn read_from_mem_tso(self, c: Constants, core: Core, addr: usize, value: usize) -> bool {
-        self.no_other_writers(core) || !self.write_addrs().contains(addr)
+    pub open spec fn init(self) -> bool {
+        arbitrary()
+    }
+
+    pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
+        self.is_tso_read_deterministic(core, addr)
             ==> value & MASK_DIRTY_ACCESS == self.pt_mem@[addr] & MASK_DIRTY_ACCESS
     }
 
-    pub open spec fn init(self) -> bool {
-        arbitrary()
+    /// For the active writer core, the memory always behaves like a Map. For other cores this is
+    /// only true for addresses that haven't been written to.
+    pub open spec fn is_tso_read_deterministic(self, core: Core, addr: usize) -> bool {
+        ||| self.no_other_writers(core)
+        ||| !self.write_addrs().contains(addr)
     }
 
     pub open spec fn is_walk_atomic(self, core: Core, path: Seq<(usize, PageDirectoryEntry)>) -> bool {
         let addrs = path.to_set().map(|x:(_,_)| x.0);
         forall|addr| #[trigger] addrs.contains(addr) ==> {
             // No TSO non-determinism:
-            &&& !self.write_addrs().contains(addr)
+            &&& self.is_tso_read_deterministic(core, addr)
             // No cache/partial-walk non-determinism:
             &&& !self.neg_writes[core].contains(addr)
         }
@@ -192,28 +197,28 @@ pub open spec fn valid_walk(
     //&&& path.len() >= 1
     //&&& l0e.layer@ == 0
     //&&& l0addr == add(state.pt_mem.pml4(), l0_bits!(va as u64) as usize)
-    //&&& state.read_from_mem_tso(c, core, l0addr, l0e.entry as usize)
+    //&&& state.read_from_mem_tso(core, l0addr, l0e.entry as usize)
     //&&& match l0e@ {
     //    GhostPageDirectoryEntry::Directory { addr, .. } => {
     //        let (l1addr, l1e) = path[1];
     //        &&& path.len() >= 2
     //        &&& l1e.layer@ == 1
     //        &&& l1addr == add(addr, l1_bits!(va as u64) as usize)
-    //        &&& state.read_from_mem_tso(c, core, l1addr, l1e.entry as usize)
+    //        &&& state.read_from_mem_tso(core, l1addr, l1e.entry as usize)
     //        &&& match l1e@ {
     //            GhostPageDirectoryEntry::Directory { addr, .. } => {
     //                let (l2addr, l2e) = path[2];
     //                &&& path.len() >= 3
     //                &&& l2e.layer@ == 2
     //                &&& l2addr == add(addr, l2_bits!(va as u64) as usize)
-    //                &&& state.read_from_mem_tso(c, core, l2addr, l2e.entry as usize)
+    //                &&& state.read_from_mem_tso(core, l2addr, l2e.entry as usize)
     //                &&& match l2e@ {
     //                    GhostPageDirectoryEntry::Directory { addr, .. } => {
     //                        let (l3addr, l3e) = path[3];
     //                        &&& path.len() == 4
     //                        &&& l3e.layer@ == 3
     //                        &&& l3addr == add(addr, l3_bits!(va as u64) as usize)
-    //                        &&& state.read_from_mem_tso(c, core, l3addr, l3e.entry as usize)
+    //                        &&& state.read_from_mem_tso(core, l3addr, l3e.entry as usize)
     //                        &&& match l3e@ {
     //                            GhostPageDirectoryEntry::Page { addr, .. } => {
     //                                &&& aligned(va as nat, L3_ENTRY_SIZE as nat)
@@ -288,7 +293,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
-    &&& pre.read_from_mem_tso(c, core, addr, value)
+    &&& pre.read_from_mem_tso(core, addr, value)
 
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
