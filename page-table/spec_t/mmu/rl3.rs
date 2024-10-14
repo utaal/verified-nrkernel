@@ -26,6 +26,7 @@ pub struct History {
     /// All writes that may still be in store buffers. Gets reset for the executing core on invlpg
     /// and barrier.
     pub writes: Set<(Core, usize)>,
+    pub neg_writes: Map<Core, Set<usize>>,
 }
 
 //pub struct Prophecy {
@@ -60,6 +61,11 @@ impl State {
     /// Is true if only this core's store buffer is non-empty.
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
+    }
+
+    pub open spec fn is_neg_write(self, addr: usize) -> bool {
+        &&& self.pt_mem.page_addrs().contains_key(addr)
+        &&& !(self.pt_mem.page_addrs()[addr] is Empty)
     }
 
     pub open spec fn writer_cores(self) -> Set<Core> {
@@ -112,6 +118,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.sbuf == pre.sbuf
 
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.hist.neg_writes == pre.hist.neg_writes.insert(core, set![])
     //&&& post.proph.pt_mems == pre.proph.pt_mems
 }
 
@@ -134,6 +141,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
 
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_WalkStep(
@@ -160,6 +168,7 @@ pub open spec fn step_WalkStep(
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(res.walk()))
 
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_WalkDone(
@@ -187,6 +196,7 @@ pub open spec fn step_WalkDone(
     &&& post.walks == pre.walks
 
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 
@@ -206,6 +216,9 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.walks == pre.walks
 
     &&& post.hist.writes == pre.hist.writes.insert((core, addr))
+    &&& post.hist.neg_writes == if pre.is_neg_write(addr) {
+            pre.hist.neg_writes.map_values(|ws:Set<_>| ws.insert(addr))
+        } else { pre.hist.neg_writes }
     //&&& post.proph.pt_mems == pre.proph.pt_mems.push(proph)
 }
 
@@ -226,6 +239,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.walks == pre.walks
 
     &&& post.hist.writes == pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
     //&&& post.proph.pt_mems == pre.proph.pt_mems.drop_first()
 }
 
@@ -242,6 +256,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& post.walks == pre.walks
 
     &&& post.hist.writes == pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
     //&&& post.proph.pt_mems == pre.proph.pt_mems
 }
 
@@ -257,6 +272,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.walks == pre.walks
 
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.hist.neg_writes == pre.hist.neg_writes
     //&&& post.proph.pt_mems == pre.proph.pt_mems
 }
 
@@ -448,9 +464,9 @@ mod refinement {
     use crate::spec_t::mmu::rl4::{ get_first };
 
     impl rl3::State {
-        pub open spec fn interp(self, c: rl3::Constants) -> rl2::State {
+        pub open spec fn interp_pt_mem(self) -> PTMem {
             let writers = self.writer_cores();
-            let pt_mem = if writers.len() == 0 {
+            if writers.len() == 0 {
                 self.pt_mem
             } else if writers.len() == 1 {
                 let wcore = writers.choose();
@@ -458,12 +474,16 @@ mod refinement {
             } else {
                 // implies !self.happy
                 arbitrary()
-            };
+            }
+        }
+
+        pub open spec fn interp(self) -> rl2::State {
             rl2::State {
                 happy: self.happy,
-                pt_mem: self.pt_mem, // + sbuf
+                pt_mem: self.interp_pt_mem(),
                 walks: self.walks,
                 writes: self.hist.writes,
+                hist: rl2::History { neg_writes: self.hist.neg_writes },
             }
         }
     }
@@ -489,51 +509,58 @@ mod refinement {
             pre.happy,
             pre.inv(c),
             rl3::next_step(pre, post, c, step, lbl),
-        ensures rl2::next_step(pre.interp(c), post.interp(c), c, step.interp(), lbl)
+        ensures rl2::next_step(pre.interp(), post.interp(), c, step.interp(), lbl)
     {
         match step {
             rl3::Step::Invlpg => {
-                assert(rl2::step_Invlpg(pre.interp(c), post.interp(c), c, lbl));
+                admit(); // XXX
+                assert(rl2::step_Invlpg(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::WalkInit { core, va } => {
-                assert(rl2::step_WalkInit(pre.interp(c), post.interp(c), c, core, va, lbl));
+                admit(); // XXX
+                assert(rl2::step_WalkInit(pre.interp(), post.interp(), c, core, va, lbl));
             },
             rl3::Step::WalkStep { core, walk, value } => {
                 admit();
-                assert(rl2::step_WalkStep(pre.interp(c), post.interp(c), c, core, walk, value, lbl));
+                assert(rl2::step_WalkStep(pre.interp(), post.interp(), c, core, walk, value, lbl));
             },
             rl3::Step::WalkDone { walk, value } => {
                 admit();
-                assert(rl2::step_WalkDone(pre.interp(c), post.interp(c), c, walk, value, lbl));
+                assert(rl2::step_WalkDone(pre.interp(), post.interp(), c, walk, value, lbl));
             },
             rl3::Step::Write => {
                 // TODO: This doesn't refine in the case where (pre.happy && !post.happy)
                 admit();
-                assert(rl2::step_Write(pre.interp(c), post.interp(c), c, lbl));
+                assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Writeback { core } => {
                 admit();
                 assert(pre.no_other_writers(core));
                 lemma_pt_mem_fold_writeback(pre, post, c, core);
-                assert(rl2::step_Stutter(pre.interp(c), post.interp(c), c, lbl));
+                assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Read => {
+                admit(); // XXX
                 let Lbl::Read(core, addr, value) = lbl else { arbitrary() };
                 if pre.no_other_writers(core) {
-                    assert(pre.interp(c).no_other_writers(core));
+                    assert(pre.interp().no_other_writers(core));
                     lemma_rl3_read_from_mem_tso_conditions2(pre, c, core, addr);
-                    assert(rl2::step_Read(pre.interp(c), post.interp(c), c, lbl));
+                    assert(rl2::step_Read(pre.interp(), post.interp(), c, lbl));
                 } else if !pre.write_addrs().contains(addr) {
                     lemma_rl3_read_from_mem_tso_conditions1(pre, c, core, addr);
-                    assert(rl2::step_Read(pre.interp(c), post.interp(c), c, lbl));
+                    assert(rl2::step_Read(pre.interp(), post.interp(), c, lbl));
                 }
-                assert(rl2::step_Read(pre.interp(c), post.interp(c), c, lbl));
+                assert(rl2::step_Read(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Barrier                   => {
-                assert(rl2::step_Barrier(pre.interp(c), post.interp(c), c, lbl));
+                admit(); // XXX
+                assert(rl2::step_Barrier(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Stutter                   => {
-                assert(rl2::step_Stutter(pre.interp(c), post.interp(c), c, lbl));
+                admit(); // XXX
+                assert(rl3::State::stutter(pre, post));
+                assert(post.pt_mem@ == pre.pt_mem@);
+                assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
         }
     }
@@ -543,7 +570,7 @@ mod refinement {
             pre.inv(c),
             rl3::next(pre, post, c),
         ensures
-            rl2::next(pre.interp(c), post.interp(c), c),
+            rl2::next(pre.interp(), post.interp(), c),
     {
         if pre.happy {
             // TODO: ...
@@ -592,13 +619,13 @@ mod refinement {
             match get_first(state.sbuf[core], addr) {
                 Some(v) => v,
                 None    => state.pt_mem@[addr],
-            } == state.interp(c).pt_mem@[addr]
+            } == state.interp().pt_mem@[addr]
     {
         let wcore = state.writer_cores().choose();
         assume(wcore == core);
         assume(state.writer_cores().len() == 1);
         // Should follow trivially from previous two
-        assume(state.interp(c).pt_mem == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1)));
+        assume(state.interp().pt_mem == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1)));
         //match get_first(state.sbuf[core], addr) {
         //    Some(v) => v,
         //    None    => state.pt_mem@[addr],

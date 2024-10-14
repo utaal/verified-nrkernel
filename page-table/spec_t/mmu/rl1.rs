@@ -142,7 +142,11 @@ impl State {
         }
     }
 
-    /// Is true if only this core's store buffer is non-empty.
+    pub open spec fn is_neg_write(self, addr: usize) -> bool {
+        &&& self.pt_mem.page_addrs().contains_key(addr)
+        &&& !(self.pt_mem.page_addrs()[addr] is Empty)
+    }
+
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
     }
@@ -281,11 +285,9 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.happy == pre.happy && pre.no_other_writers(core)
     &&& post.pt_mem == pre.pt_mem.write(addr, value)
     &&& post.writes == pre.writes.insert((core, addr))
-    &&& post.neg_writes ==
-        if pre.pt_mem.page_addrs().contains_key(addr)
-            && !(pre.pt_mem.page_addrs()[addr] is Empty)
-        { pre.neg_writes.map_values(|ws:Set<_>| ws.insert(addr)) }
-        else { pre.neg_writes }
+    &&& post.neg_writes == if pre.is_neg_write(addr) {
+            pre.neg_writes.map_values(|ws:Set<_>| ws.insert(addr))
+        } else { pre.neg_writes }
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {

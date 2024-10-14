@@ -36,6 +36,7 @@ pub struct History {
     /// All writes that may still be in store buffers. Gets reset for the executing core on invlpg
     /// and barrier.
     pub writes: Set<(Core, usize)>,
+    pub neg_writes: Map<Core, Set<usize>>,
 }
 
 
@@ -81,6 +82,11 @@ impl State {
 
     pub open spec fn writer_cores(self) -> Set<Core> {
         self.hist.writes.map(|x:(_,_)| x.0)
+    }
+
+    pub open spec fn is_neg_write(self, addr: usize) -> bool {
+        &&& self.pt_mem.page_addrs().contains_key(addr)
+        &&& !(self.pt_mem.page_addrs()[addr] is Empty)
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -138,6 +144,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
     &&& post.hist.walks == pre.hist.walks.insert(core, set![])
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.hist.neg_writes == pre.hist.neg_writes.insert(core, set![])
 }
 
 
@@ -157,6 +164,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
@@ -173,6 +181,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
@@ -189,6 +198,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 
@@ -212,6 +222,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk))
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_WalkStep(
@@ -240,6 +251,7 @@ pub open spec fn step_WalkStep(
 
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_WalkDone(
@@ -270,6 +282,7 @@ pub open spec fn step_WalkDone(
     &&& post.hist.walks == pre.hist.walks
     //&&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 
@@ -293,6 +306,9 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes.insert((core, addr))
+    &&& post.hist.neg_writes == if pre.is_neg_write(addr) {
+            pre.hist.neg_writes.map_values(|ws:Set<_>| ws.insert(addr))
+        } else { pre.hist.neg_writes }
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -310,6 +326,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -327,6 +344,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -345,6 +363,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
 
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub enum Step {
@@ -442,7 +461,7 @@ mod refinement {
                 pt_mem: self.pt_mem,
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
-                hist: rl3::History { writes: self.hist.writes },
+                hist: rl3::History { writes: self.hist.writes, neg_writes: self.hist.neg_writes },
             }
         }
     }

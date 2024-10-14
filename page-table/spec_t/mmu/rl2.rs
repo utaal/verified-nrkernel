@@ -18,20 +18,22 @@ pub struct State {
     /// All writes that may still be in store buffers. Gets reset for the executing core on invlpg
     /// and barrier.
     pub writes: Set<(Core, usize)>,
-    ///// History variables.
-    //pub hist: History,
+    /// History variables.
+    pub hist: History,
 }
 
 pub struct History {
+    pub neg_writes: Map<Core, Set<usize>>,
 }
 
 impl State {
     pub open spec fn stutter(pre: State, post: State) -> bool {
-        let State { happy, pt_mem, walks, writes } = post;
+        let State { happy, pt_mem, walks, writes, hist } = post;
         &&& happy == pre.happy
         &&& pt_mem@ == pre.pt_mem@
         &&& walks == pre.walks
         &&& writes == pre.writes
+        &&& hist == pre.hist
     }
 
     pub open spec fn init(self) -> bool {
@@ -50,7 +52,11 @@ impl State {
         ||| !self.write_addrs().contains(addr)
     }
 
-    /// Is true if only this core's store buffer is non-empty.
+    pub open spec fn is_neg_write(self, addr: usize) -> bool {
+        &&& self.pt_mem.page_addrs().contains_key(addr)
+        &&& !(self.pt_mem.page_addrs()[addr] is Empty)
+    }
+
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
     }
@@ -87,6 +93,8 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.walks == pre.walks.insert(core, set![])
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.writes === pre.writes.filter(|e:(Core, usize)| e.0 != core)
+
+    &&& post.hist.neg_writes == pre.hist.neg_writes.insert(core, set![])
 }
 
 
@@ -105,6 +113,8 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
+
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_WalkStep(
@@ -128,6 +138,8 @@ pub open spec fn step_WalkStep(
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(res.walk()))
+
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_WalkDone(
@@ -152,6 +164,8 @@ pub open spec fn step_WalkDone(
     &&& post.happy == pre.happy
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.walks == pre.walks
+
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 
@@ -167,6 +181,10 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.pt_mem == pre.pt_mem.write(addr, value)
     &&& post.walks == pre.walks
     &&& post.writes == pre.writes.insert((core, addr))
+
+    &&& post.hist.neg_writes == if pre.is_neg_write(addr) {
+            pre.hist.neg_writes.map_values(|ws:Set<_>| ws.insert(addr))
+        } else { pre.hist.neg_writes }
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -180,6 +198,8 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.walks == pre.walks
     &&& post.writes == pre.writes
+
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -191,6 +211,8 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.pt_mem@ == pre.pt_mem@
     &&& post.walks == pre.walks
     &&& post.writes === pre.writes.filter(|e:(Core, usize)| e.0 != core)
+
+    &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
