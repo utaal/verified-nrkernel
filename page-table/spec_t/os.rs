@@ -157,39 +157,32 @@ impl<M: mmu::MMU> OSVariables<M> {
             }
     }
 
-    pub open spec fn inflight_pte_above_zero_pte_result_consistant(self, c: OSConstants) -> bool {
-        forall|core: Core|
-            {
-                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                    CoreState::MapWaiting { vaddr, pte, .. }
-                    | CoreState::MapExecuting { vaddr, pte, .. } => { above_zero(pte.frame.size) },
-                    CoreState::UnmapWaiting { vaddr, .. }
-                    | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
-                        self.interp_pt_mem().contains_key(vaddr) ==> above_zero(
-                            self.interp_pt_mem()[vaddr].frame.size,
-                        )
-                    }
-                    CoreState::UnmapOpExecuting { result: Some(result), .. }
-                    | CoreState::UnmapOpDone { result, .. }
-                    | CoreState::UnmapShootdownWaiting { result, .. } => {
-                        result is Ok ==> above_zero(result.get_Ok_0().frame.size)
-                    },
-                    CoreState::Idle => { true },
-                }
+    pub open spec fn inflight_pte_above_zero_pte_result_consistent(self, c: OSConstants) -> bool {
+        forall|core: Core| hardware::valid_core(c.hw, core) ==>
+            match self.core_states[core] {
+                CoreState::MapWaiting { vaddr, pte, .. }
+                | CoreState::MapExecuting { vaddr, pte, .. }
+                    => above_zero(pte.frame.size),
+                CoreState::UnmapWaiting { vaddr, .. }
+                | CoreState::UnmapOpExecuting { vaddr, result: None, .. }
+                    => self.interp_pt_mem().contains_key(vaddr)
+                        ==> above_zero(self.interp_pt_mem()[vaddr].frame.size),
+                CoreState::UnmapOpExecuting { result: Some(result), .. }
+                | CoreState::UnmapOpDone { result, .. }
+                | CoreState::UnmapShootdownWaiting { result, .. }
+                    => result is Ok ==> above_zero(result.get_Ok_0().frame.size),
+                CoreState::Idle => true,
             }
     }
 
     pub open spec fn successful_unmaps(self, c: OSConstants) -> bool {
-        forall|core: Core|
-            {
-                hardware::valid_core(c.hw, core) ==> match self.core_states[core] {
-                    CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
-                    | CoreState::UnmapOpDone { vaddr, .. }
-                    | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        !self.interp_pt_mem().contains_key(vaddr)
-                    },
-                    _ => { true },
-                }
+        forall|core: Core| hardware::valid_core(c.hw, core) ==>
+            match self.core_states[core] {
+                CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
+                | CoreState::UnmapOpDone { vaddr, .. }
+                | CoreState::UnmapShootdownWaiting { vaddr, .. }
+                    => !self.interp_pt_mem().contains_key(vaddr),
+                _ => true,
             }
     }
 
@@ -208,16 +201,14 @@ impl<M: mmu::MMU> OSVariables<M> {
     pub open spec fn basic_inv(self, c: OSConstants) -> bool {
         &&& self.wf(c)
         &&& self.valid_ids(c)
-        &&& self.inflight_pte_above_zero_pte_result_consistant(c)
+        &&& self.inflight_pte_above_zero_pte_result_consistent(c)
         &&& self.successful_unmaps(c)
-        //&&& self.tlb_inv(c)
 
     }
 
     pub open spec fn inv(self, c: OSConstants) -> bool {
         &&& self.basic_inv(c)
         //&&& self.tlb_inv(c)
-        //&&& self.overlapping_inv(c)
         &&& self.overlapping_vmem_inv(c)
     }
 
@@ -717,12 +708,7 @@ pub open spec fn step_Unmap_Start<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ULT_id, vaddr })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.sound == s1.sound && step_Unmap_sound(
-        pt,
-        s1.core_states.values(),
-        vaddr,
-        pte_size,
-    )
+    &&& s2.sound == s1.sound && step_Unmap_sound(pt, s1.core_states.values(), vaddr, pte_size)
 }
 
 pub open spec fn step_Unmap_Op_Start<M: mmu::MMU>(
@@ -892,16 +878,16 @@ pub open spec fn step_Unmap_End<M: mmu::MMU>(
 #[allow(inconsistent_fields)]
 pub enum OSStep {
     HW { ULT_id: nat, step: hardware::HWStep },
-    //map
+    // Map
     MapStart { ULT_id: nat, vaddr: nat, pte: PTE },
     MapOpStart { core: Core },
-    MapOpStutter { core: Core, addr: usize, value: usize },
-    MapEnd { core: Core, addr: usize, value: usize, result: Result<(), ()> },
-    //unmap
+    MapOpStutter { core: Core, paddr: usize, value: usize },
+    MapEnd { core: Core, paddr: usize, value: usize, result: Result<(), ()> },
+    // Unmap
     UnmapStart { ULT_id: nat, vaddr: nat },
     UnmapOpStart { core: Core },
-    UnmapOpChange { core: Core, addr: usize, value: usize, result: Result<PTE, ()> },
-    UnmapOpStutter { core: Core, addr: usize, value: usize },
+    UnmapOpChange { core: Core, paddr: usize, value: usize, result: Result<PTE, ()> },
+    UnmapOpStutter { core: Core, paddr: usize, value: usize },
     UnmapOpEnd { core: Core },
     UnmapInitiateShootdown { core: Core },
     AckShootdownIPI { core: Core },
@@ -952,7 +938,7 @@ impl OSStep {
             },
             OSStep::MapOpStart { .. } => hlspec::AbstractStep::Stutter,
             OSStep::MapOpStutter { .. } => hlspec::AbstractStep::Stutter,
-            OSStep::MapEnd { core, result, addr, value } => {
+            OSStep::MapEnd { core, result, paddr, value } => {
                 match s.core_states[core] {
                     CoreState::MapExecuting { ULT_id, .. } => {
                         hlspec::AbstractStep::MapEnd { thread_id: ULT_id, result }
@@ -987,21 +973,21 @@ impl OSStep {
 
 pub open spec fn next_step<M: mmu::MMU>(c: OSConstants, s1: OSVariables<M>, s2: OSVariables<M>, step: OSStep) -> bool {
     match step {
-        OSStep::HW { ULT_id, step }                         => step_HW(c, s1, s2, ULT_id, step),
+        OSStep::HW { ULT_id, step }                          => step_HW(c, s1, s2, ULT_id, step),
         //Map steps
-        OSStep::MapStart { ULT_id, vaddr, pte }             => step_Map_Start(c, s1, s2, ULT_id, vaddr, pte),
-        OSStep::MapOpStart { core }                         => step_Map_op_Start(c, s1, s2, core),
-        OSStep::MapOpStutter { core, addr, value }          => step_Map_op_Stutter(c, s1, s2, core, addr, value),
-        OSStep::MapEnd { core, addr, value, result }        => step_Map_End(c, s1, s2, core, addr, value, result),
+        OSStep::MapStart { ULT_id, vaddr, pte }              => step_Map_Start(c, s1, s2, ULT_id, vaddr, pte),
+        OSStep::MapOpStart { core }                          => step_Map_op_Start(c, s1, s2, core),
+        OSStep::MapOpStutter { core, paddr, value }          => step_Map_op_Stutter(c, s1, s2, core, paddr, value),
+        OSStep::MapEnd { core, paddr, value, result }        => step_Map_End(c, s1, s2, core, paddr, value, result),
         //Unmap steps
-        OSStep::UnmapStart { ULT_id, vaddr }                => step_Unmap_Start(c, s1, s2, ULT_id, vaddr),
-        OSStep::UnmapOpStart { core }                       => step_Unmap_Op_Start(c, s1, s2, core),
-        OSStep::UnmapOpChange { core, addr, value, result } => step_Unmap_Op_Change(c, s1, s2, core, addr, value, result),
-        OSStep::UnmapOpStutter { core, addr, value }        => step_Unmap_Op_Stutter(c, s1, s2, core, addr, value),
-        OSStep::UnmapOpEnd { core }                         => step_Unmap_Op_End(c, s1, s2, core),
-        OSStep::UnmapInitiateShootdown { core }             => step_Unmap_Initiate_Shootdown(c, s1, s2, core),
-        OSStep::AckShootdownIPI { core }                    => step_Ack_Shootdown_IPI(c, s1, s2, core),
-        OSStep::UnmapEnd { core }                           => step_Unmap_End(c, s1, s2, core),
+        OSStep::UnmapStart { ULT_id, vaddr }                 => step_Unmap_Start(c, s1, s2, ULT_id, vaddr),
+        OSStep::UnmapOpStart { core }                        => step_Unmap_Op_Start(c, s1, s2, core),
+        OSStep::UnmapOpChange { core, paddr, value, result } => step_Unmap_Op_Change(c, s1, s2, core, paddr, value, result),
+        OSStep::UnmapOpStutter { core, paddr, value }        => step_Unmap_Op_Stutter(c, s1, s2, core, paddr, value),
+        OSStep::UnmapOpEnd { core }                          => step_Unmap_Op_End(c, s1, s2, core),
+        OSStep::UnmapInitiateShootdown { core }              => step_Unmap_Initiate_Shootdown(c, s1, s2, core),
+        OSStep::AckShootdownIPI { core }                     => step_Ack_Shootdown_IPI(c, s1, s2, core),
+        OSStep::UnmapEnd { core }                            => step_Unmap_End(c, s1, s2, core),
     }
 }
 

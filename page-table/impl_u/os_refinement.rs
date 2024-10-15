@@ -1,11 +1,9 @@
 use vstd::prelude::*;
 
-//use crate::impl_u::spec_pt;
-//use crate::spec_t::hardware::Core;
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap, HWLoadResult, HWRWOp, HWStoreResult,
-    LoadResult, MemRegion, PTE, RWOp, StoreResult, WORD_SIZE,
+    LoadResult, MemRegion, PTE, RWOp, StoreResult, WORD_SIZE, Core
 };
 use crate::spec_t::hlproof::lemma_mem_domain_from_mappings;
 use crate::spec_t::os_invariant::{
@@ -13,6 +11,7 @@ use crate::spec_t::os_invariant::{
     lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl,
     lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os,
     lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl, next_step_preserves_inv,
+    lemma_map_insert_values_equality, lemma_map_insert_value,
 };
 use crate::spec_t::{hardware, hlspec, mem, os, mmu};
 use crate::extra::result_map_ok;
@@ -117,53 +116,6 @@ proof fn lemma_effective_mappings_unaffected_if_thread_state_constant<M: mmu::MM
     lemma_inflight_vaddr_equals_hl_unmap(c, s1);
     lemma_inflight_vaddr_equals_hl_unmap(c, s2);
     assert(s2.inflight_unmap_vaddr() =~= s1.inflight_unmap_vaddr());
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Map lemmata
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn map_values_contain_value_of_contained_key<A, B>(map: Map<A, B>, key: A)
-    requires
-        map.dom().contains(key),
-    ensures
-        map.values().contains(map[key]),
-{
-}
-
-proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
-    requires
-    ensures
-        map.insert(key, value).values().contains(value),
-{
-    assert(map.insert(key, value).dom().contains(key));
-    assert(map.insert(key, value)[key] == value);
-}
-
-pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, value: B)
-    requires
-        map.dom().contains(key),
-    ensures
-        map.values().insert(value) === map.insert(key, value).values().insert(map.index(key)),
-{
-    //
-    assert forall|values| #![auto] map.values().insert(value).contains(values) implies map.insert(
-        key,
-        value,
-    ).values().insert(map.index(key)).contains(values) by {
-        if (values == value) {
-            lemma_map_insert_value(map, key, value);
-        } else {
-            let k = choose|some_key| #[trigger]
-                map.dom().contains(some_key) && (map[some_key] == values);
-            assert(map.insert(key, value).dom().contains(k));
-            if (k == key) {
-                assert(map.index(key) == values);
-            } else {
-                assert(map[k] === map.insert(key, value)[k]);
-            }
-        }
-    }
-    assert(map.values().insert(value) =~= map.insert(key, value).values().insert(map.index(key)));
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -448,7 +400,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
     paddr: nat,
     op: HWRWOp,
     pte: Option<(nat, PTE)>,
-    core: hardware::Core,
+    core: Core,
 )
     requires
         s1.inv(c),
@@ -706,7 +658,7 @@ proof fn step_Map_End_refines<M: mmu::MMU>(
     c: os::OSConstants,
     s1: os::OSVariables<M>,
     s2: os::OSVariables<M>,
-    core: hardware::Core,
+    core: Core,
     result: Result<(), ()>,
 )
     requires
@@ -1329,7 +1281,7 @@ proof fn step_Unmap_Op_Change_refines<M: mmu::MMU>(
     c: os::OSConstants,
     s1: os::OSVariables<M>,
     s2: os::OSVariables<M>,
-    core: hardware::Core,
+    core: Core,
     result: Result<PTE, ()>
 )
     requires
@@ -1449,7 +1401,7 @@ proof fn step_Unmap_End_refines<M: mmu::MMU>(
     c: os::OSConstants,
     s1: os::OSVariables<M>,
     s2: os::OSVariables<M>,
-    core: hardware::Core,
+    core: Core,
 )
     requires
         s1.inv(c),
