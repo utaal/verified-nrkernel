@@ -1306,7 +1306,7 @@ pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, valu
     assert(map.values().insert(value) =~= map.insert(key, value).values().insert(map.index(key)));
 }
 
-proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
+pub proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
     requires
     ensures
         map.insert(key, value).values().contains(value),

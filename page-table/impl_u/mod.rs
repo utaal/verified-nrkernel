@@ -7,4 +7,4 @@
 //#[cfg(feature = "impl")]
 //pub mod l2_refinement;
 //pub mod indexing;
-//pub mod os_refinement;
+pub mod os_refinement;

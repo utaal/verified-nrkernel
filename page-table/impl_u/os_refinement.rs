@@ -14,6 +14,7 @@ use crate::spec_t::os_invariant::{
     lemma_map_insert_values_equality, lemma_map_insert_value,
 };
 use crate::spec_t::{hardware, hlspec, mem, os, mmu};
+use crate::spec_t::mmu::WalkResult;
 use crate::extra::result_map_ok;
 
 verus! {
@@ -322,8 +323,8 @@ proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
     next_step_preserves_inv(c, s1, s2, step);
     match step {
         os::OSStep::HW { ULT_id, step } => match step {
-            hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, core } => {
-                step_ReadWrite_refines(c, s1, s2, ULT_id, vaddr, paddr, op, pte, core)
+            hardware::HWStep::ReadWrite { vaddr, paddr, op, walk_result, core } => {
+                step_ReadWrite_refines(c, s1, s2, ULT_id, vaddr, paddr, op, walk_result, core)
             },
             _ => {},
         },
@@ -335,9 +336,9 @@ proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::MapEnd { core, result } => {
+        os::OSStep::MapEnd { core, paddr, value, result } => {
             if (s1.sound) {
-                step_Map_End_refines(c, s1, s2, core, result);
+                step_Map_End_refines(c, s1, s2, core, paddr, value, result);
             }
         },
         //Unmap steps
@@ -350,9 +351,9 @@ proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::UnmapOpChange { core, result } => {
+        os::OSStep::UnmapOpChange { core, paddr, value, result } => {
             if s1.sound {
-                step_Unmap_Op_Change_refines(c, s1, s2, core, result);
+                step_Unmap_Op_Change_refines(c, s1, s2, core, paddr, value, result);
             }
         }
         os::OSStep::UnmapOpEnd { core } => {
@@ -399,20 +400,24 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
     vaddr: nat,
     paddr: nat,
     op: HWRWOp,
-    pte: Option<(nat, PTE)>,
+    walk_result: WalkResult,
     core: Core,
 )
     requires
         s1.inv(c),
         s2.inv(c),
-        os::step_HW(c, s1, s2, ULT_id, hardware::HWStep::ReadWrite { vaddr, paddr, op, pte, core }),
+        os::step_HW(c, s1, s2, ULT_id, hardware::HWStep::ReadWrite { vaddr, paddr, op, walk_result, core }),
     ensures
         ({
-            let hl_pte = if (pte is None || (pte matches Some((base, _))
-                && !s1.effective_mappings().dom().contains(base))) {
-                None
-            } else {
-                pte
+            let hl_pte = match walk_result {
+                WalkResult::Valid { vbase, pte } => {
+                    if s1.effective_mappings().contains_key(vbase as nat) {
+                        Some((vbase as nat, pte))
+                    } else {
+                        None
+                    }
+                },
+                WalkResult::Invalid { vbase, size } => None,
             };
             let rwop = match (op, hl_pte) {
                 (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_)) => RWOp::Store {
@@ -455,11 +460,15 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
     let hl_s1 = s1.interp(c);
     let hl_s2 = s2.interp(c);
 
-    let hl_pte = if (pte is None || (pte matches Some((base, _))
-        && !s1.effective_mappings().dom().contains(base))) {
-        None
-    } else {
-        pte
+    let hl_pte = match walk_result {
+        WalkResult::Valid { vbase, pte } => {
+            if s1.effective_mappings().contains_key(vbase as nat) {
+                Some((vbase as nat, pte))
+            } else {
+                None
+            }
+        },
+        WalkResult::Invalid { vbase, size } => None,
     };
     let rwop = match (op, hl_pte) {
         (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_)) => RWOp::Store {
@@ -527,8 +536,8 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
             }
         },
         None => {
-            if (pte is None) {
-                assert(!exists|base: nat, pte: PTE|
+            if walk_result is Invalid {
+                assume(!exists|base: nat, pte: PTE|
                     {
                         &&& #[trigger] s1.interp_pt_mem().contains_pair(base, pte)
                         &&& hlspec::mem_domain_from_entry_contains(
@@ -559,10 +568,11 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
                     hl_s1.mappings,
                 ).contains(vmem_idx));
             } else {
-                let (base, pte) = pte.unwrap();
+                let vbase = walk_result->Valid_vbase as nat;
+                let pte = walk_result->pte;
                 //assert(!s1.effective_mappings().dom().contains(vaddr));
-                assert(!s1.effective_mappings().dom().contains(base));
-                assert(!hl_s1.mappings.dom().contains(base));
+                assert(!s1.effective_mappings().dom().contains(vbase));
+                assert(!hl_s1.mappings.dom().contains(vbase));
                 assume(!hlspec::mem_domain_from_mappings(
                     hl_c.phys_mem_size,
                     hl_s1.mappings,
@@ -659,12 +669,14 @@ proof fn step_Map_End_refines<M: mmu::MMU>(
     s1: os::OSVariables<M>,
     s2: os::OSVariables<M>,
     core: Core,
+    paddr: usize,
+    value: usize,
     result: Result<(), ()>,
 )
     requires
         s1.inv(c),
         s2.inv(c),
-        os::step_Map_End(c, s1, s2, core, result),
+        os::step_Map_End(c, s1, s2, core, paddr, value, result),
         s1.sound,
     ensures
         ({
@@ -1282,13 +1294,15 @@ proof fn step_Unmap_Op_Change_refines<M: mmu::MMU>(
     s1: os::OSVariables<M>,
     s2: os::OSVariables<M>,
     core: Core,
+    paddr: usize,
+    value: usize,
     result: Result<PTE, ()>
 )
     requires
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_Unmap_Op_Change(c, s1, s2, core, result),
+        os::step_Unmap_Op_Change(c, s1, s2, core, paddr, value, result),
     ensures
         hlspec::step_Stutter(c.interp(), s1.interp(c), s2.interp(c)),
 {
