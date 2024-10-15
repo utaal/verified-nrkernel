@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::definitions_t::{
     candidate_mapping_in_bounds, x86_arch_spec_upper_bound, Flags, HWRWOp, HWStoreResult,
-    MemRegion, PageTableEntry,
+    MemRegion, PTE,
 };
 use crate::spec_t::hardware as hw;
 use crate::spec_t::mem;
@@ -48,7 +48,7 @@ proof fn program_1() {
         sound: true,
     };
 
-    let pte1 = PageTableEntry {
+    let pte1 = PTE {
         frame: MemRegion { base: 4096, size: 4096 },
         flags: Flags { is_writable: true, is_supervisor: false, disable_execute: true },
     };

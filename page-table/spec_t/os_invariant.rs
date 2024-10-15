@@ -3,7 +3,7 @@ use vstd::prelude::*;
 //use crate::impl_u::spec_pt;
 //use crate::spec_t::hardware::Core;
 use crate::definitions_t::{
-    above_zero, candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PageTableEntry,
+    above_zero, candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE,
 };
 use crate::impl_u::os_refinement::{
     lemma_map_insert_values_equality, map_values_contain_value_of_contained_key,
@@ -445,7 +445,7 @@ pub open spec fn unique_CoreStates(map: Map<hardware::Core, os::CoreState>) -> b
 pub open spec fn no_overlap_vmem_values(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
 ) -> bool {
     forall|state1: os::CoreState, state2: os::CoreState|
         core_states.values().contains(state1) && core_states.values().contains(state2)
@@ -514,7 +514,7 @@ pub proof fn Lemma_unique_and_overlap_values_implies_overlap_vmem<M: mmu::MMU>(
 pub proof fn Lemma_insert_idle_corestate_preserves_no_overlap(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     core: hardware::Core,
 )
     requires
@@ -555,7 +555,7 @@ pub proof fn Lemma_insert_idle_corestate_preserves_no_overlap(
 pub proof fn Lemma_insert_preserves_no_overlap(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     core: hardware::Core,
     corestate: os::CoreState,
 )
@@ -635,7 +635,7 @@ pub proof fn Lemma_insert_preserves_no_overlap(
 pub proof fn Lemma_insert_no_overlap_preserves_no_overlap(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     core: hardware::Core,
     corestate: os::CoreState,
 )
@@ -721,8 +721,8 @@ pub proof fn Lemma_insert_no_overlap_preserves_no_overlap(
 pub proof fn Lemma_submap_preserves_no_overlap(
     c: os::OSConstants,
     core_states: Map<hardware::Core, os::CoreState>,
-    pt: Map<nat, PageTableEntry>,
-    sub_pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
+    sub_pt: Map<nat, PTE>,
 )
     requires
         unique_CoreStates(core_states),
@@ -1078,7 +1078,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os<M: mmu:
 pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl<M: mmu::MMU>(
     c: os::OSConstants,
     s: os::OSVariables<M>,
-    candidate: PageTableEntry,
+    candidate: PTE,
 )
     requires
         s.basic_inv(c),
@@ -1195,7 +1195,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl<M: mmu:
 pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os<M: mmu::MMU>(
     c: os::OSConstants,
     s: os::OSVariables<M>,
-    candidate: PageTableEntry,
+    candidate: PTE,
 )
     requires
         s.basic_inv(c),

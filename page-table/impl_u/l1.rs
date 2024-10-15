@@ -4,7 +4,7 @@ use crate::definitions_u::{lemma_new_seq};
 use crate::extra::{ self, result_map };
 use crate::impl_u::indexing;
 
-use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PageTableEntry, Flags };
+use crate::definitions_t::{ MemRegion, overlap, Arch, between, aligned, PTE, Flags };
 use crate::definitions_u::{ permissive_flags };
 use crate::impl_u::l0::{ self, ambient_lemmas1 };
 
@@ -31,11 +31,11 @@ pub proof fn ambient_lemmas2()
 // #[proof]
 // fn ambient_lemmas3() {
 //     ensures([
-//             forall(|d: Directory, base: nat, pte: PageTableEntry|
+//             forall(|d: Directory, base: nat, pte: PTE|
 //                    d.inv() && #[trigger] d.accepted_mapping(base, pte) ==>
 //                    d.interp().accepted_mapping(base, pte)),
 //     ]);
-//     assert_forall_by(|d: Directory, base: nat, pte: PageTableEntry| {
+//     assert_forall_by(|d: Directory, base: nat, pte: PTE| {
 //         requires(d.inv() && #[trigger] d.accepted_mapping(base, pte));
 //         ensures(d.interp().accepted_mapping(base, pte));
 //         d.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
@@ -45,7 +45,7 @@ pub proof fn ambient_lemmas2()
 #[is_variant]
 pub enum NodeEntry {
     Directory(Directory),
-    Page(PageTableEntry),
+    Page(PTE),
     Empty(),
 }
 
@@ -222,7 +222,7 @@ impl Directory {
                 self.interp_of_entry(i).lower == self.entry_base(i) &&
                 self.interp_of_entry(i).upper == self.entry_base(i+1) &&
                 (forall|base: nat| self.interp_of_entry(i).map.dom().contains(base) ==> between(base, self.entry_base(i), self.entry_base(i+1))) &&
-                (forall|base: nat, pte: PageTableEntry| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
+                (forall|base: nat, pte: PTE| self.interp_of_entry(i).map.contains_pair(base, pte) ==> between(base, self.entry_base(i), self.entry_base(i+1))),
     {
         assert forall |i: nat| #![auto] i < self.num_entries() implies
                      self.interp_of_entry(i).inv() &&
@@ -505,7 +505,7 @@ impl Directory {
              i <= j,
              j < self.entries.len(),
         ensures
-            forall|va: nat, pte: PageTableEntry| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp_aux(i).map.contains_pair(va, pte),
+            forall|va: nat, pte: PTE| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp_aux(i).map.contains_pair(va, pte),
             forall|va: nat| #![auto] self.interp_of_entry(j).map.dom().contains(va) ==> self.interp_aux(i).map.dom().contains(va),
             forall|va: nat|
                 between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
@@ -541,7 +541,7 @@ impl Directory {
              j < self.entries.len(),
         ensures
             forall|va: nat| #![auto] self.interp_of_entry(j).map.dom().contains(va) ==> self.interp().map.dom().contains(va),
-            forall|va: nat, pte: PageTableEntry| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp().map.contains_pair(va, pte),
+            forall|va: nat, pte: PTE| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp().map.contains_pair(va, pte),
             forall|va: nat| #![auto]
                 between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.dom().contains(va)
                 ==> !self.interp().map.dom().contains(va),
@@ -550,7 +550,7 @@ impl Directory {
     }
 
     // TODO restore spec(checked) when recommends_by is fixed
-    pub open spec fn resolve(self, vaddr: nat) -> Result<(nat, PageTableEntry),()>
+    pub open spec fn resolve(self, vaddr: nat) -> Result<(nat, PTE),()>
         recommends
             self.inv(),
             self.interp().accepted_resolve(vaddr),
@@ -604,7 +604,7 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall|base: nat, pte: PageTableEntry|
+            forall|base: nat, pte: PTE|
                 self.interp_aux(j).map.contains_pair(base, pte) ==>
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
             forall|base: nat|
@@ -616,7 +616,7 @@ impl Directory {
         } else {
             let _ = self.interp_of_entry(j);
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
-            assert forall |base: nat, pte: PageTableEntry| #![auto]
+            assert forall |base: nat, pte: PTE| #![auto]
                 self.interp_aux(j).map.contains_pair(base, pte) implies
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte) by {
                 if self.interp_aux(j+1).map.contains_pair(base, pte) { } else { }
@@ -633,7 +633,7 @@ impl Directory {
         requires
             self.inv(),
         ensures
-            forall|base: nat, pte: PageTableEntry|
+            forall|base: nat, pte: PTE|
                 self.interp().map.contains_pair(base, pte) ==>
                 exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).map.contains_pair(base, pte),
             forall|base: nat|
@@ -767,7 +767,7 @@ impl Directory {
                            d.interp().map.dom().contains(base) &&
                            between(vaddr, base, base + (#[trigger] d.interp().map.index(base)).frame.size)) by
                     {
-                        assert(!exists|base:nat, pte:PageTableEntry|
+                        assert(!exists|base:nat, pte:PTE|
                                     d.interp().map.contains_pair(base, pte) &&
                                     between(vaddr, base, base + pte.frame.size));
                         if exists|base:nat|
@@ -801,13 +801,13 @@ impl Directory {
         }
     }
 
-    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PageTableEntry) -> bool
+    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PTE) -> bool
         recommends self.inv()
     {
         self.base_vaddr <= base && base + pte.frame.size <= self.upper_vaddr()
     }
 
-    pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PageTableEntry) -> bool
+    pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PTE) -> bool
         recommends self.inv()
     {
         &&& aligned(base, pte.frame.size)
@@ -816,7 +816,7 @@ impl Directory {
         &&& self.arch.contains_entry_size_at_index_atleast(pte.frame.size, self.layer)
     }
 
-    pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, pte: PageTableEntry)
+    pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_manual(self, base: nat, pte: PTE)
         requires
             self.inv(),
             self.accepted_mapping(base, pte)
@@ -828,11 +828,11 @@ impl Directory {
 
     pub proof fn lemma_accepted_mapping_implies_interp_accepted_mapping_auto(self)
         ensures
-            forall|base: nat, pte: PageTableEntry|
+            forall|base: nat, pte: PTE|
                 self.inv() && #[trigger] self.accepted_mapping(base, pte) ==>
                 self.interp().accepted_mapping(base, pte),
     {
-        assert_forall_by(|base: nat, pte: PageTableEntry| {
+        assert_forall_by(|base: nat, pte: PTE| {
             requires(self.inv() && #[trigger] self.accepted_mapping(base, pte));
             ensures(self.interp().accepted_mapping(base, pte));
 
@@ -877,7 +877,7 @@ impl Directory {
         assert(new_dir.inv());
     }
 
-    pub open spec fn map_frame(self, base: nat, pte: PageTableEntry) -> Result<Directory,Directory>
+    pub open spec fn map_frame(self, base: nat, pte: PTE) -> Result<Directory,Directory>
         decreases self.arch.layers.len() - self.layer
     {
         decreases_by(Self::check_map_frame);
@@ -917,7 +917,7 @@ impl Directory {
     }
 
     #[verifier(decreases_by)]
-    proof fn check_map_frame(self, base: nat, pte: PageTableEntry) {
+    proof fn check_map_frame(self, base: nat, pte: PTE) {
         ambient_lemmas1();
         ambient_lemmas2(); // TODO: unnecessary?
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
@@ -926,7 +926,7 @@ impl Directory {
         }
     }
 
-    pub proof fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, pte: PageTableEntry, d: Directory)
+    pub proof fn lemma_accepted_mapping_implies_directory_accepted_mapping(self, base: nat, pte: PTE, d: Directory)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
@@ -971,7 +971,7 @@ impl Directory {
         assert(aligned(pte.frame.base, pte.frame.size));
     }
 
-    proof fn lemma_map_frame_empty_is_ok(self, base: nat, pte: PageTableEntry)
+    proof fn lemma_map_frame_empty_is_ok(self, base: nat, pte: PTE)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
@@ -981,7 +981,7 @@ impl Directory {
             // self.new_empty_dir(self.index_for_vaddr(base)).map_frame(base, pte).is_Ok()
         decreases self.arch.layers.len() - self.layer;
 
-    pub proof fn lemma_map_frame_preserves_inv(self, base: nat, pte: PageTableEntry)
+    pub proof fn lemma_map_frame_preserves_inv(self, base: nat, pte: PTE)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
@@ -1076,7 +1076,7 @@ impl Directory {
         }
     }
 
-    proof fn lemma_insert_interp_of_entry_implies_insert_interp_aux(self, i: nat, j: nat, base: nat, n: NodeEntry, pte: PageTableEntry)
+    proof fn lemma_insert_interp_of_entry_implies_insert_interp_aux(self, i: nat, j: nat, base: nat, n: NodeEntry, pte: PTE)
         requires
             self.inv(),
             i <= j,
@@ -1146,7 +1146,7 @@ impl Directory {
         }
     }
 
-    proof fn lemma_insert_interp_of_entry_implies_insert_interp(self, j: nat, base: nat, n: NodeEntry, pte: PageTableEntry)
+    proof fn lemma_insert_interp_of_entry_implies_insert_interp(self, j: nat, base: nat, n: NodeEntry, pte: PTE)
         requires
             self.inv(),
             j < self.num_entries(),
@@ -1196,7 +1196,7 @@ impl Directory {
         }
     }
 
-    pub proof fn lemma_map_frame_structure_assertions(self, base: nat, pte: PageTableEntry, idx: nat)
+    pub proof fn lemma_map_frame_structure_assertions(self, base: nat, pte: PTE, idx: nat)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
@@ -1269,7 +1269,7 @@ impl Directory {
         }
     }
 
-    pub proof fn lemma_map_frame_refines_map_frame(self, base: nat, pte: PageTableEntry)
+    pub proof fn lemma_map_frame_refines_map_frame(self, base: nat, pte: PTE)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),

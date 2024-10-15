@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ MemRegion, MemRegionExec, PageTableEntry, PageTableEntryExec, Flags,
+use crate::definitions_t::{ MemRegion, MemRegionExec, PTE, PageTableEntryExec, Flags,
 between, aligned, new_seq, x86_arch_exec, x86_arch_spec, axiom_max_phyaddr_width_facts, MAX_BASE,
 WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
 X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
@@ -680,7 +680,7 @@ pub open spec fn interp_at_entry(mem: &mem::PageTableMemory, pt: PTDir, layer: n
         },
         GPDE::Page { addr, RW, US, XD, .. } =>
             l1::NodeEntry::Page(
-                PageTableEntry {
+                PTE {
                     frame: MemRegion { base: addr as nat, size: x86_arch_spec.entry_size(layer) },
                     flags: Flags {
                         is_writable:     RW,
@@ -907,9 +907,9 @@ fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize
                 assert(interp@.entries[idx as int] === interp_at_entry(mem, pt, layer as nat, ptr, base as nat, idx as nat));
             }
             }
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.0));
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.1.frame));
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PageTableEntry)| v.1.flags));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.0));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.1.frame));
+            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.1.flags));
             assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
             res
         }
@@ -938,7 +938,7 @@ pub fn resolve(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, vaddr: usize
     res
 }
 
-pub open spec fn accepted_mapping(vaddr: nat, pte: PageTableEntry) -> bool {
+pub open spec fn accepted_mapping(vaddr: nat, pte: PTE) -> bool {
     // Can't map pages in PML4, i.e. layer 0
     &&& x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size, 1)
     &&& pte.frame.base <= MAX_PHYADDR

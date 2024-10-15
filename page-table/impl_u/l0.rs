@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 use vstd::map::*;
 use crate::extra;
-use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PageTableEntry };
+use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PTE };
 
 verus! {
 
@@ -19,38 +19,38 @@ pub proof fn ambient_arith()
 
 pub proof fn ambient_lemmas1()
     ensures
-        forall|s1: Map<nat,PageTableEntry>, s2: Map<nat,PageTableEntry>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
+        forall|s1: Map<nat,PTE>, s2: Map<nat,PTE>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
         forall|a: int, b: int| #[trigger] (a * b) == b * a,
-        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat|
+        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat|
             (m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat|
+        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat|
             (m2.dom().contains(n) && !m1.dom().contains(n))
             ==> equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat, v: PageTableEntry|
+        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat, v: PTE|
             (!m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)),
-        forall|m1: Map<nat, PageTableEntry>, m2: Map<nat, PageTableEntry>, n: nat, v: PageTableEntry|
+        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat, v: PTE|
             (!m1.dom().contains(n) && !m2.dom().contains(n))
             ==> equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)),
         // forall(|d: Directory| d.inv() ==> (#[trigger] d.interp().upper == d.upper_vaddr())),
         // forall(|d: Directory| d.inv() ==> (#[trigger] d.interp().lower == d.base_vaddr)),
     {
-    lemma_finite_map_union::<nat,PageTableEntry>();
+    lemma_finite_map_union::<nat,PTE>();
     // assert_nonlinear_by({ ensures(forall|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
     // assert_forall_by(|d: Directory, i: nat| {
     //     requires(#[auto_trigger] d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory());
     //     ensures(#[auto_trigger] d.entries.index(i).get_Directory_0().inv());
     //     assert(d.directories_obey_invariant());
     // });
-    lemma_map_union_prefer_right_remove_commute::<nat,PageTableEntry>();
-    lemma_map_union_prefer_right_insert_commute::<nat,PageTableEntry>();
+    lemma_map_union_prefer_right_remove_commute::<nat,PTE>();
+    lemma_map_union_prefer_right_insert_commute::<nat,PTE>();
     assert(forall|a: int, b: int| #[trigger] (a * b) == b * a) by (nonlinear_arith) { };
 }
 
 
 pub struct PageTableContents {
-    pub map: Map<nat /* VAddr */, PageTableEntry>,
+    pub map: Map<nat /* VAddr */, PTE>,
     pub arch: Arch,
     pub lower: nat,
     pub upper: nat,
@@ -89,7 +89,7 @@ impl PageTableContents {
                     MemRegion { base: b2, size: self.map[b2].frame.size }))
     }
 
-    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PageTableEntry) -> bool {
+    pub open spec(checked) fn candidate_mapping_in_bounds(self, base: nat, pte: PTE) -> bool {
         self.lower <= base && base + pte.frame.size <= self.upper
     }
 
@@ -100,14 +100,14 @@ impl PageTableContents {
             self.map.dom().contains(b1) ==> self.candidate_mapping_in_bounds(b1, self.map[b1])
     }
 
-    pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PageTableEntry) -> bool {
+    pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PTE) -> bool {
         &&& aligned(base, pte.frame.size)
         &&& aligned(pte.frame.base, pte.frame.size)
         &&& self.candidate_mapping_in_bounds(base, pte)
         &&& self.arch.contains_entry_size(pte.frame.size)
     }
 
-    pub open spec(checked) fn valid_mapping(self, base: nat, pte: PageTableEntry) -> bool {
+    pub open spec(checked) fn valid_mapping(self, base: nat, pte: PTE) -> bool {
         forall|b: nat| #![auto]
             self.map.dom().contains(b) ==> !overlap(
                 MemRegion { base: base, size: pte.frame.size },
@@ -115,7 +115,7 @@ impl PageTableContents {
     }
 
     /// Maps the given `pte` at `base` in the address space
-    pub open spec(checked) fn map_frame(self, base: nat, pte: PageTableEntry) -> Result<PageTableContents,PageTableContents> {
+    pub open spec(checked) fn map_frame(self, base: nat, pte: PTE) -> Result<PageTableContents,PageTableContents> {
         if self.accepted_mapping(base, pte) {
             if self.valid_mapping(base, pte) {
                 Ok(PageTableContents {
@@ -130,7 +130,7 @@ impl PageTableContents {
         }
     }
 
-    proof fn map_frame_preserves_inv(self, base: nat, pte: PageTableEntry)
+    proof fn map_frame_preserves_inv(self, base: nat, pte: PTE)
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
@@ -151,14 +151,14 @@ impl PageTableContents {
 
     /// Given a virtual address `vaddr` it returns the corresponding `PAddr`
     /// and access rights or an error in case no mapping is found.
-    pub open spec(checked) fn resolve(self, vaddr: nat) -> Result<(nat, PageTableEntry),()>
+    pub open spec(checked) fn resolve(self, vaddr: nat) -> Result<(nat, PTE),()>
         recommends self.accepted_resolve(vaddr)
     {
-        if exists|base:nat, pte:PageTableEntry|
+        if exists|base:nat, pte:PTE|
             self.map.contains_pair(base, pte) &&
             between(vaddr, base, base + pte.frame.size)
         {
-            let (base, pte) = choose|base:nat, pte:PageTableEntry|
+            let (base, pte) = choose|base:nat, pte:PTE|
                 self.map.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
             Ok((base, pte))
         } else {

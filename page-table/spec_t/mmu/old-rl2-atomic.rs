@@ -93,7 +93,7 @@ pub open spec fn valid_walk(
     state: State,
     core: Core,
     va: usize,
-    pte: Option<PageTableEntry>,
+    pte: Option<PTE>,
     path: Seq<(usize, PDE)>,
     ) -> bool
 {

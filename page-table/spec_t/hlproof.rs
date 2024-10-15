@@ -1,7 +1,7 @@
 #![verus::trusted]
 use crate::definitions_t::{
     above_zero, between, candidate_mapping_overlaps_existing_pmem, overlap, MemRegion,
-    PageTableEntry, WORD_SIZE,
+    PTE, WORD_SIZE,
 };
 use crate::spec_t::mem;
 use vstd::prelude::*;
@@ -21,9 +21,9 @@ verus! {
 //ensures that if a new mapping is added the old ones are still in there and no new other mappings appear
 pub proof fn lemma_mem_domain_from_mappings(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
     base: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         !mappings.dom().contains(base),
@@ -54,7 +54,7 @@ pub proof fn lemma_mem_domain_from_mappings(
         mappings.insert(base, pte),
     ) by {
         let vaddr = word_idx * WORD_SIZE as nat;
-        let (base2, pte2) = choose|base: nat, pte: PageTableEntry|
+        let (base2, pte2) = choose|base: nat, pte: PTE|
             {
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
                 let pmem_idx = mem::word_index_spec(paddr);
@@ -72,7 +72,7 @@ pub proof fn lemma_mem_domain_from_mappings(
             mappings.insert(base, pte),
         ) implies between(word_idx * WORD_SIZE as nat, base, base + pte.frame.size) by {
         let vaddr = word_idx * WORD_SIZE as nat;
-        let (base2, pte2) = choose|base2: nat, pte2: PageTableEntry|
+        let (base2, pte2) = choose|base2: nat, pte2: PTE|
             {
                 let paddr = (pte2.frame.base + (vaddr - base2)) as nat;
                 let pmem_idx = mem::word_index_spec(paddr);
@@ -94,7 +94,7 @@ pub proof fn lemma_mem_domain_from_mappings(
     };
 }
 
-pub proof fn lemma_mem_domain_from_entry_finite(phys_mem_size: nat, base: nat, pte: PageTableEntry)
+pub proof fn lemma_mem_domain_from_entry_finite(phys_mem_size: nat, base: nat, pte: PTE)
     ensures
         mem_domain_from_entry(phys_mem_size, base, pte).finite(),
 {
@@ -109,7 +109,7 @@ pub proof fn lemma_mem_domain_from_entry_finite(phys_mem_size: nat, base: nat, p
 
 pub proof fn lemma_mem_domain_from_empty_mappings_finite(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
 )
     requires
         mappings.dom() === Set::empty(),
@@ -121,7 +121,7 @@ pub proof fn lemma_mem_domain_from_empty_mappings_finite(
 
 pub proof fn lemma_mem_domain_from_mapping_finite(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
 )
     requires
         mappings.dom().finite(),
@@ -145,9 +145,9 @@ pub proof fn lemma_mem_domain_from_mapping_finite(
 
 pub proof fn lemma_mem_domain_from_mappings_finite_induction(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
     base: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         mappings.dom().finite(),
@@ -174,9 +174,9 @@ pub proof fn lemma_mem_domain_from_mappings_finite_induction(
 
 pub proof fn lemma_finite_step(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
     base: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         mem_domain_from_mappings(phys_mem_size, mappings).finite(),
@@ -200,9 +200,9 @@ pub proof fn lemma_finite_step(
 
 pub proof fn lemma_mem_domain_from_new_mappings_subset(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
     bs: nat,
-    pt: PageTableEntry,
+    pt: PTE,
     word_idx: nat,
 )
     requires
@@ -214,7 +214,7 @@ pub proof fn lemma_mem_domain_from_new_mappings_subset(
 {
     let mappings_ext = mappings.insert(bs, pt);
     let vaddr = word_idx * WORD_SIZE as nat;
-    let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry|
+    let (base, pte): (nat, PTE) = choose|base: nat, pte: PTE|
         {
             &&& #[trigger] mappings_ext.contains_pair(base, pte)
             &&& mem_domain_from_entry_contains(phys_mem_size, vaddr, base, pte)
@@ -242,7 +242,7 @@ pub proof fn lemma_overlap_sym(region1: MemRegion, region2: MemRegion)
 {
 }
 
-pub proof fn lemma_overlap(mappings: Map<nat, PageTableEntry>, base: nat, pte: PageTableEntry)
+pub proof fn lemma_overlap(mappings: Map<nat, PTE>, base: nat, pte: PTE)
     requires
         pmem_no_overlap(mappings),
         !candidate_mapping_overlaps_existing_pmem(mappings, pte),
@@ -296,7 +296,7 @@ pub proof fn insert_map_preserves_unique(
     thread_state: Map<nat, AbstractArguments>,
     thread_id: nat,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         inflight_maps_unique(thread_state),
@@ -403,7 +403,7 @@ pub proof fn map_start_preserves_inv(
     s2: AbstractVariables,
     thread_id: nat,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         step_Map_start(c, s1, s2, thread_id, vaddr, pte),

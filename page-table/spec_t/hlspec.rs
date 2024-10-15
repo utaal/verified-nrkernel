@@ -5,7 +5,7 @@
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
-    x86_arch_spec, MemRegion, PageTableEntry, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
+    x86_arch_spec, MemRegion, PTE, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
     MAX_PHYADDR, WORD_SIZE,
 };
 use crate::spec_t::mem;
@@ -31,14 +31,14 @@ pub struct AbstractVariables {
     /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
     /// flags into `map` as well and write the specification exclusively in terms of `map` but that
     /// also makes some of the enabling conditions awkward, e.g. full mappings have the same flags, etc.
-    pub mappings: Map<nat, PageTableEntry>,
+    pub mappings: Map<nat, PTE>,
     pub sound: bool,
 }
 
 #[allow(inconsistent_fields)]
 pub enum AbstractStep {
-    ReadWrite { thread_id: nat, vaddr: nat, op: RWOp, pte: Option<(nat, PageTableEntry)> },
-    MapStart { thread_id: nat, vaddr: nat, pte: PageTableEntry },
+    ReadWrite { thread_id: nat, vaddr: nat, op: RWOp, pte: Option<(nat, PTE)> },
+    MapStart { thread_id: nat, vaddr: nat, pte: PTE },
     MapEnd { thread_id: nat, result: Result<(), ()> },
     UnmapStart { thread_id: nat, vaddr: nat },
     UnmapEnd { thread_id: nat, result: Result<(), ()> },
@@ -48,8 +48,8 @@ pub enum AbstractStep {
 //To allow two-step transitions that preserve arguments
 #[allow(inconsistent_fields)]
 pub enum AbstractArguments {
-    Map { vaddr: nat, pte: PageTableEntry },
-    Unmap { vaddr: nat, pte: Option<PageTableEntry> },
+    Map { vaddr: nat, pte: PTE },
+    Unmap { vaddr: nat, pte: Option<PTE> },
     Empty,
 }
 
@@ -70,10 +70,10 @@ pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
 pub open spec fn mem_domain_from_mappings_contains(
     phys_mem_size: nat,
     word_idx: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
 ) -> bool {
     let vaddr = word_idx * WORD_SIZE as nat;
-    exists|base: nat, pte: PageTableEntry|
+    exists|base: nat, pte: PTE|
         {
             &&& #[trigger] mappings.contains_pair(base, pte)
             &&& mem_domain_from_entry_contains(phys_mem_size, vaddr, base, pte)
@@ -84,7 +84,7 @@ pub open spec fn mem_domain_from_entry_contains(
     phys_mem_size: nat,
     vaddr: nat,
     base: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     let paddr = (pte.frame.base + (vaddr - base)) as nat;
     let pmem_idx = mem::word_index_spec(paddr);
@@ -94,12 +94,12 @@ pub open spec fn mem_domain_from_entry_contains(
 
 pub open spec fn mem_domain_from_mappings(
     phys_mem_size: nat,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
 ) -> Set<nat> {
     Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings))
 }
 
-pub open spec fn mem_domain_from_entry(phys_mem_size: nat, base: nat, pte: PageTableEntry) -> Set<
+pub open spec fn mem_domain_from_entry(phys_mem_size: nat, base: nat, pte: PTE) -> Set<
     nat,
 > {
     Set::new(
@@ -168,7 +168,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
 
 pub open spec fn candidate_mapping_overlaps_inflight_pmem(
     inflightargs: Set<AbstractArguments>,
-    candidate: PageTableEntry,
+    candidate: PTE,
 ) -> bool {
     &&& exists|b: AbstractArguments|
         #![auto]
@@ -196,7 +196,7 @@ pub open spec fn step_ReadWrite(
     thread_id: nat,
     vaddr: nat,
     op: RWOp,
-    pte: Option<(nat, PageTableEntry)>,
+    pte: Option<(nat, PTE)>,
 ) -> bool {
     let vmem_idx = mem::word_index_spec(vaddr);
     &&& s2.sound == s1.sound
@@ -258,10 +258,10 @@ pub open spec fn step_ReadWrite(
 // Map
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Map_sound(
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
     inflights: Set<AbstractArguments>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     &&& !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte.frame.size)
     &&& !candidate_mapping_overlaps_existing_pmem(mappings, pte)
@@ -270,9 +270,9 @@ pub open spec fn step_Map_sound(
 
 pub open spec fn step_Map_enabled(
     inflight: Set<AbstractArguments>,
-    map: Map<nat, PageTableEntry>,
+    map: Map<nat, PTE>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
@@ -292,7 +292,7 @@ pub open spec fn step_Map_start(
     s2: AbstractVariables,
     thread_id: nat,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
@@ -497,7 +497,7 @@ pub open spec fn next(c: AbstractConstants, s1: AbstractVariables, s2: AbstractV
     exists|step: AbstractStep| next_step(c, s1, s2, step)
 }
 
-pub open spec fn pmem_no_overlap(mappings: Map<nat, PageTableEntry>) -> bool {
+pub open spec fn pmem_no_overlap(mappings: Map<nat, PTE>) -> bool {
     forall|bs1: nat, bs2: nat|
         mappings.dom().contains(bs1) && mappings.dom().contains(bs2) && overlap(
             mappings.index(bs1).frame,
@@ -507,7 +507,7 @@ pub open spec fn pmem_no_overlap(mappings: Map<nat, PageTableEntry>) -> bool {
 
 pub open spec fn inflight_map_no_overlap_pmem(
     inflightargs: Set<AbstractArguments>,
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
 ) -> bool {
     forall|b: AbstractArguments|
         #![auto]
@@ -536,7 +536,7 @@ pub open spec fn inflight_map_no_overlap_inflight_pmem(
         }
 }
 
-pub open spec fn mappings_frame_sizes_over_zero(mappings: Map<nat, PageTableEntry>) -> bool {
+pub open spec fn mappings_frame_sizes_over_zero(mappings: Map<nat, PTE>) -> bool {
     forall|base: nat|
         #![auto]
         mappings.dom().contains(base) ==> above_zero(mappings.index(base).frame.size)

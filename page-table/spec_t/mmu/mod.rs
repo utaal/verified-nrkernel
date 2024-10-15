@@ -6,7 +6,7 @@ pub mod pt_mem;
 
 use vstd::prelude::*;
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PageTableEntry, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize };
+use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize };
 
 verus! {
 
@@ -34,7 +34,7 @@ impl Res {
 pub enum WalkResult {
     Valid {
         vbase: usize,
-        pte: PageTableEntry,
+        pte: PTE,
     },
     /// A `WalkResult::Invalid { .. }` indicates that the the range `[base..(base + size)]` has no
     /// existing valid translation (according to the result of a page table walk).
@@ -85,7 +85,7 @@ impl Walk {
             } else { arbitrary() };
             WalkResult::Valid {
                 vbase,
-                pte: PageTableEntry {
+                pte: PTE {
                     frame: MemRegion { base: base as nat, size: size as nat },
                     flags: self.flags(),
                 }

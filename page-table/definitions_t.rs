@@ -92,14 +92,14 @@ pub open spec fn next_entry_base_from_index(base: nat, idx: nat, entry_size: nat
     base + (idx + 1) * entry_size
 }
 
-pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PageTableEntry) -> bool {
+pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PTE) -> bool {
     base + pte.frame.size < x86_arch_spec.upper_vaddr(0, 0)
 }
 
 pub open spec fn candidate_mapping_overlaps_existing_vmem(
-    mappings: Map<nat, PageTableEntry>,
+    mappings: Map<nat, PTE>,
     base: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     exists|b: nat|
         #![auto]
@@ -113,8 +113,8 @@ pub open spec fn candidate_mapping_overlaps_existing_vmem(
 }
 
 pub open spec fn candidate_mapping_overlaps_existing_pmem(
-    mappings: Map<nat, PageTableEntry>,
-    pte: PageTableEntry,
+    mappings: Map<nat, PTE>,
+    pte: PTE,
 ) -> bool {
     exists|b: nat|
         #![auto]
@@ -237,13 +237,13 @@ pub struct Flags {
     pub disable_execute: bool,
 }
 
-pub struct PageTableEntry {
+pub struct PTE {
     pub frame: MemRegion,
-    /// The `flags` field on a `PageTableEntry` denotes the combined flags of the entire
+    /// The `flags` field on a `PTE` denotes the combined flags of the entire
     /// translation path to the entry. (See page table walk definition in hardware model,
     /// `spec_t::hardware`.) However, because we always set the flags on directories to be
     /// permissive these flags also correspond to the flags that we set for the frame mapping
-    /// corresponding to this `PageTableEntry`.
+    /// corresponding to this `PTE`.
     pub flags: Flags,
 }
 
@@ -253,8 +253,8 @@ pub struct PageTableEntryExec {
 }
 
 impl PageTableEntryExec {
-    pub open spec fn view(self) -> PageTableEntry {
-        PageTableEntry { frame: self.frame@, flags: self.flags }
+    pub open spec fn view(self) -> PTE {
+        PTE { frame: self.frame@, flags: self.flags }
     }
 }
 

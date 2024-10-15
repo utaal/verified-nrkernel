@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
 use crate::definitions_t::{ Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_BASE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, aligned, new_seq, bitmask_inc };
-use crate::definitions_t::{ PageTableEntry, PageTableEntryExec, MemRegion};
+use crate::definitions_t::{ PTE, PageTableEntryExec, MemRegion};
 use crate::spec_t::impl_spec;
 use crate::spec_t::mem;
 use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GPDE, nat_to_u64 };
@@ -49,13 +49,13 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
     let m2 = PT::interp(&mem, pt).interp().map;
     PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
     assert(PT::interp(&mem, pt).interp().inv());
-    assert forall|addr: nat, pte: PageTableEntry|
+    assert forall|addr: nat, pte: PTE|
         m1.contains_pair(addr, pte) implies #[trigger] m2.contains_pair(addr, pte)
     by {
         assert(addr == addr as u64);
         let addr: u64 = addr as u64;
         assert(addr < MAX_BASE);
-        let pte = choose|pte: PageTableEntry| valid_pt_walk(mem, addr, pte);
+        let pte = choose|pte: PTE| valid_pt_walk(mem, addr, pte);
         assert(valid_pt_walk(mem, addr as u64, pte));
         PT::lemma_interp_at_facts(&mem, pt, 0, mem.cr3_spec().base, 0);
 
@@ -101,7 +101,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                         addr: page_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                     } => {
                         assert(aligned(addr as nat, L1_ENTRY_SIZE as nat));
-                        assert(pte == PageTableEntry {
+                        assert(pte == PTE {
                             frame: MemRegion { base: page_addr as nat, size: L1_ENTRY_SIZE as nat },
                             flags: Flags {
                                 is_writable:      l0_RW &&  l1_RW,
@@ -143,7 +143,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                                 addr: page_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                             } => {
                                 assert(aligned(addr as nat, L2_ENTRY_SIZE as nat));
-                                assert(pte == PageTableEntry {
+                                assert(pte == PTE {
                                     frame: MemRegion { base: page_addr as nat, size: L2_ENTRY_SIZE as nat },
                                     flags: Flags {
                                         is_writable:      l0_RW &&  l1_RW &&  l2_RW,
@@ -193,7 +193,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                                         addr: page_addr, RW: l3_RW, US: l3_US, XD: l3_XD, ..
                                     } => {
                                         assert(aligned(addr as nat, L3_ENTRY_SIZE as nat));
-                                        assert(pte == PageTableEntry {
+                                        assert(pte == PTE {
                                             frame: MemRegion { base: page_addr as nat, size: L3_ENTRY_SIZE as nat },
                                             flags: Flags {
                                                 is_writable:      l0_RW &&  l1_RW &&  l2_RW &&  l3_RW,
@@ -258,7 +258,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
     assert forall|addr: nat| !m1.contains_key(addr) ==> !m2.contains_key(addr) by {
         PT::lemma_interp_at_facts(&mem, pt, 0, mem.cr3_spec().base, 0);
         PT::interp(&mem, pt).lemma_inv_implies_interp_inv();
-        if addr < MAX_BASE && (exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte)) {
+        if addr < MAX_BASE && (exists|pte: PTE| valid_pt_walk(mem, nat_to_u64(addr), pte)) {
         } else {
             if addr >= MAX_BASE {
             } else {
@@ -267,9 +267,9 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                 // addr` was unstable and seems okay now, so I'm not touching these.
                 assert(addr == addr as u64);
                 assert(nat_to_u64(addr) == addr);
-                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, nat_to_u64(addr), pte));
+                assert(!exists|pte: PTE| valid_pt_walk(mem, nat_to_u64(addr), pte));
                 let addr: u64 = addr as u64;
-                assert(!exists|pte: PageTableEntry| valid_pt_walk(mem, addr, pte));
+                assert(!exists|pte: PTE| valid_pt_walk(mem, addr, pte));
                 let l0_idx_u64:  u64 = l0_bits!(addr);
                 let l0_idx:      nat = l0_idx_u64 as nat;
                 let l1_idx_u64:  u64 = l1_bits!(addr);
@@ -328,7 +328,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                 addr: page_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                             } => {
                                 assert_by_contradiction!(!aligned(addr as nat, L1_ENTRY_SIZE as nat), {
-                                    let pte = PageTableEntry {
+                                    let pte = PTE {
                                         frame: MemRegion { base: page_addr as nat, size: L1_ENTRY_SIZE as nat },
                                         flags: Flags {
                                             is_writable:      l0_RW &&  l1_RW,
@@ -380,7 +380,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                         addr: page_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                                     } => {
                                         assert_by_contradiction!(!aligned(addr as nat, L2_ENTRY_SIZE as nat), {
-                                            let pte = PageTableEntry {
+                                            let pte = PTE {
                                                 frame: MemRegion { base: page_addr as nat, size: L2_ENTRY_SIZE as nat },
                                                 flags: Flags {
                                                     is_writable:      l0_RW &&  l1_RW &&  l2_RW,
@@ -437,7 +437,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                                 addr: page_addr, RW: l3_RW, US: l3_US, XD: l3_XD, ..
                                             } => {
                                                 assert_by_contradiction!(!aligned(addr as nat, L3_ENTRY_SIZE as nat), {
-                                                    let pte = PageTableEntry {
+                                                    let pte = PTE {
                                                         frame: MemRegion { base: page_addr as nat, size: L3_ENTRY_SIZE as nat },
                                                         flags: Flags {
                                                             is_writable:      l0_RW &&  l1_RW &&  l2_RW &&  l3_RW,

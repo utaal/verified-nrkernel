@@ -192,7 +192,7 @@ pub open spec fn valid_walk(
     c: Constants,
     core: Core,
     va: usize,
-    pte: Option<PageTableEntry>,
+    pte: Option<PTE>,
     path: Seq<(usize, PDE)>,
     ) -> bool
 {

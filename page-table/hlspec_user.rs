@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound,
-    Flags, LoadResult, MemRegion, PageTableEntry, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
+    Flags, LoadResult, MemRegion, PTE, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
 };
 use crate::spec_t::hlspec::*;
 
@@ -42,7 +42,7 @@ proof fn program_1() {
     assert(wf(c, s1));
     assert(init(c, s1));
 
-    let pte1 = PageTableEntry {
+    let pte1 = PTE {
         frame: MemRegion { base: 4096, size: 4096 },
         flags: Flags { is_writable: true, is_supervisor: false, disable_execute: true },
     };

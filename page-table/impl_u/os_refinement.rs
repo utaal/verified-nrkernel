@@ -5,7 +5,7 @@ use vstd::prelude::*;
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap, HWLoadResult, HWRWOp, HWStoreResult,
-    LoadResult, MemRegion, PageTableEntry, RWOp, StoreResult, WORD_SIZE,
+    LoadResult, MemRegion, PTE, RWOp, StoreResult, WORD_SIZE,
 };
 use crate::spec_t::hlproof::lemma_mem_domain_from_mappings;
 use crate::spec_t::os_invariant::{
@@ -173,7 +173,7 @@ proof fn lemma_map_soundness_equality<M: mmu::MMU>(
     c: os::OSConstants,
     s: os::OSVariables<M>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         s.basic_inv(c),
@@ -255,7 +255,7 @@ proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem<M: mmu::MMU>(
     c: os::OSConstants,
     s: os::OSVariables<M>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         s.basic_inv(c),
@@ -447,7 +447,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
     vaddr: nat,
     paddr: nat,
     op: HWRWOp,
-    pte: Option<(nat, PageTableEntry)>,
+    pte: Option<(nat, PTE)>,
     core: hardware::Core,
 )
     requires
@@ -576,7 +576,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
         },
         None => {
             if (pte is None) {
-                assert(!exists|base: nat, pte: PageTableEntry|
+                assert(!exists|base: nat, pte: PTE|
                     {
                         &&& #[trigger] s1.interp_pt_mem().contains_pair(base, pte)
                         &&& hlspec::mem_domain_from_entry_contains(
@@ -592,7 +592,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
                         key,
                         value,
                     ));
-                assert(!exists|base: nat, pte: PageTableEntry|
+                assert(!exists|base: nat, pte: PTE|
                     {
                         &&& #[trigger] hl_s1.mappings.contains_pair(base, pte)
                         &&& hlspec::mem_domain_from_entry_contains(
@@ -631,7 +631,7 @@ proof fn step_Map_Start_refines<M: mmu::MMU>(
     s2: os::OSVariables<M>,
     ULT_id: nat,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 )
     requires
         s1.basic_inv(c),
@@ -969,9 +969,9 @@ proof fn step_Map_End_refines<M: mmu::MMU>(
                         ));
                         assert(hl_s2.mem.dom().contains(idx));
                         let vidx = (idx * WORD_SIZE as nat);
-                        let (mem_base, mem_pte): (nat, PageTableEntry) = choose|
+                        let (mem_base, mem_pte): (nat, PTE) = choose|
                             base: nat,
-                            pte: PageTableEntry,
+                            pte: PTE,
                         |
                             {
                                 &&& #[trigger] hl_s1.mappings.contains_pair(base, pte)
@@ -1265,9 +1265,9 @@ proof fn step_Unmap_Start_refines<M: mmu::MMU>(
                     ));
                     assert(hl_s1.mem.dom().contains(idx));
                     let vidx = (idx * WORD_SIZE as nat);
-                    let (mem_base, mem_pte): (nat, PageTableEntry) = choose|
+                    let (mem_base, mem_pte): (nat, PTE) = choose|
                         base: nat,
-                        pte: PageTableEntry,
+                        pte: PTE,
                     |
                         {
                             &&& #[trigger] hl_s2.mappings.contains_pair(base, pte)
@@ -1330,7 +1330,7 @@ proof fn step_Unmap_Op_Change_refines<M: mmu::MMU>(
     s1: os::OSVariables<M>,
     s2: os::OSVariables<M>,
     core: hardware::Core,
-    result: Result<PageTableEntry, ()>
+    result: Result<PTE, ()>
 )
     requires
         s1.inv(c),

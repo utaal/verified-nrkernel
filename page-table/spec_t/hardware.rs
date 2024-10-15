@@ -5,7 +5,7 @@
 
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, HWRWOp, MemRegion,
-    PageTableEntry, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR_WIDTH,
+    PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR_WIDTH,
     PAGE_SIZE, Core,
 };
 use crate::spec_t::mem::{self, word_index_spec};
@@ -34,7 +34,7 @@ pub struct NUMAVariables {
 }
 
 pub struct CoreVariables {
-    pub tlb: Map<nat, PageTableEntry>,
+    pub tlb: Map<nat, PTE>,
 }
 
 #[allow(inconsistent_fields)]
@@ -48,7 +48,7 @@ pub enum HWStep {
         walk_result: WalkResult,
         core: Core,
     },
-    TLBFill { vaddr: usize, pte: PageTableEntry, core: Core },
+    TLBFill { vaddr: usize, pte: PTE, core: Core },
     TLBEvict { vaddr: nat, core: Core },
     Stutter,
 }
@@ -371,7 +371,7 @@ pub open spec fn read_entry(
 pub open spec fn valid_pt_walk(
     pt_mem: mem::PageTableMemory,
     addr: u64,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     let l0_idx: nat = l0_bits!(addr) as nat;
     let l1_idx: nat = l1_bits!(addr) as nat;
@@ -381,7 +381,7 @@ pub open spec fn valid_pt_walk(
         GPDE::Directory { addr: dir_addr, RW: l0_RW, US: l0_US, XD: l0_XD, .. } => {
             match read_entry(pt_mem, dir_addr as nat, 1, l1_idx) {
                 GPDE::Page { addr: page_addr, RW: l1_RW, US: l1_US, XD: l1_XD, .. } => {
-                    aligned(addr as nat, L1_ENTRY_SIZE as nat) && pte == PageTableEntry {
+                    aligned(addr as nat, L1_ENTRY_SIZE as nat) && pte == PTE {
                         frame: MemRegion { base: page_addr as nat, size: L1_ENTRY_SIZE as nat },
                         flags: Flags {
                             is_writable: l0_RW && l1_RW,
@@ -393,7 +393,7 @@ pub open spec fn valid_pt_walk(
                 GPDE::Directory { addr: dir_addr, RW: l1_RW, US: l1_US, XD: l1_XD, .. } => {
                     match read_entry(pt_mem, dir_addr as nat, 2, l2_idx) {
                         GPDE::Page { addr: page_addr, RW: l2_RW, US: l2_US, XD: l2_XD, .. } => {
-                            aligned(addr as nat, L2_ENTRY_SIZE as nat) && pte == PageTableEntry {
+                            aligned(addr as nat, L2_ENTRY_SIZE as nat) && pte == PTE {
                                 frame: MemRegion {
                                     base: page_addr as nat,
                                     size: L2_ENTRY_SIZE as nat,
@@ -409,7 +409,7 @@ pub open spec fn valid_pt_walk(
                             match read_entry(pt_mem, dir_addr as nat, 3, l3_idx) {
                                 GPDE::Page { addr: page_addr, RW: l3_RW, US: l3_US, XD: l3_XD, .. } => {
                                     aligned(addr as nat, L3_ENTRY_SIZE as nat) && pte
-                                        == PageTableEntry {
+                                        == PTE {
                                         frame: MemRegion {
                                             base: page_addr as nat,
                                             size: L3_ENTRY_SIZE as nat,
@@ -443,7 +443,7 @@ pub open spec fn nat_to_u64(n: nat) -> u64
 }
 
 /// Page table walker interpretation of the page table memory
-pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<nat, PageTableEntry> {
+pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<nat, PTE> {
     // TODO:
     arbitrary()
     //Map::new(
@@ -451,8 +451,8 @@ pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<nat, PageTableEntry
     //        addr
     //            < MAX_BASE
     //        // Casting addr to u64 is okay since addr < MAX_BASE < u64::MAX
-    //         && exists|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
-    //    |addr: nat| choose|pte: PageTableEntry| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
+    //         && exists|pte: PTE| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
+    //    |addr: nat| choose|pte: PTE| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
     //)
 }
 
@@ -591,7 +591,7 @@ pub open spec fn step_TLBFill<M: mmu::MMU>(
     s2: HWVariables<M>,
     core: Core,
     vbase: usize,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     &&& valid_core(c, core)
     &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, WalkResult::Valid { vbase, pte }))

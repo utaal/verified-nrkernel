@@ -12,7 +12,7 @@ use crate::spec_t::mmu::WalkResult;
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
-    x86_arch_spec, HWLoadResult, HWRWOp, HWStoreResult, LoadResult, MemRegion, PageTableEntry,
+    x86_arch_spec, HWLoadResult, HWRWOp, HWStoreResult, LoadResult, MemRegion, PTE,
     RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core,
 };
 use crate::extra::result_map_ok;
@@ -44,15 +44,15 @@ pub struct ShootdownVector {
 #[allow(inconsistent_fields)]
 pub enum CoreState {
     Idle,
-    MapWaiting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
-    MapExecuting { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
+    MapWaiting { ULT_id: nat, vaddr: nat, pte: PTE },
+    MapExecuting { ULT_id: nat, vaddr: nat, pte: PTE },
     UnmapWaiting { ULT_id: nat, vaddr: nat },
-    UnmapOpExecuting { ULT_id: nat, vaddr: nat, result: Option<Result<PageTableEntry, ()>> },
-    UnmapOpDone { ULT_id: nat, vaddr: nat, result: Result<PageTableEntry, ()> },
+    UnmapOpExecuting { ULT_id: nat, vaddr: nat, result: Option<Result<PTE, ()>> },
+    UnmapOpDone { ULT_id: nat, vaddr: nat, result: Result<PTE, ()> },
     UnmapShootdownWaiting {
         ULT_id: nat,
         vaddr: nat,
-        result: Result<PageTableEntry, ()>,
+        result: Result<PTE, ()>,
     },
 }
 
@@ -70,7 +70,7 @@ impl CoreState {
         self is Idle
     }
 
-    pub open spec fn vmem_pte_size(self, pt: Map<nat, PageTableEntry>) -> nat
+    pub open spec fn vmem_pte_size(self, pt: Map<nat, PTE>) -> nat
         recommends
             !self.is_idle(),
     {
@@ -335,7 +335,7 @@ impl<M: mmu::MMU> OSVariables<M> {
     // Interpretation functions
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    pub open spec fn interp_pt_mem(self) -> Map<nat, PageTableEntry> {
+    pub open spec fn interp_pt_mem(self) -> Map<nat, PTE> {
         hardware::interp_pt_mem(self.hw.mmu.pt_mem())
     }
 
@@ -358,7 +358,7 @@ impl<M: mmu::MMU> OSVariables<M> {
         )
     }
 
-    pub open spec fn effective_mappings(self) -> Map<nat, PageTableEntry> {
+    pub open spec fn effective_mappings(self) -> Map<nat, PTE> {
         let effective_mappings = self.interp_pt_mem();
         let unmap_dom = self.inflight_unmap_vaddr();
         Map::new(
@@ -370,14 +370,14 @@ impl<M: mmu::MMU> OSVariables<M> {
 
     pub open spec fn interp_vmem(self, c: OSConstants) -> Map<nat, nat> {
         let phys_mem_size = c.interp().phys_mem_size;
-        let mappings: Map<nat, PageTableEntry> = self.effective_mappings();
+        let mappings: Map<nat, PTE> = self.effective_mappings();
         Map::new(
             |vmem_idx: nat|
                 hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
             |vmem_idx: nat|
                 {
                     let vaddr = vmem_idx * WORD_SIZE as nat;
-                    let (base, pte): (nat, PageTableEntry) = choose|base: nat, pte: PageTableEntry|
+                    let (base, pte): (nat, PTE) = choose|base: nat, pte: PTE|
                         #![auto]
                         mappings.contains_pair(base, pte) && between(
                             vaddr,
@@ -442,7 +442,7 @@ impl<M: mmu::MMU> OSVariables<M> {
     }
 
     pub open spec fn interp(self, c: OSConstants) -> hlspec::AbstractVariables {
-        let mappings: Map<nat, PageTableEntry> = self.effective_mappings();
+        let mappings: Map<nat, PTE> = self.effective_mappings();
         let mem: Map<nat, nat> = self.interp_vmem(c);
         let thread_state: Map<nat, hlspec::AbstractArguments> = self.interp_thread_state(c);
         let sound: bool = self.sound;
@@ -454,9 +454,9 @@ impl<M: mmu::MMU> OSVariables<M> {
 // Overlapping inflight memory helper functions for HL-soundness
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn candidate_mapping_overlaps_inflight_pmem(
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     inflightargs: Set<CoreState>,
-    candidate: PageTableEntry,
+    candidate: PTE,
 ) -> bool {
     exists|b: CoreState|
         #![auto]
@@ -484,7 +484,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
 }
 
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     inflightargs: Set<CoreState>,
     base: nat,
     candidate_size: nat,
@@ -561,10 +561,10 @@ pub open spec fn step_HW<M: mmu::MMU>(
 // Map
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Map_sound(
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     inflightargs: Set<CoreState>,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     &&& !candidate_mapping_overlaps_existing_pmem(pt, pte)
     &&& !candidate_mapping_overlaps_inflight_pmem(pt, inflightargs, pte)
@@ -574,7 +574,7 @@ pub open spec fn step_Map_sound(
 pub open spec fn step_Map_enabled(
     //pt_mem: mem::PageTableMemory,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
@@ -594,7 +594,7 @@ pub open spec fn step_Map_Start<M: mmu::MMU>(
     s2: OSVariables<M>,
     ULT_id: nat,
     vaddr: nat,
-    pte: PageTableEntry,
+    pte: PTE,
 ) -> bool {
     let core = c.ULT2core[ULT_id];
     //enabling conditions
@@ -681,7 +681,7 @@ pub open spec fn step_Map_End<M: mmu::MMU>(
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Unmap_sound(
-    pt: Map<nat, PageTableEntry>,
+    pt: Map<nat, PTE>,
     inflightargs: Set<CoreState>,
     vaddr: nat,
     pte_size: nat,
@@ -750,7 +750,7 @@ pub open spec fn step_Unmap_Op_Change<M: mmu::MMU>(
     core: Core,
     paddr: usize,
     value: usize,
-    result: Result<PageTableEntry, ()>,
+    result: Result<PTE, ()>,
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
@@ -893,14 +893,14 @@ pub open spec fn step_Unmap_End<M: mmu::MMU>(
 pub enum OSStep {
     HW { ULT_id: nat, step: hardware::HWStep },
     //map
-    MapStart { ULT_id: nat, vaddr: nat, pte: PageTableEntry },
+    MapStart { ULT_id: nat, vaddr: nat, pte: PTE },
     MapOpStart { core: Core },
     MapOpStutter { core: Core, addr: usize, value: usize },
     MapEnd { core: Core, addr: usize, value: usize, result: Result<(), ()> },
     //unmap
     UnmapStart { ULT_id: nat, vaddr: nat },
     UnmapOpStart { core: Core },
-    UnmapOpChange { core: Core, addr: usize, value: usize, result: Result<PageTableEntry, ()> },
+    UnmapOpChange { core: Core, addr: usize, value: usize, result: Result<PTE, ()> },
     UnmapOpStutter { core: Core, addr: usize, value: usize },
     UnmapOpEnd { core: Core },
     UnmapInitiateShootdown { core: Core },
