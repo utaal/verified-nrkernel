@@ -137,8 +137,7 @@ pub enum Lbl {
     /// Internal event
     Tau,
     /// Completion of a page table walk.
-    /// Core, virtual address, Some(pte) if valid, None if invalid. If the walk is successful
-    /// (Some), the virtual address should always be aligned to the size of the mapped region.
+    /// Core, virtual address, walk result
     Walk(Core, WalkResult),
     /// Write to physical memory.
     /// Core, physical address, written value

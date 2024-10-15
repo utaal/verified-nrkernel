@@ -10,8 +10,7 @@ use crate::definitions_t::{
 };
 use crate::spec_t::mem::{self, word_index_spec};
 use vstd::prelude::*;
-use crate::spec_t::mmu::{self, WalkResult};
-use crate::spec_t::mmu::pt_mem;
+use crate::spec_t::mmu::{self, pt_mem, WalkResult};
 
 verus! {
 
@@ -19,7 +18,6 @@ pub struct HWConstants {
     pub NUMA_no: nat,
     pub core_no: nat,
     pub phys_mem_size: nat,
-    //optionally: core_nos: Map<nat, nat>,
 }
 
 pub struct HWVariables<M: mmu::MMU> {
@@ -41,6 +39,7 @@ pub struct CoreVariables {
 
 #[allow(inconsistent_fields)]
 pub enum HWStep {
+    Invlpg { core: Core, vaddr: usize },
     MMUStep { lbl: mmu::Lbl },
     ReadWrite {
         vaddr: nat,
@@ -143,10 +142,6 @@ pub const MASK_L2_PG_FLAG_PS: u64 = bit!(7u64);
 
 pub const MASK_L3_PG_FLAG_PAT: u64 = bit!(7u64);
 
-// const MASK_DIR_REFC:           u64 = bitmask_inc!(52u64,62u64); // Ignored bits for storing refcount in L3 and L2
-// const MASK_DIR_L1_REFC:        u64 = bitmask_inc!(8u64,12u64); // Ignored bits for storing refcount in L1
-// const MASK_DIR_REFC_SHIFT:     u64 = 52u64;
-// const MASK_DIR_L1_REFC_SHIFT:  u64 = 8u64;
 // In the implementation we can always use the 12:52 mask as the invariant guarantees that in the
 // other cases, the lower bits are already zero anyway.
 // We cannot use dual exec/spec constants here because for those Verus currently doesn't support
@@ -154,10 +149,7 @@ pub const MASK_L3_PG_FLAG_PAT: u64 = bit!(7u64);
 pub spec const MASK_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_ADDR_SPEC)]
-pub exec const MASK_ADDR: u64
-    ensures
-        MASK_ADDR == MASK_ADDR_SPEC,
-{
+pub exec const MASK_ADDR: u64 ensures MASK_ADDR == MASK_ADDR_SPEC {
     axiom_max_phyaddr_width_facts();
     bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
 }
@@ -165,10 +157,7 @@ pub exec const MASK_ADDR: u64
 pub spec const MASK_L1_PG_ADDR_SPEC: u64 = bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_L1_PG_ADDR_SPEC)]
-pub exec const MASK_L1_PG_ADDR: u64
-    ensures
-        MASK_L1_PG_ADDR == MASK_L1_PG_ADDR_SPEC,
-{
+pub exec const MASK_L1_PG_ADDR: u64 ensures MASK_L1_PG_ADDR == MASK_L1_PG_ADDR_SPEC {
     axiom_max_phyaddr_width_facts();
     bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1)
 }
@@ -176,10 +165,7 @@ pub exec const MASK_L1_PG_ADDR: u64
 pub spec const MASK_L2_PG_ADDR_SPEC: u64 = bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_L2_PG_ADDR_SPEC)]
-pub exec const MASK_L2_PG_ADDR: u64
-    ensures
-        MASK_L2_PG_ADDR == MASK_L2_PG_ADDR_SPEC,
-{
+pub exec const MASK_L2_PG_ADDR: u64 ensures MASK_L2_PG_ADDR == MASK_L2_PG_ADDR_SPEC {
     axiom_max_phyaddr_width_facts();
     bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1)
 }
@@ -187,10 +173,7 @@ pub exec const MASK_L2_PG_ADDR: u64
 pub spec const MASK_L3_PG_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_L3_PG_ADDR_SPEC)]
-pub exec const MASK_L3_PG_ADDR: u64
-    ensures
-        MASK_L3_PG_ADDR == MASK_L3_PG_ADDR_SPEC,
-{
+pub exec const MASK_L3_PG_ADDR: u64 ensures MASK_L3_PG_ADDR == MASK_L3_PG_ADDR_SPEC {
     axiom_max_phyaddr_width_facts();
     bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
 }
@@ -198,10 +181,7 @@ pub exec const MASK_L3_PG_ADDR: u64
 pub spec const MASK_DIR_ADDR_SPEC: u64 = MASK_ADDR;
 
 #[verifier::when_used_as_spec(MASK_DIR_ADDR_SPEC)]
-pub exec const MASK_DIR_ADDR: u64
-    ensures
-        MASK_DIR_ADDR == MASK_DIR_ADDR_SPEC,
-{
+pub exec const MASK_DIR_ADDR: u64 ensures MASK_DIR_ADDR == MASK_DIR_ADDR_SPEC {
     MASK_ADDR
 }
 
@@ -457,8 +437,7 @@ pub open spec fn valid_pt_walk(
 
 // Can't use `n as u64` in triggers because it's an arithmetic expression
 pub open spec fn nat_to_u64(n: nat) -> u64
-    recommends
-        n <= u64::MAX,
+    recommends n <= u64::MAX,
 {
     n as u64
 }
@@ -491,8 +470,16 @@ pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
 }
 
 pub open spec fn step_MMUStep<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, lbl: mmu::Lbl) -> bool {
-    &&& !(lbl is Walk)
+    // TODO: Make barrier separate transition and include in map end
+    &&& !(lbl is Walk || lbl is Invlpg)
     &&& M::next(s1.mmu, s2.mmu, lbl)
+
+    &&& s2.mem === s1.mem
+    &&& s2.NUMAs === s1.NUMAs
+}
+
+pub open spec fn step_Invlpg<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, core: Core, addr: usize) -> bool {
+    &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Invlpg(core, addr))
 
     &&& s2.mem === s1.mem
     &&& s2.NUMAs === s1.NUMAs
@@ -625,15 +612,16 @@ pub open spec fn step_TLBEvict<M: mmu::MMU>(
     &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
         === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.remove(vaddr)
     &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
+    &&& s2.mmu == s1.mmu
 }
 
 pub open spec fn step_Stutter<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>) -> bool {
-    &&& s2.mem == s1.mem
-    &&& s2.NUMAs == s1.NUMAs
+    &&& s2 == s1
 }
 
 pub open spec fn next_step<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, step: HWStep) -> bool {
     match step {
+        HWStep::Invlpg { core, vaddr }       => step_Invlpg(c, s1, s2, core, vaddr),
         HWStep::Stutter                      => step_Stutter(c, s1, s2),
         HWStep::ReadWrite { vaddr, paddr, op, walk_result, core }
                                              => step_ReadWrite(c, s1, s2, vaddr, paddr, op, walk_result, core),

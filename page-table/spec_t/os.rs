@@ -7,7 +7,6 @@
 
 use vstd::prelude::*;
 
-//use crate::impl_u::spec_pt;
 use crate::spec_t::{hardware, hlspec, mem, mmu};
 use crate::spec_t::mmu::WalkResult;
 use crate::definitions_t::{
@@ -166,7 +165,7 @@ impl<M: mmu::MMU> OSVariables<M> {
                     | CoreState::MapExecuting { vaddr, pte, .. } => { above_zero(pte.frame.size) },
                     CoreState::UnmapWaiting { vaddr, .. }
                     | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
-                        self.interp_pt_mem().dom().contains(vaddr) ==> above_zero(
+                        self.interp_pt_mem().contains_key(vaddr) ==> above_zero(
                             self.interp_pt_mem()[vaddr].frame.size,
                         )
                     }
@@ -187,7 +186,7 @@ impl<M: mmu::MMU> OSVariables<M> {
                     CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
                     | CoreState::UnmapOpDone { vaddr, .. }
                     | CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        !self.interp_pt_mem().dom().contains(vaddr)
+                        !self.interp_pt_mem().contains_key(vaddr)
                     },
                     _ => { true },
                 }
@@ -237,7 +236,7 @@ impl<M: mmu::MMU> OSVariables<M> {
                     CoreState::UnmapShootdownWaiting { vaddr, .. } => {
                         forall|handler: Core|
                             !(#[trigger] self.TLB_Shootdown.open_requests.contains(handler))
-                                ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.dom().contains(
+                                ==> !self.hw.NUMAs[handler.NUMA_id].cores[handler.core_id].tlb.contains_key(
                             vaddr)
                     },
                     _ => true,
@@ -251,7 +250,7 @@ impl<M: mmu::MMU> OSVariables<M> {
             |v_address: nat|
                 {
                     &&& exists|core: Core|
-                        self.core_states.dom().contains(core) && match self.core_states[core] {
+                        self.core_states.contains_key(core) && match self.core_states[core] {
                             CoreState::UnmapOpDone { vaddr, result, .. }
                             | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
                                 (result is Ok) && (vaddr === v_address)
@@ -317,7 +316,7 @@ impl<M: mmu::MMU> OSVariables<M> {
 
     pub open spec fn existing_map_no_overlap_existing_vmem(self, c: OSConstants) -> bool {
         forall|vaddr| #[trigger]
-            self.interp_pt_mem().dom().contains(vaddr)
+            self.interp_pt_mem().contains_key(vaddr)
                 ==> !candidate_mapping_overlaps_existing_vmem(
                 self.interp_pt_mem().remove(vaddr),
                 vaddr,
@@ -335,16 +334,6 @@ impl<M: mmu::MMU> OSVariables<M> {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // Interpretation functions
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    //pub open spec fn pt_variables(self, core: Core) -> spec_pt::PageTableVariables {
-    //    spec_pt::PageTableVariables {
-    //        pt_mem: self.hw.global_pt,
-    //        thread_state: match self.core_states[core] {
-    //            CoreState::MapExecuting { .. } => spec_pt::ThreadState::Mapping,
-    //            CoreState::UnmapOpExecuting { result, .. } => spec_pt::ThreadState::Unmapping { result },
-    //            _ => spec_pt::ThreadState::Idle,
-    //        },
-    //    }
-    //}
 
     pub open spec fn interp_pt_mem(self) -> Map<nat, PageTableEntry> {
         hardware::interp_pt_mem(self.hw.mmu.pt_mem())
@@ -354,9 +343,9 @@ impl<M: mmu::MMU> OSVariables<M> {
         Set::new(
             |v_address: nat|
                 {
-                    &&& self.interp_pt_mem().dom().contains(v_address)
+                    &&& self.interp_pt_mem().contains_key(v_address)
                     &&& exists|core: Core|
-                        self.core_states.dom().contains(core) && match self.core_states[core] {
+                        self.core_states.contains_key(core) && match self.core_states[core] {
                             CoreState::UnmapWaiting { ULT_id, vaddr }
                             | CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
                             | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
@@ -374,7 +363,7 @@ impl<M: mmu::MMU> OSVariables<M> {
         let unmap_dom = self.inflight_unmap_vaddr();
         Map::new(
             |vmem_idx: nat|
-                effective_mappings.dom().contains(vmem_idx) && !unmap_dom.contains(vmem_idx),
+                effective_mappings.contains_key(vmem_idx) && !unmap_dom.contains(vmem_idx),
             |vmem_idx: nat| effective_mappings[vmem_idx],
         )
     }
@@ -421,7 +410,7 @@ impl<M: mmu::MMU> OSVariables<M> {
                         },
                         CoreState::UnmapWaiting { ULT_id, vaddr }
                         | CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None } => {
-                            let pte = if self.interp_pt_mem().dom().contains(vaddr) {
+                            let pte = if self.interp_pt_mem().contains_key(vaddr) {
                                 Some(self.interp_pt_mem()[vaddr])
                             } else {
                                 None
@@ -480,7 +469,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
                 },
                 CoreState::UnmapWaiting { ULT_id, vaddr }
                 | CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None, .. } => {
-                    &&& pt.dom().contains(vaddr)
+                    &&& pt.contains_key(vaddr)
                     &&& overlap(candidate.frame, pt[vaddr].frame)
                 },
                 CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result), .. }
@@ -514,7 +503,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                 },
                 CoreState::UnmapWaiting { vaddr, .. }
                 | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
-                    let size = if pt.dom().contains(vaddr) {
+                    let size = if pt.contains_key(vaddr) {
                         pt[vaddr].frame.size
                     } else {
                         0
@@ -560,13 +549,8 @@ pub open spec fn step_HW<M: mmu::MMU>(
         || system_step is TLBEvict
         || (system_step matches hardware::HWStep::MMUStep { lbl: mmu::Lbl::Tau })
     &&& !(system_step is Stutter)
-    //hw/spec_pt-statemachine steps
+    //hw statemachine steps
     &&& hardware::next_step(c.hw, s1.hw, s2.hw, system_step)
-    &&& arbitrary()
-    //&&& spec_pt::step_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -616,28 +600,14 @@ pub open spec fn step_Map_Start<M: mmu::MMU>(
     //enabling conditions
     &&& c.valid_ULT(ULT_id)
     &&& s1.core_states[core] is Idle
-    &&& step_Map_enabled(
-        //s1.hw.global_pt,
-        vaddr,
-        pte,
-    )
-    //hw/spec_pt-statemachine steps
+    &&& step_Map_enabled(vaddr, pte)
+
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapWaiting { ULT_id, vaddr, pte })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.sound == s1.sound && step_Map_sound(
-        s1.interp_pt_mem(),
-        //TODO reallllllly think about this
-        s1.core_states.values(),
-        vaddr,
-        pte,
-    )
+    &&& s2.sound == s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte)
 }
 
 pub open spec fn step_Map_op_Start<M: mmu::MMU>(
@@ -650,20 +620,11 @@ pub open spec fn step_Map_op_Start<M: mmu::MMU>(
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] matches CoreState::MapWaiting { ULT_id, vaddr, pte }
     &&& s1.kernel_lock(c) is None
-    //hw/spec_pt-statemachine steps
+
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Map_Start(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //    vaddr,
-    //    pte,
-    //)
     //new state
-    &&& s2.core_states == s1.core_states.insert(
-        core,
-        CoreState::MapExecuting { ULT_id, vaddr, pte },
-    )
+    &&& s2.core_states == s1.core_states.insert(core, CoreState::MapExecuting { ULT_id, vaddr, pte })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
 }
@@ -673,19 +634,16 @@ pub open spec fn step_Map_op_Stutter<M: mmu::MMU>(
     s1: OSVariables<M>,
     s2: OSVariables<M>,
     core: Core,
-    addr: usize,
+    paddr: usize,
     value: usize,
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] is MapExecuting
-    //hw/spec_pt-statemachine steps
-    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, addr, value))
-    &&& arbitrary()
-    //&&& spec_pt::step_Map_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
+
+    // hw statemachine steps
+    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, paddr, value))
+    &&& s2.interp_pt_mem() == s1.interp_pt_mem() // restrict possible writes
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -697,27 +655,22 @@ pub open spec fn step_Map_End<M: mmu::MMU>(
     s1: OSVariables<M>,
     s2: OSVariables<M>,
     core: Core,
-    addr: usize,
+    paddr: usize,
     value: usize,
     result: Result<(), ()>,
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
-    &&& s1.core_states[core] matches CoreState::MapExecuting {
-        ULT_id,
-        vaddr,
-        pte,
+    &&& s1.core_states[core] matches CoreState::MapExecuting { ULT_id, vaddr, pte }
+    // hw statemachine steps
+    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, paddr, value))
+    &&& if candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte) {
+        &&& result is Err
+        &&& s2.interp_pt_mem() == s1.interp_pt_mem()
+    } else {
+        &&& result is Ok
+        &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
     }
-    //hw/spec_pt-statemachine steps
-    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, addr, value))
-    &&& arbitrary()
-    //&&& spec_pt::step_Map_End(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //    vaddr,
-    //    pte,
-    //    result,
-    //)
     //new state
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
@@ -754,22 +707,13 @@ pub open spec fn step_Unmap_Start<M: mmu::MMU>(
 ) -> bool {
     let pt = s1.interp_pt_mem();
     let core = c.ULT2core[ULT_id];
-    let pte_size = if pt.contains_key(vaddr) {
-        pt[vaddr].frame.size
-    } else {
-        0
-    };
+    let pte_size = if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 };
     //enabling conditions
     &&& c.valid_ULT(ULT_id)
     &&& s1.core_states[core] is Idle
     &&& step_Unmap_enabled(vaddr)
-    //hw/spec_pt-statemachine steps
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ULT_id, vaddr })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -791,14 +735,8 @@ pub open spec fn step_Unmap_Op_Start<M: mmu::MMU>(
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] matches CoreState::UnmapWaiting { ULT_id, vaddr }
     &&& s1.kernel_lock(c) is None
-    //hw/spec_pt-statemachine steps
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Unmap_Start(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //    vaddr,
-    //)
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -810,40 +748,28 @@ pub open spec fn step_Unmap_Op_Change<M: mmu::MMU>(
     s1: OSVariables<M>,
     s2: OSVariables<M>,
     core: Core,
-    addr: usize,
+    paddr: usize,
     value: usize,
     result: Result<PageTableEntry, ()>,
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
-    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
-        ULT_id,
-        vaddr,
-        result: None
-    }
-    //hw/spec_pt-statemachine steps
-    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, addr, value))
-    &&& arbitrary()
-    //&&& spec_pt::step_Unmap_Change(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //    vaddr,
-    //    result
-    //)
-    //new state
-    &&& if result is Ok {
-        s2.core_states == s1.core_states.insert(
+    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None }
+    // hw statemachine steps
+    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, paddr, value))
+    &&& if s1.interp_pt_mem().contains_key(vaddr) {
+        &&& result is Ok
+        &&& s2.interp_pt_mem() == s1.interp_pt_mem().remove(vaddr)
+        &&& s2.core_states == s1.core_states.insert(
             core,
-            CoreState::UnmapOpExecuting {
-                ULT_id,
-                vaddr,
-                result: Some(Ok(s1.interp_pt_mem()[vaddr])),
-            },
+            CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(Ok(s1.interp_pt_mem()[vaddr])) }
         )
     } else {
-        s2.core_states == s1.core_states.insert(
+        &&& result is Err
+        &&& s2.interp_pt_mem() == s1.interp_pt_mem()
+        &&& s2.core_states == s1.core_states.insert(
             core,
-            CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(Err(())) },
+            CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(Err(())) }
         )
     }
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -855,23 +781,15 @@ pub open spec fn step_Unmap_Op_Stutter<M: mmu::MMU>(
     s1: OSVariables<M>,
     s2: OSVariables<M>,
     core: Core,
-    addr: usize,
+    paddr: usize,
     value: usize,
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
-    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
-        ULT_id,
-        vaddr,
-        result: Some(res)
-    }
-    //hw/spec_pt-statemachine steps
-    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, addr, value))
-    &&& arbitrary()
-    //&&& spec_pt::step_Unmap_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
+    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(res) }
+    // hw statemachine steps
+    &&& hardware::step_MMUStep(c.hw, s1.hw, s2.hw, mmu::Lbl::Write(core, paddr, value))
+    &&& s2.interp_pt_mem() == s1.interp_pt_mem()
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -886,22 +804,13 @@ pub open spec fn step_Unmap_Op_End<M: mmu::MMU>(
 ) -> bool {
     //enabling conditions
     &&& hardware::valid_core(c.hw, core)
-    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting {
-        ULT_id,
-        vaddr,
-        result: Some(res)
-    }
-    //hw/spec_pt-statemachine steps
+    &&& s1.core_states[core] matches CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(res) }
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Unmap_End(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapOpDone { ULT_id, vaddr, result: res },
+        CoreState::UnmapOpDone { ULT_id, vaddr, result: res }
     )
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.sound == s1.sound
@@ -917,13 +826,8 @@ pub open spec fn step_Unmap_Initiate_Shootdown<M: mmu::MMU>(
     &&& hardware::valid_core(c.hw, core)
     &&& s1.core_states[core] matches CoreState::UnmapOpDone { ULT_id: ult_id, vaddr, result }
     &&& result is Ok
-    //hw/spec_pt-statemachine steps
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
@@ -937,7 +841,8 @@ pub open spec fn step_Unmap_Initiate_Shootdown<M: mmu::MMU>(
 }
 
 // Acknowledge TLB eviction to other core (in response to shootdown IPI)
-//check if tlb shootdown/unmap has happend and send ACK
+// check if tlb shootdown/unmap has happend and send ACK
+// TODO: Maybe rename this since we're actually doing the invlpg here as well
 pub open spec fn step_Ack_Shootdown_IPI<M: mmu::MMU>(
     c: OSConstants,
     s1: OSVariables<M>,
@@ -945,17 +850,10 @@ pub open spec fn step_Ack_Shootdown_IPI<M: mmu::MMU>(
     core: Core,
 ) -> bool {
     //enabling conditions
-    //TODO discuss: only valid cores are in the open_requests
     &&& s1.TLB_Shootdown.open_requests.contains(core)
-    &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().contains(s1.TLB_Shootdown.vaddr)
-    &&& !s1.interp_pt_mem().contains_key(s1.TLB_Shootdown.vaddr)
-    //hw/spec_pt-statemachine steps
-    &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
+    &&& !s1.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_key(s1.TLB_Shootdown.vaddr)
+    // hw statemachine steps
+    &&& hardware::step_Invlpg(c.hw, s1.hw, s2.hw, core, s1.TLB_Shootdown.vaddr as usize)
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == ShootdownVector {
@@ -977,16 +875,11 @@ pub open spec fn step_Unmap_End<M: mmu::MMU>(
         CoreState::UnmapShootdownWaiting { result, ULT_id, .. } => {
             s1.TLB_Shootdown.open_requests.is_empty()
         },
-        CoreState::UnmapOpDone { result, ULT_id, .. } => { result is Err },
+        CoreState::UnmapOpDone { result, ULT_id, .. } => result is Err,
         _ => false,
     }
-    //hw/spec_pt-statemachine steps
+    // hw statemachine steps
     &&& hardware::step_Stutter(c.hw, s1.hw, s2.hw)
-    &&& arbitrary()
-    //&&& spec_pt::step_Stutter(
-    //    s1.pt_variables(core),
-    //    s2.pt_variables(core),
-    //)
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
@@ -1023,53 +916,35 @@ impl OSStep {
                 hardware::HWStep::ReadWrite { vaddr, paddr, op, walk_result, core } => {
                     let hl_pte = match walk_result {
                         WalkResult::Valid { vbase, pte } => {
-                            if s.effective_mappings().dom().contains(vbase as nat) {
+                            if s.effective_mappings().contains_key(vbase as nat) {
                                 Some((vbase as nat, pte))
                             } else {
                                 None
                             }
                         },
-                        WalkResult::Invalid { vbase, size } => {
-                            None
-                        },
+                        WalkResult::Invalid { vbase, size } => None,
                     };
                     let rwop = match (op, hl_pte) {
-                        (
-                            HWRWOp::Store { new_value, result: HWStoreResult::Ok },
-                            Some(_),
-                        ) => RWOp::Store { new_value, result: StoreResult::Ok },
-                        (
-                            HWRWOp::Store { new_value, result: HWStoreResult::Ok },
-                            None,
-                        ) => RWOp::Store { new_value, result: StoreResult::Undefined },
-                        (
-                            HWRWOp::Store { new_value, result: HWStoreResult::Pagefault },
-                            _,
-                        ) => RWOp::Store { new_value, result: StoreResult::Undefined },
-                        (
-                            HWRWOp::Load { is_exec, result: HWLoadResult::Value(v) },
-                            Some(_),
-                        ) => RWOp::Load { is_exec, result: LoadResult::Value(v) },
-                        (
-                            HWRWOp::Load { is_exec, result: HWLoadResult::Value(v) },
-                            None,
-                        ) => RWOp::Load { is_exec, result: LoadResult::Undefined },
-                        (
-                            HWRWOp::Load { is_exec, result: HWLoadResult::Pagefault },
-                            _,
-                        ) => RWOp::Load { is_exec, result: LoadResult::Undefined },
+                        (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_))
+                            => RWOp::Store { new_value, result: StoreResult::Ok },
+                        (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, None)
+                            => RWOp::Store { new_value, result: StoreResult::Undefined },
+                        (HWRWOp::Store { new_value, result: HWStoreResult::Pagefault }, _)
+                            => RWOp::Store { new_value, result: StoreResult::Undefined },
+                        (HWRWOp::Load { is_exec, result: HWLoadResult::Value(v) }, Some(_))
+                            => RWOp::Load { is_exec, result: LoadResult::Value(v) },
+                        (HWRWOp::Load { is_exec, result: HWLoadResult::Value(v) }, None)
+                            => RWOp::Load { is_exec, result: LoadResult::Undefined },
+                        (HWRWOp::Load { is_exec, result: HWLoadResult::Pagefault }, _)
+                            => RWOp::Load { is_exec, result: LoadResult::Undefined },
                     };
-                    hlspec::AbstractStep::ReadWrite {
-                        thread_id: ULT_id,
-                        vaddr,
-                        op: rwop,
-                        pte: hl_pte,
-                    }
+                    hlspec::AbstractStep::ReadWrite { thread_id: ULT_id, vaddr, op: rwop, pte: hl_pte }
                 },
+                hardware::HWStep::Invlpg { core, vaddr } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBFill { vaddr, pte, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::TLBEvict { vaddr, core } => hlspec::AbstractStep::Stutter,
                 hardware::HWStep::Stutter => arbitrary(),
-                hardware::HWStep::MMUStep { lbl } => arbitrary(),
+                hardware::HWStep::MMUStep { lbl } => hlspec::AbstractStep::Stutter,
             },
             //Map steps
             OSStep::MapStart { ULT_id, vaddr, pte } => {
@@ -1138,9 +1013,6 @@ pub open spec fn init<M: mmu::MMU>(c: OSConstants, s: OSVariables<M>) -> bool {
     // hardware stuff
     &&& s.interp_pt_mem() === Map::empty()
     &&& hardware::init(c.hw, s.hw)
-    //spec_pt
-    &&& arbitrary()
-    //&&& forall|core: Core| #[trigger] hardware::valid_core(c.hw, core) ==> spec_pt::init(s.pt_variables(core))
     //wf of ULT2core mapping
     &&& forall|id: nat| #[trigger] c.valid_ULT(id) <==> c.ULT2core.contains_key(id)
     &&& forall|id: nat|
