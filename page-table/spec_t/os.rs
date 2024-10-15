@@ -480,46 +480,44 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     base: nat,
     candidate_size: nat,
 ) -> bool {
-    exists|b: CoreState|
-        #![auto]
-        {
-            &&& inflightargs.contains(b)
-            &&& match b {
-                CoreState::MapWaiting { vaddr, pte, .. }
-                | CoreState::MapExecuting { vaddr, pte, .. } => {
-                    overlap(
-                        MemRegion { base: vaddr, size: pte.frame.size },
-                        MemRegion { base: base, size: candidate_size },
-                    )
-                },
-                CoreState::UnmapWaiting { vaddr, .. }
-                | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
-                    let size = if pt.contains_key(vaddr) {
-                        pt[vaddr].frame.size
-                    } else {
-                        0
-                    };
-                    overlap(
-                        MemRegion { base: vaddr, size: size },
-                        MemRegion { base: base, size: candidate_size },
-                    )
-                },
-                CoreState::UnmapOpExecuting { vaddr, result: Some(result), .. }
-                | CoreState::UnmapOpDone { vaddr, result, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
-                    let size = if result is Ok {
-                        result.get_Ok_0().frame.size
-                    } else {
-                        0
-                    };
-                    overlap(
-                        MemRegion { base: vaddr, size: size },
-                        MemRegion { base: base, size: candidate_size },
-                    )
-                },
-                _ => { false },
-            }
+    exists|b: CoreState| #![auto] {
+        &&& inflightargs.contains(b)
+        &&& match b {
+            CoreState::MapWaiting { vaddr, pte, .. }
+            | CoreState::MapExecuting { vaddr, pte, .. } => {
+                overlap(
+                    MemRegion { base: vaddr, size: pte.frame.size },
+                    MemRegion { base: base, size: candidate_size },
+                )
+            },
+            CoreState::UnmapWaiting { vaddr, .. }
+            | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+                let size = if pt.contains_key(vaddr) {
+                    pt[vaddr].frame.size
+                } else {
+                    0
+                };
+                overlap(
+                    MemRegion { base: vaddr, size: size },
+                    MemRegion { base: base, size: candidate_size },
+                )
+            },
+            CoreState::UnmapOpExecuting { vaddr, result: Some(result), .. }
+            | CoreState::UnmapOpDone { vaddr, result, .. }
+            | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
+                let size = if result is Ok {
+                    result.get_Ok_0().frame.size
+                } else {
+                    0
+                };
+                overlap(
+                    MemRegion { base: vaddr, size: size },
+                    MemRegion { base: base, size: candidate_size },
+                )
+            },
+            _ => { false },
         }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1001,18 +999,11 @@ pub open spec fn init<M: mmu::MMU>(c: OSConstants, s: OSVariables<M>) -> bool {
     &&& hardware::init(c.hw, s.hw)
     //wf of ULT2core mapping
     &&& forall|id: nat| #[trigger] c.valid_ULT(id) <==> c.ULT2core.contains_key(id)
-    &&& forall|id: nat|
-        c.valid_ULT(id) ==> #[trigger] hardware::valid_core(
-            c.hw,
-            c.ULT2core[id],
-        )
+    &&& forall|id: nat| c.valid_ULT(id) ==> #[trigger] hardware::valid_core(c.hw, c.ULT2core[id])
     //core_state
-    &&& forall|core: Core|
-        hardware::valid_core(c.hw, core) <==> #[trigger] s.core_states.contains_key(core)
-    &&& forall|core: Core| #[trigger]
-        hardware::valid_core(c.hw, core) ==> s.core_states[core]
-            === CoreState::Idle
-        //shootdown
+    &&& forall|core: Core| hardware::valid_core(c.hw, core) <==> #[trigger] s.core_states.contains_key(core)
+    &&& forall|core: Core| #[trigger] hardware::valid_core(c.hw, core) ==> s.core_states[core] === CoreState::Idle
+    //shootdown
     &&& s.TLB_Shootdown.open_requests === Set::empty()
     //sound
     &&& s.sound

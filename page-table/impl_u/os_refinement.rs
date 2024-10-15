@@ -162,7 +162,6 @@ proof fn lemma_map_soundness_equality<M: mmu::MMU>(
                     };
                 if (!s.inflight_unmap_vaddr().contains(base)) {
                     assert(s.effective_mappings().dom().contains(base));
-
                 } else {
                     let core = choose|core|
                         s.core_states.dom().contains(core) && match s.core_states[core] {
@@ -236,9 +235,7 @@ proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem<M: mmu::MMU>(
                 vaddr,
                 pte_size,
             )) {
-                let base = choose|b: nat|
-                    #![auto]
-                    {
+                let base = choose|b: nat| #![auto] {
                         &&& s.interp_pt_mem().dom().contains(b)
                         &&& overlap(
                             MemRegion { base: vaddr, size: pte_size },
@@ -537,8 +534,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
         },
         None => {
             if walk_result is Invalid {
-                assume(!exists|base: nat, pte: PTE|
-                    {
+                assume(!exists|base: nat, pte: PTE| {
                         &&& #[trigger] s1.interp_pt_mem().contains_pair(base, pte)
                         &&& hlspec::mem_domain_from_entry_contains(
                             c.hw.phys_mem_size,

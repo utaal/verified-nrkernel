@@ -44,6 +44,15 @@ pub enum WalkResult {
     },
 }
 
+impl WalkResult {
+    pub open spec fn vbase(self) -> usize {
+        match self {
+            WalkResult::Valid { vbase, .. } => vbase,
+            WalkResult::Invalid { vbase, .. } => vbase,
+        }
+    }
+}
+
 impl Walk {
     /// Also returns the address from which the value `value` must be read.
     pub open spec fn next(self, pml4: usize, value: usize) -> (Res, usize) {
@@ -70,7 +79,8 @@ impl Walk {
 
     /// If the walk's result is valid, returns `Valid { .. }`, otherwise `Invalid { .. }`.
     ///
-    /// TODO: rename this function to "result" or something like that
+    /// TODO: rename this function to "result" or something like that. In fact, reconsider this
+    /// whole function and how/if it fits with the atomic ptwalk.
     pub open spec fn pte(self) -> WalkResult
         recommends self.path.len() > 0 && !(self.path.last().1@ is Directory)
     {
