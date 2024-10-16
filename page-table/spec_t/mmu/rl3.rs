@@ -54,6 +54,16 @@ impl State {
         value & MASK_DIRTY_ACCESS == val & MASK_DIRTY_ACCESS
     }
 
+    /// The page table walker behaves the same no matter what the dirty and accessed bits are set
+    /// to. Thus we can use this more convenient read function where we simply mask away those two
+    /// bits.
+    pub open spec fn read_from_mem_tso_mask(self, core: Core, addr: usize) -> usize {
+        (match get_first(self.sbuf[core], addr) {
+            Some(v) => v,
+            None    => self.pt_mem@[addr],
+        }) & MASK_DIRTY_ACCESS
+    }
+
     pub open spec fn init(self) -> bool {
         arbitrary()
     }
