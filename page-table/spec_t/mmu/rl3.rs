@@ -35,21 +35,12 @@ pub struct History {
 //}
 
 impl State {
-    pub open spec fn stutter(pre: State, post: State) -> bool {
-        let State { happy, pt_mem, walks, sbuf, hist } = post;
-        &&& happy == pre.happy
-        &&& pt_mem@ == pre.pt_mem@
-        &&& walks == pre.walks
-        &&& sbuf == pre.sbuf
-        &&& hist == pre.hist
-    }
-
     /// This predicate is true whenever `value` is a value that might be read from the address
     /// `addr` on core `core`. See rl4.rs for explanation.
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
         let val = match get_first(self.sbuf[core], addr) {
             Some(v) => v,
-            None    => self.pt_mem@[addr],
+            None    => self.pt_mem.read(addr),
         };
         value & MASK_DIRTY_ACCESS == val & MASK_DIRTY_ACCESS
     }
@@ -60,7 +51,7 @@ impl State {
     pub open spec fn read_from_mem_tso_mask(self, core: Core, addr: usize) -> usize {
         (match get_first(self.sbuf[core], addr) {
             Some(v) => v,
-            None    => self.pt_mem@[addr],
+            None    => self.pt_mem.read(addr),
         }) & MASK_DIRTY_ACCESS
     }
 
@@ -124,7 +115,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.happy == pre.happy
     // .. and cancels inflight walks.
     &&& post.walks == pre.walks.insert(core, set![])
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
 
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
@@ -146,7 +137,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& arbitrary() // TODO: conditions on va? max vaddr?
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
 
@@ -164,7 +155,7 @@ pub open spec fn step_WalkStep(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
+    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -173,7 +164,7 @@ pub open spec fn step_WalkStep(
     &&& res is Incomplete
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(res.walk()))
 
@@ -190,7 +181,7 @@ pub open spec fn step_WalkDone(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
+    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
@@ -200,7 +191,7 @@ pub open spec fn step_WalkDone(
     &&& !(res is Incomplete)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
 
@@ -220,7 +211,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& aligned(addr as nat, 8)
 
     &&& post.happy == pre.happy && pre.no_other_writers(core)
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
 
@@ -260,7 +251,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& pre.read_from_mem_tso(core, addr, value)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
 
@@ -276,7 +267,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& pre.sbuf[core].len() == 0
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
 
@@ -287,7 +278,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl is Tau
-    &&& State::stutter(pre, post)
+    &&& post == pre
 }
 
 pub enum Step {
@@ -526,7 +517,6 @@ mod refinement {
                 assert(rl2::step_Invlpg(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::WalkInit { core, va } => {
-                admit(); // XXX
                 assert(rl2::step_WalkInit(pre.interp(), post.interp(), c, core, va, lbl));
             },
             rl3::Step::WalkStep { core, walk, value } => {
@@ -566,9 +556,7 @@ mod refinement {
                 assert(rl2::step_Barrier(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Stutter                   => {
-                admit(); // XXX
-                assert(rl3::State::stutter(pre, post));
-                assert(post.pt_mem@ == pre.pt_mem@);
+                assert(post.pt_mem == pre.pt_mem);
                 assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
         }
@@ -627,8 +615,8 @@ mod refinement {
         ensures
             match get_first(state.sbuf[core], addr) {
                 Some(v) => v,
-                None    => state.pt_mem@[addr],
-            } == state.interp().pt_mem@[addr]
+                None    => state.pt_mem.read(addr),
+            } == state.interp().pt_mem.read(addr)
     {
         let wcore = state.writer_cores().choose();
         assume(wcore == core);
@@ -637,7 +625,7 @@ mod refinement {
         assume(state.interp().pt_mem == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1)));
         //match get_first(state.sbuf[core], addr) {
         //    Some(v) => v,
-        //    None    => state.pt_mem@[addr],
+        //    None    => state.pt_mem[addr],
         //} == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))@[addr]
         admit();
         assert(get_first(state.sbuf[core], addr) is None);

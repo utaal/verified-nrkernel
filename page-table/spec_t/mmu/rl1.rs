@@ -112,7 +112,7 @@ impl State {
     pub open spec fn stutter(pre: State, post: State) -> bool {
         let State { happy, pt_mem, writes, neg_writes } = post;
         &&& happy == pre.happy
-        &&& pt_mem@ == pre.pt_mem@
+        &&& pt_mem == pre.pt_mem
         &&& writes == pre.writes
     }
 
@@ -122,7 +122,7 @@ impl State {
 
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
         self.is_tso_read_deterministic(core, addr)
-            ==> value & MASK_DIRTY_ACCESS == self.pt_mem@[addr] & MASK_DIRTY_ACCESS
+            ==> value & MASK_DIRTY_ACCESS == self.pt_mem.read(addr) & MASK_DIRTY_ACCESS
     }
 
     /// For the active writer core, the memory always behaves like a Map. For other cores this is
@@ -180,7 +180,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& c.valid_core(core)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.writes === pre.writes.filter(|e:(Core, usize)| e.0 != core)
     &&& post.neg_writes == pre.neg_writes.insert(core, set![])
 }
@@ -200,7 +200,7 @@ pub open spec fn valid_walk(
     let (l0addr, l0e) = path[0];
     &&& path.len() >= 1
     &&& l0e.layer@ == 0
-    &&& l0addr == add(state.pt_mem.pml4(), l0_bits!(vbase as u64) as usize)
+    &&& l0addr == add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
     &&& state.read_from_mem_tso(core, l0addr, l0e.entry as usize)
     &&& match l0e@ {
         GPDE::Directory { addr, .. } => {
@@ -299,7 +299,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& pre.read_from_mem_tso(core, addr, value)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.writes == pre.writes
     &&& post.neg_writes == pre.neg_writes
 }
@@ -310,7 +310,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& c.valid_core(core)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.writes === pre.writes.filter(|e:(Core, usize)| e.0 != core)
     &&& post.neg_writes == pre.neg_writes
 }

@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
-use crate::spec_t::mmu::pt_mem::{ PTMem };
+use crate::spec_t::mmu::pt_mem::*;
 use crate::definitions_t::{ aligned, bit, Core };
 
 verus! {
@@ -64,7 +64,7 @@ impl State {
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
         let val = match get_first(self.sbuf[core], addr) {
             Some(v) => v,
-            None    => self.pt_mem@[addr],
+            None    => self.pt_mem.read(addr),
         };
         value & MASK_DIRTY_ACCESS == val & MASK_DIRTY_ACCESS
     }
@@ -136,7 +136,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& pre.walks[core].is_empty()
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
@@ -156,7 +156,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
     &&& pre.walks[core].contains(walk)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache.insert(core, pre.cache[core].insert(walk))
@@ -173,7 +173,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
     &&& pre.cache[core].contains(walk)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
@@ -190,7 +190,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
     &&& pre.cache[core].contains(walk)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache.insert(core, pre.cache[core].remove(walk))
     &&& post.walks == pre.walks
@@ -214,7 +214,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& arbitrary() // TODO: conditions on va? max vaddr?
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
@@ -234,7 +234,7 @@ pub open spec fn step_WalkStep(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
+    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -243,7 +243,7 @@ pub open spec fn step_WalkStep(
     &&& res is Incomplete
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(res.walk()))
@@ -262,7 +262,7 @@ pub open spec fn step_WalkDone(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4(), value);
+    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
@@ -273,7 +273,7 @@ pub open spec fn step_WalkDone(
     &&& !(res is Incomplete)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk))
@@ -298,7 +298,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& aligned(addr as nat, 8)
 
     &&& post.happy == pre.happy && pre.no_other_writers(core)
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
@@ -336,7 +336,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& pre.read_from_mem_tso(core, addr, value)
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
@@ -355,7 +355,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& pre.sbuf[core].len() == 0
 
     &&& post.happy == pre.happy
-    &&& post.pt_mem@ == pre.pt_mem@
+    &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
