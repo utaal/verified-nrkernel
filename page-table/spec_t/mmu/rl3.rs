@@ -310,8 +310,8 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
     }
 }
 
-pub open spec fn next(pre: State, post: State, c: Constants) -> bool {
-    pre.happy ==> exists|step, lbl| next_step(pre, post, c, step, lbl)
+pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    pre.happy ==> exists|step| next_step(pre, post, c, step, lbl)
 }
 
 proof fn init_implies_inv(pre: State, c: Constants)
@@ -562,17 +562,15 @@ mod refinement {
         }
     }
 
-    proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants)
+    proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
         requires
             pre.inv(c),
-            rl3::next(pre, post, c),
+            rl3::next(pre, post, c, lbl),
         ensures
-            rl2::next(pre.interp(), post.interp(), c),
+            rl2::next(pre.interp(), post.interp(), c, lbl),
     {
         if pre.happy {
-            // TODO: ...
-            assume(exists|x:(rl3::Step, Lbl)| #[trigger] rl3::next_step(pre, post, c, x.0, x.1));
-            let (step, lbl) = choose|x:(rl3::Step, Lbl)| #[trigger] rl3::next_step(pre, post, c, x.0, x.1);
+            let step = choose|step: rl3::Step| rl3::next_step(pre, post, c, step, lbl);
             next_step_refines(pre, post, c, step, lbl);
         }
     }

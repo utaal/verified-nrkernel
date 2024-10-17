@@ -341,8 +341,8 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
     }
 }
 
-pub open spec fn next(pre: State, post: State, c: Constants) -> bool {
-    pre.happy ==> exists|step, lbl| next_step(pre, post, c, step, lbl)
+pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    pre.happy ==> exists|step| next_step(pre, post, c, step, lbl)
 }
 
 proof fn init_implies_inv(pre: State, c: Constants)

@@ -237,8 +237,8 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
     }
 }
 
-pub open spec fn next(pre: State, post: State, c: Constants) -> bool {
-    pre.happy ==> exists|step, lbl| next_step(pre, post, c, step, lbl)
+pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    pre.happy ==> exists|step| next_step(pre, post, c, step, lbl)
 }
 
 proof fn init_implies_inv(pre: State, c: Constants)
@@ -253,6 +253,20 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
     ensures post.inv(c)
 {
     admit();
+}
+
+mod refinement {
+    use crate::spec_t::mmu::*;
+    //use crate::spec_t::mmu::pt_mem::{ PTMem };
+    use crate::spec_t::mmu::rl1;
+    use crate::spec_t::mmu::rl2;
+    //use crate::spec_t::mmu::rl4::{ get_first };
+
+    impl rl2::State {
+        pub open spec fn interp(self) -> rl1::State {
+            arbitrary()
+        }
+    }
 }
 
 } // verus!
