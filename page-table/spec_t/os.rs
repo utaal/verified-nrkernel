@@ -8,7 +8,7 @@
 use vstd::prelude::*;
 
 use crate::spec_t::{hardware, hlspec, mem, mmu};
-use crate::spec_t::mmu::WalkResult;
+use crate::spec_t::mmu::{WalkResult, pt_mem};
 use crate::definitions_t::{
     above_zero, aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
@@ -32,6 +32,12 @@ pub struct OSVariables<M: mmu::MMU> {
     // maps numa node to ULT operation spinning/operating on it
     pub core_states: Map<Core, CoreState>,
     pub TLB_Shootdown: ShootdownVector,
+    /// We track a simple view of the page table memory here, which changes everytime we do a write
+    /// transition in the MMU. This memory view is used for two things:
+    /// - Determining the `sound` history variable
+    /// - Encoding the desired semantics of the implementation, e.g. Map_End has to change the
+    ///   memory such that the interpretation contains a new entry.
+    pub pt_mem: pt_mem::PTMem,
     //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
     pub sound: bool,
 }
@@ -71,14 +77,15 @@ impl CoreState {
     }
 
     pub open spec fn vmem_pte_size(self, pt: Map<nat, PTE>) -> nat
-        recommends
-            !self.is_idle(),
+        recommends !self.is_idle(),
     {
         match self {
-            CoreState::MapWaiting { pte, .. } | CoreState::MapExecuting { pte, .. } => {
+            CoreState::MapWaiting { pte, .. }
+            | CoreState::MapExecuting { pte, .. } => {
                 pte.frame.size
             },
-            CoreState::UnmapWaiting { vaddr, .. } | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+            CoreState::UnmapWaiting { vaddr, .. }
+            | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
                 if pt.contains_key(vaddr) {
                     pt[vaddr].frame.size
                 } else {
@@ -282,10 +289,8 @@ impl<M: mmu::MMU> OSVariables<M> {
             hardware::valid_core(c.hw, core),
     {
         OSVariables {
-            hw: self.hw,
             core_states: self.core_states.insert(core, CoreState::Idle),
-            TLB_Shootdown: self.TLB_Shootdown,
-            sound: self.sound,
+            ..self
         }
     }
 
@@ -327,34 +332,30 @@ impl<M: mmu::MMU> OSVariables<M> {
     ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     pub open spec fn interp_pt_mem(self) -> Map<nat, PTE> {
-        hardware::interp_pt_mem(self.hw.mmu.pt_mem())
+        hardware::interp_pt_mem(self.pt_mem)
     }
 
     pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {
-        Set::new(
-            |v_address: nat|
-                {
-                    &&& self.interp_pt_mem().contains_key(v_address)
-                    &&& exists|core: Core|
-                        self.core_states.contains_key(core) && match self.core_states[core] {
-                            CoreState::UnmapWaiting { ULT_id, vaddr }
-                            | CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
-                            | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
-                            | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
-                                vaddr === v_address
-                            },
-                            _ => false,
-                        }
-                },
-        )
+        Set::new(|v_address: nat| {
+            &&& self.interp_pt_mem().contains_key(v_address)
+            &&& exists|core: Core|
+                self.core_states.contains_key(core) && match self.core_states[core] {
+                    CoreState::UnmapWaiting { ULT_id, vaddr }
+                    | CoreState::UnmapOpExecuting { ULT_id, vaddr, .. }
+                    | CoreState::UnmapOpDone { ULT_id, vaddr, .. }
+                    | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, .. } => {
+                        vaddr === v_address
+                    },
+                    _ => false,
+                }
+        })
     }
 
     pub open spec fn effective_mappings(self) -> Map<nat, PTE> {
         let effective_mappings = self.interp_pt_mem();
         let unmap_dom = self.inflight_unmap_vaddr();
         Map::new(
-            |vmem_idx: nat|
-                effective_mappings.contains_key(vmem_idx) && !unmap_dom.contains(vmem_idx),
+            |vmem_idx: nat| effective_mappings.contains_key(vmem_idx) && !unmap_dom.contains(vmem_idx),
             |vmem_idx: nat| effective_mappings[vmem_idx],
         )
     }
@@ -363,22 +364,15 @@ impl<M: mmu::MMU> OSVariables<M> {
         let phys_mem_size = c.interp().phys_mem_size;
         let mappings: Map<nat, PTE> = self.effective_mappings();
         Map::new(
-            |vmem_idx: nat|
-                hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
-            |vmem_idx: nat|
-                {
-                    let vaddr = vmem_idx * WORD_SIZE as nat;
-                    let (base, pte): (nat, PTE) = choose|base: nat, pte: PTE|
-                        #![auto]
-                        mappings.contains_pair(base, pte) && between(
-                            vaddr,
-                            base,
-                            base + pte.frame.size,
-                        );
-                    let paddr = (pte.frame.base + (vaddr - base)) as nat;
-                    let pmem_idx = mem::word_index_spec(paddr);
-                    self.hw.mem[pmem_idx as int]
-                },
+            |vmem_idx: nat| hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
+            |vmem_idx: nat| {
+                let vaddr = vmem_idx * WORD_SIZE as nat;
+                let (base, pte) = choose|base: nat, pte: PTE| #![auto]
+                    mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
+                let paddr = (pte.frame.base + (vaddr - base)) as nat;
+                let pmem_idx = mem::word_index_spec(paddr);
+                self.hw.mem[pmem_idx as int]
+            },
         )
     }
 
@@ -449,29 +443,27 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
     inflightargs: Set<CoreState>,
     candidate: PTE,
 ) -> bool {
-    exists|b: CoreState|
-        #![auto]
-        {
-            &&& inflightargs.contains(b)
-            &&& match b {
-                CoreState::MapWaiting { vaddr, pte, .. }
-                | CoreState::MapExecuting { vaddr, pte, .. } => {
-                    overlap(candidate.frame, pte.frame)
-                },
-                CoreState::UnmapWaiting { ULT_id, vaddr }
-                | CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None, .. } => {
-                    &&& pt.contains_key(vaddr)
-                    &&& overlap(candidate.frame, pt[vaddr].frame)
-                },
-                CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result), .. }
-                | CoreState::UnmapOpDone { ULT_id, vaddr, result, .. }
-                | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result, .. } => {
-                    &&& result is Ok
-                    &&& overlap(candidate.frame, result.get_Ok_0().frame)
-                },
-                CoreState::Idle => false,
-            }
+    exists|b: CoreState| #![auto] {
+        &&& inflightargs.contains(b)
+        &&& match b {
+            CoreState::MapWaiting { vaddr, pte, .. }
+            | CoreState::MapExecuting { vaddr, pte, .. } => {
+                overlap(candidate.frame, pte.frame)
+            },
+            CoreState::UnmapWaiting { ULT_id, vaddr }
+            | CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None, .. } => {
+                &&& pt.contains_key(vaddr)
+                &&& overlap(candidate.frame, pt[vaddr].frame)
+            },
+            CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result), .. }
+            | CoreState::UnmapOpDone { ULT_id, vaddr, result, .. }
+            | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result, .. } => {
+                &&& result is Ok
+                &&& overlap(candidate.frame, result.get_Ok_0().frame)
+            },
+            CoreState::Idle => false,
         }
+    }
 }
 
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(
@@ -543,6 +535,7 @@ pub open spec fn step_HW<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound
 }
 
@@ -596,6 +589,7 @@ pub open spec fn step_Map_Start<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapWaiting { ULT_id, vaddr, pte })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte)
 }
 
@@ -615,6 +609,7 @@ pub open spec fn step_Map_op_Start<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapExecuting { ULT_id, vaddr, pte })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound
 }
 
@@ -636,6 +631,7 @@ pub open spec fn step_Map_op_Stutter<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem.write(paddr, value)
     &&& s2.sound == s1.sound
 }
 
@@ -661,8 +657,9 @@ pub open spec fn step_Map_End<M: mmu::MMU>(
         &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
     }
     //new state
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem.write(paddr, value)
     &&& s1.sound == s2.sound
 }
 
@@ -706,6 +703,7 @@ pub open spec fn step_Unmap_Start<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ULT_id, vaddr })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound && step_Unmap_sound(pt, s1.core_states.values(), vaddr, pte_size)
 }
 
@@ -724,6 +722,7 @@ pub open spec fn step_Unmap_Op_Start<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound
 }
 
@@ -757,6 +756,7 @@ pub open spec fn step_Unmap_Op_Change<M: mmu::MMU>(
         )
     }
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem.write(paddr, value)
     &&& s2.sound == s1.sound
 }
 
@@ -777,6 +777,7 @@ pub open spec fn step_Unmap_Op_Stutter<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem.write(paddr, value)
     &&& s2.sound == s1.sound
 }
 
@@ -797,6 +798,7 @@ pub open spec fn step_Unmap_Op_End<M: mmu::MMU>(
         CoreState::UnmapOpDone { ULT_id, vaddr, result: res }
     )
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound
 }
 
@@ -821,6 +823,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown<M: mmu::MMU>(
         vaddr: vaddr,
         open_requests: Set::new(|core: Core| hardware::valid_core(c.hw, core)),
     }
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound
 }
 
@@ -844,6 +847,7 @@ pub open spec fn step_Ack_Shootdown_IPI<M: mmu::MMU>(
         vaddr: s1.TLB_Shootdown.vaddr,
         open_requests: s1.TLB_Shootdown.open_requests.remove(core),
     }
+    &&& s2.pt_mem == s1.pt_mem
     &&& s2.sound == s1.sound
 }
 
@@ -867,6 +871,7 @@ pub open spec fn step_Unmap_End<M: mmu::MMU>(
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.pt_mem == s1.pt_mem
     &&& s1.sound == s2.sound
 }
 

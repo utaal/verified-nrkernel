@@ -166,12 +166,6 @@ pub enum Lbl {
 pub struct MemoryTypePlaceholder { }
 
 pub trait MMU: Sized {
-    ///// `mem_view` is necessary to express some of the transitions in the OS state machine. Need to
-    ///// decide on the exact type for this. (PML4 + Map<usize,usize> ?)
-    ///// TODO: Maybe this doesn't need to be part of the MMU trait, can probably track this as
-    ///// separate ghost state in the OS state machine.
-    //spec fn mem_view(self) -> MemoryTypePlaceholder; // Map<usize,usize>;
-    spec fn pt_mem(self) -> pt_mem::PTMem; // Map<usize,usize>;
     spec fn init(self) -> bool;
     spec fn next(pre: Self, post: Self, lbl: Lbl) -> bool;
     spec fn inv(self) -> bool;
@@ -190,8 +184,6 @@ pub trait MMU: Sized {
 pub struct DummyAtomicMMU { }
 
 impl MMU for DummyAtomicMMU {
-    //spec fn mem_view(self) -> MemoryTypePlaceholder; // Map<usize,usize>;
-    spec fn pt_mem(self) -> pt_mem::PTMem; // Map<usize,usize>;
     spec fn init(self) -> bool;
     spec fn next(pre: Self, post: Self, lbl: Lbl) -> bool;
     spec fn inv(self) -> bool;
