@@ -109,13 +109,6 @@ pub struct State {
 pub struct History { }
 
 impl State {
-    pub open spec fn stutter(pre: State, post: State) -> bool {
-        let State { happy, pt_mem, writes, neg_writes } = post;
-        &&& happy == pre.happy
-        &&& pt_mem == pre.pt_mem
-        &&& writes == pre.writes
-    }
-
     pub open spec fn init(self) -> bool {
         arbitrary()
     }
@@ -188,86 +181,166 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
 // ---- Atomic page table walks ----
 
-pub open spec fn valid_walk(
-    state: State,
-    c: Constants,
-    core: Core,
-    walk_result: WalkResult,
-    path: Seq<(usize, PDE)>,
-    ) -> bool
-{
-    let vbase = walk_result.vbase();
-    let (l0addr, l0e) = path[0];
-    &&& path.len() >= 1
-    &&& l0e.layer@ == 0
-    &&& l0addr == add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
-    &&& state.read_from_mem_tso(core, l0addr, l0e.entry as usize)
-    &&& match l0e@ {
-        GPDE::Directory { addr, .. } => {
-            let (l1addr, l1e) = path[1];
-            &&& path.len() >= 2
-            &&& l1e.layer@ == 1
-            &&& l1addr == add(addr, l1_bits!(vbase as u64) as usize)
-            &&& state.read_from_mem_tso(core, l1addr, l1e.entry as usize)
-            &&& match l1e@ {
-                GPDE::Directory { addr, .. } => {
-                    let (l2addr, l2e) = path[2];
-                    &&& path.len() >= 3
-                    &&& l2e.layer@ == 2
-                    &&& l2addr == add(addr, l2_bits!(vbase as u64) as usize)
-                    &&& state.read_from_mem_tso(core, l2addr, l2e.entry as usize)
-                    &&& match l2e@ {
-                        GPDE::Directory { addr, .. } => {
-                            let (l3addr, l3e) = path[3];
-                            &&& path.len() == 4
-                            &&& l3e.layer@ == 3
-                            &&& l3addr == add(addr, l3_bits!(vbase as u64) as usize)
-                            &&& state.read_from_mem_tso(core, l3addr, l3e.entry as usize)
-                            &&& match l3e@ {
-                                GPDE::Page { addr, .. } => {
-                                    &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
-                                    &&& walk_result == Walk { va: vbase, path }.pte()
+//pub open spec fn valid_walk(
+//    state: State,
+//    c: Constants,
+//    core: Core,
+//    walk_result: WalkResult,
+//    path: Seq<(usize, PDE)>,
+//    ) -> bool
+//{
+//    let vbase = walk_result.vbase();
+//    let (l0addr, l0e) = path[0];
+//    &&& path.len() >= 1
+//    &&& l0e.layer@ == 0
+//    &&& l0addr == add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
+//    &&& state.read_from_mem_tso(core, l0addr, l0e.entry as usize)
+//    &&& match l0e@ {
+//        GPDE::Directory { addr, .. } => {
+//            let (l1addr, l1e) = path[1];
+//            &&& path.len() >= 2
+//            &&& l1e.layer@ == 1
+//            &&& l1addr == add(addr, l1_bits!(vbase as u64) as usize)
+//            &&& state.read_from_mem_tso(core, l1addr, l1e.entry as usize)
+//            &&& match l1e@ {
+//                GPDE::Directory { addr, .. } => {
+//                    let (l2addr, l2e) = path[2];
+//                    &&& path.len() >= 3
+//                    &&& l2e.layer@ == 2
+//                    &&& l2addr == add(addr, l2_bits!(vbase as u64) as usize)
+//                    &&& state.read_from_mem_tso(core, l2addr, l2e.entry as usize)
+//                    &&& match l2e@ {
+//                        GPDE::Directory { addr, .. } => {
+//                            let (l3addr, l3e) = path[3];
+//                            &&& path.len() == 4
+//                            &&& l3e.layer@ == 3
+//                            &&& l3addr == add(addr, l3_bits!(vbase as u64) as usize)
+//                            &&& state.read_from_mem_tso(core, l3addr, l3e.entry as usize)
+//                            &&& match l3e@ {
+//                                GPDE::Page { addr, .. } => {
+//                                    &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+//                                    &&& walk_result == Walk { va: vbase, path }.pte()
+//                                },
+//                                GPDE::Directory { .. }
+//                                | GPDE::Empty => walk_result == Walk { va: vbase, path }.pte(),
+//                            }
+//                        },
+//                        GPDE::Page { addr, .. } => {
+//                            &&& aligned(vbase as nat, L2_ENTRY_SIZE as nat)
+//                            &&& path.len() == 3
+//                            &&& walk_result == Walk { va: vbase, path }.pte()
+//                        },
+//                        GPDE::Empty => {
+//                            &&& path.len() == 3
+//                            &&& walk_result == Walk { va: vbase, path }.pte()
+//                        },
+//                    }
+//                },
+//                GPDE::Page { addr, .. } => {
+//                    &&& aligned(vbase as nat, L1_ENTRY_SIZE as nat)
+//                    &&& path.len() == 2
+//                    &&& walk_result == Walk { va: vbase, path }.pte()
+//                },
+//                GPDE::Empty => {
+//                    &&& path.len() == 2
+//                    &&& walk_result == Walk { va: vbase, path }.pte()
+//                },
+//            }
+//        },
+//        GPDE::Empty => {
+//            &&& path.len() == 2
+//            &&& walk_result == Walk { va: vbase, path }.pte()
+//        },
+//        GPDE::Page { .. } => false, // No page mappings here
+//    }
+//}
+
+pub open spec fn valid_pt_walk(pt_mem: PTMem, addr: usize, pte: PTE, path: Seq<usize>) -> bool {
+    let l0_idx = l0_bits!(addr as u64) as usize;
+    let l1_idx = l1_bits!(addr as u64) as usize;
+    let l2_idx = l2_bits!(addr as u64) as usize;
+    let l3_idx = l3_bits!(addr as u64) as usize;
+    let l0_addr = add(pt_mem.pml4, l0_idx);
+    let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
+    match l0e@ {
+        GPDE::Directory { addr: l1_daddr, .. } => {
+            let l1_addr = add(l1_daddr, l1_idx);
+            let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
+            match l1e@ {
+                GPDE::Page { addr: pg_addr, .. } => {
+                    &&& aligned(addr as nat, L1_ENTRY_SIZE as nat)
+                    &&& pte == PTE {
+                        frame: MemRegion { base: pg_addr as nat, size: L1_ENTRY_SIZE as nat },
+                        flags: Flags::from_GPDEs(seq![l0e@, l1e@]),
+                    }
+                    &&& path == seq![l0_addr, l1_addr]
+                },
+                GPDE::Directory { addr: l2_daddr, .. } => {
+                    let l2_addr = add(l2_daddr, l2_idx);
+                    let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    match l2e@ {
+                        GPDE::Page { addr: pg_addr, .. } => {
+                            &&& aligned(addr as nat, L2_ENTRY_SIZE as nat)
+                            &&& pte == PTE {
+                                frame: MemRegion { base: pg_addr as nat, size: L2_ENTRY_SIZE as nat },
+                                flags: Flags::from_GPDEs(seq![l0e@, l1e@, l2e@]),
+                            }
+                            &&& path == seq![l0_addr, l1_addr, l2_addr]
+                        },
+                        GPDE::Directory { addr: l3_daddr, .. } => {
+                            let l3_addr = add(l3_daddr, l3_idx);
+                            let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            match l3e@ {
+                                GPDE::Page { addr: pg_addr, .. } => {
+                                    &&& aligned(addr as nat, L3_ENTRY_SIZE as nat)
+                                    &&& pte == PTE {
+                                        frame: MemRegion { base: pg_addr as nat, size: L3_ENTRY_SIZE as nat },
+                                        flags: Flags::from_GPDEs(seq![l0e@, l1e@, l2e@, l3e@]),
+                                    }
+                                    &&& path == seq![l0_addr, l1_addr, l2_addr, l3_addr]
                                 },
-                                GPDE::Directory { .. }
-                                | GPDE::Empty => walk_result == Walk { va: vbase, path }.pte(),
+                                GPDE::Directory { .. } => false,
+                                GPDE::Empty => false,
                             }
                         },
-                        GPDE::Page { addr, .. } => {
-                            &&& aligned(vbase as nat, L2_ENTRY_SIZE as nat)
-                            &&& path.len() == 3
-                            &&& walk_result == Walk { va: vbase, path }.pte()
-                        },
-                        GPDE::Empty => {
-                            &&& path.len() == 3
-                            &&& walk_result == Walk { va: vbase, path }.pte()
-                        },
+                        GPDE::Empty => false,
                     }
                 },
-                GPDE::Page { addr, .. } => {
-                    &&& aligned(vbase as nat, L1_ENTRY_SIZE as nat)
-                    &&& path.len() == 2
-                    &&& walk_result == Walk { va: vbase, path }.pte()
-                },
-                GPDE::Empty => {
-                    &&& path.len() == 2
-                    &&& walk_result == Walk { va: vbase, path }.pte()
-                },
+                GPDE::Empty => false,
             }
         },
-        GPDE::Empty => {
-            &&& path.len() == 2
-            &&& walk_result == Walk { va: vbase, path }.pte()
-        },
-        GPDE::Page { .. } => false, // No page mappings here
+        _ => false,
     }
 }
 
+pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<usize, (PTE, Seq<usize>)> {
+    // addr < MAX_BASE
+    Map::new(|addr: usize| exists|pte: PTE, path: Seq<_>| valid_pt_walk(pt_mem, addr, pte, path),
+             |addr: usize| choose|pte: PTE, path: Seq<_>| valid_pt_walk(pt_mem, addr, pte, path),
+    )
+}
+
+// Design decisions for atomic page table walk:
+// * Ideally I would directly use the same interpretation function here that we use to encode VCs
+//   for the implementation. The problem with that is that even when there is no translation, we
+//   need to consider the path, to know in which ranges a failing pt walk would appear atomic.
+//   But if we directly include the paths, then inserting/removing empty directories is not a
+//   view stutter step anymore.
 pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, PDE)>, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
-    // TODO:
-    &&& pre.is_walk_atomic(core, path) ==> valid_walk(pre, c, core, walk_result, path)
+    // TODO: need to somehow track the relevant addresses in the Map instead of the path here
+    //       but then I can't do the check without first doing the walk? (Maybe yes)
+    &&& pre.is_walk_atomic(core, path) ==> {
+        let pt = interp_pt_mem(pre.pt_mem);
+        match walk_result {
+            WalkResult::Valid { vbase, pte } => pt.contains_pair(vbase, (pte, path)),
+            WalkResult::Invalid { vbase, size } => {
+                forall|vbase2| vbase <= vbase2 < vbase + size ==> !pt.contains_key(vbase2)
+            },
+        }
+    }
 
     &&& post.pt_mem == pre.pt_mem
     &&& post.writes == pre.writes
@@ -317,12 +390,11 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl is Tau
-    &&& State::stutter(pre, post)
+    &&& post == pre
 }
 
 pub enum Step {
     Invlpg,
-    // TODO: maybe just make path part of the label
     Walk { path: Seq<(usize, PDE)> },
     Write,
     Read,

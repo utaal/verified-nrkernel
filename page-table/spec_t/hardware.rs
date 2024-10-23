@@ -208,6 +208,7 @@ impl PDE {
         let XD  = v & MASK_FLAG_XD   == MASK_FLAG_XD;
         let D   = v & MASK_PG_FLAG_D == MASK_PG_FLAG_D;
         let G   = v & MASK_PG_FLAG_G == MASK_PG_FLAG_G;
+        // TODO: this outer if should probably be rolled into the inner one
         if self.layer@ <= 3 {
             if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
                 if self.layer == 0 {
@@ -297,6 +298,19 @@ impl PDE {
 }
 
 impl Flags {
+    pub open spec fn from_GPDEs(pdes: Seq<GPDE>) -> Flags
+        recommends
+            pdes.len() > 0,
+            forall|i| 0 <= i < pdes.len() ==> !(pdes[i] is Empty)
+        decreases pdes.len()
+    {
+        if pdes.len() <= 1 {
+            Flags::from_GPDE(pdes[0])
+        } else {
+            Flags::from_GPDEs(pdes.drop_first()).combine(Flags::from_GPDE(pdes[0]))
+        }
+    }
+
     pub open spec fn from_GPDE(pde: GPDE) -> Flags
         recommends !(pde is Empty)
     {

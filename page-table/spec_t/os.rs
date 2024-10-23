@@ -38,6 +38,11 @@ pub struct OSVariables<M: mmu::MMU> {
     /// - Encoding the desired semantics of the implementation, e.g. Map_End has to change the
     ///   memory such that the interpretation contains a new entry.
     pub pt_mem: pt_mem::PTMem,
+    // history variables: writes, neg_writes
+    // TODO: invariant: No core holds lock ==> writes is empty && neg_writes is empty for all cores
+    //                  (and some aux inv to prove it, where shootdown acked ==> neg_writes empty
+    //                  for that core)
+    //
     //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
     pub sound: bool,
 }
@@ -55,11 +60,7 @@ pub enum CoreState {
     UnmapWaiting { ULT_id: nat, vaddr: nat },
     UnmapOpExecuting { ULT_id: nat, vaddr: nat, result: Option<Result<PTE, ()>> },
     UnmapOpDone { ULT_id: nat, vaddr: nat, result: Result<PTE, ()> },
-    UnmapShootdownWaiting {
-        ULT_id: nat,
-        vaddr: nat,
-        result: Result<PTE, ()>,
-    },
+    UnmapShootdownWaiting { ULT_id: nat, vaddr: nat, result: Result<PTE, ()> },
 }
 
 impl CoreState {

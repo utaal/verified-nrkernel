@@ -351,24 +351,13 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 let vaddr = s1.core_states[core]->UnmapOpExecuting_vaddr;
                 let ULT_id = s1.core_states[core]->UnmapOpExecuting_ULT_id;
                 let corestate = os::CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result) };
-                lemma_insert_preserves_no_overlap(
-                    c,
-                    s1.core_states,
-                    s1.interp_pt_mem(),
-                    core,
-                    corestate,
-                );
+                lemma_insert_preserves_no_overlap(c, s1.core_states, s1.interp_pt_mem(), core, corestate);
                 if s1.interp_pt_mem().contains_key(vaddr) {
                     assert(no_overlap_vmem_values(s2.core_states, s1.interp_pt_mem()));
                 } else {
                     assume(no_overlap_vmem_values(s2.core_states, s1.interp_pt_mem()));
                 }
-                lemma_submap_preserves_no_overlap(
-                    c,
-                    s2.core_states,
-                    s1.interp_pt_mem(),
-                    s2.interp_pt_mem(),
-                );
+                lemma_submap_preserves_no_overlap(c, s2.core_states, s1.interp_pt_mem(), s2.interp_pt_mem());
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.interp_pt_mem().submap_of(s1.interp_pt_mem()));
 
