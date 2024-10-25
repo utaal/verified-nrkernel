@@ -125,7 +125,7 @@ impl State {
         ||| !self.write_addrs().contains(addr)
     }
 
-    pub open spec fn is_walk_atomic(self, core: Core, path: Seq<(usize, PDE)>) -> bool {
+    pub open spec fn is_walk_atomic(self, core: Core, path: Seq<(usize, GPDE)>) -> bool {
         let addrs = path.to_set().map(|x:(_,_)| x.0);
         forall|addr| #[trigger] addrs.contains(addr) ==> {
             // No TSO non-determinism:
@@ -255,6 +255,74 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 //    }
 //}
 
+//pub struct Walk {
+//    pub vbase: usize,
+//    pub path: Seq<(usize, GPDE)>,
+//}
+//
+//impl Walk {
+//    pub open spec fn valid(self, pt_mem: PTMem) -> bool {
+//        arbitrary() // basically the do_pt_walk
+//    }
+//
+//    pub open spec fn result(self) -> WalkResult {
+//        arbitrary()
+//    }
+//}
+
+pub open spec fn do_pt_walk(pt_mem: PTMem, vaddr: usize) -> Walk {
+    let l0_idx = l0_bits!(vaddr as u64) as usize;
+    let l1_idx = l1_bits!(vaddr as u64) as usize;
+    let l2_idx = l2_bits!(vaddr as u64) as usize;
+    let l3_idx = l3_bits!(vaddr as u64) as usize;
+    let l0_addr = add(pt_mem.pml4, l0_idx);
+    let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
+    match l0e@ {
+        GPDE::Directory { addr: l1_daddr, .. } => {
+            let l1_addr = add(l1_daddr, l1_idx);
+            let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
+            match l1e@ {
+                GPDE::Directory { addr: l2_daddr, .. } => {
+                    let l2_addr = add(l2_daddr, l2_idx);
+                    let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    match l2e@ {
+                        GPDE::Directory { addr: l3_daddr, .. } => {
+                            let l3_addr = add(l3_daddr, l3_idx);
+                            let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            Walk {
+                                vbase: arbitrary(),
+                                path: seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)],
+                                complete: true,
+                            }
+                        },
+                        _ => {
+                            Walk {
+                                vbase: arbitrary(),
+                                path: seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)],
+                                complete: true,
+                            }
+                        },
+                    }
+                },
+                _ => {
+                    Walk {
+                        vbase: arbitrary(),
+                        path: seq![(l0_addr, l0e@), (l1_addr, l1e@)],
+                        complete: true,
+                    }
+                },
+            }
+        },
+        _ => {
+            Walk {
+                vbase: arbitrary(),
+                path: seq![(l0_addr, l0e@)],
+                complete: true,
+            }
+        },
+    }
+}
+
 pub open spec fn valid_pt_walk(pt_mem: PTMem, addr: usize, pte: PTE, path: Seq<usize>) -> bool {
     let l0_idx = l0_bits!(addr as u64) as usize;
     let l1_idx = l1_bits!(addr as u64) as usize;
@@ -313,33 +381,68 @@ pub open spec fn valid_pt_walk(pt_mem: PTMem, addr: usize, pte: PTE, path: Seq<u
     }
 }
 
-pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<usize, (PTE, Seq<usize>)> {
-    // addr < MAX_BASE
-    Map::new(|addr: usize| exists|pte: PTE, path: Seq<_>| valid_pt_walk(pt_mem, addr, pte, path),
-             |addr: usize| choose|pte: PTE, path: Seq<_>| valid_pt_walk(pt_mem, addr, pte, path),
-    )
-}
+//pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<usize, PTE> {
+//    // addr < MAX_BASE
+//    Map::new(|addr: usize| exists|pte: PTE| valid_pt_walk(pt_mem, addr, pte),
+//             |addr: usize| choose|pte: PTE| valid_pt_walk(pt_mem, addr, pte),
+//    )
+//}
 
-// Design decisions for atomic page table walk:
-// * Ideally I would directly use the same interpretation function here that we use to encode VCs
-//   for the implementation. The problem with that is that even when there is no translation, we
-//   need to consider the path, to know in which ranges a failing pt walk would appear atomic.
-//   But if we directly include the paths, then inserting/removing empty directories is not a
-//   view stutter step anymore.
-pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, PDE)>, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
-    // TODO: need to somehow track the relevant addresses in the Map instead of the path here
-    //       but then I can't do the check without first doing the walk? (Maybe yes)
-    &&& pre.is_walk_atomic(core, path) ==> {
-        let pt = interp_pt_mem(pre.pt_mem);
-        match walk_result {
-            WalkResult::Valid { vbase, pte } => pt.contains_pair(vbase, (pte, path)),
-            WalkResult::Invalid { vbase, size } => {
-                forall|vbase2| vbase <= vbase2 < vbase + size ==> !pt.contains_key(vbase2)
-            },
-        }
+    // 1. successful walk ==> map contains the entry
+    // 2. successful walk <== map contains the entry
+    //
+    // exception:
+    // * while unmapping
+    //   * 1 is not true (for any walk involving a page mapping that is in neg_writes)
+    // * while mapping
+    //   * 2 is not true (for any walk involving a page mapping that is in pos_writes)
+    //   * but only due to TSO? --> no, also NA
+    //
+    // * maybe track a set of exception ranges, associated with a page mapping change (can we do that in writes/neg_writes?)
+    //
+    // more abstractly:
+    // the underspecification thing means that tracking only writes/neg_writes should be sufficient
+    // (Any read on the path uses something from writes/neg_writes --> arbitrary walk result)
+    // --> the only question is how best to expose that to OSSM
+    //
+    // Map with paths in entries. Maintain invariant that all paths except for modified are
+    // disjoint from writes/neg_writes.
+    //
+    // Fully underspecifying doesn't work. Otherwise (during map) tlb fil may cache some arbitrary
+    // translation.
+
+    &&& {
+        let vbase = walk_result.vbase();
+        let atomic_walk = do_pt_walk(pre.pt_mem, vbase);
+        atomic_walk.result() is Valid ==>
+            // If the atomic walk finds a valid translation
+            if pre.is_walk_atomic(core, atomic_walk.path) {
+                // and if the path does not use addresses in writes/neg_writes, then the walk's result
+                // is the same as that of the atomic walk
+                atomic_walk.result() == walk_result
+            } else {
+                // if the path *does* use an address in writes/neg_writes, then the walk's result
+                // is either the same as atomic or it's invalid
+                // TODO: needs to be stronger, needs to constrain vbase and size
+                atomic_walk.result() is Invalid || atomic_walk.result() == walk_result
+            }
+        //match atomic_walk.result() {
+        //    WalkResult::Valid { .. } => {
+        //        true
+        //    },
+        //    WalkResult::Invalid { .. } => {
+        //        // TODO: double check. I may not have equality here. (smaller or larger invalid range)
+        //        !pre.neg_writes[core].contains(atomic_walk.path.last().0)
+        //            ==> walk_result == atomic_walk.result()
+        //        // TODO: Exception?
+        //        // !pre.neg_writes[core].contains(atomic_walk.path.last().0)
+        //        //     ==> walk_result == atomic_walk.result()
+        //    }
+        //}
     }
 
     &&& post.pt_mem == pre.pt_mem
@@ -395,7 +498,7 @@ pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -
 
 pub enum Step {
     Invlpg,
-    Walk { path: Seq<(usize, PDE)> },
+    Walk,
     Write,
     Read,
     Barrier,
@@ -404,12 +507,12 @@ pub enum Step {
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg                     => step_Invlpg(pre, post, c, lbl),
-        Step::Walk { path }              => step_Walk(pre, post, c, path, lbl),
-        Step::Write                      => step_Write(pre, post, c, lbl),
-        Step::Read                       => step_Read(pre, post, c, lbl),
-        Step::Barrier                    => step_Barrier(pre, post, c, lbl),
-        Step::Stutter                    => step_Stutter(pre, post, c, lbl),
+        Step::Invlpg  => step_Invlpg(pre, post, c, lbl),
+        Step::Walk    => step_Walk(pre, post, c, lbl),
+        Step::Write   => step_Write(pre, post, c, lbl),
+        Step::Read    => step_Read(pre, post, c, lbl),
+        Step::Barrier => step_Barrier(pre, post, c, lbl),
+        Step::Stutter => step_Stutter(pre, post, c, lbl),
     }
 }
 

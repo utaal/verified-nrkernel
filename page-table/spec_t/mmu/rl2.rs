@@ -92,8 +92,8 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 // ---- Non-atomic page table walks ----
 
 // FIXME: this should make sure the alignment of va fits with the PTE
-pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, va: usize, lbl: Lbl) -> bool {
-    let walk = Walk { va, path: seq![] };
+pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vbase: usize, lbl: Lbl) -> bool {
+    let walk = Walk { vbase, path: seq![], complete: false };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -118,17 +118,17 @@ pub open spec fn step_WalkStep(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
+    let (walk_next, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& pre.read_from_mem_tso(core, addr, value)
-    &&& res is Incomplete
+    &&& !walk_next.complete
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(res.walk()))
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk_next))
 
     &&& post.hist.neg_writes == pre.hist.neg_writes
 }
@@ -142,14 +142,14 @@ pub open spec fn step_WalkDone(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
+    let (walk_next, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
-    &&& walk.pte() == walk_result
+    &&& walk_next.result() == walk_result
     &&& pre.read_from_mem_tso(core, addr, value)
-    &&& !(res is Incomplete)
+    &&& walk_next.complete
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
@@ -214,7 +214,7 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Non-atomic page table walks
-    WalkInit { core: Core, va: usize },
+    WalkInit { core: Core, vbase: usize },
     WalkStep { core: Core, walk: Walk, value: usize },
     WalkDone { walk: Walk, value: usize },
     // TSO
@@ -227,7 +227,7 @@ pub enum Step {
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
         Step::Invlpg                         => step_Invlpg(pre, post, c, lbl),
-        Step::WalkInit { core, va }          => step_WalkInit(pre, post, c, core, va, lbl),
+        Step::WalkInit { core, vbase }       => step_WalkInit(pre, post, c, core, vbase, lbl),
         Step::WalkStep { core, walk, value } => step_WalkStep(pre, post, c, core, walk, value, lbl),
         Step::WalkDone { walk, value }       => step_WalkDone(pre, post, c, walk, value, lbl),
         Step::Write                          => step_Write(pre, post, c, lbl),

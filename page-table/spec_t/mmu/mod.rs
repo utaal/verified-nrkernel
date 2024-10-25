@@ -11,24 +11,9 @@ use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_S
 verus! {
 
 pub struct Walk {
-    pub va: usize,
-    pub path: Seq<(usize, PDE)>,
-}
-
-pub enum Res {
-    Incomplete(Walk),
-    Valid(Walk),
-    Invalid(Walk),
-}
-
-impl Res {
-    pub open spec fn walk(self) -> Walk {
-        match self {
-            Res::Incomplete(walk) => walk,
-            Res::Valid(walk)      => walk,
-            Res::Invalid(walk)    => walk,
-        }
-    }
+    pub vbase: usize,
+    pub path: Seq<(usize, GPDE)>,
+    pub complete: bool,
 }
 
 pub enum WalkResult {
@@ -54,44 +39,43 @@ impl WalkResult {
 }
 
 impl Walk {
+    // TODO: reconsider how this thing works in the step by step walks
     /// Also returns the address from which the value `value` must be read.
-    pub open spec fn next(self, pml4: usize, value: usize) -> (Res, usize) {
-        let va = self.va; let path = self.path;
+    pub open spec fn next(self, pml4: usize, value: usize) -> (Walk, usize) {
+        let vbase = self.vbase; let path = self.path;
         // TODO: do this better
         let addr = if path.len() == 0 {
-            add(pml4, l0_bits!(va as u64) as usize)
+            add(pml4, l0_bits!(vbase as u64) as usize)
         } else if path.len() == 1 {
-            add(path.last().0, l1_bits!(va as u64) as usize)
+            add(path.last().0, l1_bits!(vbase as u64) as usize)
         } else if path.len() == 2 {
-            add(path.last().0, l2_bits!(va as u64) as usize)
+            add(path.last().0, l2_bits!(vbase as u64) as usize)
         } else if path.len() == 3 {
-            add(path.last().0, l3_bits!(va as u64) as usize)
+            add(path.last().0, l3_bits!(vbase as u64) as usize)
         } else { arbitrary() };
 
-        let entry = PDE { entry: value as u64, layer: Ghost(path.len()) };
-        let walk = Walk { va, path: path.push((addr, entry)) };
-        (match entry@ {
-            GPDE::Directory { .. } => Res::Incomplete(walk),
-            GPDE::Page { .. }      => Res::Valid(walk),
-            GPDE::Empty            => Res::Invalid(walk),
-        }, addr)
+        let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
+        let walk = Walk {
+            vbase,
+            path: path.push((addr, entry)),
+            complete: !(entry is Directory)
+        };
+        (walk, addr)
     }
 
-    /// If the walk's result is valid, returns `Valid { .. }`, otherwise `Invalid { .. }`.
-    ///
-    /// TODO: rename this function to "result" or something like that. In fact, reconsider this
-    /// whole function and how/if it fits with the atomic ptwalk.
-    pub open spec fn pte(self) -> WalkResult
-        recommends self.path.len() > 0 && !(self.path.last().1@ is Directory)
-    {
+    //pub open spec fn valid(self, pt_mem: PTMem) -> bool {
+    //    arbitrary() // basically the pt_walk_path
+    //}
+
+    pub open spec fn result(self) -> WalkResult {
         let path = self.path;
-        if path.last().1@ is Page {
+        if path.last().1 is Page {
             let (vbase, base, size) = if path.len() == 2 {
-                (align_to_usize(self.va, L1_ENTRY_SIZE), path[1].1@->Page_addr, L1_ENTRY_SIZE)
+                (align_to_usize(self.vbase, L1_ENTRY_SIZE), path[1].1->Page_addr, L1_ENTRY_SIZE)
             } else if path.len() == 3 {
-                (align_to_usize(self.va, L2_ENTRY_SIZE), path[2].1@->Page_addr, L2_ENTRY_SIZE)
+                (align_to_usize(self.vbase, L2_ENTRY_SIZE), path[2].1->Page_addr, L2_ENTRY_SIZE)
             } else if path.len() == 4 {
-                (align_to_usize(self.va, L3_ENTRY_SIZE), path[3].1@->Page_addr, L3_ENTRY_SIZE)
+                (align_to_usize(self.vbase, L3_ENTRY_SIZE), path[3].1->Page_addr, L3_ENTRY_SIZE)
             } else { arbitrary() };
             WalkResult::Valid {
                 vbase,
@@ -100,14 +84,14 @@ impl Walk {
                     flags: self.flags(),
                 }
             }
-        } else if path.last().1@ is Empty {
+        } else if path.last().1 is Empty {
             // FIXME: this is wrong, needs to be vaddr aligned to entry size
             let (vbase, size) = if path.len() == 1 {
-                (align_to_usize(self.va, L1_ENTRY_SIZE), L1_ENTRY_SIZE)
+                (align_to_usize(self.vbase, L1_ENTRY_SIZE), L1_ENTRY_SIZE)
             } else if path.len() == 2 {
-                (align_to_usize(self.va, L2_ENTRY_SIZE), L2_ENTRY_SIZE)
+                (align_to_usize(self.vbase, L2_ENTRY_SIZE), L2_ENTRY_SIZE)
             } else if path.len() == 3 {
-                (align_to_usize(self.va, L3_ENTRY_SIZE), L3_ENTRY_SIZE)
+                (align_to_usize(self.vbase, L3_ENTRY_SIZE), L3_ENTRY_SIZE)
             } else { arbitrary() };
             WalkResult::Invalid { vbase, size }
         } else {
@@ -117,10 +101,10 @@ impl Walk {
 
     pub open spec fn flags(self) -> Flags {
         let path = self.path;
-        let flags0 = Flags::from_GPDE(path[0].1@);
-        let flags1 = flags0.combine(Flags::from_GPDE(path[1].1@));
-        let flags2 = flags1.combine(Flags::from_GPDE(path[2].1@));
-        let flags3 = flags2.combine(Flags::from_GPDE(path[3].1@));
+        let flags0 = Flags::from_GPDE(path[0].1);
+        let flags1 = flags0.combine(Flags::from_GPDE(path[1].1));
+        let flags2 = flags1.combine(Flags::from_GPDE(path[2].1));
+        let flags3 = flags2.combine(Flags::from_GPDE(path[3].1));
         if path.len() == 1 {
             flags0
         } else if path.len() == 2 {

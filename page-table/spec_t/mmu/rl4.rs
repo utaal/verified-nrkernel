@@ -204,8 +204,8 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
 // ---- Non-atomic page table walks ----
 
 // FIXME: this should make sure the alignment of va fits with the PTE
-pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, va: usize, lbl: Lbl) -> bool {
-    let walk = Walk { va, path: seq![] };
+pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vbase: usize, lbl: Lbl) -> bool {
+    let walk = Walk { vbase, path: seq![], complete: false };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -234,21 +234,21 @@ pub open spec fn step_WalkStep(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
+    let (walk_next, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& pre.read_from_mem_tso(core, addr, value)
-    &&& res is Incomplete
+    &&& !walk_next.complete
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(res.walk()))
+    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(walk_next))
 
-    &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
+    &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk_next))
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
 }
@@ -262,15 +262,15 @@ pub open spec fn step_WalkDone(
     lbl: Lbl
     ) -> bool
 {
-    let (res, addr) = walk.next(pre.pt_mem.pml4, value);
+    let (walk_next, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     //&&& walk.va == va
-    &&& walk.pte() == walk_result
+    &&& walk_next.result() == walk_result
     &&& pre.read_from_mem_tso(core, addr, value)
-    &&& !(res is Incomplete)
+    &&& walk_next.complete
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
@@ -373,7 +373,7 @@ pub enum Step {
     CacheUse { core: Core, walk: Walk },
     CacheEvict { core: Core, walk: Walk },
     // Non-atomic page table walks
-    WalkInit { core: Core, va: usize },
+    WalkInit { core: Core, vbase: usize },
     WalkStep { core: Core, walk: Walk, value: usize },
     WalkDone { walk: Walk, value: usize },
     // TSO
@@ -389,7 +389,7 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::CacheFill { core, walk }       => step_CacheFill(pre, post, c, core, walk, lbl),
         Step::CacheUse { core, walk }        => step_CacheUse(pre, post, c, core, walk, lbl),
         Step::CacheEvict { core, walk }      => step_CacheEvict(pre, post, c, core, walk, lbl),
-        Step::WalkInit { core, va }          => step_WalkInit(pre, post, c, core, va, lbl),
+        Step::WalkInit { core, vbase }       => step_WalkInit(pre, post, c, core, vbase, lbl),
         Step::WalkStep { core, walk, value } => step_WalkStep(pre, post, c, core, walk, value, lbl),
         Step::WalkDone { walk, value }       => step_WalkDone(pre, post, c, walk, value, lbl),
         Step::Write                          => step_Write(pre, post, c, lbl),
@@ -434,7 +434,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
             assert(post.inv(c))
         },
         Step::CacheEvict { core, walk } => assert(post.inv(c)),
-        Step::WalkInit { core, va } => assert(post.inv(c)),
+        Step::WalkInit { core, vbase } => assert(post.inv(c)),
         Step::WalkStep { core, walk, value } => assert(post.inv(c)),
         Step::WalkDone { walk, value } => assert(post.inv(c)),
         Step::Write                      => assert(post.inv(c)),
@@ -472,7 +472,7 @@ mod refinement {
                 rl4::Step::CacheFill { core, walk }       => rl3::Step::Stutter,
                 rl4::Step::CacheUse { core, walk }        => rl3::Step::Stutter,
                 rl4::Step::CacheEvict { core, walk }      => rl3::Step::Stutter,
-                rl4::Step::WalkInit { core, va }          => rl3::Step::WalkInit { core, va },
+                rl4::Step::WalkInit { core, vbase }       => rl3::Step::WalkInit { core, vbase },
                 rl4::Step::WalkStep { core, walk, value } => rl3::Step::WalkStep { core, walk, value },
                 rl4::Step::WalkDone { walk, value }       => rl3::Step::WalkDone { walk, value },
                 rl4::Step::Write                          => rl3::Step::Write,
@@ -503,8 +503,8 @@ mod refinement {
             rl4::Step::CacheEvict { core, walk }    => {
                 assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
-            rl4::Step::WalkInit { core, va } => {
-                assert(rl3::step_WalkInit(pre.interp(), post.interp(), c, core, va, lbl))
+            rl4::Step::WalkInit { core, vbase } => {
+                assert(rl3::step_WalkInit(pre.interp(), post.interp(), c, core, vbase, lbl))
             },
             rl4::Step::WalkStep { core, walk, value } => {
                 assert(rl3::step_WalkStep(pre.interp(), post.interp(), c, core, walk, value, lbl));
