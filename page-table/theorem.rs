@@ -1,7 +1,8 @@
 use vstd::prelude::*;
 use crate::spec_t::hlspec;
 use crate::spec_t::os;
-use crate::spec_t::mmu::{ self, DummyAtomicMMU };
+use crate::spec_t::mmu::{ DummyAtomicMMU };
+//use crate::spec_t::mmu::{ self, DummyAtomicMMU };
 
 verus!{
 

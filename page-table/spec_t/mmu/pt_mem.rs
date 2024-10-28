@@ -11,6 +11,7 @@ verus! {
 // TODO: memory size
 pub struct PTMem {
     pub mem: Map<usize, usize>,
+    //pub types: Map<usize, MType>,
     pub pml4: usize,
 }
 
@@ -18,6 +19,7 @@ impl PTMem {
     pub open spec fn write(self, addr: usize, value: usize) -> PTMem {
         PTMem {
             mem: self.mem.insert(addr, value),
+            //types: self.types,
             pml4: self.pml4,
         }
     }
@@ -25,6 +27,14 @@ impl PTMem {
     pub open spec fn read(self, addr: usize) -> usize {
         self.mem[addr]
     }
+
+    //pub open spec fn retype(self, m: Map<usize, MType>) -> PTMem {
+    //    PTMem {
+    //        mem: self.mem,
+    //        types: self.types.union_prefer_right(m),
+    //        pml4: self.pml4,
+    //    }
+    //}
 
     pub open spec fn page_addrs(self) -> Map<usize, GPDE> {
         arbitrary() // TODO: the thing below but as Map
@@ -40,14 +50,13 @@ impl PTMem {
 //}
 
 //pub enum MType {
-//    PDir0,
-//    PDir1,
-//    PDir2,
-//    PTable,
-//    User,
+//    PDir0E,
+//    PDir1E,
+//    PDir2E,
+//    PDir3E,
 //    Untyped,
 //}
-//
+
 //impl MType {
 //    pub open spec fn is_page_type(self) -> bool {
 //        match self {
@@ -61,28 +70,28 @@ impl PTMem {
 pub open spec fn flatten<A>(s: Set<Set<A>>) -> Set<A>;
 
 //impl PTMem {
-//    /// The view of the memory is byte-indexed but stores full words. Only 8-byte aligned indices
-//    /// are meaningful. This way we get to store full words without breaking them down into bytes
-//    /// and worrying about endianness but unlike if we kept a word-indexed memory, we also don't
-//    /// have to convert back and forth between u64- and byte-indexed.
-//    /// TODO: unaligned addresses probably just shouldn't be in domain? make an invariant to that effect probably.
-//    pub open spec fn view(self) -> Map<usize, usize>;
+//    ///// The view of the memory is byte-indexed but stores full words. Only 8-byte aligned indices
+//    ///// are meaningful. This way we get to store full words without breaking them down into bytes
+//    ///// and worrying about endianness but unlike if we kept a word-indexed memory, we also don't
+//    ///// have to convert back and forth between u64- and byte-indexed.
+//    ///// TODO: unaligned addresses probably just shouldn't be in domain? make an invariant to that effect probably.
+//    //pub open spec fn view(self) -> Map<usize, usize>;
+//    //
+//    //pub open spec fn pml4(self) -> usize;
+//    //
+//    //pub open spec fn write(self, addr: usize, value: usize) -> PTMem;
+//    //
+//    ///// Describes the effect of performing a write on the PTMem.
+//    //pub proof fn axiom_write(self, addr: usize, value: usize) -> (res: PTMem)
+//    //    ensures res@ == self@.insert(addr, value)
+//    //{
+//    //    admit();
+//    //    self.write(addr, value)
+//    //}
 //
-//    pub open spec fn pml4(self) -> usize;
-//
-//    pub open spec fn write(self, addr: usize, value: usize) -> PTMem;
-//
-//    /// Describes the effect of performing a write on the PTMem.
-//    pub proof fn axiom_write(self, addr: usize, value: usize) -> (res: PTMem)
-//        ensures res@ == self@.insert(addr, value)
-//    {
-//        admit();
-//        self.write(addr, value)
-//    }
-//
-//    pub open spec fn page_addrs(self) -> Map<usize, GPDE> {
-//        arbitrary() // TODO: the thing below but as Map
-//    }
+//    //pub open spec fn page_addrs(self) -> Map<usize, GPDE> {
+//    //    arbitrary() // TODO: the thing below but as Map
+//    //}
 //    ///// All addresses that may be used in a page table walk.
 //    //pub open spec fn page_addrs(self) -> Set<usize> {
 //    //    let l0_addrs = self.page_addrs_aux(set![self.pml4()], 0);

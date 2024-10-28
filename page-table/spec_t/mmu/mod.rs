@@ -1,12 +1,12 @@
 //pub mod rl1;
 //pub mod rl2;
-pub mod rl3;
+//pub mod rl3;
 pub mod rl4;
 pub mod pt_mem;
 
 use vstd::prelude::*;
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize };
+use crate::definitions_t::{ PTE, Flags, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize, aligned };
 
 verus! {
 
@@ -94,6 +94,52 @@ impl Walk {
     }
 }
 
+//pub open spec fn is_l0_entry(pt_mem: pt_mem::PTMem, addr: usize) -> bool {
+//    pt_mem.pml4() <= addr < pt_mem.pml4() + 4096
+//}
+
+
+pub open spec fn pt_walk(pt_mem: pt_mem::PTMem, vbase: usize, path: Seq<(usize, GPDE)>) -> bool {
+    let l0_idx = l0_bits!(vbase as u64) as usize;
+    let l1_idx = l1_bits!(vbase as u64) as usize;
+    let l2_idx = l2_bits!(vbase as u64) as usize;
+    let l3_idx = l3_bits!(vbase as u64) as usize;
+    let l0_addr = add(pt_mem.pml4, l0_idx);
+    let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
+    match l0e@ {
+        GPDE::Directory { addr: l1_daddr, .. } => {
+            let l1_addr = add(l1_daddr, l1_idx);
+            let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
+            match l1e@ {
+                GPDE::Directory { addr: l2_daddr, .. } => {
+                    let l2_addr = add(l2_daddr, l2_idx);
+                    let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    match l2e@ {
+                        GPDE::Directory { addr: l3_daddr, .. } => {
+                            let l3_addr = add(l3_daddr, l3_idx);
+                            let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+                            &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]
+                        },
+                        _ => {
+                            &&& aligned(vbase as nat, L2_ENTRY_SIZE as nat)
+                            &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]
+                        },
+                    }
+                },
+                _ => {
+                    &&& aligned(vbase as nat, L1_ENTRY_SIZE as nat)
+                    &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]
+                },
+            }
+        },
+        _ => {
+            &&& aligned(vbase as nat, L0_ENTRY_SIZE as nat)
+            &&& path == seq![(l0_addr, l0e@)]
+        },
+    }
+}
+
 pub struct Constants {
     pub cores: Set<Core>,
 }
@@ -123,8 +169,6 @@ pub enum Lbl {
     Barrier(Core),
 }
 
-#[verifier(external_body)]
-pub struct MemoryTypePlaceholder { }
 
 pub trait MMU: Sized {
     spec fn init(self) -> bool;

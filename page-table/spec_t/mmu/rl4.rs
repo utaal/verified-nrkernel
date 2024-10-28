@@ -16,7 +16,6 @@ pub const MASK_NEG_DIRTY_ACCESS: usize = !(bit!(5) | bit!(6)) as usize;
 // behavior we assume of the hardware.
 
 pub struct State {
-    pub happy: bool,
     /// Page table memory
     pub pt_mem: PTMem,
     /// In-progress page table walks
@@ -31,12 +30,34 @@ pub struct State {
 }
 
 pub struct History {
+    pub happy: bool,
     /// All partial walks since the last invlpg
     pub walks: Map<Core, Set<Walk>>,
     /// All writes that may still be in store buffers. Gets reset for the executing core on invlpg
     /// and barrier.
     pub writes: Set<(Core, usize)>,
     pub neg_writes: Map<Core, Set<usize>>,
+    /// Tracks all writes since the last time both writes and neg_writes were empty.
+    pub all_writes: Set<WriteInfo>,
+}
+
+pub struct WriteInfo {
+    pub core: Core,
+    pub addr: usize,
+    pub old: GPDE,
+    pub new: GPDE,
+}
+
+impl WriteInfo {
+    pub open spec fn is_negative(self) -> bool {
+        self.old is Empty
+    }
+
+    pub open spec fn is_dir(self) -> bool {
+        // Dir/Page depends only on the location, so it can never happen that one of the two is dir
+        // and the other page.
+        self.old is Directory || self.new is Directory
+    }
 }
 
 
@@ -65,6 +86,10 @@ impl State {
         arbitrary()
     }
 
+    pub open spec fn writer_mem_view(self) -> PTMem {
+        arbitrary() // TODO: PTMem obtained by applying the single writer's store buffer to the memory
+    }
+
     pub open spec fn no_other_writers(self, core: Core) -> bool {
         self.writer_cores().subset_of(set![core])
         //self.writer_cores() === set![] || self.writer_cores() === set![core] 
@@ -75,10 +100,27 @@ impl State {
         self.hist.writes.map(|x:(_,_)| x.0)
     }
 
-    pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        &&& self.pt_mem.page_addrs().contains_key(addr)
-        &&& !(self.pt_mem.page_addrs()[addr] is Empty)
+    //pub open spec fn is_write_happy(self, w: WriteInfo) -> bool {
+    //    &&& w.is_negative() ==> forall|w2| #![auto] self.hist.all_writes.contains(w2) ==> w2.is_negative()
+    //    &&& w.is_dir()      ==> forall|w2| #![auto] self.hist.all_writes.contains(w2) ==> w2.is_dir()
+    //}
+
+    pub open spec fn is_pos_write(self, addr: usize) -> bool {
+        forall|path, vbase, i: int| #![auto]
+            pt_walk(self.writer_mem_view(), vbase, path) && 0 <= i < path.len() && path[i].0 == addr
+                ==> !(path[i].1 is Empty)
     }
+
+    pub open spec fn is_neg_write(self, addr: usize) -> bool {
+        forall|path, vbase, i: int| #![auto]
+            pt_walk(self.writer_mem_view(), vbase, path) && 0 <= i < path.len() && path[i].0 == addr
+                ==> !(path[i].1 is Empty)
+    }
+
+    //pub open spec fn is_neg_write(self, addr: usize) -> bool {
+    //    &&& self.pt_mem.page_addrs().contains_key(addr)
+    //    &&& !(self.pt_mem.page_addrs()[addr] is Empty)
+    //}
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
@@ -96,7 +138,7 @@ impl State {
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
-        self.happy ==> {
+        self.hist.happy ==> {
         // TODO:
         // invariant on walks and cache:
         // - The PDEs stored in `Partial` walks are always directories
@@ -127,12 +169,12 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     // .. and waits for inflight walks to complete.
     &&& pre.walks[core].is_empty()
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks.insert(core, set![])
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
     &&& post.hist.neg_writes == pre.hist.neg_writes.insert(core, set![])
@@ -147,12 +189,12 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache.insert(core, pre.cache[core].insert(walk))
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -164,12 +206,12 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
     &&& c.valid_core(core)
     &&& pre.cache[core].contains(walk)
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -181,12 +223,12 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
     &&& c.valid_core(core)
     &&& pre.cache[core].contains(walk)
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache.insert(core, pre.cache[core].remove(walk))
     &&& post.walks == pre.walks
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -205,12 +247,12 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     // can we just ignore them?
     &&& arbitrary() // TODO: conditions on va? max vaddr?
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk))
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -257,12 +299,12 @@ pub open spec fn step_WalkStep(
     &&& pre.walks[core].contains(walk)
     &&& !walk_next.complete
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(walk_next))
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk_next))
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -288,12 +330,12 @@ pub open spec fn step_WalkDone(
     &&& walk_next.complete
     }
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk))
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     //&&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
     &&& post.hist.writes === pre.hist.writes
@@ -313,12 +355,15 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
-    &&& post.happy == pre.happy && pre.no_other_writers(core)
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
+    &&& post.hist.happy
+            == pre.hist.happy
+            && pre.no_other_writers(core)
+            //&& pre.is_write_happy(WriteInfo { core, addr,  })
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes.insert((core, addr))
     &&& post.hist.neg_writes == if pre.is_neg_write(addr) {
@@ -333,12 +378,12 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& c.valid_core(core)
     &&& 0 < pre.sbuf[core].len()
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem.write(addr, value)
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -351,12 +396,12 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl:
     &&& aligned(addr as nat, 8)
     &&& value == pre.read_from_mem_tso(core, addr, r)
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -370,12 +415,12 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& c.valid_core(core)
     &&& pre.sbuf[core].len() == 0
 
-    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
+    &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes === pre.hist.writes.filter(|e:(Core, usize)| e.0 != core)
     &&& post.hist.neg_writes == pre.hist.neg_writes
@@ -418,7 +463,7 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
-    pre.happy ==> exists|step| next_step(pre, post, c, step, lbl)
+    exists|step| next_step(pre, post, c, step, lbl)
 }
 
 proof fn init_implies_inv(pre: State, c: Constants)
@@ -466,105 +511,134 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
 
 
 
-mod refinement {
-    use crate::spec_t::mmu::*;
-    use crate::spec_t::mmu::rl3;
-    use crate::spec_t::mmu::rl4;
-
-    impl rl4::State {
-        pub open spec fn interp(self) -> rl3::State {
-            rl3::State {
-                happy: self.happy,
-                pt_mem: self.pt_mem,
-                walks: self.hist.walks,
-                sbuf: self.sbuf,
-                hist: rl3::History { writes: self.hist.writes, neg_writes: self.hist.neg_writes },
-            }
-        }
-    }
-
-    impl rl4::Step {
-        pub open spec fn interp(self) -> rl3::Step {
-            match self {
-                rl4::Step::Invlpg                            => rl3::Step::Invlpg,
-                rl4::Step::CacheFill { core, walk }          => rl3::Step::Stutter,
-                rl4::Step::CacheUse { core, walk }           => rl3::Step::Stutter,
-                rl4::Step::CacheEvict { core, walk }         => rl3::Step::Stutter,
-                rl4::Step::WalkInit { core, vbase }          => rl3::Step::WalkInit { core, vbase },
-                rl4::Step::WalkStep { core, walk, value, r } => rl3::Step::WalkStep { core, walk, value },
-                rl4::Step::WalkDone { walk, value, r }       => rl3::Step::WalkDone { walk, value },
-                rl4::Step::Write                             => rl3::Step::Write,
-                rl4::Step::Writeback { core }                => rl3::Step::Writeback { core },
-                rl4::Step::Read { r }                        => rl3::Step::Read,
-                rl4::Step::Barrier                           => rl3::Step::Barrier,
-            }
-        }
-    }
-
-    proof fn next_step_refines(pre: rl4::State, post: rl4::State, c: rl4::Constants, step: rl4::Step, lbl: Lbl)
-        requires
-            pre.happy,
-            pre.inv(c),
-            rl4::next_step(pre, post, c, step, lbl),
-        ensures rl3::next_step(pre.interp(), post.interp(), c, step.interp(), lbl)
-    {
-        match step {
-            rl4::Step::Invlpg => {
-                assert(rl3::step_Invlpg(pre.interp(), post.interp(), c, lbl));
-            },
-            rl4::Step::CacheFill { core, walk }  => {
-                assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
-            },
-            rl4::Step::CacheUse { core, walk }      => {
-                assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
-            },
-            rl4::Step::CacheEvict { core, walk }    => {
-                assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
-            },
-            rl4::Step::WalkInit { core, vbase } => {
-                assert(rl3::step_WalkInit(pre.interp(), post.interp(), c, core, vbase, lbl))
-            },
-            rl4::Step::WalkStep { core, walk, value, r } => {
-                assert(rl3::step_WalkStep(pre.interp(), post.interp(), c, core, walk, value, lbl));
-            },
-            rl4::Step::WalkDone { walk, value, r } => {
-                assert(rl3::step_WalkDone(pre.interp(), post.interp(), c, walk, value, lbl));
-            },
-            rl4::Step::Write => {
-                assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));
-                //let core = lbl->Write_0;
-                //if pre.no_other_writers(core) {
-                //    assert(pre.interp().no_other_writers(core));
-                //    assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));
-                //} else {
-                //    assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));
-                //}
-            },
-            rl4::Step::Writeback { core }        => {
-                assert(rl3::step_Writeback(pre.interp(), post.interp(), c, core, lbl));
-            },
-            rl4::Step::Read { r }                => {
-                assert(rl3::step_Read(pre.interp(), post.interp(), c, lbl));
-            },
-            rl4::Step::Barrier                   => {
-                assert(rl3::step_Barrier(pre.interp(), post.interp(), c, lbl));
-            },
-        }
-    }
-
-    proof fn next_refines(pre: rl4::State, post: rl4::State, c: rl4::Constants, lbl: Lbl)
-        requires
-            pre.inv(c),
-            rl4::next(pre, post, c, lbl),
-        ensures
-            rl3::next(pre.interp(), post.interp(), c, lbl),
-    {
-        if pre.happy {
-            let step = choose|step: rl4::Step| rl4::next_step(pre, post, c, step, lbl);
-            next_step_refines(pre, post, c, step, lbl);
-        }
-    }
-}
+//mod refinement {
+//    use crate::spec_t::mmu::*;
+//    use crate::spec_t::mmu::rl3;
+//    use crate::spec_t::mmu::rl4;
+//    use crate::spec_t::mmu::rl4::bit;
+//
+//    impl rl4::State {
+//        pub open spec fn interp(self) -> rl3::State {
+//            rl3::State {
+//                happy: self.happy,
+//                pt_mem: self.pt_mem,
+//                walks: self.hist.walks,
+//                sbuf: self.sbuf,
+//                hist: rl3::History { writes: self.hist.writes, neg_writes: self.hist.neg_writes },
+//            }
+//        }
+//    }
+//
+//    impl rl4::Step {
+//        pub open spec fn interp(self) -> rl3::Step {
+//            match self {
+//                rl4::Step::Invlpg                            => rl3::Step::Invlpg,
+//                rl4::Step::CacheFill { core, walk }          => rl3::Step::Stutter,
+//                rl4::Step::CacheUse { core, walk }           => rl3::Step::Stutter,
+//                rl4::Step::CacheEvict { core, walk }         => rl3::Step::Stutter,
+//                rl4::Step::WalkInit { core, vbase }          => rl3::Step::WalkInit { core, vbase },
+//                rl4::Step::WalkStep { core, walk, value, r } => rl3::Step::WalkStep { core, walk, value },
+//                rl4::Step::WalkDone { walk, value, r }       => rl3::Step::WalkDone { walk, value },
+//                rl4::Step::Write                             => rl3::Step::Write,
+//                rl4::Step::Writeback { core }                => rl3::Step::Writeback { core },
+//                rl4::Step::Read { r }                        => rl3::Step::Read,
+//                rl4::Step::Barrier                           => rl3::Step::Barrier,
+//            }
+//        }
+//    }
+//
+//    /// The value of r is irrelevant, so we can just ignore it.
+//    proof fn rl4_walk_next_is_rl3_walk_next(state: rl4::State, core: Core, walk: Walk, r: usize)
+//        ensures rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp(), core, walk)
+//    {
+//        admit();
+//    }
+//
+//    proof fn next_step_refines(pre: rl4::State, post: rl4::State, c: rl4::Constants, step: rl4::Step, lbl: Lbl)
+//        requires
+//            pre.happy,
+//            pre.inv(c),
+//            rl4::next_step(pre, post, c, step, lbl),
+//        ensures rl3::next_step(pre.interp(), post.interp(), c, step.interp(), lbl)
+//    {
+//        match step {
+//            rl4::Step::Invlpg => {
+//                assert(rl3::step_Invlpg(pre.interp(), post.interp(), c, lbl));
+//            },
+//            rl4::Step::CacheFill { core, walk }  => {
+//                assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
+//            },
+//            rl4::Step::CacheUse { core, walk }      => {
+//                assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
+//            },
+//            rl4::Step::CacheEvict { core, walk }    => {
+//                assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
+//            },
+//            rl4::Step::WalkInit { core, vbase } => {
+//                assert(rl3::step_WalkInit(pre.interp(), post.interp(), c, core, vbase, lbl))
+//            },
+//            rl4::Step::WalkStep { core, walk, value, r } => {
+//                rl4_walk_next_is_rl3_walk_next(pre, core, walk, r);
+//                assert(rl3::step_WalkStep(pre.interp(), post.interp(), c, core, walk, value, lbl));
+//            },
+//            rl4::Step::WalkDone { walk, value, r } => {
+//                let core = lbl->Walk_0;
+//                rl4_walk_next_is_rl3_walk_next(pre, core, walk, r);
+//                assert(rl3::step_WalkDone(pre.interp(), post.interp(), c, walk, value, lbl));
+//            },
+//            rl4::Step::Write => {
+//                assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));
+//                //let core = lbl->Write_0;
+//                //if pre.no_other_writers(core) {
+//                //    assert(pre.interp().no_other_writers(core));
+//                //    assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));
+//                //} else {
+//                //    assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));
+//                //}
+//            },
+//            rl4::Step::Writeback { core }        => {
+//                assert(rl3::step_Writeback(pre.interp(), post.interp(), c, core, lbl));
+//            },
+//            rl4::Step::Read { r }                => {
+//                //let core = lbl->Read_0;
+//                //let addr = lbl->Read_1;
+//                //let value = lbl->Read_2;
+//                //let val = match rl4::get_first(pre.sbuf[core], addr) {
+//                //    Some(v) => v,
+//                //    None    => pre.pt_mem.read(addr),
+//                //};
+//                //assert(val == pre.interp().read_from_mem_tso(core, addr));
+//                //assert(value == val ^ (r & rl4::MASK_DIRTY_ACCESS));
+//
+//                assert(forall|val: usize, r: usize| #![auto]
+//                    (val ^ (r & rl4::MASK_DIRTY_ACCESS)) & rl4::MASK_NEG_DIRTY_ACCESS
+//                        == val & rl4::MASK_NEG_DIRTY_ACCESS)
+//                by {
+//                    assert(forall|val: usize, r: usize| #![auto]
+//                        (val ^ (r & ((bit!(5) | bit!(6)) as usize))) & (!(bit!(5) | bit!(6)) as usize)
+//                            == val & (!(bit!(5) | bit!(6)) as usize)) by (bit_vector);
+//                };
+//                assert(rl3::step_Read(pre.interp(), post.interp(), c, lbl));
+//            },
+//            rl4::Step::Barrier                   => {
+//                assert(rl3::step_Barrier(pre.interp(), post.interp(), c, lbl));
+//            },
+//        }
+//    }
+//
+//    proof fn next_refines(pre: rl4::State, post: rl4::State, c: rl4::Constants, lbl: Lbl)
+//        requires
+//            pre.inv(c),
+//            rl4::next(pre, post, c, lbl),
+//        ensures
+//            rl3::next(pre.interp(), post.interp(), c, lbl),
+//    {
+//        if pre.happy {
+//            let step = choose|step: rl4::Step| rl4::next_step(pre, post, c, step, lbl);
+//            next_step_refines(pre, post, c, step, lbl);
+//        }
+//    }
+//}
 
 
 
