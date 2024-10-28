@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
-use crate::spec_t::mmu::rl4::{ MASK_DIRTY_ACCESS };
+use crate::spec_t::mmu::rl4::{ MASK_DIRTY_ACCESS, MASK_NEG_DIRTY_ACCESS };
 use crate::spec_t::mmu::pt_mem::{ PTMem };
 use crate::definitions_t::{ aligned, Core };
 
@@ -31,10 +31,9 @@ impl State {
         arbitrary()
     }
 
-    pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, value: usize) -> bool {
-        self.is_tso_read_deterministic(core, addr)
-            ==> value & MASK_DIRTY_ACCESS == self.pt_mem.read(addr) & MASK_DIRTY_ACCESS
-    }
+    //pub open spec fn read_from_mem_tso(self, core: Core, addr: usize) -> usize {
+    //    if self.is_tso_read_deterministic(core, addr) ==> self.pt_mem.read(addr)
+    //}
 
     /// For the active writer core, the memory always behaves like a Map. For other cores this is
     /// only true for addresses that haven't been written to.
@@ -108,6 +107,29 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.hist.neg_writes == pre.hist.neg_writes
 }
 
+pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
+    let vbase = walk.vbase; let path = walk.path;
+    // TODO: do this better
+    let addr = if path.len() == 0 {
+        add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
+    } else if path.len() == 1 {
+        add(path.last().0, l1_bits!(vbase as u64) as usize)
+    } else if path.len() == 2 {
+        add(path.last().0, l2_bits!(vbase as u64) as usize)
+    } else if path.len() == 3 {
+        add(path.last().0, l3_bits!(vbase as u64) as usize)
+    } else { arbitrary() };
+    let value = state.read_from_mem_tso(core, addr);
+
+    let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
+    let walk = Walk {
+        vbase,
+        path: path.push((addr, entry)),
+        complete: !(entry is Directory)
+    };
+    walk
+}
+
 pub open spec fn step_WalkStep(
     pre: State,
     post: State,
@@ -118,12 +140,11 @@ pub open spec fn step_WalkStep(
     lbl: Lbl
     ) -> bool
 {
-    let (walk_next, addr) = walk.next(pre.pt_mem.pml4, value);
+    let walk_next = walk_next(pre, core, walk);
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
-    &&& pre.read_from_mem_tso(core, addr, value)
     &&& !walk_next.complete
 
     &&& post.happy == pre.happy
@@ -142,14 +163,15 @@ pub open spec fn step_WalkDone(
     lbl: Lbl
     ) -> bool
 {
-    let (walk_next, addr) = walk.next(pre.pt_mem.pml4, value);
     &&& lbl matches Lbl::Walk(core, walk_result)
 
+    &&& {
+    let walk_next = walk_next(pre, core, walk);
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& walk_next.result() == walk_result
-    &&& pre.read_from_mem_tso(core, addr, value)
     &&& walk_next.complete
+    }
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
@@ -182,7 +204,8 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
-    &&& pre.read_from_mem_tso(core, addr, value)
+    &&& pre.is_tso_read_deterministic(core, addr)
+        ==> value & MASK_NEG_DIRTY_ACCESS == pre.pt_mem.read(addr) & MASK_NEG_DIRTY_ACCESS
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem

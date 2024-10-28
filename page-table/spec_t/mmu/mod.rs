@@ -1,5 +1,5 @@
-pub mod rl1;
-pub mod rl2;
+//pub mod rl1;
+//pub mod rl2;
 pub mod rl3;
 pub mod rl4;
 pub mod pt_mem;
@@ -39,29 +39,6 @@ impl WalkResult {
 }
 
 impl Walk {
-    // TODO: reconsider how this thing works in the step by step walks
-    /// Also returns the address from which the value `value` must be read.
-    pub open spec fn next(self, pml4: usize, value: usize) -> (Walk, usize) {
-        let vbase = self.vbase; let path = self.path;
-        // TODO: do this better
-        let addr = if path.len() == 0 {
-            add(pml4, l0_bits!(vbase as u64) as usize)
-        } else if path.len() == 1 {
-            add(path.last().0, l1_bits!(vbase as u64) as usize)
-        } else if path.len() == 2 {
-            add(path.last().0, l2_bits!(vbase as u64) as usize)
-        } else if path.len() == 3 {
-            add(path.last().0, l3_bits!(vbase as u64) as usize)
-        } else { arbitrary() };
-
-        let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
-        let walk = Walk {
-            vbase,
-            path: path.push((addr, entry)),
-            complete: !(entry is Directory)
-        };
-        (walk, addr)
-    }
 
     //pub open spec fn valid(self, pt_mem: PTMem) -> bool {
     //    arbitrary() // basically the pt_walk_path

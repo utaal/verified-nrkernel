@@ -29,24 +29,24 @@ proof fn lemma1_next(
 // Lemma 2: Concrete MMU refines the atomic MMU
 // TODO: interp function that skips directly to rl1
 
-proof fn lemma2_init(c: mmu::Constants, pre: mmu::rl4::State)
-    requires pre.init()
-    ensures pre.interp().interp().interp().init()
-{
-    admit();
-}
+//proof fn lemma2_init(c: mmu::Constants, pre: mmu::rl4::State)
+//    requires pre.init()
+//    ensures pre.interp().interp().interp().init()
+//{
+//    admit();
+//}
 
-proof fn lemma2_next(
-    c: mmu::Constants,
-    pre: mmu::rl4::State,
-    post: mmu::rl4::State,
-    lbl: mmu::Lbl,
-)
-    requires mmu::rl4::next(pre, post, c, lbl)
-    ensures mmu::rl1::next(pre.interp().interp().interp(), post.interp().interp().interp(), c, lbl)
-{
-    admit();
-}
+//proof fn lemma2_next(
+//    c: mmu::Constants,
+//    pre: mmu::rl4::State,
+//    post: mmu::rl4::State,
+//    lbl: mmu::Lbl,
+//)
+//    requires mmu::rl4::next(pre, post, c, lbl)
+//    ensures mmu::rl1::next(pre.interp().interp().interp(), post.interp().interp().interp(), c, lbl)
+//{
+//    admit();
+//}
 
 // Lemma 3: The implementation refines the implementation behavior specified in the OS state machine
 //
