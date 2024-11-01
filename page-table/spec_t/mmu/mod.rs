@@ -17,26 +17,20 @@ pub struct Walk {
 }
 
 pub enum WalkResult {
-    Valid {
-        vbase: usize,
-        pte: PTE,
-    },
-    /// A `WalkResult::Invalid { .. }` indicates that the the range `[base..(base + size)]` has no
-    /// existing valid translation (according to the result of a page table walk).
-    Invalid {
-        vbase: usize,
-        size: usize,
-    },
+    Valid { vbase: usize, pte: PTE },
+    /// A `WalkResult::Invalid` indicates that no valid translation exists for the 4k range
+    /// starting at the (4k-aligned) address of the ptwalk.
+    Invalid { vbase: usize },
 }
 
-impl WalkResult {
-    pub open spec fn vbase(self) -> usize {
-        match self {
-            WalkResult::Valid { vbase, .. } => vbase,
-            WalkResult::Invalid { vbase, .. } => vbase,
-        }
-    }
-}
+//impl WalkResult {
+//    pub open spec fn vbase(self) -> usize {
+//        match self {
+//            WalkResult::Valid { vbase, .. } => vbase,
+//            WalkResult::Invalid { vbase, .. } => vbase,
+//        }
+//    }
+//}
 
 impl Walk {
 
@@ -62,15 +56,8 @@ impl Walk {
                 }
             }
         } else if path.last().1 is Empty {
-            // FIXME: this is wrong, needs to be vaddr aligned to entry size
-            let (vbase, size) = if path.len() == 1 {
-                (align_to_usize(self.vbase, L1_ENTRY_SIZE), L1_ENTRY_SIZE)
-            } else if path.len() == 2 {
-                (align_to_usize(self.vbase, L2_ENTRY_SIZE), L2_ENTRY_SIZE)
-            } else if path.len() == 3 {
-                (align_to_usize(self.vbase, L3_ENTRY_SIZE), L3_ENTRY_SIZE)
-            } else { arbitrary() };
-            WalkResult::Invalid { vbase, size }
+            // This vbase is always 4k-aligned
+            WalkResult::Invalid { vbase: self.vbase }
         } else {
             arbitrary()
         }

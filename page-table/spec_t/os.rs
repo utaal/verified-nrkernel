@@ -912,7 +912,7 @@ impl OSStep {
                                 None
                             }
                         },
-                        WalkResult::Invalid { vbase, size } => None,
+                        WalkResult::Invalid { .. } => None,
                     };
                     let rwop = match (op, hl_pte) {
                         (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_))

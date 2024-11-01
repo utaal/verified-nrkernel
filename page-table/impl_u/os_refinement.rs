@@ -414,7 +414,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
                         None
                     }
                 },
-                WalkResult::Invalid { vbase, size } => None,
+                WalkResult::Invalid { .. } => None,
             };
             let rwop = match (op, hl_pte) {
                 (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_)) => RWOp::Store {
@@ -465,7 +465,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
                 None
             }
         },
-        WalkResult::Invalid { vbase, size } => None,
+        WalkResult::Invalid { .. } => None,
     };
     let rwop = match (op, hl_pte) {
         (HWRWOp::Store { new_value, result: HWStoreResult::Ok }, Some(_)) => RWOp::Store {
