@@ -11,7 +11,7 @@ use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_S
 verus! {
 
 pub struct Walk {
-    pub vbase: usize,
+    pub vaddr: usize,
     pub path: Seq<(usize, GPDE)>,
     pub complete: bool,
 }
@@ -42,11 +42,11 @@ impl Walk {
         let path = self.path;
         if path.last().1 is Page {
             let (vbase, base, size) = if path.len() == 2 {
-                (align_to_usize(self.vbase, L1_ENTRY_SIZE), path[1].1->Page_addr, L1_ENTRY_SIZE)
+                (align_to_usize(self.vaddr, L1_ENTRY_SIZE), path[1].1->Page_addr, L1_ENTRY_SIZE)
             } else if path.len() == 3 {
-                (align_to_usize(self.vbase, L2_ENTRY_SIZE), path[2].1->Page_addr, L2_ENTRY_SIZE)
+                (align_to_usize(self.vaddr, L2_ENTRY_SIZE), path[2].1->Page_addr, L2_ENTRY_SIZE)
             } else if path.len() == 4 {
-                (align_to_usize(self.vbase, L3_ENTRY_SIZE), path[3].1->Page_addr, L3_ENTRY_SIZE)
+                (align_to_usize(self.vaddr, L3_ENTRY_SIZE), path[3].1->Page_addr, L3_ENTRY_SIZE)
             } else { arbitrary() };
             WalkResult::Valid {
                 vbase,
@@ -57,7 +57,7 @@ impl Walk {
             }
         } else if path.last().1 is Empty {
             // This vbase is always 4k-aligned
-            WalkResult::Invalid { vbase: self.vbase }
+            WalkResult::Invalid { vbase: align_to_usize(self.vaddr, L3_ENTRY_SIZE) }
         } else {
             arbitrary()
         }

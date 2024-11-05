@@ -249,12 +249,12 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
 // ---- Non-atomic page table walks ----
 
 // FIXME: this should make sure the alignment of va fits with the PTE
-pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vbase: usize, lbl: Lbl) -> bool {
-    let walk = Walk { vbase, path: seq![], complete: false };
+pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
+    let walk = Walk { vaddr, path: seq![], complete: false };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
-    &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+    //&&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
     // FIXME: What about bits in the virtual address above the indices? Do they need to be zero or
     // can we just ignore them?
     &&& arbitrary() // TODO: conditions on va? max vaddr?
@@ -272,22 +272,22 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 }
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Walk {
-    let vbase = walk.vbase; let path = walk.path;
+    let vaddr = walk.vaddr; let path = walk.path;
     // TODO: do this better
     let addr = if path.len() == 0 {
-        add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
+        add(state.pt_mem.pml4, l0_bits!(vaddr as u64) as usize)
     } else if path.len() == 1 {
-        add(path.last().0, l1_bits!(vbase as u64) as usize)
+        add(path.last().0, l1_bits!(vaddr as u64) as usize)
     } else if path.len() == 2 {
-        add(path.last().0, l2_bits!(vbase as u64) as usize)
+        add(path.last().0, l2_bits!(vaddr as u64) as usize)
     } else if path.len() == 3 {
-        add(path.last().0, l3_bits!(vbase as u64) as usize)
+        add(path.last().0, l3_bits!(vaddr as u64) as usize)
     } else { arbitrary() };
     let value = state.read_from_mem_tso(core, addr, r);
 
     let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
     let walk = Walk {
-        vbase,
+        vaddr,
         path: path.push((addr, entry)),
         complete: !(entry is Directory)
     };
@@ -456,7 +456,7 @@ pub enum Step {
     CacheUse { core: Core, walk: Walk },
     CacheEvict { core: Core, walk: Walk },
     // Non-atomic page table walks
-    WalkInit { core: Core, vbase: usize },
+    WalkInit { core: Core, vaddr: usize },
     WalkStep { core: Core, walk: Walk, value: usize, r: usize },
     WalkDone { walk: Walk, value: usize, r: usize },
     // TSO
@@ -472,7 +472,7 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::CacheFill { core, walk }          => step_CacheFill(pre, post, c, core, walk, lbl),
         Step::CacheUse { core, walk }           => step_CacheUse(pre, post, c, core, walk, lbl),
         Step::CacheEvict { core, walk }         => step_CacheEvict(pre, post, c, core, walk, lbl),
-        Step::WalkInit { core, vbase }          => step_WalkInit(pre, post, c, core, vbase, lbl),
+        Step::WalkInit { core, vaddr }          => step_WalkInit(pre, post, c, core, vaddr, lbl),
         Step::WalkStep { core, walk, value, r } => step_WalkStep(pre, post, c, core, walk, value, r, lbl),
         Step::WalkDone { walk, value, r }       => step_WalkDone(pre, post, c, walk, value, r, lbl),
         Step::Write                             => step_Write(pre, post, c, lbl),
@@ -503,7 +503,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
     //        Step::CacheFill { core, walk }          => assert(post.inv(c)),
     //        Step::CacheUse { core, walk }           => assert(post.inv(c)),
     //        Step::CacheEvict { core, walk }         => assert(post.inv(c)),
-    //        Step::WalkInit { core, vbase }          => assert(post.inv(c)),
+    //        Step::WalkInit { core, vaddr }          => assert(post.inv(c)),
     //        Step::WalkStep { core, walk, value, r } => assert(post.inv(c)),
     //        Step::WalkDone { walk, value, r }       => assert(post.inv(c)),
     //        Step::Write                             => assert(post.inv(c)),
@@ -544,7 +544,7 @@ mod refinement {
                 rl4::Step::CacheFill { core, walk }          => rl3::Step::Stutter,
                 rl4::Step::CacheUse { core, walk }           => rl3::Step::Stutter,
                 rl4::Step::CacheEvict { core, walk }         => rl3::Step::Stutter,
-                rl4::Step::WalkInit { core, vbase }          => rl3::Step::WalkInit { core, vbase },
+                rl4::Step::WalkInit { core, vaddr }          => rl3::Step::WalkInit { core, vaddr },
                 rl4::Step::WalkStep { core, walk, value, r } => rl3::Step::WalkStep { core, walk, value },
                 rl4::Step::WalkDone { walk, value, r }       => rl3::Step::WalkDone { walk, value },
                 rl4::Step::Write                             => rl3::Step::Write,
@@ -582,8 +582,8 @@ mod refinement {
             rl4::Step::CacheEvict { core, walk }    => {
                 assert(rl3::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
-            rl4::Step::WalkInit { core, vbase } => {
-                assert(rl3::step_WalkInit(pre.interp(), post.interp(), c, core, vbase, lbl))
+            rl4::Step::WalkInit { core, vaddr } => {
+                assert(rl3::step_WalkInit(pre.interp(), post.interp(), c, core, vaddr, lbl))
             },
             rl4::Step::WalkStep { core, walk, value, r } => {
                 rl4_walk_next_is_rl3_walk_next(pre, core, walk, r);

@@ -102,22 +102,22 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 // ---- Non-atomic page table walks ----
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
-    let vbase = walk.vbase; let path = walk.path;
+    let vaddr = walk.vaddr; let path = walk.path;
     // TODO: do this better
     let addr = if path.len() == 0 {
-        add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
+        add(state.pt_mem.pml4, l0_bits!(vaddr as u64) as usize)
     } else if path.len() == 1 {
-        add(path.last().0, l1_bits!(vbase as u64) as usize)
+        add(path.last().0, l1_bits!(vaddr as u64) as usize)
     } else if path.len() == 2 {
-        add(path.last().0, l2_bits!(vbase as u64) as usize)
+        add(path.last().0, l2_bits!(vaddr as u64) as usize)
     } else if path.len() == 3 {
-        add(path.last().0, l3_bits!(vbase as u64) as usize)
+        add(path.last().0, l3_bits!(vaddr as u64) as usize)
     } else { arbitrary() };
     let value = state.pt_mem.read(addr);
 
     let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
     let walk = Walk {
-        vbase,
+        vaddr,
         path: path.push((addr, entry)),
         complete: !(entry is Directory)
     };
@@ -240,7 +240,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
     //if pre.happy {
     //    match step {
     //        Step::Invlpg                         => assert(post.inv(c)),
-    //        Step::WalkInit { core, vbase }       => assert(post.inv(c)),
+    //        Step::WalkInit { core, vaddr }       => assert(post.inv(c)),
     //        Step::WalkStep { core, walk, value } => assert(post.inv(c)),
     //        Step::WalkDone { walk, value }       => assert(post.inv(c)),
     //        Step::Write                          => assert(post.inv(c)),

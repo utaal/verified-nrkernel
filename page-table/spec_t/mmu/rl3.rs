@@ -114,13 +114,13 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
 // ---- Non-atomic page table walks ----
 
-pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vbase: usize, lbl: Lbl) -> bool {
-    let walk = Walk { vbase, path: seq![], complete: false };
+pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
+    let walk = Walk { vaddr, path: seq![], complete: false };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
-    &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
-    &&& arbitrary() // TODO: conditions on va? max vaddr?
+    //&&& aligned(vaddr as nat, L3_ENTRY_SIZE as nat)
+    //&&& arbitrary() // TODO: conditions on va? max vaddr?
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
@@ -131,22 +131,22 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 }
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
-    let vbase = walk.vbase; let path = walk.path;
+    let vaddr = walk.vaddr; let path = walk.path;
     // TODO: do this better
     let addr = if path.len() == 0 {
-        add(state.pt_mem.pml4, l0_bits!(vbase as u64) as usize)
+        add(state.pt_mem.pml4, l0_bits!(vaddr as u64) as usize)
     } else if path.len() == 1 {
-        add(path.last().0, l1_bits!(vbase as u64) as usize)
+        add(path.last().0, l1_bits!(vaddr as u64) as usize)
     } else if path.len() == 2 {
-        add(path.last().0, l2_bits!(vbase as u64) as usize)
+        add(path.last().0, l2_bits!(vaddr as u64) as usize)
     } else if path.len() == 3 {
-        add(path.last().0, l3_bits!(vbase as u64) as usize)
+        add(path.last().0, l3_bits!(vaddr as u64) as usize)
     } else { arbitrary() };
     let value = state.read_from_mem_tso(core, addr);
 
     let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
     let walk = Walk {
-        vbase,
+        vaddr,
         path: path.push((addr, entry)),
         complete: !(entry is Directory)
     };
@@ -274,7 +274,7 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Non-atomic page table walks
-    WalkInit { core: Core, vbase: usize },
+    WalkInit { core: Core, vaddr: usize },
     WalkStep { core: Core, walk: Walk, value: usize },
     WalkDone { walk: Walk, value: usize },
     // TSO
@@ -288,7 +288,7 @@ pub enum Step {
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
         Step::Invlpg                         => step_Invlpg(pre, post, c, lbl),
-        Step::WalkInit { core, vbase }       => step_WalkInit(pre, post, c, core, vbase, lbl),
+        Step::WalkInit { core, vaddr }       => step_WalkInit(pre, post, c, core, vaddr, lbl),
         Step::WalkStep { core, walk, value } => step_WalkStep(pre, post, c, core, walk, value, lbl),
         Step::WalkDone { walk, value }       => step_WalkDone(pre, post, c, walk, value, lbl),
         Step::Write                          => step_Write(pre, post, c, lbl),
@@ -321,7 +321,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
     //if pre.happy {
     //    match step {
     //        Step::Invlpg                         => assert(post.inv(c)),
-    //        Step::WalkInit { core, vbase }       => assert(post.inv(c)),
+    //        Step::WalkInit { core, vaddr }       => assert(post.inv(c)),
     //        Step::WalkStep { core, walk, value } => assert(post.inv(c)),
     //        Step::WalkDone { walk, value }       => assert(post.inv(c)),
     //        Step::Write                          => assert(post.inv(c)),
@@ -369,7 +369,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
 //        pub open spec fn interp(self) -> rl2::Step {
 //            match self {
 //                rl3::Step::Invlpg                         => rl2::Step::Invlpg,
-//                rl3::Step::WalkInit { core, vbase }       => rl2::Step::WalkInit { core, vbase },
+//                rl3::Step::WalkInit { core, vaddr }       => rl2::Step::WalkInit { core, vaddr },
 //                rl3::Step::WalkStep { core, walk, value } => rl2::Step::WalkStep { core, walk, value },
 //                rl3::Step::WalkDone { walk, value }       => rl2::Step::WalkDone { walk, value },
 //                rl3::Step::Write                          => rl2::Step::Write,
@@ -393,8 +393,8 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
 //                admit(); // XXX
 //                assert(rl2::step_Invlpg(pre.interp(), post.interp(), c, lbl));
 //            },
-//            rl3::Step::WalkInit { core, vbase } => {
-//                assert(rl2::step_WalkInit(pre.interp(), post.interp(), c, core, vbase, lbl));
+//            rl3::Step::WalkInit { core, vaddr } => {
+//                assert(rl2::step_WalkInit(pre.interp(), post.interp(), c, core, vaddr, lbl));
 //            },
 //            rl3::Step::WalkStep { core, walk, value } => {
 //                admit();
