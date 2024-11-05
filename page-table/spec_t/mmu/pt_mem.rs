@@ -1,6 +1,7 @@
 use vstd::prelude::*;
 
-use crate::spec_t::hardware::{ GPDE };
+use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
+use crate::definitions_t::{ L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
 
 //use crate::definitions_t::{
 //    aligned, WORD_SIZE,
@@ -36,8 +37,68 @@ impl PTMem {
     //    }
     //}
 
-    pub open spec fn page_addrs(self) -> Map<usize, GPDE> {
-        arbitrary() // TODO: the thing below but as Map
+    /// Set of currently valid (complete) paths in the page table (including those ending in invalid entries)
+    pub open spec fn page_table_paths(self) -> Set<Seq<(usize, GPDE)>> {
+        Set::new(|e: (_, Seq<_>)| pt_walk(self, e.0, e.1)).map(|e: (_, Seq<_>)| e.1)
+    }
+
+    /// Is this a negative write? I.e. is it to a location that currently represents a page mapping
+    /// anywhere in the page table?
+    pub open spec fn is_neg_write(self, addr: usize) -> bool {
+        forall|path| #![auto]
+            self.page_table_paths().contains(path) && path.last().0 == addr
+            ==> path.last().1 is Page
+    }
+
+    /// Is this a positive write? I.e. is it to a location that currently represents a reachable
+    /// but invalid location in the page table and changes it to a page mapping?
+    /// TODO: do i need to know that this actually becomes a valid entry or is it sufficient to
+    /// know that it was previously invalid?
+    pub open spec fn is_pos_write(self, addr: usize) -> bool {
+        forall|path| #![auto]
+            self.page_table_paths().contains(path) && path.last().0 == addr
+            ==> path.last().1 is Empty
+    }
+}
+
+pub open spec fn pt_walk(pt_mem: PTMem, vbase: usize, path: Seq<(usize, GPDE)>) -> bool {
+    let l0_idx = l0_bits!(vbase as u64) as usize;
+    let l1_idx = l1_bits!(vbase as u64) as usize;
+    let l2_idx = l2_bits!(vbase as u64) as usize;
+    let l3_idx = l3_bits!(vbase as u64) as usize;
+    let l0_addr = add(pt_mem.pml4, l0_idx);
+    let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
+    match l0e@ {
+        GPDE::Directory { addr: l1_daddr, .. } => {
+            let l1_addr = add(l1_daddr, l1_idx);
+            let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
+            match l1e@ {
+                GPDE::Directory { addr: l2_daddr, .. } => {
+                    let l2_addr = add(l2_daddr, l2_idx);
+                    let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    match l2e@ {
+                        GPDE::Directory { addr: l3_daddr, .. } => {
+                            let l3_addr = add(l3_daddr, l3_idx);
+                            let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+                            &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]
+                        },
+                        _ => {
+                            &&& aligned(vbase as nat, L2_ENTRY_SIZE as nat)
+                            &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]
+                        },
+                    }
+                },
+                _ => {
+                    &&& aligned(vbase as nat, L1_ENTRY_SIZE as nat)
+                    &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]
+                },
+            }
+        },
+        _ => {
+            &&& aligned(vbase as nat, L0_ENTRY_SIZE as nat)
+            &&& path == seq![(l0_addr, l0e@)]
+        },
     }
 }
 

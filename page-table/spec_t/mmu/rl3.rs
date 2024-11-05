@@ -6,7 +6,7 @@ use crate::spec_t::mmu::rl4::{ Writes, Polarity, MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
-// This file contains refinement layer 3 of the MMU. Compared to layer 3, it expresses translation
+// This file contains refinement layer 3 of the MMU. Compared to layer 4, it expresses translation
 // caching and non-atomic walks as a single concept, and it doesn't explicitly consider the values
 // of dirty/accessed bits.
 
@@ -18,12 +18,6 @@ pub struct State {
     pub walks: Map<Core, Set<Walk>>,
     /// Store buffers
     pub sbuf: Map<Core, Seq<(usize, usize)>>,
-    /// History variables. These are not allowed to influence transitions in any way. Neither in
-    /// enabling conditions nor in how the state is updated.
-    pub hist: History,
-}
-
-pub struct History {
     pub writes: Writes,
     /// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
     /// flipped when neg and writes are all empty.
@@ -32,6 +26,7 @@ pub struct History {
     /// Technically we could probably infer the polarity from the write tracking but this is easier.
     pub polarity: Polarity,
 }
+
 
 impl State {
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize) -> usize {
@@ -48,62 +43,46 @@ impl State {
 
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
-        let core = self.hist.polarity.core();
+        let core = self.polarity.core();
         self.sbuf[core].fold_left(self.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
     }
 
-    /// Assuming `self.happy`, from the writer's perspective on the memory, is this a negative
-    /// write? I.e. is it to a location that currently represents a page mapping anywhere in the
-    /// page table?
     pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        forall|path| #![auto]
-            Self::page_table_paths(self.writer_mem()).contains(path) && path.last().0 == addr
-            ==> path.last().1 is Page
+        self.writer_mem().is_neg_write(addr)
     }
 
-    /// Assuming `self.happy`, from the writer's perspective on the memory, is this a positive
-    /// write? I.e. is it to a location that currently represents a reachable but invalid 
-    /// location in the page table and changes it to a page mapping?
-    /// TODO: do i need to know that this actually becomes a valid entry or is it sufficient to
-    /// know that it was previously invalid?
     pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        forall|path| #![auto]
-            Self::page_table_paths(self.writer_mem()).contains(path) && path.last().0 == addr
-            ==> path.last().1 is Empty
-    }
-
-    /// Set of currently valid (complete) paths in the page table (including those ending in invalid entries)
-    pub open spec fn page_table_paths(mem: PTMem) -> Set<Seq<(usize, GPDE)>> {
-        Set::new(|e: (_, Seq<_>)| pt_walk(mem, e.0, e.1)).map(|e: (_, Seq<_>)| e.1)
+        self.writer_mem().is_pos_write(addr)
     }
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     // - the location corresponds to *exactly* one leaf entry in the page table
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
-        &&& self.must_respect_polarity(c) ==> {
+        &&& !self.can_change_polarity(c) ==> {
             // If we're not at the start of an operation, the writer must stay the same
-            &&& self.hist.polarity.core() == core
+            &&& self.polarity.core() == core
             // and the polarity must match
-            &&& if self.hist.polarity is Pos { self.is_pos_write(addr) } else { self.is_neg_write(addr) }
+            &&& if self.polarity is Pos { self.is_pos_write(addr) } else { self.is_neg_write(addr) }
         }
         // The write must be to a location that's currently a leaf of the page table.
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
         &&& exists|path, i| #![auto]
-            Self::page_table_paths(self.writer_mem()).contains(path)
+            self.writer_mem().page_table_paths().contains(path)
             && 0 <= i < path.len() && path[i].0 == addr
     }
 
-    pub open spec fn must_respect_polarity(self, c: Constants) -> bool {
-        ||| !self.hist.writes.all.is_empty()
-        // TODO: maybe bad trigger
-        ||| exists|core| #![auto] c.valid_core(core) && !self.hist.writes.neg[core].is_empty()
+    pub open spec fn can_change_polarity(self, c: Constants) -> bool {
+        &&& self.writes.all.is_empty()
+        &&& forall|core| #![auto] c.valid_core(core) ==> self.writes.neg[core].is_empty()
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
+        &&& forall|core| #[trigger] self.walks.contains_key(core) ==> self.walks[core].finite()
+        &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
@@ -126,34 +105,28 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.pt_mem == pre.pt_mem
     &&& post.walks == pre.walks.insert(core, set![])
     &&& post.sbuf == pre.sbuf
-
-    &&& post.hist.writes.all === pre.hist.writes.all.filter(|e:(Core, usize)| e.0 != core)
-    &&& post.hist.writes.neg == pre.hist.writes.neg.insert(core, set![])
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes.all === pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.writes.neg == pre.writes.neg.insert(core, set![])
+    &&& post.polarity == pre.polarity
 }
 
 
 // ---- Non-atomic page table walks ----
 
-// FIXME: this should make sure the alignment of va fits with the PTE
 pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vbase: usize, lbl: Lbl) -> bool {
     let walk = Walk { vbase, path: seq![], complete: false };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
-    // FIXME: What about bits in the virtual address above the indices? Do they need to be zero or
-    // can we just ignore them?
     &&& arbitrary() // TODO: conditions on va? max vaddr?
 
     &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
-
-    &&& post.hist.writes.all === pre.hist.writes.all
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes == pre.writes
+    &&& post.polarity == pre.polarity
 }
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
@@ -200,14 +173,10 @@ pub open spec fn step_WalkStep(
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk_next))
-
-    &&& post.hist.writes.all === pre.hist.writes.all
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes == pre.writes
+    &&& post.polarity == pre.polarity
 }
 
-/// Note: A valid walk's result is a region whose base and size depend on the path taken. E.g. a
-/// huge page mapping results in a 2M-sized region. Invalid walks are always for a 4K-sized region.
 pub open spec fn step_WalkDone(
     pre: State,
     post: State,
@@ -231,18 +200,13 @@ pub open spec fn step_WalkDone(
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
-
-    &&& post.hist.writes.all === pre.hist.writes.all
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes === pre.writes
+    &&& post.polarity == pre.polarity
 }
 
 
 // ---- TSO ----
-// Our modeling of TSO with store buffers is adapted from the one in the paper "A Better x86 Memory
-// Model: x86-TSO".
-// TODO: we don't model atomics, so technically the user-space threads cannot synchronize
-// TODO: max physical size?
+
 /// Write to core's local store buffer.
 pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
@@ -254,14 +218,13 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
-
-    &&& post.hist.writes.all === pre.hist.writes.all.insert((core, addr))
-    &&& post.hist.writes.neg == if pre.is_neg_write(addr) {
-            pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-        } else { pre.hist.writes.neg }
+    &&& post.writes.all === pre.writes.all.insert((core, addr))
+    &&& post.writes.neg == if pre.is_neg_write(addr) {
+            pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
+        } else { pre.writes.neg }
     // Whenever this causes polarity to change and happy isn't set to false, the
-    // conditions for polarity to change are satisfied (`must_respect_polarity`)
-    &&& post.hist.polarity == if pre.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    // conditions for polarity to change are satisfied (`can_change_polarity`)
+    &&& post.polarity == if pre.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -275,10 +238,8 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.pt_mem == pre.pt_mem.write(addr, value)
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.walks == pre.walks
-
-    &&& post.hist.writes.all === pre.hist.writes.all
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes == pre.writes
+    &&& post.polarity == pre.polarity
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -292,10 +253,8 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
-
-    &&& post.hist.writes.all === pre.hist.writes.all
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes == pre.writes
+    &&& post.polarity == pre.polarity
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -310,10 +269,9 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks
-
-    &&& post.hist.writes.all === pre.hist.writes.all.filter(|e:(Core, usize)| e.0 != core)
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    &&& post.writes.all === pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
+    &&& post.writes.neg == pre.writes.neg
+    &&& post.polarity == pre.polarity
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -321,8 +279,6 @@ pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post == pre
 }
 
-/// Any transition that reads from memory takes an arbitrary usize `r`, which is used to
-/// non-deterministically flip the accessed and dirty bits.
 pub enum Step {
     // Mixed
     Invlpg,
@@ -371,31 +327,20 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
         next_step(pre, post, c, step, lbl),
     ensures post.inv(c)
 {
-    if pre.happy {
-        match step {
-            Step::Invlpg => {
-                let core = lbl->Invlpg_0;
-                assert(c.valid_core(core));
-                assert(post.walks[core].is_empty());
-                // TODO: Verus sets have some serious problems. How do I not know that a set with len 0
-                // is the empty set..?
-                // Really don't want to add finiteness invariants everywhere.
-                assume(post.walks[core].finite());
-                assert(post.walks[core] === set![]);
-                assert(post.inv(c))
-            },
-            Step::WalkInit { core, vbase } => assert(post.inv(c)),
-            Step::WalkStep { core, walk, value } => assert(post.inv(c)),
-            Step::WalkDone { walk, value } => assert(post.inv(c)),
-            Step::Write                      => assert(post.inv(c)),
-            Step::Writeback { core }         => assert(post.inv(c)),
-            Step::Read                       => assert(post.inv(c)),
-            Step::Barrier                    => assert(post.inv(c)),
-            Step::Stutter                    => assert(post.inv(c)),
-        }
-    }
+    //if pre.happy {
+    //    match step {
+    //        Step::Invlpg                         => assert(post.inv(c)),
+    //        Step::WalkInit { core, vbase }       => assert(post.inv(c)),
+    //        Step::WalkStep { core, walk, value } => assert(post.inv(c)),
+    //        Step::WalkDone { walk, value }       => assert(post.inv(c)),
+    //        Step::Write                          => assert(post.inv(c)),
+    //        Step::Writeback { core }             => assert(post.inv(c)),
+    //        Step::Read                           => assert(post.inv(c)),
+    //        Step::Barrier                        => assert(post.inv(c)),
+    //        Step::Stutter                        => assert(post.inv(c)),
+    //    }
+    //}
 }
-
 
 //mod refinement {
 //    use crate::spec_t::mmu::*;

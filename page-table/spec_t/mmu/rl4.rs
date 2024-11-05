@@ -98,36 +98,19 @@ impl State {
         self.sbuf[core].fold_left(self.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
     }
 
-    /// Assuming `self.happy`, from the writer's perspective on the memory, is this a negative
-    /// write? I.e. is it to a location that currently represents a page mapping anywhere in the
-    /// page table?
     pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        forall|path| #![auto]
-            Self::page_table_paths(self.writer_mem()).contains(path) && path.last().0 == addr
-            ==> path.last().1 is Page
+        self.writer_mem().is_neg_write(addr)
     }
 
-    /// Assuming `self.happy`, from the writer's perspective on the memory, is this a positive
-    /// write? I.e. is it to a location that currently represents a reachable but invalid 
-    /// location in the page table and changes it to a page mapping?
-    /// TODO: do i need to know that this actually becomes a valid entry or is it sufficient to
-    /// know that it was previously invalid?
     pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        forall|path| #![auto]
-            Self::page_table_paths(self.writer_mem()).contains(path) && path.last().0 == addr
-            ==> path.last().1 is Empty
-    }
-
-    /// Set of currently valid (complete) paths in the page table (including those ending in invalid entries)
-    pub open spec fn page_table_paths(mem: PTMem) -> Set<Seq<(usize, GPDE)>> {
-        Set::new(|e: (_, Seq<_>)| pt_walk(mem, e.0, e.1)).map(|e: (_, Seq<_>)| e.1)
+        self.writer_mem().is_pos_write(addr)
     }
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     // - the location corresponds to *exactly* one leaf entry in the page table
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
-        &&& self.must_respect_polarity(c) ==> {
+        &&& !self.can_change_polarity(c) ==> {
             // If we're not at the start of an operation, the writer must stay the same
             &&& self.hist.polarity.core() == core
             // and the polarity must match
@@ -137,14 +120,13 @@ impl State {
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
         &&& exists|path, i| #![auto]
-            Self::page_table_paths(self.writer_mem()).contains(path)
+            self.writer_mem().page_table_paths().contains(path)
             && 0 <= i < path.len() && path[i].0 == addr
     }
 
-    pub open spec fn must_respect_polarity(self, c: Constants) -> bool {
-        ||| !self.hist.writes.all.is_empty()
-        // TODO: maybe bad trigger
-        ||| exists|core| #![auto] c.valid_core(core) && !self.hist.writes.neg[core].is_empty()
+    pub open spec fn can_change_polarity(self, c: Constants) -> bool {
+        &&& self.hist.writes.all.is_empty()
+        &&& forall|core| #![auto] c.valid_core(core) ==> self.hist.writes.neg[core].is_empty()
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -402,7 +384,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     // Whenever this causes polarity to change and happy isn't set to false, the
-    // conditions for polarity to change are satisfied (`must_respect_polarity`)
+    // conditions for polarity to change are satisfied (`can_change_polarity`)
     &&& post.hist.polarity == if pre.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
@@ -515,31 +497,21 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
         next_step(pre, post, c, step, lbl),
     ensures post.inv(c)
 {
-    if pre.hist.happy {
-        match step {
-            Step::Invlpg => {
-                //let core = lbl->Invlpg_0;
-                //assert(c.valid_core(core));
-                //assert(post.walks[core].is_empty());
-                //assert(post.walks[core] === set![]);
-                //assert(post.hist.walks[core] =~= set![]);
-                assert(post.inv(c))
-            },
-            Step::CacheFill { core, walk } => assert(post.inv(c)),
-            Step::CacheUse { core, walk } => {
-                //assert(post.walks[core].finite());
-                assert(post.inv(c))
-            },
-            Step::CacheEvict { core, walk } => assert(post.inv(c)),
-            Step::WalkInit { core, vbase } => assert(post.inv(c)),
-            Step::WalkStep { core, walk, value, r } => assert(post.inv(c)),
-            Step::WalkDone { walk, value, r } => assert(post.inv(c)),
-            Step::Write                      => assert(post.inv(c)),
-            Step::Writeback { core }         => assert(post.inv(c)),
-            Step::Read { r }                 => assert(post.inv(c)),
-            Step::Barrier                    => assert(post.inv(c)),
-        }
-    }
+    //if pre.hist.happy {
+    //    match step {
+    //        Step::Invlpg                            => assert(post.inv(c)),
+    //        Step::CacheFill { core, walk }          => assert(post.inv(c)),
+    //        Step::CacheUse { core, walk }           => assert(post.inv(c)),
+    //        Step::CacheEvict { core, walk }         => assert(post.inv(c)),
+    //        Step::WalkInit { core, vbase }          => assert(post.inv(c)),
+    //        Step::WalkStep { core, walk, value, r } => assert(post.inv(c)),
+    //        Step::WalkDone { walk, value, r }       => assert(post.inv(c)),
+    //        Step::Write                             => assert(post.inv(c)),
+    //        Step::Writeback { core }                => assert(post.inv(c)),
+    //        Step::Read { r }                        => assert(post.inv(c)),
+    //        Step::Barrier                           => assert(post.inv(c)),
+    //    }
+    //}
 }
 
 
@@ -559,10 +531,8 @@ mod refinement {
                 pt_mem: self.pt_mem,
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
-                hist: rl3::History {
-                    writes: self.hist.writes,
-                    polarity: self.hist.polarity,
-                },
+                writes: self.hist.writes,
+                polarity: self.hist.polarity,
             }
         }
     }
@@ -586,8 +556,8 @@ mod refinement {
     }
 
     /// The value of r is irrelevant, so we can just ignore it.
-    proof fn rl4_walk_next_is_rl3_walk_next(state: rl4::State, core: Core, walk: Walk, r: usize)
-        ensures rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp(), core, walk)
+    broadcast proof fn rl4_walk_next_is_rl3_walk_next(state: rl4::State, core: Core, walk: Walk, r: usize)
+        ensures #[trigger] rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp(), core, walk)
     {
         admit();
     }
