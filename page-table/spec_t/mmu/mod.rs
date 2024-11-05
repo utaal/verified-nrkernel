@@ -1,6 +1,6 @@
 //pub mod rl1;
 //pub mod rl2;
-//pub mod rl3;
+pub mod rl3;
 pub mod rl4;
 pub mod pt_mem;
 
@@ -185,6 +185,30 @@ impl MMU for DummyAtomicMMU {
     proof fn next_preserves_inv(pre: Self, post: Self, lbl: Lbl) {
         admit();
     }
+}
+
+
+
+
+// TODO: Auxiliary stuff, should go somewhere else
+
+
+pub open spec fn get_first_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<B>
+    decreases s.len() - i
+{
+    if i >= s.len() {
+        None
+    } else {
+        if s[i].0 == a {
+            Some(s[i].1)
+        } else {
+            get_first_aux(s, i + 1, a)
+        }
+    }
+}
+
+pub open spec fn get_first<A,B>(s: Seq<(A, B)>, a: A) -> Option<B> {
+    get_first_aux(s, 0, a)
 }
 
 } // verus!
