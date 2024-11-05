@@ -81,6 +81,7 @@ impl State {
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
         &&& forall|core| #[trigger] self.walks.contains_key(core) ==> self.walks[core].finite()
         &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
     }
@@ -196,12 +197,7 @@ pub open spec fn step_WalkDone(
     &&& walk_next.complete
     }
 
-    &&& post.happy == pre.happy
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.walks == pre.walks
-    &&& post.writes === pre.writes
-    &&& post.polarity == pre.polarity
+    &&& post == pre
 }
 
 
@@ -249,12 +245,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& aligned(addr as nat, 8)
     &&& value & MASK_NEG_DIRTY_ACCESS == pre.read_from_mem_tso(core, addr) & MASK_NEG_DIRTY_ACCESS
 
-    &&& post.happy == pre.happy
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.walks == pre.walks
-    &&& post.writes == pre.writes
-    &&& post.polarity == pre.polarity
+    &&& post == pre
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes

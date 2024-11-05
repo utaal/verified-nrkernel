@@ -2,6 +2,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 use crate::definitions_t::{ L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
+use crate::spec_t::mmu::WalkResult;
 
 //use crate::definitions_t::{
 //    aligned, WORD_SIZE,
@@ -39,7 +40,7 @@ impl PTMem {
 
     /// Set of currently valid (complete) paths in the page table (including those ending in invalid entries)
     pub open spec fn page_table_paths(self) -> Set<Seq<(usize, GPDE)>> {
-        Set::new(|e: (_, Seq<_>)| pt_walk(self, e.0, e.1)).map(|e: (_, Seq<_>)| e.1)
+        Set::new(|e: (_, _, Seq<_>)| pt_walk(self, e.0, e.1, e.2)).map(|e: (_, _, Seq<_>)| e.2)
     }
 
     /// Is this a negative write? I.e. is it to a location that currently represents a page mapping
@@ -61,7 +62,7 @@ impl PTMem {
     }
 }
 
-pub open spec fn pt_walk(pt_mem: PTMem, vbase: usize, path: Seq<(usize, GPDE)>) -> bool {
+pub open spec fn pt_walk(pt_mem: PTMem, vbase: usize, size: usize, path: Seq<(usize, GPDE)>) -> bool {
     let l0_idx = l0_bits!(vbase as u64) as usize;
     let l1_idx = l1_bits!(vbase as u64) as usize;
     let l2_idx = l2_bits!(vbase as u64) as usize;
@@ -81,23 +82,47 @@ pub open spec fn pt_walk(pt_mem: PTMem, vbase: usize, path: Seq<(usize, GPDE)>) 
                             let l3_addr = add(l3_daddr, l3_idx);
                             let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
                             &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+                            &&& size == L3_ENTRY_SIZE
                             &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]
                         },
                         _ => {
                             &&& aligned(vbase as nat, L2_ENTRY_SIZE as nat)
+                            &&& size == L2_ENTRY_SIZE
                             &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]
                         },
                     }
                 },
                 _ => {
                     &&& aligned(vbase as nat, L1_ENTRY_SIZE as nat)
+                    &&& size == L1_ENTRY_SIZE
                     &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]
                 },
             }
         },
         _ => {
             &&& aligned(vbase as nat, L0_ENTRY_SIZE as nat)
+            &&& size == L0_ENTRY_SIZE
             &&& path == seq![(l0_addr, l0e@)]
+        },
+    }
+}
+
+/// Convert `pt_walk` to 4k-sized invalid results
+pub open spec fn pt_walk_4k(pt_mem: PTMem, wr: WalkResult, path: Seq<(usize, GPDE)>) -> bool {
+    match wr {
+        WalkResult::Valid { vbase, pte } => {
+            exists|size| {
+                &&& pt_walk(pt_mem, vbase, size, path)
+                &&& !(path.last().1 is Empty)
+            }
+        },
+        WalkResult::Invalid { vbase } => {
+            exists|vbase2, size| {
+                &&& pt_walk(pt_mem, vbase2, size, path)
+                &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+                &&& path.last().1 is Empty
+                &&& vbase2 <= vbase < vbase2 + size
+            }
         },
     }
 }
