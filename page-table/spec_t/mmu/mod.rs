@@ -18,8 +18,7 @@ pub struct Walk {
 
 pub enum WalkResult {
     Valid { vbase: usize, pte: PTE },
-    /// A `WalkResult::Invalid` indicates that no valid translation exists for the 4k range
-    /// starting at the (4k-aligned) address of the ptwalk.
+    /// A `WalkResult::Invalid` indicates that no valid translation exists for the given (8-aligned) vaddr
     Invalid { vbase: usize },
 }
 
@@ -56,8 +55,8 @@ impl Walk {
                 }
             }
         } else if path.last().1 is Empty {
-            // This vbase is always 4k-aligned
-            WalkResult::Invalid { vbase: align_to_usize(self.vaddr, L3_ENTRY_SIZE) }
+            // The result holds for an 8-byte aligned address
+            WalkResult::Invalid { vbase: align_to_usize(self.vaddr, 8) }
         } else {
             arbitrary()
         }

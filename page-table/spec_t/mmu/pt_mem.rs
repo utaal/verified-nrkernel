@@ -1,8 +1,8 @@
 use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
-use crate::spec_t::mmu::WalkResult;
+use crate::definitions_t::{ PTE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
+use crate::spec_t::mmu::{ Walk, WalkResult };
 
 //use crate::definitions_t::{
 //    aligned, WORD_SIZE,
@@ -38,17 +38,29 @@ impl PTMem {
     //    }
     //}
 
-    /// Set of currently valid (complete) paths in the page table (including those ending in invalid entries)
-    pub open spec fn page_table_paths(self) -> Set<Seq<(usize, GPDE)>> {
-        Set::new(|e: (_, _, Seq<_>)| pt_walk(self, e.0, e.1, e.2)).map(|e: (_, _, Seq<_>)| e.2)
+    /// Set of currently valid (complete) walks in the page table (including those ending in invalid entries)
+    pub open spec fn all_pt_walks(self) -> Set<Walk> {
+        Set::new(|e| pt_walk_pred(self, e))
+    }
+
+    /// This address is only used in one location in the page table.
+    /// TODO: this should be part of the invariant. What's the condition i need on writes?
+    pub open spec fn is_single_location(self, addr: usize) -> bool {
+        forall|walk1, walk2, i, j| #![auto]
+            self.all_pt_walks().contains(walk1)
+            && self.all_pt_walks().contains(walk2)
+            && 0 <= i < walk1.path.len()
+            && 0 <= j < walk2.path.len()
+            && walk1.path[i].0 == walk2.path[j].0
+            ==> walk2 == walk1
     }
 
     /// Is this a negative write? I.e. is it to a location that currently represents a page mapping
     /// anywhere in the page table?
     pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        forall|path| #![auto]
-            self.page_table_paths().contains(path) && path.last().0 == addr
-            ==> path.last().1 is Page
+        forall|walk| #![auto]
+            self.all_pt_walks().contains(walk) && walk.path.last().0 == addr
+            ==> walk.path.last().1 is Page
     }
 
     /// Is this a positive write? I.e. is it to a location that currently represents a reachable
@@ -56,76 +68,146 @@ impl PTMem {
     /// TODO: do i need to know that this actually becomes a valid entry or is it sufficient to
     /// know that it was previously invalid?
     pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        forall|path| #![auto]
-            self.page_table_paths().contains(path) && path.last().0 == addr
-            ==> path.last().1 is Empty
+        forall|walk| #![auto]
+            self.all_pt_walks().contains(walk) && walk.path.last().0 == addr
+            ==> walk.path.last().1 is Empty
+    }
+
+    pub open spec fn pt_walk(self, vaddr: usize) -> Walk {
+        let l0_idx = l0_bits!(vaddr as u64) as usize;
+        let l1_idx = l1_bits!(vaddr as u64) as usize;
+        let l2_idx = l2_bits!(vaddr as u64) as usize;
+        let l3_idx = l3_bits!(vaddr as u64) as usize;
+        let l0_addr = add(self.pml4, l0_idx);
+        let l0e = PDE { entry: self.read(l0_addr) as u64, layer: Ghost(0) };
+        match l0e@ {
+            GPDE::Directory { addr: l1_daddr, .. } => {
+                let l1_addr = add(l1_daddr, l1_idx);
+                let l1e = PDE { entry: self.read(l1_addr) as u64, layer: Ghost(1) };
+                match l1e@ {
+                    GPDE::Directory { addr: l2_daddr, .. } => {
+                        let l2_addr = add(l2_daddr, l2_idx);
+                        let l2e = PDE { entry: self.read(l2_addr) as u64, layer: Ghost(2) };
+                        match l2e@ {
+                            GPDE::Directory { addr: l3_daddr, .. } => {
+                                let l3_addr = add(l3_daddr, l3_idx);
+                                let l3e = PDE { entry: self.read(l3_addr) as u64, layer: Ghost(3) };
+                                Walk {
+                                    vaddr,
+                                    path: seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)],
+                                    complete: true,
+                                }
+                            },
+                            _ => {
+                                Walk {
+                                    vaddr,
+                                    path: seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)],
+                                    complete: true,
+                                }
+                            },
+                        }
+                    },
+                    _ => {
+                        Walk { vaddr, path: seq![(l0_addr, l0e@), (l1_addr, l1e@)], complete: true }
+                    },
+                }
+            },
+            _ => {
+                Walk { vaddr, path: seq![(l0_addr, l0e@)], complete: true }
+            },
+        }
+    }
+
+    pub open spec fn is_base_pt_walk(self, vaddr: usize) -> bool {
+        &&& self.pt_walk(vaddr).result() matches WalkResult::Valid { vbase, pte }
+        &&& vbase == vaddr
+    }
+
+    pub open spec fn view(self) -> Map<usize,PTE> {
+        Map::new(
+            |va| self.is_base_pt_walk(va),
+            |va| self.pt_walk(va).result()->pte
+        )
     }
 }
 
-pub open spec fn pt_walk(pt_mem: PTMem, vbase: usize, size: usize, path: Seq<(usize, GPDE)>) -> bool {
-    let l0_idx = l0_bits!(vbase as u64) as usize;
-    let l1_idx = l1_bits!(vbase as u64) as usize;
-    let l2_idx = l2_bits!(vbase as u64) as usize;
-    let l3_idx = l3_bits!(vbase as u64) as usize;
+/// Only complete page table walks
+pub open spec fn pt_walk_pred(pt_mem: PTMem, walk: Walk) -> bool {
+    let vaddr = walk.vaddr;
+    let l0_idx = l0_bits!(vaddr as u64) as usize;
+    let l1_idx = l1_bits!(vaddr as u64) as usize;
+    let l2_idx = l2_bits!(vaddr as u64) as usize;
+    let l3_idx = l3_bits!(vaddr as u64) as usize;
     let l0_addr = add(pt_mem.pml4, l0_idx);
     let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
-    match l0e@ {
+    &&& walk.complete
+    &&& match l0e@ {
         GPDE::Directory { addr: l1_daddr, .. } => {
             let l1_addr = add(l1_daddr, l1_idx);
             let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
-            match l1e@ {
+            &&& match l1e@ {
                 GPDE::Directory { addr: l2_daddr, .. } => {
                     let l2_addr = add(l2_daddr, l2_idx);
                     let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
-                    match l2e@ {
+                    &&& match l2e@ {
                         GPDE::Directory { addr: l3_daddr, .. } => {
                             let l3_addr = add(l3_daddr, l3_idx);
                             let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
-                            &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
-                            &&& size == L3_ENTRY_SIZE
-                            &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]
+                            &&& aligned(vaddr as nat, L3_ENTRY_SIZE as nat)
+                            &&& walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]
                         },
                         _ => {
-                            &&& aligned(vbase as nat, L2_ENTRY_SIZE as nat)
-                            &&& size == L2_ENTRY_SIZE
-                            &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]
+                            &&& aligned(vaddr as nat, L2_ENTRY_SIZE as nat)
+                            &&& walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]
                         },
                     }
                 },
                 _ => {
-                    &&& aligned(vbase as nat, L1_ENTRY_SIZE as nat)
-                    &&& size == L1_ENTRY_SIZE
-                    &&& path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]
+                    &&& aligned(vaddr as nat, L1_ENTRY_SIZE as nat)
+                    &&& walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]
                 },
             }
         },
         _ => {
-            &&& aligned(vbase as nat, L0_ENTRY_SIZE as nat)
-            &&& size == L0_ENTRY_SIZE
-            &&& path == seq![(l0_addr, l0e@)]
+            &&& aligned(vaddr as nat, L0_ENTRY_SIZE as nat)
+            &&& walk.path == seq![(l0_addr, l0e@)]
         },
     }
 }
 
-/// Convert `pt_walk` to 4k-sized invalid results
-pub open spec fn pt_walk_4k(pt_mem: PTMem, wr: WalkResult, path: Seq<(usize, GPDE)>) -> bool {
-    match wr {
-        WalkResult::Valid { vbase, pte } => {
-            exists|size| {
-                &&& pt_walk(pt_mem, vbase, size, path)
-                &&& !(path.last().1 is Empty)
-            }
-        },
-        WalkResult::Invalid { vbase } => {
-            exists|vbase2, size| {
-                &&& pt_walk(pt_mem, vbase2, size, path)
-                &&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
-                &&& path.last().1 is Empty
-                &&& vbase2 <= vbase < vbase2 + size
-            }
-        },
-    }
-}
+
+//pub open spec fn pt_walk_path_size(path: Seq<(usize, GPDE)>) -> usize {
+//    if path.len() == 1 {
+//        L0_ENTRY_SIZE
+//    } else if path.len() == 2 {
+//        L1_ENTRY_SIZE
+//    } else if path.len() == 3 {
+//        L2_ENTRY_SIZE
+//    } else if path.len() == 4 {
+//        L3_ENTRY_SIZE
+//    } else { arbitrary() }
+//}
+
+///// "Convert" `pt_walk_path` to `WalkResult`
+//pub open spec fn pt_walk(pt_mem: PTMem, wr: WalkResult, path: Seq<(usize, GPDE)>) -> bool {
+//    match wr {
+//        WalkResult::Valid { vbase, pte } => {
+//            &&& pt_walk_path(pt_mem, vbase, path)
+//            &&& path.last().1 is Page
+//            &&& pte == PTE {
+//
+//            }
+//        },
+//        WalkResult::Invalid { vbase } => {
+//            exists|vbase2| {
+//                &&& pt_walk_path(pt_mem, vbase2, path)
+//                &&& aligned(vbase as nat, 8)
+//                &&& path.last().1 is Empty
+//                &&& vbase2 <= vbase < vbase2 + pt_walk_path_size(path)
+//            }
+//        },
+//    }
+//}
 
 //#[verifier(external_body)]
 //pub struct PTMem {
@@ -153,7 +235,7 @@ pub open spec fn pt_walk_4k(pt_mem: PTMem, wr: WalkResult, path: Seq<(usize, GPD
 //}
 
 // TODO: define this, prove some stuff and add it to vstd
-pub open spec fn flatten<A>(s: Set<Set<A>>) -> Set<A>;
+//pub open spec fn flatten<A>(s: Set<Set<A>>) -> Set<A>;
 
 //impl PTMem {
 //    ///// The view of the memory is byte-indexed but stores full words. Only 8-byte aligned indices

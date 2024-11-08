@@ -119,9 +119,9 @@ impl State {
         // The write must be to a location that's currently a leaf of the page table.
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
-        &&& exists|path, i| #![auto]
-            self.writer_mem().page_table_paths().contains(path)
-            && 0 <= i < path.len() && path[i].0 == addr
+        //&&& exists|path, i| #![auto]
+        //    self.writer_mem().page_table_paths().contains(path)
+        //    && 0 <= i < path.len() && path[i].0 == addr
     }
 
     pub open spec fn can_change_polarity(self, c: Constants) -> bool {

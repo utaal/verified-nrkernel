@@ -24,6 +24,11 @@ pub struct State {
     /// Additionally tracks the current writer core.
     /// Technically we could probably infer the polarity from the write tracking but this is easier.
     pub polarity: Polarity,
+    /// Tracks the virtual address ranges for which we cannot guarantee atomic walk results
+    /// If polarity is negative, we give no guarantees about the results in these ranges; If it's
+    /// positive, the possible results are atomic semantics or an "invalid" result.
+    /// Each element is a tuple `(vbase, size)`
+    pub na_ranges: Set<(usize, usize)>,
 }
 
 
@@ -42,7 +47,11 @@ impl State {
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
+    //   - and its entries must not be modified
+    //      - not necessary because these would only be problematic if positive which is not allowed
     // - the location corresponds to *exactly* one leaf entry in the page table
+    //   - previous conditions are important for this: i cannot know if there's exactly one leaf
+    //     entry, if e.g. allow unmapping non-empty
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
         &&& !self.can_change_polarity(c) ==> {
             // If we're not at the start of an operation, the writer must stay the same
@@ -53,9 +62,9 @@ impl State {
         // The write must be to a location that's currently a leaf of the page table.
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
-        &&& exists|path, i| #![auto]
-            self.pt_mem.page_table_paths().contains(path)
-            && 0 <= i < path.len() && path[i].0 == addr
+        //&&& exists|path, i| #![auto]
+        //    self.pt_mem.page_table_paths().contains(path)
+        //    && 0 <= i < path.len() && path[i].0 == addr
     }
 
     pub open spec fn can_change_polarity(self, c: Constants) -> bool {
