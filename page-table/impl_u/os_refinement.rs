@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 
 use crate::definitions_t::{
-    above_zero, aligned, between, candidate_mapping_overlaps_existing_pmem,
+    aligned, between, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap, HWLoadResult, HWRWOp, HWStoreResult,
     LoadResult, MemRegion, PTE, RWOp, StoreResult, WORD_SIZE, Core
 };
@@ -130,7 +130,7 @@ proof fn lemma_map_soundness_equality<M: mmu::MMU>(
 )
     requires
         s.basic_inv(c),
-        above_zero(pte.frame.size),
+        pte.frame.size > 0,
     ensures
         hlspec::step_Map_sound(s.interp(c).mappings, s.interp(c).thread_state.values(), vaddr, pte)
             <==> os::step_Map_sound(s.interp_pt_mem(), s.core_states.values(), vaddr, pte),

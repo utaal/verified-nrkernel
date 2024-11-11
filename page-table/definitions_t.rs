@@ -196,10 +196,6 @@ impl MemRegion {
     }
 }
 
-pub open spec fn above_zero(size: nat) -> bool {
-    size > 0
-}
-
 pub open spec fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
         ||| region1.base == region2.base
