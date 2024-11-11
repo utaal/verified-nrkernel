@@ -52,9 +52,9 @@ impl State {
     // - the location corresponds to *exactly* one leaf entry in the page table
     //   - previous conditions are important for this: i cannot know if there's exactly one leaf
     //     entry, if e.g. allow unmapping non-empty
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
+    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& self.is_writer_core(core)
-        &&& self.pt_mem.is_nonneg_write(addr)
+        &&& self.pt_mem.is_nonneg_write(addr, value)
         //&&& !self.can_change_polarity(c) ==> {
         //    // If we're not at the start of an operation, the writer must stay the same
         //    &&& self.polarity.core() == core
@@ -167,10 +167,10 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
-    &&& post.happy      == pre.happy && pre.is_this_write_happy(core, addr, c)
+    &&& post.happy      == pre.happy && pre.is_this_write_happy(core, addr, value, c)
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
     &&& post.writes.all == pre.writes.all.insert((core, addr))
-    &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr) {
+    &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
     &&& post.na_ranges == pre.na_ranges.union(Set::new(|r:(_,_)|

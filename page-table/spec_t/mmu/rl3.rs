@@ -45,22 +45,26 @@ impl State {
         forall|c, a| #![auto] self.writes.all.contains((c, a)) ==> c == core
     }
 
+    pub open spec fn single_writer(self) -> bool {
+        forall|c1, c2, a1, a2| #![auto]
+            self.writes.all.contains((c1, a1)) && self.writes.all.contains((c2, a2)) ==> c2 == c1
+    }
+
     pub open spec fn writer_core(self) -> Core {
         self.writes.all.choose().0
     }
 
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
-        let core = self.writer_core();
-        self.sbuf[core].fold_left(self.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
+        self.pt_mem.write_seq(self.sbuf[self.writer_core()])
     }
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     // - the location corresponds to *exactly* one leaf entry in the page table
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
+    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& self.is_writer_core(core)
-        &&& self.writer_mem().is_nonneg_write(addr)
+        &&& self.writer_mem().is_nonneg_write(addr, value)
         //&&& !self.can_change_polarity(c) ==> {
         //    // If we're not at the start of an operation, the writer must stay the same
         //    &&& self.polarity.core() == core
@@ -100,6 +104,16 @@ impl State {
                 &&& walk.path.len() <= 4
                 &&& walk.path.len() == 3 ==> walk.complete
             }
+    }
+
+    pub open spec fn inv_walks_disjoint_with_present_bit_0_addrs(self, c: Constants) -> bool {
+        forall|core, addr, walk, i| #![auto] {
+            &&& c.valid_core(core)
+            //&&& (forall|core| #[trigger] c.valid_core(core) ==> !self.writes.all.contains((core, addr)))
+            &&& self.writer_mem().read(addr) & 1 == 0
+            &&& self.walks[core].contains(walk)
+            &&& 0 <= i < walk.path.len()
+        } ==> walk.path[i].0 != addr
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
@@ -244,12 +258,12 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
-    &&& post.happy == pre.happy && pre.is_this_write_happy(core, addr, c)
+    &&& post.happy == pre.happy && pre.is_this_write_happy(core, addr, value, c)
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.writes.all === pre.writes.all.insert((core, addr))
-    &&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr) {
+    &&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
     // Whenever this causes polarity to change and happy isn't set to false, the
@@ -346,7 +360,7 @@ proof fn init_implies_inv(pre: State, c: Constants)
     ensures pre.inv(c)
 { admit(); }
 
-proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+proof fn next_step_preserves_wf(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.wf(c),
         next_step(pre, post, c, step, lbl),
@@ -365,6 +379,118 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
     //        Step::Stutter                        => assert(post.inv(c)),
     //    }
     //}
+}
+
+
+proof fn next_step_preserves_inv_walks_disjoint_with_present_bit_0_addrs(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.happy,
+        pre.wf(c),
+        pre.inv_walks_disjoint_with_present_bit_0_addrs(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.happy ==> post.inv_walks_disjoint_with_present_bit_0_addrs(c)
+{
+    if pre.happy {
+        match step {
+            Step::Invlpg => {
+                let core = lbl->Invlpg_0;
+                assume(pre.single_writer()); // prove this in separate invariant
+                // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
+                // though I mention all the triggers.
+                broadcast use lemma_writes_filter_empty_if_writer_core;
+                lemma_writes_filter_empty_if_writer_core(pre, post, core);
+                assert(pre.sbuf[core].len() == 0);
+                assert(post.writer_mem() == pre.writer_mem());
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::WalkInit { core, vaddr } => {
+                assert(post.writer_mem() == pre.writer_mem());
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::WalkStep { core, walk, value } => {
+                let walk_next = walk_next(pre, core, walk);
+                assert(post.writer_mem() == pre.writer_mem());
+                assert forall|core2, addr, walk2, i| #![auto] {
+                    &&& c.valid_core(core2)
+                    &&& post.writer_mem().read(addr) & 1 == 0
+                    &&& post.walks[core2].contains(walk2)
+                    &&& 0 <= i < walk2.path.len()
+                } implies walk2.path[i].0 != addr by {
+                    if core2 == core && walk2 == walk_next {
+                        // walk_next adds one more entry to the path and the resulting walk is not
+                        // yet complete. This means the entry was a directory, which means the
+                        // present bit is set.
+                        admit();
+                        assert(walk2.path[i].0 != addr);
+                    } else {
+                        assert(walk2.path[i].0 != addr);
+                    }
+                };
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::WalkDone { walk, value } => {
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::Write => {
+                let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+                assume(forall|addr| #[trigger] post.writer_mem().read(addr) == if addr == wraddr { value } else { pre.writer_mem().read(addr) });
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::Writeback { core } => {
+                broadcast use lemma_writeback_preserves_writer_mem;
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::Read => {
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c))
+            },
+            Step::Barrier => {
+                let core = lbl->Barrier_0;
+                assume(pre.single_writer()); // prove this in separate invariant
+                // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
+                // though I mention all the triggers.
+                //broadcast use lemma_writes_filter_empty_if_writer_core;
+                lemma_writes_filter_empty_if_writer_core(pre, post, core);
+                assert(pre.sbuf[core].len() == 0);
+                assert(post.writer_mem() == pre.writer_mem());
+                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+            },
+            Step::Stutter => assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c)),
+        }
+    }
+}
+
+broadcast proof fn lemma_writes_filter_empty_if_writer_core(pre: State, post: State, core: Core)
+    requires
+        pre.single_writer(),
+        #[trigger] pre.sbuf[core].len() == 0,
+        post.writes.all === pre.writes.all.filter(|e:(Core, usize)| e.0 != core),
+    ensures #[trigger] post.writer_mem() == pre.writer_mem()
+    //post.writes.all == if #[trigger] pre.is_writer_core(core) { set![] } else { pre.writes.all }
+{
+    admit();
+}
+
+
+broadcast proof fn lemma_writeback_preserves_writer_mem(pre: State, post: State, c: Constants, core: Core, addr: usize, value: usize)
+    requires
+        #[trigger] c.valid_core(core),
+        0 < pre.sbuf[core].len(),
+        (addr, value) == pre.sbuf[core][0],
+        post.pt_mem == #[trigger] pre.pt_mem.write(addr, value),
+        post.sbuf   == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
+    ensures #[trigger] post.writer_mem() == pre.writer_mem()
+{
+    broadcast use lemma_foo;
+    admit();
+}
+
+broadcast proof fn lemma_foo(m: PTMem, writes: Seq<(usize, usize)>, addr: usize, value: usize)
+    requires
+        writes.len() > 0,
+        (addr, value) == writes[0],
+    ensures m.write_seq(writes) == #[trigger] m.write(addr, value).write_seq(writes.drop_first())
+{
+    admit();
 }
 
 //mod refinement {

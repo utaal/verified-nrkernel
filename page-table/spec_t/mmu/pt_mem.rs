@@ -55,6 +55,10 @@ impl PTMem {
             ==> walk2 == walk1
     }
 
+    pub open spec fn write_seq(self, writes: Seq<(usize, usize)>) -> Self {
+        writes.fold_left(self, |acc: PTMem, wr: (_, _)| acc.write(wr.0, wr.1))
+    }
+
     // Using present bits doesn't work because mb0 bits can still make it invalid and those are
     // different depending on the entry
     //pub open spec fn is_pos_or_neg_write(self, addr: usize, value: usize) -> bool {
@@ -65,16 +69,27 @@ impl PTMem {
     //    }
     //}
 
-    /// A present bit of 1 doesn't guarantee that this is a valid entry. It may not be reachable
-    /// from PML4 or it may have must-be-zero flags set (which depends on what layer the entry is
-    /// reachable at).
-    pub open spec fn maybe_neg_write(self, addr: usize) -> bool {
-        self.read(addr) & 1 != 0
+    ///// A present bit of 1 doesn't guarantee that this is a valid entry. It may not be reachable
+    ///// from PML4 or it may have must-be-zero flags set (which depends on what layer the entry is
+    ///// reachable at).
+    //pub open spec fn maybe_neg_write(self, addr: usize) -> bool {
+    //    self.read(addr) & 1 != 0
+    //}
+
+    /// A present bit of 0 guarantees that this is not currently a valid entry.
+    /// I.e. this write can be:
+    /// - Invalid -> Valid
+    /// - Invalid -> Invalid
+    pub open spec fn is_nonneg_write(self, addr: usize, _value: usize) -> bool {
+        self.read(addr) & 1 == 0
     }
 
-    /// A present bit of 0 guarantees that this is not currently a valid entry
-    pub open spec fn is_nonneg_write(self, addr: usize) -> bool {
-        self.read(addr) & 1 == 0
+    /// Writing a present bit of 0 guarantees that this doesn't become a valid entry.
+    /// I.e. this write can be:
+    /// - Valid -> Invalid
+    /// - Invalid -> Invalid
+    pub open spec fn is_nonpos_write(self, _addr: usize, value: usize) -> bool {
+        value & 1 == 0
     }
 
     ///// Is this a negative write? I.e. is it to a location that currently represents a page mapping

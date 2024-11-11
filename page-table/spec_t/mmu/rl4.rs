@@ -102,16 +102,15 @@ impl State {
 
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
-        let core = self.writer_core();
-        self.sbuf[core].fold_left(self.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
+        self.pt_mem.write_seq(self.sbuf[self.writer_core()])
     }
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     // - the location corresponds to *exactly* one leaf entry in the page table
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
+    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& self.is_writer_core(core)
-        &&& self.writer_mem().is_nonneg_write(addr)
+        &&& self.writer_mem().is_nonneg_write(addr, value)
         //&&& !self.can_change_polarity(c) ==> {
         //    // If we're not at the start of an operation, the writer must stay the same
         //    &&& self.hist.polarity.core() == core
@@ -380,10 +379,10 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
-    &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, c)
+    &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, c)
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all.insert((core, addr))
-    &&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr) {
+    &&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     // Whenever this causes polarity to change and happy isn't set to false, the
