@@ -208,53 +208,45 @@ impl PDE {
         let XD  = v & MASK_FLAG_XD   == MASK_FLAG_XD;
         let D   = v & MASK_PG_FLAG_D == MASK_PG_FLAG_D;
         let G   = v & MASK_PG_FLAG_G == MASK_PG_FLAG_G;
-        // TODO: this outer if should probably be rolled into the inner one
-        if self.layer@ <= 3 {
-            if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
-                if self.layer == 0 {
+        if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
+            if self.layer == 0 {
+                let addr = (v & MASK_ADDR) as usize;
+                GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
+            } else if self.layer == 1 {
+                if v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
+                    // super page mapping
+                    let addr = (v & MASK_L1_PG_ADDR) as usize;
+                    let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
+                    GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
+                } else {
                     let addr = (v & MASK_ADDR) as usize;
                     GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
-                } else if self.layer == 1 {
-                    if v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
-                        // super page mapping
-                        let addr = (v & MASK_L1_PG_ADDR) as usize;
-                        let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
-                        GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
-                    } else {
-                        let addr = (v & MASK_ADDR) as usize;
-                        GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
-                    }
-                } else if self.layer == 2 {
-                    if v & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
-                        // huge page mapping
-                        let addr = (v & MASK_L2_PG_ADDR) as usize;
-                        let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
-                        GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
-                    } else {
-                        let addr = (v & MASK_ADDR) as usize;
-                        GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
-                    }
-                } else {
-                    // TODO: uncomment when we have inline proofs
-                    // assert(self.layer == 3);
-                    let addr = (v & MASK_L3_PG_ADDR) as usize;
-                    let PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
-                    GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
                 }
+            } else if self.layer == 2 {
+                if v & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
+                    // huge page mapping
+                    let addr = (v & MASK_L2_PG_ADDR) as usize;
+                    let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
+                    GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
+                } else {
+                    let addr = (v & MASK_ADDR) as usize;
+                    GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
+                }
+            } else if self.layer == 3 {
+                let addr = (v & MASK_L3_PG_ADDR) as usize;
+                let PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
+                GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
             } else {
-                GPDE::Empty
+                arbitrary()
             }
         } else {
-            arbitrary()
+            GPDE::Empty
         }
     }
 
     /// Returns `true` iff all must-be-zero bits for a given entry are zero.
     #[verifier::opaque]
-    pub open spec fn all_mb0_bits_are_zero(self) -> bool
-        recommends
-            self.layer@ <= 3,
-    {
+    pub open spec fn all_mb0_bits_are_zero(self) -> bool {
         if self.entry & MASK_FLAG_P == MASK_FLAG_P {
             if self.layer == 0 {  // PML4, always directory
                 // 51:M, 7

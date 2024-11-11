@@ -164,4 +164,14 @@ pub open spec fn get_first<A,B>(s: Seq<(A, B)>, a: A) -> Option<B> {
     get_first_aux(s, 0, a)
 }
 
+pub trait SeqTupExt: Sized {
+    spec fn contains_addr(self, addr: usize) -> bool;
+}
+
+impl SeqTupExt for Seq<(usize, usize)> {
+    open spec fn contains_addr(self, addr: usize) -> bool {
+        exists|i| 0 <= i < self.len() && #[trigger] self[i].0 == addr
+    }
+}
+
 } // verus!

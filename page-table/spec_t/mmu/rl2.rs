@@ -37,14 +37,6 @@ impl State {
         arbitrary()
     }
 
-    pub open spec fn is_writer_core(self, core: Core) -> bool {
-        forall|c, a| #![auto] self.writes.all.contains((c, a)) ==> c == core
-    }
-
-    pub open spec fn writer_core(self) -> Core {
-        self.writes.all.choose().0
-    }
-
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     //   - and its entries must not be modified
@@ -53,7 +45,7 @@ impl State {
     //   - previous conditions are important for this: i cannot know if there's exactly one leaf
     //     entry, if e.g. allow unmapping non-empty
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
-        &&& self.is_writer_core(core)
+        &&& !self.writes.all.is_empty() ==> core == self.writes.core
         &&& self.pt_mem.is_nonneg_write(addr, value)
         //&&& !self.can_change_polarity(c) ==> {
         //    // If we're not at the start of an operation, the writer must stay the same
@@ -75,8 +67,7 @@ impl State {
     //}
 
     pub open spec fn is_tso_read_deterministic(self, core: Core, addr: usize) -> bool {
-        ||| self.is_writer_core(core)
-        ||| exists|v| #[trigger] self.writes.all.contains((core, v))
+        self.writes.all.contains(addr) ==> self.writes.core == core
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -102,11 +93,11 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
     &&& c.valid_core(core)
 
-    &&& post.happy      == pre.happy
-    &&& post.pt_mem     == pre.pt_mem
-    &&& post.writes.all == pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
-    &&& post.writes.neg == pre.writes.neg.insert(core, set![])
-    &&& post.na_ranges === set![] // This might not be correct when we have negative writes as well
+    &&& post.happy      ==  pre.happy
+    &&& post.pt_mem     ==  pre.pt_mem
+    &&& post.writes.all === set![]
+    &&& post.writes.neg ==  pre.writes.neg.insert(core, set![])
+    &&& post.na_ranges  === set![] // This might not be correct when we have negative writes as well
     //&&& post.polarity   == pre.polarity
 }
 
@@ -169,7 +160,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
 
     &&& post.happy      == pre.happy && pre.is_this_write_happy(core, addr, value, c)
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
-    &&& post.writes.all == pre.writes.all.insert((core, addr))
+    &&& post.writes.all == pre.writes.all.insert(addr)
     &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
@@ -199,11 +190,11 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
 
     &&& c.valid_core(core)
 
-    &&& post.happy      == pre.happy
-    &&& post.pt_mem     == pre.pt_mem
-    &&& post.writes.all == pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
-    &&& post.writes.neg == pre.writes.neg
-    &&& post.na_ranges === set![] // This might not be correct when we have negative writes as well
+    &&& post.happy      ==  pre.happy
+    &&& post.pt_mem     ==  pre.pt_mem
+    &&& post.writes.all === set![]
+    &&& post.writes.neg ==  pre.writes.neg
+    &&& post.na_ranges  === set![] // This might not be correct when we have negative writes as well
     //&&& post.polarity   == pre.polarity
 }
 
