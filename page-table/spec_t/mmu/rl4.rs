@@ -34,12 +34,12 @@ pub struct History {
     /// All partial walks since the last invlpg
     pub walks: Map<Core, Set<Walk>>,
     pub writes: Writes,
-    /// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
-    /// flipped when neg and writes are all empty.
-    /// A non-flipping write with the wrong polarity sets happy to false.
-    /// Additionally tracks the current writer core.
-    /// Technically we could probably infer the polarity from the write tracking but this is easier.
-    pub polarity: Polarity,
+    ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
+    ///// flipped when neg and writes are all empty.
+    ///// A non-flipping write with the wrong polarity sets happy to false.
+    ///// Additionally tracks the current writer core.
+    ///// Technically we could probably infer the polarity from the write tracking but this is easier.
+    //pub polarity: Polarity,
 }
 
 pub struct Writes {
@@ -53,19 +53,19 @@ pub struct Writes {
     pub neg: Map<Core, Set<usize>>,
 }
 
-pub enum Polarity {
-    Pos(Core),
-    Neg(Core),
-}
-
-impl Polarity {
-    pub open spec fn core(self) -> Core {
-        match self {
-            Polarity::Pos(c) => c,
-            Polarity::Neg(c) => c,
-        }
-    }
-}
+//pub enum Polarity {
+//    Pos(Core),
+//    Neg(Core),
+//}
+//
+//impl Polarity {
+//    pub open spec fn core(self) -> Core {
+//        match self {
+//            Polarity::Pos(c) => c,
+//            Polarity::Neg(c) => c,
+//        }
+//    }
+//}
 
 impl State {
     /// FIXME: I changed this to always keep dirty/accessed bits nondeterministic rather than
@@ -92,30 +92,33 @@ impl State {
         arbitrary()
     }
 
+    pub open spec fn is_writer_core(self, core: Core) -> bool {
+        forall|c, a| #![auto] self.hist.writes.all.contains((c, a)) ==> c == core
+    }
+
+    pub open spec fn writer_core(self) -> Core {
+        self.hist.writes.all.choose().0
+    }
+
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
-        let core = self.hist.polarity.core();
+        let core = self.writer_core();
         self.sbuf[core].fold_left(self.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
-    }
-
-    pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        self.writer_mem().is_neg_write(addr)
-    }
-
-    pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        self.writer_mem().is_pos_write(addr)
     }
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     // - the location corresponds to *exactly* one leaf entry in the page table
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
-        &&& !self.can_change_polarity(c) ==> {
-            // If we're not at the start of an operation, the writer must stay the same
-            &&& self.hist.polarity.core() == core
-            // and the polarity must match
-            &&& if self.hist.polarity is Pos { self.is_pos_write(addr) } else { self.is_neg_write(addr) }
-        }
+        &&& self.is_writer_core(core)
+        &&& self.writer_mem().is_nonneg_write(addr)
+        //&&& !self.can_change_polarity(c) ==> {
+        //    // If we're not at the start of an operation, the writer must stay the same
+        //    &&& self.hist.polarity.core() == core
+        //    // and the polarity must match
+        //    &&& if self.hist.polarity is Pos { self.writer_mem().is_nonneg_write(addr) } else { self.writer_mem().is_neg_write(addr) }
+        //}
+        //&&& if self.writer_mem().is_nonneg_write(addr)
         // The write must be to a location that's currently a leaf of the page table.
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
@@ -124,10 +127,10 @@ impl State {
         //    && 0 <= i < path.len() && path[i].0 == addr
     }
 
-    pub open spec fn can_change_polarity(self, c: Constants) -> bool {
-        &&& self.hist.writes.all.is_empty()
-        &&& forall|core| #![auto] c.valid_core(core) ==> self.hist.writes.neg[core].is_empty()
-    }
+    //pub open spec fn can_change_polarity(self, c: Constants) -> bool {
+    //    &&& self.hist.writes.all.is_empty()
+    //    &&& forall|core| #![auto] c.valid_core(core) ==> self.hist.writes.neg[core].is_empty()
+    //}
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
@@ -185,7 +188,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.hist.walks == pre.hist.walks.insert(core, set![])
     &&& post.hist.writes.all === pre.hist.writes.all.filter(|e:(Core, usize)| e.0 != core)
     &&& post.hist.writes.neg == pre.hist.writes.neg.insert(core, set![])
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 
@@ -206,7 +209,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
@@ -224,7 +227,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
@@ -242,7 +245,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 
@@ -268,7 +271,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk))
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Walk {
@@ -321,7 +324,7 @@ pub open spec fn step_WalkStep(
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk_next))
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 /// Note: A valid walk's result is a region whose base and size depend on the path taken. E.g. a
@@ -356,7 +359,7 @@ pub open spec fn step_WalkDone(
     //&&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 
@@ -380,12 +383,12 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, c)
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all.insert((core, addr))
-    &&& post.hist.writes.neg == if pre.is_neg_write(addr) {
+    &&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr) {
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
-    &&& post.hist.polarity == if pre.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    //&&& post.hist.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -404,7 +407,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl: Lbl) -> bool {
@@ -423,7 +426,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl:
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -443,7 +446,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all === pre.hist.writes.all.filter(|e:(Core, usize)| e.0 != core)
     &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.polarity == pre.hist.polarity
+    //&&& post.hist.polarity == pre.hist.polarity
 }
 
 /// Any transition that reads from memory takes an arbitrary usize `r`, which is used to
@@ -532,7 +535,7 @@ mod refinement {
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
                 writes: self.hist.writes,
-                polarity: self.hist.polarity,
+                //polarity: self.hist.polarity,
             }
         }
     }

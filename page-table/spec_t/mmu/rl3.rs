@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 use crate::definitions_t::{ aligned, Core };
-use crate::spec_t::mmu::rl4::{ Writes, Polarity, MASK_NEG_DIRTY_ACCESS };
+use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
@@ -19,12 +19,12 @@ pub struct State {
     /// Store buffers
     pub sbuf: Map<Core, Seq<(usize, usize)>>,
     pub writes: Writes,
-    /// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
-    /// flipped when neg and writes are all empty.
-    /// A non-flipping write with the wrong polarity sets happy to false.
-    /// Additionally tracks the current writer core.
-    /// Technically we could probably infer the polarity from the write tracking but this is easier.
-    pub polarity: Polarity,
+    ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
+    ///// flipped when neg and writes are all empty.
+    ///// A non-flipping write with the wrong polarity sets happy to false.
+    ///// Additionally tracks the current writer core.
+    ///// Technically we could probably infer the polarity from the write tracking but this is easier.
+    //pub polarity: Polarity,
 }
 
 
@@ -41,30 +41,32 @@ impl State {
         arbitrary()
     }
 
+    pub open spec fn is_writer_core(self, core: Core) -> bool {
+        forall|c, a| #![auto] self.writes.all.contains((c, a)) ==> c == core
+    }
+
+    pub open spec fn writer_core(self) -> Core {
+        self.writes.all.choose().0
+    }
+
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
-        let core = self.polarity.core();
+        let core = self.writer_core();
         self.sbuf[core].fold_left(self.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))
-    }
-
-    pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        self.writer_mem().is_neg_write(addr)
-    }
-
-    pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        self.writer_mem().is_pos_write(addr)
     }
 
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     // - the location corresponds to *exactly* one leaf entry in the page table
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
-        &&& !self.can_change_polarity(c) ==> {
-            // If we're not at the start of an operation, the writer must stay the same
-            &&& self.polarity.core() == core
-            // and the polarity must match
-            &&& if self.polarity is Pos { self.is_pos_write(addr) } else { self.is_neg_write(addr) }
-        }
+        &&& self.is_writer_core(core)
+        &&& self.writer_mem().is_nonneg_write(addr)
+        //&&& !self.can_change_polarity(c) ==> {
+        //    // If we're not at the start of an operation, the writer must stay the same
+        //    &&& self.polarity.core() == core
+        //    // and the polarity must match
+        //    &&& if self.polarity is Pos { self.writer_mem().is_nonneg_write(addr) } else { self.writer_mem().is_neg_write(addr) }
+        //}
         // The write must be to a location that's currently a leaf of the page table.
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
@@ -73,10 +75,10 @@ impl State {
         //    && 0 <= i < path.len() && path[i].0 == addr
     }
 
-    pub open spec fn can_change_polarity(self, c: Constants) -> bool {
-        &&& self.writes.all.is_empty()
-        &&& forall|core| #![auto] c.valid_core(core) ==> self.writes.neg[core].is_empty()
-    }
+    //pub open spec fn can_change_polarity(self, c: Constants) -> bool {
+    //    &&& self.writes.all.is_empty()
+    //    &&& forall|core| #![auto] c.valid_core(core) ==> self.writes.neg[core].is_empty()
+    //}
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
@@ -86,9 +88,24 @@ impl State {
         &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
     }
 
+    // Since we only have positive writes, all currently inflight walks are prefixes of existing
+    // paths.
+    //pub open spec fn inv_walks_are_prefixes(self, c: Constants) -> bool {
+    //    forall|walk| self.walks.contains(walk) ==> ...
+    //}
+
+    pub open spec fn inv_walks_basic(self, c: Constants) -> bool {
+        forall|core, walk|
+            c.valid_core(core) && self.walks[core].contains(walk) ==> {
+                &&& walk.path.len() <= 4
+                &&& walk.path.len() == 3 ==> walk.complete
+            }
+    }
+
     pub open spec fn inv(self, c: Constants) -> bool {
         self.happy ==> {
         &&& self.wf(c)
+        &&& self.inv_walks_basic(c)
         }
     }
 }
@@ -108,7 +125,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.sbuf == pre.sbuf
     &&& post.writes.all === pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
     &&& post.writes.neg == pre.writes.neg.insert(core, set![])
-    &&& post.polarity == pre.polarity
+    //&&& post.polarity == pre.polarity
 }
 
 
@@ -127,7 +144,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
     &&& post.writes == pre.writes
-    &&& post.polarity == pre.polarity
+    //&&& post.polarity == pre.polarity
 }
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
@@ -153,6 +170,23 @@ pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
     walk
 }
 
+// TODO: might be easier to just spell out the whole thing and do case distinctions
+// Or may want to generate the path prefix set...
+pub open spec fn complete_walk(state: State, core: Core, walk: Walk) -> Walk
+    recommends walk.path.len() < 4 && !walk.complete
+    decreases 4 - walk.path.len()
+{
+    if walk.path.len() < 4 {
+        if walk.complete {
+            walk
+        } else {
+            complete_walk(state, core, walk_next(state, core, walk))
+        }
+    } else {
+        arbitrary()
+    }
+}
+
 pub open spec fn step_WalkStep(
     pre: State,
     post: State,
@@ -175,7 +209,7 @@ pub open spec fn step_WalkStep(
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk_next))
     &&& post.writes == pre.writes
-    &&& post.polarity == pre.polarity
+    //&&& post.polarity == pre.polarity
 }
 
 pub open spec fn step_WalkDone(
@@ -215,12 +249,12 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.writes.all === pre.writes.all.insert((core, addr))
-    &&& post.writes.neg == if pre.is_neg_write(addr) {
+    &&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr) {
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
-    &&& post.polarity == if pre.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    //&&& post.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -235,7 +269,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.walks == pre.walks
     &&& post.writes == pre.writes
-    &&& post.polarity == pre.polarity
+    //&&& post.polarity == pre.polarity
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -262,7 +296,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.walks == pre.walks
     &&& post.writes.all === pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
     &&& post.writes.neg == pre.writes.neg
-    &&& post.polarity == pre.polarity
+    //&&& post.polarity == pre.polarity
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -314,9 +348,9 @@ proof fn init_implies_inv(pre: State, c: Constants)
 
 proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
-        pre.inv(c),
+        pre.wf(c),
         next_step(pre, post, c, step, lbl),
-    ensures post.inv(c)
+    ensures post.wf(c)
 {
     //if pre.happy {
     //    match step {

@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 use crate::definitions_t::{ aligned, Core };
-use crate::spec_t::mmu::rl4::{ Writes, Polarity, MASK_NEG_DIRTY_ACCESS };
+use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
@@ -18,12 +18,12 @@ pub struct State {
     ///// Store buffers
     //pub sbuf: Map<Core, Seq<(usize, usize)>>,
     pub writes: Writes,
-    /// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
-    /// flipped when neg and writes are all empty.
-    /// A non-flipping write with the wrong polarity sets happy to false.
-    /// Additionally tracks the current writer core.
-    /// Technically we could probably infer the polarity from the write tracking but this is easier.
-    pub polarity: Polarity,
+    ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
+    ///// flipped when neg and writes are all empty.
+    ///// A non-flipping write with the wrong polarity sets happy to false.
+    ///// Additionally tracks the current writer core.
+    ///// Technically we could probably infer the polarity from the write tracking but this is easier.
+    //pub polarity: Polarity,
     /// Tracks the virtual address ranges for which we cannot guarantee atomic walk results
     /// If polarity is negative, we give no guarantees about the results in these ranges; If it's
     /// positive, the possible results are atomic semantics or an "invalid" result.
@@ -37,12 +37,12 @@ impl State {
         arbitrary()
     }
 
-    pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        self.pt_mem.is_neg_write(addr)
+    pub open spec fn is_writer_core(self, core: Core) -> bool {
+        forall|c, a| #![auto] self.writes.all.contains((c, a)) ==> c == core
     }
 
-    pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        self.pt_mem.is_pos_write(addr)
+    pub open spec fn writer_core(self) -> Core {
+        self.writes.all.choose().0
     }
 
     // TODO: I may want/need to add these conditions as well:
@@ -53,12 +53,14 @@ impl State {
     //   - previous conditions are important for this: i cannot know if there's exactly one leaf
     //     entry, if e.g. allow unmapping non-empty
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, c: Constants) -> bool {
-        &&& !self.can_change_polarity(c) ==> {
-            // If we're not at the start of an operation, the writer must stay the same
-            &&& self.polarity.core() == core
-            // and the polarity must match
-            &&& if self.polarity is Pos { self.is_pos_write(addr) } else { self.is_neg_write(addr) }
-        }
+        &&& self.is_writer_core(core)
+        &&& self.pt_mem.is_nonneg_write(addr)
+        //&&& !self.can_change_polarity(c) ==> {
+        //    // If we're not at the start of an operation, the writer must stay the same
+        //    &&& self.polarity.core() == core
+        //    // and the polarity must match
+        //    &&& if self.polarity is Pos { self.pt_mem.is_nonneg_write(addr) } else { self.pt_mem.is_neg_write(addr) }
+        //}
         // The write must be to a location that's currently a leaf of the page table.
         // FIXME: i'm not sure this is doing what i want it to do.
         // TODO: maybe bad trigger
@@ -67,13 +69,13 @@ impl State {
         //    && 0 <= i < path.len() && path[i].0 == addr
     }
 
-    pub open spec fn can_change_polarity(self, c: Constants) -> bool {
-        &&& self.writes.all.is_empty()
-        &&& forall|core| #![auto] c.valid_core(core) ==> self.writes.neg[core].is_empty()
-    }
+    //pub open spec fn can_change_polarity(self, c: Constants) -> bool {
+    //    &&& self.writes.all.is_empty()
+    //    &&& forall|core| #![auto] c.valid_core(core) ==> self.writes.neg[core].is_empty()
+    //}
 
     pub open spec fn is_tso_read_deterministic(self, core: Core, addr: usize) -> bool {
-        ||| core == self.polarity.core()
+        ||| self.is_writer_core(core)
         ||| exists|v| #[trigger] self.writes.all.contains((core, v))
     }
 
@@ -104,7 +106,8 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.pt_mem     == pre.pt_mem
     &&& post.writes.all == pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
     &&& post.writes.neg == pre.writes.neg.insert(core, set![])
-    &&& post.polarity   == pre.polarity
+    &&& post.na_ranges === set![] // This might not be correct when we have negative writes as well
+    //&&& post.polarity   == pre.polarity
 }
 
 
@@ -133,24 +136,23 @@ pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
     walk
 }
 
-pub open spec fn step_Walk(pre: State, post: State, c: Constants, path: Seq<(usize, GPDE)>, lbl: Lbl) -> bool {
+/// An atomic page table walk
+pub open spec fn step_Walk(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
-    &&& {
-        if !pre.writes_neg_contains(path.last().0) {
-            arbitrary()
-        } else {
-            true
-        }
-    }
-    //let walk_next = walk_next(pre, core, walk);
-    //&&& pt_walk_4k(pre.pt_mem, walk_result, path)
-    //&&& pt_walk_4k()
-    //&&& pre.walks[core].contains(walk)
-    //&&& walk_next.result() == walk_result
-    //&&& walk_next.complete
-    &&& arbitrary() // FIXME:
+    &&& pre.pt_mem.pt_walk(walk_result.vbase()).result() == walk_result
+
+    &&& post == pre
+}
+
+/// A non-atomic page table walk. This can only be an invalid result and only on specific ranges.
+pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::Walk(core, walk_result)
+
+    &&& c.valid_core(core)
+    &&& walk_result matches WalkResult::Invalid { vbase }
+    &&& exists|r| #![auto] pre.na_ranges.contains(r) && r.0 <= vbase < r.0 + r.1
 
     &&& post == pre
 }
@@ -168,10 +170,15 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.happy      == pre.happy && pre.is_this_write_happy(core, addr, c)
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
     &&& post.writes.all == pre.writes.all.insert((core, addr))
-    &&& post.writes.neg == if pre.is_neg_write(addr) {
+    &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr) {
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
-    &&& post.polarity   == if pre.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    &&& post.na_ranges == pre.na_ranges.union(Set::new(|r:(_,_)|
+            post.pt_mem@.contains_key(r.0)
+            && !pre.pt_mem@.contains_key(r.1)
+            && post.pt_mem@[r.0].frame.size == r.1
+            ))
+    //&&& post.polarity   == if pre.pt_mem.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -196,7 +203,8 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.pt_mem     == pre.pt_mem
     &&& post.writes.all == pre.writes.all.filter(|e:(Core, usize)| e.0 != core)
     &&& post.writes.neg == pre.writes.neg
-    &&& post.polarity   == pre.polarity
+    &&& post.na_ranges === set![] // This might not be correct when we have negative writes as well
+    //&&& post.polarity   == pre.polarity
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -208,7 +216,9 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Atomic page table walk
-    Walk { path: Seq<(usize, GPDE)> },
+    Walk,
+    // Non-atomic page table walk
+    WalkNA,
     // TSO
     Write,
     Read,
@@ -218,12 +228,13 @@ pub enum Step {
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg        => step_Invlpg(pre, post, c, lbl),
-        Step::Walk { path } => step_Walk(pre, post, c, path, lbl),
-        Step::Write         => step_Write(pre, post, c, lbl),
-        Step::Read          => step_Read(pre, post, c, lbl),
-        Step::Barrier       => step_Barrier(pre, post, c, lbl),
-        Step::Stutter       => step_Stutter(pre, post, c, lbl),
+        Step::Invlpg  => step_Invlpg(pre, post, c, lbl),
+        Step::Walk    => step_Walk(pre, post, c, lbl),
+        Step::WalkNA  => step_WalkNA(pre, post, c, lbl),
+        Step::Write   => step_Write(pre, post, c, lbl),
+        Step::Read    => step_Read(pre, post, c, lbl),
+        Step::Barrier => step_Barrier(pre, post, c, lbl),
+        Step::Stutter => step_Stutter(pre, post, c, lbl),
     }
 }
 

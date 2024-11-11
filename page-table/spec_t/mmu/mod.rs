@@ -22,14 +22,14 @@ pub enum WalkResult {
     Invalid { vbase: usize },
 }
 
-//impl WalkResult {
-//    pub open spec fn vbase(self) -> usize {
-//        match self {
-//            WalkResult::Valid { vbase, .. } => vbase,
-//            WalkResult::Invalid { vbase, .. } => vbase,
-//        }
-//    }
-//}
+impl WalkResult {
+    pub open spec fn vbase(self) -> usize {
+        match self {
+            WalkResult::Valid { vbase, .. } => vbase,
+            WalkResult::Invalid { vbase, .. } => vbase,
+        }
+    }
+}
 
 impl Walk {
 

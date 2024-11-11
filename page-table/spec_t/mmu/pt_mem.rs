@@ -55,23 +55,45 @@ impl PTMem {
             ==> walk2 == walk1
     }
 
-    /// Is this a negative write? I.e. is it to a location that currently represents a page mapping
-    /// anywhere in the page table?
-    pub open spec fn is_neg_write(self, addr: usize) -> bool {
-        forall|walk| #![auto]
-            self.all_pt_walks().contains(walk) && walk.path.last().0 == addr
-            ==> walk.path.last().1 is Page
+    // Using present bits doesn't work because mb0 bits can still make it invalid and those are
+    // different depending on the entry
+    //pub open spec fn is_pos_or_neg_write(self, addr: usize, value: usize) -> bool {
+    //    if self.read(addr) & 1 == 1 {
+    //        value & 1 == 0
+    //    } else {
+    //        value & 1 == 1
+    //    }
+    //}
+
+    /// A present bit of 1 doesn't guarantee that this is a valid entry. It may not be reachable
+    /// from PML4 or it may have must-be-zero flags set (which depends on what layer the entry is
+    /// reachable at).
+    pub open spec fn maybe_neg_write(self, addr: usize) -> bool {
+        self.read(addr) & 1 != 0
     }
 
-    /// Is this a positive write? I.e. is it to a location that currently represents a reachable
-    /// but invalid location in the page table and changes it to a page mapping?
-    /// TODO: do i need to know that this actually becomes a valid entry or is it sufficient to
-    /// know that it was previously invalid?
-    pub open spec fn is_pos_write(self, addr: usize) -> bool {
-        forall|walk| #![auto]
-            self.all_pt_walks().contains(walk) && walk.path.last().0 == addr
-            ==> walk.path.last().1 is Empty
+    /// A present bit of 0 guarantees that this is not currently a valid entry
+    pub open spec fn is_nonneg_write(self, addr: usize) -> bool {
+        self.read(addr) & 1 == 0
     }
+
+    ///// Is this a negative write? I.e. is it to a location that currently represents a page mapping
+    ///// anywhere in the page table?
+    //pub open spec fn is_neg_write(self, addr: usize) -> bool {
+    //    forall|walk| #![auto]
+    //        self.all_pt_walks().contains(walk) && walk.path.last().0 == addr
+    //        ==> walk.path.last().1 is Page
+    //}
+    //
+    ///// Is this a positive write? I.e. is it to a location that currently represents a reachable
+    ///// but invalid location in the page table and changes it to a page mapping?
+    ///// TODO: do i need to know that this actually becomes a valid entry or is it sufficient to
+    ///// know that it was previously invalid?
+    //pub open spec fn is_nonneg_write(self, addr: usize) -> bool {
+    //    forall|walk| #![auto]
+    //        self.all_pt_walks().contains(walk) && walk.path.last().0 == addr
+    //        ==> walk.path.last().1 is Empty
+    //}
 
     pub open spec fn pt_walk(self, vaddr: usize) -> Walk {
         let l0_idx = l0_bits!(vaddr as u64) as usize;
