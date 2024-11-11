@@ -10,7 +10,7 @@ use vstd::prelude::*;
 use crate::spec_t::{hardware, hlspec, mem, mmu};
 use crate::spec_t::mmu::{WalkResult, pt_mem};
 use crate::definitions_t::{
-    above_zero, aligned, between, candidate_mapping_in_bounds,
+    aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
     x86_arch_spec, HWLoadResult, HWRWOp, HWStoreResult, LoadResult, MemRegion, PTE,
     RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core,
@@ -170,15 +170,15 @@ impl<M: mmu::MMU> OSVariables<M> {
             match self.core_states[core] {
                 CoreState::MapWaiting { vaddr, pte, .. }
                 | CoreState::MapExecuting { vaddr, pte, .. }
-                    => above_zero(pte.frame.size),
+                    => pte.frame.size > 0,
                 CoreState::UnmapWaiting { vaddr, .. }
                 | CoreState::UnmapOpExecuting { vaddr, result: None, .. }
                     => self.interp_pt_mem().contains_key(vaddr)
-                        ==> above_zero(self.interp_pt_mem()[vaddr].frame.size),
+                        ==> self.interp_pt_mem()[vaddr].frame.size > 0,
                 CoreState::UnmapOpExecuting { result: Some(result), .. }
                 | CoreState::UnmapOpDone { result, .. }
                 | CoreState::UnmapShootdownWaiting { result, .. }
-                    => result is Ok ==> above_zero(result.get_Ok_0().frame.size),
+                    => result is Ok ==> result.get_Ok_0().frame.size > 0,
                 CoreState::Idle => true,
             }
     }

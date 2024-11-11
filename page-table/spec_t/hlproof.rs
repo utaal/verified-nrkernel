@@ -1,6 +1,6 @@
 #![verus::trusted]
 use crate::definitions_t::{
-    above_zero, between, candidate_mapping_overlaps_existing_pmem, overlap, MemRegion,
+    between, candidate_mapping_overlaps_existing_pmem, overlap,
     PTE, WORD_SIZE,
 };
 use crate::spec_t::mem;
@@ -9,8 +9,7 @@ use vstd::prelude::*;
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 
 use crate::spec_t::hlspec::{
-    candidate_mapping_overlaps_inflight_pmem, if_map_then_unique, inflight_maps_unique,
-    inflight_mem_size_over_zero, inv, mappings_frame_sizes_over_zero, mem_domain_from_entry,
+    candidate_mapping_overlaps_inflight_pmem, if_map_then_unique, inflight_maps_unique, inv, mem_domain_from_entry,
     mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains,
     pmem_no_overlap, step_Map_end, step_Map_start, step_Unmap_start, AbstractArguments,
     AbstractConstants, AbstractVariables,
@@ -232,34 +231,17 @@ pub proof fn lemma_mem_domain_from_new_mappings_subset(
 //                                        Step preserves inv lemmata                                             //
 //                                                                                                               //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn lemma_overlap_sym(region1: MemRegion, region2: MemRegion)
-    requires
-        !overlap(region1, region2),
-        region1.size > 0,
-        region2.size > 0,
-    ensures
-        !overlap(region2, region1),
-{
-}
 
 pub proof fn lemma_overlap(mappings: Map<nat, PTE>, base: nat, pte: PTE)
     requires
         pmem_no_overlap(mappings),
         !candidate_mapping_overlaps_existing_pmem(mappings, pte),
-        mappings_frame_sizes_over_zero(mappings),
-        above_zero(pte.frame.size),
     ensures
         pmem_no_overlap(mappings.insert(base, pte)),
 {
     assert(forall|bs1: nat|
         #![auto]
         mappings.dom().contains(bs1) ==> !overlap(pte.frame, mappings.index(bs1).frame));
-    assert forall|bs1: nat| #![auto] mappings.dom().contains(bs1) implies !overlap(
-        mappings.index(bs1).frame,
-        pte.frame,
-    ) by {
-        lemma_overlap_sym(pte.frame, mappings.index(bs1).frame);
-    }
     assert(pmem_no_overlap(mappings.insert(base, pte)));
 }
 
@@ -301,15 +283,12 @@ pub proof fn insert_map_preserves_unique(
     requires
         inflight_maps_unique(thread_state),
         !candidate_mapping_overlaps_inflight_pmem(thread_state.values(), pte),
-        above_zero(pte.frame.size),
-        inflight_mem_size_over_zero(thread_state.values()),
     ensures
         inflight_maps_unique(thread_state.insert(thread_id, AbstractArguments::Map { vaddr, pte })),
 {
     let arg = AbstractArguments::Map { vaddr, pte };
     let args = thread_state.insert(thread_id, arg);
     let p = pte;
-    assume(inflight_mem_size_over_zero(args.values()));
     assert forall|id: nat| #[trigger] args.dom().contains(id) implies if_map_then_unique(
         args,
         id,
@@ -393,8 +372,7 @@ pub proof fn unmap_start_preserves_inv(
             thread_id,
             AbstractArguments::Unmap { vaddr, pte },
         );
-    } else {
-    }
+    } 
 }
 
 pub proof fn map_start_preserves_inv(
@@ -422,8 +400,7 @@ pub proof fn map_start_preserves_inv(
             s1.thread_state.values().insert(AbstractArguments::Map { vaddr, pte }),
         ));
         insert_map_preserves_unique(s1.thread_state, thread_id, vaddr, pte);
-    } else {
-    }
+    } 
 }
 
 pub proof fn map_end_preserves_inv(
@@ -453,10 +430,7 @@ pub proof fn map_end_preserves_inv(
                 thread_id,
                 AbstractArguments::Empty,
             ));
-        } else {
-        }
-    } else {
-    }
+        } 
+    } 
 }
-
 } // verus!

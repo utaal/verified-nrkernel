@@ -3,7 +3,7 @@
 // this is the process-level specification of the kernel's behaviour
 
 use crate::definitions_t::{
-    above_zero, aligned, between, candidate_mapping_in_bounds,
+    aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
     x86_arch_spec, MemRegion, PTE, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
     MAX_PHYADDR, WORD_SIZE,
@@ -536,23 +536,6 @@ pub open spec fn inflight_map_no_overlap_inflight_pmem(
         }
 }
 
-pub open spec fn mappings_frame_sizes_over_zero(mappings: Map<nat, PTE>) -> bool {
-    forall|base: nat|
-        #![auto]
-        mappings.dom().contains(base) ==> above_zero(mappings.index(base).frame.size)
-}
-
-pub open spec fn inflight_mem_size_over_zero(inflightargs: Set<AbstractArguments>) -> bool {
-    forall|b: AbstractArguments|
-        #![auto]
-        {
-            inflightargs.contains(b) ==> match b {
-                AbstractArguments::Map { vaddr, pte } => { above_zero(pte.frame.size) },
-                _ => { true },
-            }
-        }
-}
-
 pub open spec fn if_map_then_unique(thread_state: Map<nat, AbstractArguments>, id: nat) -> bool
     recommends
         thread_state.dom().contains(id),
@@ -576,8 +559,6 @@ pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool {
     //invariants needed to proof the former
     &&& inflight_map_no_overlap_pmem(s.thread_state.values(), s.mappings)
     &&& inflight_map_no_overlap_inflight_pmem(s.thread_state.values())
-    &&& mappings_frame_sizes_over_zero(s.mappings)
-    &&& inflight_mem_size_over_zero(s.thread_state.values())
     &&& inflight_maps_unique(s.thread_state)
 }
 
