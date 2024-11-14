@@ -34,7 +34,7 @@ pub struct History {
     /// All partial walks since the last invlpg
     pub walks: Map<Core, Set<Walk>>,
     pub writes: Writes,
-    pub na_ranges: Set<(usize, usize)>,
+    pub pending_maps: Set<(usize, PTE)>,
     ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
     ///// flipped when neg and writes are all empty.
     ///// A non-flipping write with the wrong polarity sets happy to false.
@@ -84,9 +84,9 @@ impl State {
     /// `page_addrs` instead, which contains all addresses that might be used in a page table walk.
     /// But that's not true.............
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, r: usize) -> usize {
-        let val = match get_first(self.sbuf[core], addr) {
-            Some(v) => v,
-            None    => self.pt_mem.read(addr),
+        let val = match get_last(self.sbuf[core], addr) {
+            Some((_idx, v)) => v,
+            None            => self.pt_mem.read(addr),
         };
         val ^ (r & MASK_DIRTY_ACCESS)
     }
@@ -162,7 +162,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.hist.writes.all === set![]
     &&& post.hist.writes.neg == pre.hist.writes.neg.insert(core, set![])
     &&& post.hist.writes.core == pre.hist.writes.core
-    &&& post.hist.na_ranges === set![]
+    &&& post.hist.pending_maps === set![]
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -183,7 +183,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -201,7 +201,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -219,7 +219,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -245,7 +245,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk))
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -298,7 +298,7 @@ pub open spec fn step_WalkStep(
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk_next))
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -333,7 +333,7 @@ pub open spec fn step_WalkDone(
     &&& post.hist.walks == pre.hist.walks
     //&&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -362,10 +362,10 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     &&& post.hist.writes.core == core
-    &&& post.hist.na_ranges == pre.hist.na_ranges.union(Set::new(|r:(_,_)|
+    &&& post.hist.pending_maps == pre.hist.pending_maps.union(Set::new(|r:(_,_)|
             post.pt_mem@.contains_key(r.0)
-            && !pre.pt_mem@.contains_key(r.1)
-            && post.pt_mem@[r.0].frame.size == r.1
+            && !pre.pt_mem@.contains_key(r.0)
+            && post.pt_mem@[r.0] == r.1
             ))
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
@@ -387,7 +387,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -406,7 +406,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl:
     &&& post.hist.happy == pre.hist.happy
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -428,7 +428,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.hist.writes.all === set![]
     &&& post.hist.writes.neg == pre.hist.writes.neg
     &&& post.hist.writes.core == pre.hist.writes.core
-    &&& post.hist.na_ranges === set![]
+    &&& post.hist.pending_maps === set![]
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -518,7 +518,7 @@ mod refinement {
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
                 writes: self.hist.writes,
-                hist: rl3::History { na_ranges: self.hist.na_ranges },
+                hist: rl3::History { pending_maps: self.hist.pending_maps },
                 //polarity: self.hist.polarity,
             }
         }
@@ -598,7 +598,7 @@ mod refinement {
                 //let core = lbl->Read_0;
                 //let addr = lbl->Read_1;
                 //let value = lbl->Read_2;
-                //let val = match rl4::get_first(pre.sbuf[core], addr) {
+                //let val = match rl4::get_last(pre.sbuf[core], addr) {
                 //    Some(v) => v,
                 //    None    => pre.pt_mem.read(addr),
                 //};

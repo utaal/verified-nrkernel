@@ -28,7 +28,7 @@ pub struct State {
     /// If polarity is negative, we give no guarantees about the results in these ranges; If it's
     /// positive, the possible results are atomic semantics or an "invalid" result.
     /// Each element is a tuple `(vbase, size)`
-    pub na_ranges: Set<(usize, usize)>,
+    pub pending_maps: Set<(usize, PTE)>,
 }
 
 
@@ -97,7 +97,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.pt_mem     ==  pre.pt_mem
     &&& post.writes.all === set![]
     &&& post.writes.neg ==  pre.writes.neg.insert(core, set![])
-    &&& post.na_ranges  === set![] // This might not be correct when we have negative writes as well
+    &&& post.pending_maps  === set![] // This might not be correct when we have negative writes as well
     //&&& post.polarity   == pre.polarity
 }
 
@@ -132,18 +132,19 @@ pub open spec fn step_Walk(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
-    &&& pre.pt_mem.pt_walk(walk_result.vbase()).result() == walk_result
+    &&& walk_result == pre.pt_mem.pt_walk(walk_result.vbase()).result()
 
     &&& post == pre
 }
 
 /// A non-atomic page table walk. This can only be an invalid result and only on specific ranges.
-pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, r: (usize, PTE), lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_result)
 
     &&& c.valid_core(core)
     &&& walk_result matches WalkResult::Invalid { vbase }
-    &&& exists|r| #![auto] pre.na_ranges.contains(r) && r.0 <= vbase < r.0 + r.1
+    &&& pre.pending_maps.contains(r)
+    &&& r.0 <= vbase < r.0 + r.1.frame.size
 
     &&& post == pre
 }
@@ -164,10 +165,10 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
-    &&& post.na_ranges == pre.na_ranges.union(Set::new(|r:(_,_)|
+    &&& post.pending_maps == pre.pending_maps.union(Set::new(|r:(_,_)|
             post.pt_mem@.contains_key(r.0)
-            && !pre.pt_mem@.contains_key(r.1)
-            && post.pt_mem@[r.0].frame.size == r.1
+            && !pre.pt_mem@.contains_key(r.0)
+            && post.pt_mem@[r.0] == r.1
             ))
     //&&& post.polarity   == if pre.pt_mem.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
@@ -194,7 +195,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.pt_mem     ==  pre.pt_mem
     &&& post.writes.all === set![]
     &&& post.writes.neg ==  pre.writes.neg
-    &&& post.na_ranges  === set![] // This might not be correct when we have negative writes as well
+    &&& post.pending_maps  === set![] // This might not be correct when we have negative writes as well
     //&&& post.polarity   == pre.polarity
 }
 
@@ -209,7 +210,7 @@ pub enum Step {
     // Atomic page table walk
     Walk,
     // Non-atomic page table walk
-    WalkNA,
+    WalkNA { r: (usize, PTE) },
     // TSO
     Write,
     Read,
@@ -219,13 +220,13 @@ pub enum Step {
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg  => step_Invlpg(pre, post, c, lbl),
-        Step::Walk    => step_Walk(pre, post, c, lbl),
-        Step::WalkNA  => step_WalkNA(pre, post, c, lbl),
-        Step::Write   => step_Write(pre, post, c, lbl),
-        Step::Read    => step_Read(pre, post, c, lbl),
-        Step::Barrier => step_Barrier(pre, post, c, lbl),
-        Step::Stutter => step_Stutter(pre, post, c, lbl),
+        Step::Invlpg       => step_Invlpg(pre, post, c, lbl),
+        Step::Walk         => step_Walk(pre, post, c, lbl),
+        Step::WalkNA { r } => step_WalkNA(pre, post, c, r, lbl),
+        Step::Write        => step_Write(pre, post, c, lbl),
+        Step::Read         => step_Read(pre, post, c, lbl),
+        Step::Barrier      => step_Barrier(pre, post, c, lbl),
+        Step::Stutter      => step_Stutter(pre, post, c, lbl),
     }
 }
 

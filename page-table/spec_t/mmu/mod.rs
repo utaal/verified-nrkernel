@@ -145,23 +145,35 @@ impl MMU for DummyAtomicMMU {
 
 // TODO: Auxiliary stuff, should go somewhere else
 
-
-pub open spec fn get_first_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<B>
-    decreases s.len() - i
+pub broadcast proof fn lemma_get_last<A,B>(s: Seq<(A, B)>, a: A)
+    ensures
+        match #[trigger] get_last(s, a) {
+            Some((i, b)) => {
+                &&& s[i].0 == a && s[i].1 == b
+                &&& forall|j| i < j < s.len() ==> #[trigger] s[j].0 != a
+            },
+            None => forall|j| 0 <= j < s.len() ==> #[trigger] s[j].0 != a
+        }
 {
-    if i >= s.len() {
+    admit();
+}
+
+pub open spec fn get_last_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<(int, B)>
+    decreases i + 1
+{
+    if i < 0 {
         None
     } else {
         if s[i].0 == a {
-            Some(s[i].1)
+            Some((i, s[i].1))
         } else {
-            get_first_aux(s, i + 1, a)
+            get_last_aux(s, i - 1, a)
         }
     }
 }
 
-pub open spec fn get_first<A,B>(s: Seq<(A, B)>, a: A) -> Option<B> {
-    get_first_aux(s, 0, a)
+pub open spec fn get_last<A,B>(s: Seq<(A, B)>, a: A) -> Option<(int, B)> {
+    get_last_aux(s, s.len() - 1, a)
 }
 
 pub trait SeqTupExt: Sized {

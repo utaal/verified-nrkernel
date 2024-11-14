@@ -29,15 +29,15 @@ pub struct State {
 }
 
 pub struct History {
-    pub na_ranges: Set<(usize, usize)>,
+    pub pending_maps: Set<(usize, PTE)>,
 }
 
 
 impl State {
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize) -> usize {
-        let val = match get_first(self.sbuf[core], addr) {
-            Some(v) => v,
-            None    => self.pt_mem.read(addr),
+        let val = match get_last(self.sbuf[core], addr) {
+            Some((_idx, v)) => v,
+            None            => self.pt_mem.read(addr),
         };
         val
     }
@@ -46,9 +46,19 @@ impl State {
         arbitrary()
     }
 
+    pub open spec fn writer_sbuf(self) -> Seq<(usize, usize)> {
+        self.sbuf[self.writes.core]
+    }
+
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
         self.pt_mem.write_seq(self.sbuf[self.writes.core])
+    }
+
+    pub open spec fn writer_mem_prefix(self, n: int) -> PTMem
+        recommends 0 <= n <= self.sbuf[self.writes.core].len()
+    {
+        self.pt_mem.write_seq(self.sbuf[self.writes.core].take(n))
     }
 
     // TODO: I may want/need to add these conditions as well:
@@ -99,6 +109,7 @@ impl State {
     }
 
     /// Any inflight page table walks didn't read from addresses that currently have P=0.
+    /// TODO: might be better to instead show that values at addresses in walk paths have P=1.
     pub open spec fn inv_walks_disjoint_with_present_bit_0_addrs(self, c: Constants) -> bool {
         forall|core, addr, walk, i| #![auto] {
             &&& c.valid_core(core)
@@ -113,14 +124,41 @@ impl State {
             &&& c.valid_core(core)
             &&& self.walks[core].contains(walk)
             &&& 0 <= i < walk.path.len()
-        } ==> PDE {
-                entry: self.writer_mem().read(walk.path[i].0) as u64,
-                layer: Ghost(i as nat)
-            }@ == walk.path[i].1
+        } ==> walk.path[i] == self.writer_mem().pt_walk(walk.vaddr).path[i]
     }
+
+    pub open spec fn inv_walks_match_memory2(self, c: Constants) -> bool {
+        forall|core, walk, n| {
+            &&& c.valid_core(core)
+            &&& self.walks[core].contains(walk)
+            &&& n == walk.path.len()
+        } ==> walk == #[trigger] iter_walk_aux(self, core, walk.vaddr, n)
+    }
+
+    //pub open spec fn inv_walks_match_memory(self, c: Constants) -> bool {
+    //    forall|core, walk, i| #![auto] {
+    //        &&& c.valid_core(core)
+    //        &&& self.walks[core].contains(walk)
+    //        &&& 0 <= i < walk.path.len()
+    //    } ==> PDE {
+    //            entry: self.writer_mem().read(walk.path[i].0) as u64,
+    //            layer: Ghost(i as nat)
+    //        }@ == walk.path[i].1
+    //}
 
     pub open spec fn inv_writer_sbuf(self, c: Constants) -> bool {
         forall|core| c.valid_core(core) && core != self.writes.core ==> (#[trigger] self.sbuf[core]).len() == 0
+    }
+
+    // I think this is strong enough to preserve during writeback and implies (mem@ is submap of writer_mem@)
+    pub open spec fn inv_view_plus_sbuf_is_submap(self, c: Constants) -> bool {
+        forall|n| 0 <= n < self.writer_sbuf().len()
+            ==> (#[trigger] self.writer_mem_prefix(n))@.submap_of(self.writer_mem_prefix(n + 1)@)
+    }
+
+    pub open spec fn inv_1(self, c: Constants) -> bool {
+        forall|vbase, pte| self.writer_mem()@.contains_pair(vbase, pte) && !self.pt_mem@.contains_pair(vbase, pte)
+            ==> #[trigger] self.hist.pending_maps.contains((vbase, pte))
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
@@ -147,7 +185,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.writes.all === set![]
     &&& post.writes.neg == pre.writes.neg.insert(core, set![])
     &&& post.writes.core == pre.writes.core
-    &&& post.hist.na_ranges === set![]
+    &&& post.hist.pending_maps === set![]
     //&&& post.polarity == pre.polarity
 }
 
@@ -167,7 +205,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
     &&& post.writes == pre.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.polarity == pre.polarity
 }
 
@@ -177,11 +215,11 @@ pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
     let addr = if path.len() == 0 {
         add(state.pt_mem.pml4, l0_bits!(vaddr as u64) as usize)
     } else if path.len() == 1 {
-        add(path.last().0, l1_bits!(vaddr as u64) as usize)
+        add(path.last().1->Directory_addr, l1_bits!(vaddr as u64) as usize)
     } else if path.len() == 2 {
-        add(path.last().0, l2_bits!(vaddr as u64) as usize)
+        add(path.last().1->Directory_addr, l2_bits!(vaddr as u64) as usize)
     } else if path.len() == 3 {
-        add(path.last().0, l3_bits!(vaddr as u64) as usize)
+        add(path.last().1->Directory_addr, l3_bits!(vaddr as u64) as usize)
     } else { arbitrary() };
     let value = state.read_from_mem_tso(core, addr);
 
@@ -233,7 +271,7 @@ pub open spec fn step_WalkStep(
     &&& post.sbuf == pre.sbuf
     &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk_next))
     &&& post.writes == pre.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.polarity == pre.polarity
 }
 
@@ -278,10 +316,10 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
             pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.writes.neg }
     &&& post.writes.core == core
-    &&& post.hist.na_ranges == pre.hist.na_ranges.union(Set::new(|r:(_,_)|
+    &&& post.hist.pending_maps == pre.hist.pending_maps.union(Set::new(|r:(_,_)|
             post.pt_mem@.contains_key(r.0)
-            && !pre.pt_mem@.contains_key(r.1)
-            && post.pt_mem@[r.0].frame.size == r.1
+            && !pre.pt_mem@.contains_key(r.0)
+            && post.pt_mem@[r.0] == r.1
             ))
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
@@ -300,7 +338,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
     &&& post.walks == pre.walks
     &&& post.writes == pre.writes
-    &&& post.hist.na_ranges == pre.hist.na_ranges
+    &&& post.hist.pending_maps == pre.hist.pending_maps
     //&&& post.polarity == pre.polarity
 }
 
@@ -329,7 +367,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.writes.all === set![]
     &&& post.writes.neg == pre.writes.neg
     &&& post.writes.core == pre.writes.core
-    &&& post.hist.na_ranges === set![]
+    &&& post.hist.pending_maps === set![]
     //&&& post.polarity == pre.polarity
 }
 
@@ -516,6 +554,130 @@ broadcast proof fn lemma_foo(m: PTMem, writes: Seq<(usize, usize)>)
     admit();
 }
 
+pub open spec fn iter_walk(state: rl3::State, core: Core, vaddr: usize) -> Walk {
+    iter_walk_aux(state, core, vaddr, 4)
+}
+
+pub open spec fn iter_walk_aux(state: rl3::State, core: Core, vaddr: usize, steps: nat) -> Walk {
+    let walk = Walk { vaddr, path: seq![], complete: false };
+    if steps > 0 {
+        let walk = rl3::walk_next(state, core, walk);
+        if !walk.complete && steps > 1 {
+            let walk = rl3::walk_next(state, core, walk);
+            if !walk.complete && steps > 2 {
+                let walk = rl3::walk_next(state, core, walk);
+                if !walk.complete && steps > 3 {
+                    let walk = rl3::walk_next(state, core, walk);
+                    walk
+                } else { walk }
+            } else { walk }
+        } else { walk }
+    } else { walk }
+}
+
+broadcast proof fn lemma_iter_walk_next_equals_pt_walk_1(state: rl3::State, core: Core, vaddr: usize)
+    requires core == state.writes.core
+    ensures #[trigger] iter_walk(state, core, vaddr) == state.writer_mem().pt_walk(vaddr)
+{
+    assume(state.writer_mem().pml4 == state.pt_mem.pml4);
+    let walk = Walk { vaddr, path: seq![], complete: false };
+    let walk = rl3::walk_next(state, core, walk);
+    let pt_mem = state.writer_mem();
+    let l0_idx = l0_bits!(vaddr as u64) as usize;
+    let l1_idx = l1_bits!(vaddr as u64) as usize;
+    let l2_idx = l2_bits!(vaddr as u64) as usize;
+    let l3_idx = l3_bits!(vaddr as u64) as usize;
+    let l0_addr = add(pt_mem.pml4, l0_idx);
+    assume(forall|a| state.read_from_mem_tso(core, a) == #[trigger] pt_mem.read(a));
+    let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
+    match l0e@ {
+        GPDE::Directory { addr: l1_daddr, .. } => {
+            let walk = rl3::walk_next(state, core, walk);
+            let l1_addr = add(l1_daddr, l1_idx);
+            let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
+            match l1e@ {
+                GPDE::Directory { addr: l2_daddr, .. } => {
+                    let walk = rl3::walk_next(state, core, walk);
+                    let l2_addr = add(l2_daddr, l2_idx);
+                    let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    match l2e@ {
+                        GPDE::Directory { addr: l3_daddr, .. } => {
+                            let walk = rl3::walk_next(state, core, walk);
+                            let l3_addr = add(l3_daddr, l3_idx);
+                            let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]);
+                        },
+                        _ => {
+                            assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]);
+                        },
+                    }
+                },
+                _ => {
+                    assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]);
+                },
+            }
+        },
+        _ => {
+            assert(walk.path == seq![(l0_addr, l0e@)]);
+        },
+    }
+}
+
+
+// Behaves badly when broadcast (timeouts). 
+proof fn lemma_iter_walk_result_vbase_equal(state: rl3::State, core: Core, vaddr: usize, vbase: usize)
+    requires iter_walk(state, core, vaddr).result().vbase() == vbase
+    ensures iter_walk(state, core, vaddr) == iter_walk(state, core, vbase)
+{
+    admit();
+}
+
+// TODO: This probably isn't useful for anything
+broadcast proof fn lemma_iter_walk_next_equals_pt_walk_2(state: rl3::State, core: Core, vaddr: usize)
+    requires core != state.writes.core
+    ensures #[trigger] iter_walk(state, core, vaddr) == state.pt_mem.pt_walk(vaddr)
+{
+    let walk = Walk { vaddr, path: seq![], complete: false };
+    let walk = rl3::walk_next(state, core, walk);
+    let pt_mem = state.pt_mem;
+    let l0_idx = l0_bits!(vaddr as u64) as usize;
+    let l1_idx = l1_bits!(vaddr as u64) as usize;
+    let l2_idx = l2_bits!(vaddr as u64) as usize;
+    let l3_idx = l3_bits!(vaddr as u64) as usize;
+    let l0_addr = add(pt_mem.pml4, l0_idx);
+    assume(forall|a| state.read_from_mem_tso(core, a) == #[trigger] pt_mem.read(a));
+    let l0e = PDE { entry: pt_mem.read(l0_addr) as u64, layer: Ghost(0) };
+    match l0e@ {
+        GPDE::Directory { addr: l1_daddr, .. } => {
+            let walk = rl3::walk_next(state, core, walk);
+            let l1_addr = add(l1_daddr, l1_idx);
+            let l1e = PDE { entry: pt_mem.read(l1_addr) as u64, layer: Ghost(1) };
+            match l1e@ {
+                GPDE::Directory { addr: l2_daddr, .. } => {
+                    let walk = rl3::walk_next(state, core, walk);
+                    let l2_addr = add(l2_daddr, l2_idx);
+                    let l2e = PDE { entry: pt_mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    match l2e@ {
+                        GPDE::Directory { addr: l3_daddr, .. } => {
+                            let walk = rl3::walk_next(state, core, walk);
+                            let l3_addr = add(l3_daddr, l3_idx);
+                            let l3e = PDE { entry: pt_mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]);
+                        },
+                        _ => {
+                            assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@)]);
+                        },
+                    }
+                },
+                _ => {
+                    assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@)]);
+                },
+            }
+        },
+        _ => { },
+    }
+}
+
 mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl2;
@@ -527,7 +689,7 @@ mod refinement {
                 happy: self.happy,
                 pt_mem: self.writer_mem(),
                 writes: self.writes,
-                na_ranges: self.hist.na_ranges,
+                pending_maps: self.hist.pending_maps,
             }
         }
     }
@@ -545,10 +707,14 @@ mod refinement {
                             rl2::Step::Walk
                         },
                         WalkResult::Invalid { vbase } => {
-                            if pre.writer_mem()@.contains_key(vbase) {
-                                rl2::Step::Walk
+                            if exists|r| #[trigger]
+                                pre.hist.pending_maps.contains(r)
+                                && r.0 <= vbase < r.0 + r.1.frame.size
+                            {
+                                let r = choose|r| #[trigger] pre.hist.pending_maps.contains(r) && r.0 <= vbase < r.0 + r.1.frame.size;
+                                rl2::Step::WalkNA { r }
                             } else {
-                                rl2::Step::WalkNA
+                                rl2::Step::Walk
                             }
                         },
                     }
@@ -581,71 +747,75 @@ mod refinement {
             },
             rl3::Step::WalkDone { walk, value } => {
                 let Lbl::Walk(core, walk_result) = lbl else { arbitrary() };
+                let walkn = rl3::walk_next(pre, core, walk);
+                let vbase = walk_result.vbase();
+                // XXX: Should follow from path prefix being same in memory and last read being
+                // done on current state (pre). Non-trivial but shouldn't be too hard.
+                assume(walkn == rl3::iter_walk(pre, core, walk.vaddr));
+                rl3::lemma_iter_walk_result_vbase_equal(pre, core, walk.vaddr, vbase);
+                assert(walkn == rl3::iter_walk(pre, core, vbase));
+                let awalk = pre.writer_mem().pt_walk(vbase);
+                assert(walkn.complete);
+                assert(walkn.result() == walk_result);
                 assume(pre.inv_walks_match_memory(c));
+                assert(forall|i| 0 <= i < walk.path.len() ==> awalk.path[i] == walk.path[i]);
+                //assume(pre.inv_view_plus_sbuf_is_submap(c));
                 match walk_result {
                     WalkResult::Valid { vbase, pte } => {
-                        let walkn = rl3::walk_next(pre, core, walk);
-                        let walk_gpde0 = walkn.path[0].1;
-                        assume(walk_gpde0 is Directory);
-                        assert(walkn.complete);
-                        if walkn.path.len() == 2 {
-                            // TODO: just for testing doing proof directly for len 2, should make
-                            // this more generic
-                            let gpde0 = PDE {
-                                    entry: pre.writer_mem().read(walkn.path[0].0) as u64,
-                                    layer: Ghost(0 as nat)
-                                }@;
-                            assert(gpde0 == walk_gpde0);
-                            let walk_gpde1 = walkn.path[1].1;
-                            assert(walk_gpde1 is Page);
-                            let mem_gpde1 = PDE {
-                                    entry: pre.writer_mem().read(walkn.path[1].0) as u64,
-                                    layer: Ghost(1 as nat)
-                                }@;
-                            // XXX: Possibilities:
-                            // 1. We didn't write to this address, so the two are equal and we get
-                            //    an atomic walk.
-                            // 2. We did write to this address, the write is already visible, so we
-                            //    get an atomic walk.
-                            // 3. We did write to this address, the write is not yet visible. If
-                            //    the thing we wrote is a valid entry, it must have been added to
-                            //    `na_ranges`, which violates the enabling condition. Thus it must
-                            //    have been an invalid entry, which means the GPDE is the same,
-                            //    i.e. atomic walk.
-                            if pre.sbuf[core].contains_addr(walkn.path[1].0) {
-                                admit();
+                            //lemma_iter_walk_next_equals_pt_walk_2;
+                        if core == pre.writes.core {
+                            broadcast use rl3::lemma_iter_walk_next_equals_pt_walk_1;
+                            //assert(walkn.path.last() == pre.writer_mem().pt_walk(vbase).path.last());
+                            //assert(walkn.path =~= pre.writer_mem().pt_walk(vbase).path);
+                            assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
+                        } else {
+                            // XXX: The walk result is Valid, so this entry (a Page mapping) has
+                            //      P=1. We only allow positive writes, so the writer sbuf cannot
+                            //      have another entry for this address.
+                            //      Needs an invariant.
+                            assume(pre.read_from_mem_tso(core, walkn.path.last().0) == pre.writer_mem().read(walkn.path.last().0));
+                            //assert(walkn.path.last() == pre.writer_mem().pt_walk(vbase).path.last());
+                            //assert(walkn.path =~= pre.writer_mem().pt_walk(vbase).path);
+                            assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
+                        }
+                    },
+                    WalkResult::Invalid { vbase } => {
+                        if exists|r|
+                            #[trigger] pre.hist.pending_maps.contains(r)
+                            && r.0 <= vbase < r.0 + r.1.frame.size
+                        {
+                            let r = choose|r| #[trigger] pre.hist.pending_maps.contains(r) && r.0 <= vbase < r.0 + r.1.frame.size;
+                            assert(rl2::step_WalkNA(pre.interp(), post.interp(), c, r, lbl));
+                            //rl2::Step::WalkNA
+                        } else {
+                            assert(forall|r| #[trigger] pre.hist.pending_maps.contains(r)
+                                    ==> !(r.0 <= vbase < r.0 + r.1.frame.size));
+                            if core == pre.writes.core {
+                                broadcast use rl3::lemma_iter_walk_next_equals_pt_walk_1;
                                 assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
                             } else {
-                                broadcast use pt_mem::PTMem::lemma_write_seq_idle;
-                                let l1_idx = l1_bits!(vbase as u64) as usize;
-                                let l1_addr = add(walk_gpde0->Directory_addr, l1_idx);
-                                assume(walkn.path[1].0 == l1_addr);
-                                assume(walk_gpde1 == mem_gpde1); // XXX: is this true?
+                                assume(pre.inv_1(c));
+                                //forall|vbase, pte| self.writer_mem()@.contains_pair(vbase, pte) && !self.pt_mem@.contains_pair(vbase, pte)
+                                //    ==> #[trigger] self.hist.pending_maps.contains((vbase, pte))
+                                // XXX: Missing some kind of disjointness/no-overlap reasoning here
+                                //      I think. I.e. When the walk for vbase returns invalid, all other
+                                //      walks don't map regions that contain vbase.
+                                //      XXX: No, this is wrong. I shouldn't need to reason about
+                                //      this at all, I think. That probably means my if exists|..|
+                                //      bla condition isn't the right thing yet
+                                assume(forall|vb, pte| #[trigger] pre.pt_mem@.contains_pair(vb, pte)
+                                        ==> !(vb <= vbase < vb + pte.frame.size));
                                 admit();
                                 assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
                             }
-                            assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
-                        } else {
-                            admit();
-                            assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
-                        }
-                        //rl2::Step::Walk
-                    },
-                    WalkResult::Invalid { vbase } => {
-                        if pre.writer_mem()@.contains_key(vbase) {
-                            admit();
-                            assert(rl2::step_Walk(pre.interp(), post.interp(), c, lbl));
-                            //rl2::Step::Walk
-                        } else {
-                            admit();
-                            assert(rl2::step_WalkNA(pre.interp(), post.interp(), c, lbl));
-                            //rl2::Step::WalkNA
                         }
                     },
                 }
             },
             rl3::Step::Write => {
-                // TODO: This doesn't refine in the case where (pre.happy && !post.happy)
+                // XXX: This doesn't refine in the case where (pre.happy && !post.happy)
+                //      (Should be fairly simple fix, just add happy conditions to problematic
+                //      update or something)
                 admit();
                 assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
             },
@@ -665,6 +835,7 @@ mod refinement {
             },
         }
     }
+
 
     //proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
     //    requires
@@ -702,10 +873,10 @@ mod refinement {
     //        state.inv(c),
     //        !state.write_addrs().contains(addr),
     //        c.valid_core(core),
-    //    ensures get_first(state.sbuf[core], addr) is None
+    //    ensures get_last(state.sbuf[core], addr) is None
     //{
     //    admit();
-    //    assert(get_first(state.sbuf[core], addr) is None);
+    //    assert(get_last(state.sbuf[core], addr) is None);
     //}
     //
     //proof fn lemma_rl3_read_from_mem_tso_conditions2(state: rl3::State, c: rl3::Constants, core: Core, addr: usize)
@@ -715,7 +886,7 @@ mod refinement {
     //        state.no_other_writers(core),
     //        c.valid_core(core),
     //    ensures
-    //        match get_first(state.sbuf[core], addr) {
+    //        match get_last(state.sbuf[core], addr) {
     //            Some(v) => v,
     //            None    => state.pt_mem.read(addr),
     //        } == state.interp().pt_mem.read(addr)
@@ -725,12 +896,12 @@ mod refinement {
     //    assume(state.writer_cores().len() == 1);
     //    // Should follow trivially from previous two
     //    assume(state.interp().pt_mem == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1)));
-    //    //match get_first(state.sbuf[core], addr) {
+    //    //match get_last(state.sbuf[core], addr) {
     //    //    Some(v) => v,
     //    //    None    => state.pt_mem[addr],
     //    //} == state.sbuf[core].fold_left(state.pt_mem, |acc: PTMem, wr: (usize, usize)| acc.write(wr.0, wr.1))@[addr]
     //    admit();
-    //    assert(get_first(state.sbuf[core], addr) is None);
+    //    assert(get_last(state.sbuf[core], addr) is None);
     //}
 
 }
