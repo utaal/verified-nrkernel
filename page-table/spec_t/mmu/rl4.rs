@@ -34,7 +34,7 @@ pub struct History {
     /// All partial walks since the last invlpg
     pub walks: Map<Core, Set<Walk>>,
     pub writes: Writes,
-    pub pending_maps: Set<(usize, PTE)>,
+    pub pending_maps: Map<usize, PTE>,
     ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
     ///// flipped when neg and writes are all empty.
     ///// A non-flipping write with the wrong polarity sets happy to false.
@@ -162,7 +162,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post.hist.writes.all === set![]
     &&& post.hist.writes.neg == pre.hist.writes.neg.insert(core, set![])
     &&& post.hist.writes.core == pre.hist.writes.core
-    &&& post.hist.pending_maps === set![]
+    &&& post.hist.pending_maps === map![]
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -362,11 +362,11 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     &&& post.hist.writes.core == core
-    &&& post.hist.pending_maps == pre.hist.pending_maps.union(Set::new(|r:(_,_)|
-            post.pt_mem@.contains_key(r.0)
-            && !pre.pt_mem@.contains_key(r.0)
-            && post.pt_mem@[r.0] == r.1
-            ))
+    &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
+        Map::new(
+            |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
+            |vbase| post.pt_mem@[vbase]
+        ))
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
     //&&& post.hist.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
@@ -428,7 +428,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.hist.writes.all === set![]
     &&& post.hist.writes.neg == pre.hist.writes.neg
     &&& post.hist.writes.core == pre.hist.writes.core
-    &&& post.hist.pending_maps === set![]
+    &&& post.hist.pending_maps === map![]
     //&&& post.hist.polarity == pre.hist.polarity
 }
 
@@ -532,8 +532,8 @@ mod refinement {
                 rl4::Step::CacheUse { core, walk }           => rl3::Step::Stutter,
                 rl4::Step::CacheEvict { core, walk }         => rl3::Step::Stutter,
                 rl4::Step::WalkInit { core, vaddr }          => rl3::Step::WalkInit { core, vaddr },
-                rl4::Step::WalkStep { core, walk, value, r } => rl3::Step::WalkStep { core, walk, value },
-                rl4::Step::WalkDone { walk, value, r }       => rl3::Step::WalkDone { walk, value },
+                rl4::Step::WalkStep { core, walk, value, r } => rl3::Step::WalkStep { core, walk },
+                rl4::Step::WalkDone { walk, value, r }       => rl3::Step::WalkDone { walk },
                 rl4::Step::Write                             => rl3::Step::Write,
                 rl4::Step::Writeback { core }                => rl3::Step::Writeback { core },
                 rl4::Step::Read { r }                        => rl3::Step::Read,
@@ -574,12 +574,12 @@ mod refinement {
             },
             rl4::Step::WalkStep { core, walk, value, r } => {
                 rl4_walk_next_is_rl3_walk_next(pre, core, walk, r);
-                assert(rl3::step_WalkStep(pre.interp(), post.interp(), c, core, walk, value, lbl));
+                assert(rl3::step_WalkStep(pre.interp(), post.interp(), c, core, walk, lbl));
             },
             rl4::Step::WalkDone { walk, value, r } => {
                 let core = lbl->Walk_0;
                 rl4_walk_next_is_rl3_walk_next(pre, core, walk, r);
-                assert(rl3::step_WalkDone(pre.interp(), post.interp(), c, walk, value, lbl));
+                assert(rl3::step_WalkDone(pre.interp(), post.interp(), c, walk, lbl));
             },
             rl4::Step::Write => {
                 assert(rl3::step_Write(pre.interp(), post.interp(), c, lbl));

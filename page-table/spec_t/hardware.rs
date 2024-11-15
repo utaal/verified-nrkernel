@@ -542,11 +542,8 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
                 },
             }
         },
-        WalkResult::Invalid { vbase } => {
-            // If the walk result is `Invalid`, this transition must coincide with a "completed"
-            // invalid page table walk with this result and the region (always 4k-sized) must
-            // include vaddr.
-            &&& vbase <= vaddr < vbase + L3_ENTRY_SIZE
+        WalkResult::Invalid { vaddr: vaddr_r } => {
+            &&& vaddr == vaddr_r
             &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, walk_result))
 
             // .. and the result is always a page fault and an unchanged memory.

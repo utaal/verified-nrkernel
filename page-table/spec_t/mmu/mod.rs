@@ -19,14 +19,14 @@ pub struct Walk {
 pub enum WalkResult {
     Valid { vbase: usize, pte: PTE },
     /// A `WalkResult::Invalid` indicates that no valid translation exists for the given (8-aligned) vaddr
-    Invalid { vbase: usize },
+    Invalid { vaddr: usize },
 }
 
 impl WalkResult {
-    pub open spec fn vbase(self) -> usize {
+    pub open spec fn vaddr(self) -> usize {
         match self {
             WalkResult::Valid { vbase, .. } => vbase,
-            WalkResult::Invalid { vbase, .. } => vbase,
+            WalkResult::Invalid { vaddr, .. } => vaddr,
         }
     }
 }
@@ -56,7 +56,7 @@ impl Walk {
             }
         } else if path.last().1 is Empty {
             // The result holds for an 8-byte aligned address
-            WalkResult::Invalid { vbase: align_to_usize(self.vaddr, 8) }
+            WalkResult::Invalid { vaddr: align_to_usize(self.vaddr, 8) }
         } else {
             arbitrary()
         }
