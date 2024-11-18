@@ -82,13 +82,15 @@ impl PTMem {
     /// I.e. this write can be:
     /// - Invalid -> Valid
     /// - Invalid -> Invalid
+    ///
+    /// The second conjunct guarantees that we write at most once to each address.
     // ///
     // /// I also require that the written value has P=1. This doesn't guarantee the result is a valid
     // /// entry (might be unreachable or have mb0 bits set) but it guarantees... what? only one write
     // /// per addr i guess
     pub open spec fn is_nonneg_write(self, addr: usize, value: usize) -> bool {
         &&& self.read(addr) & 1 == 0
-        //&&& value & 1 == 1
+        &&& value & 1 == 1
     }
 
     /// Writing a present bit of 0 guarantees that this doesn't become a valid entry.

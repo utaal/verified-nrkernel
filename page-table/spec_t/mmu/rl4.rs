@@ -84,20 +84,22 @@ impl State {
     /// `page_addrs` instead, which contains all addresses that might be used in a page table walk.
     /// But that's not true.............
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, r: usize) -> usize {
-        let val = match get_last(self.sbuf[core], addr) {
-            Some((_idx, v)) => v,
-            None            => self.pt_mem.read(addr),
-        };
-        val ^ (r & MASK_DIRTY_ACCESS)
+        self.mem_view_of_core(core).read(addr) ^ (r & MASK_DIRTY_ACCESS)
     }
 
     pub open spec fn init(self) -> bool {
         arbitrary()
     }
 
+    /// The memory as seen by the given core. I.e. taking into consideration the core's store
+    /// buffers.
+    pub open spec fn mem_view_of_core(self, core: Core) -> PTMem {
+        self.pt_mem.write_seq(self.sbuf[core])
+    }
+
     /// The view of the memory from the writer core's perspective.
     pub open spec fn writer_mem(self) -> PTMem {
-        self.pt_mem.write_seq(self.sbuf[self.hist.writes.core])
+        self.mem_view_of_core(self.hist.writes.core)
     }
 
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
@@ -544,7 +546,7 @@ mod refinement {
 
     /// The value of r is irrelevant, so we can just ignore it.
     broadcast proof fn rl4_walk_next_is_rl3_walk_next(state: rl4::State, core: Core, walk: Walk, r: usize)
-        ensures #[trigger] rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp(), core, walk)
+        ensures #[trigger] rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp().mem_view_of_core(core), walk)
     {
         admit();
     }

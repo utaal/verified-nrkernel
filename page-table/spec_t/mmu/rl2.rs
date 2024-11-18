@@ -104,35 +104,12 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
 // ---- Non-atomic page table walks ----
 
-pub open spec fn walk_next(state: State, core: Core, walk: Walk) -> Walk {
-    let vaddr = walk.vaddr; let path = walk.path;
-    // TODO: do this better
-    let addr = if path.len() == 0 {
-        add(state.pt_mem.pml4, l0_bits!(vaddr as u64) as usize)
-    } else if path.len() == 1 {
-        add(path.last().0, l1_bits!(vaddr as u64) as usize)
-    } else if path.len() == 2 {
-        add(path.last().0, l2_bits!(vaddr as u64) as usize)
-    } else if path.len() == 3 {
-        add(path.last().0, l3_bits!(vaddr as u64) as usize)
-    } else { arbitrary() };
-    let value = state.pt_mem.read(addr);
-
-    let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
-    let walk = Walk {
-        vaddr,
-        path: path.push((addr, entry)),
-        complete: !(entry is Directory)
-    };
-    walk
-}
-
 /// An atomic page table walk
 pub open spec fn step_Walk(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_res)
 
     &&& c.valid_core(core)
-    &&& walk_res == pre.pt_mem.pt_walk(walk_res.vaddr()).result()
+    &&& walk_res == rl3::iter_walk(pre.pt_mem, walk_res.vaddr()).result()
 
     &&& post == pre
 }

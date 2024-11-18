@@ -158,6 +158,7 @@ pub broadcast proof fn lemma_get_last<A,B>(s: Seq<(A, B)>, a: A)
     admit();
 }
 
+#[verifier(opaque)]
 pub open spec fn get_last_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<(int, B)>
     decreases i + 1
 {
