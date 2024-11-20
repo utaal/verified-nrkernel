@@ -150,7 +150,9 @@ pub spec const MASK_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_ADDR_SPEC)]
 pub exec const MASK_ADDR: u64 ensures MASK_ADDR == MASK_ADDR_SPEC {
-    axiom_max_phyaddr_width_facts();
+    proof {
+        axiom_max_phyaddr_width_facts();
+    }
     bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
 }
 
@@ -158,7 +160,9 @@ pub spec const MASK_L1_PG_ADDR_SPEC: u64 = bitmask_inc!(30u64, MAX_PHYADDR_WIDTH
 
 #[verifier::when_used_as_spec(MASK_L1_PG_ADDR_SPEC)]
 pub exec const MASK_L1_PG_ADDR: u64 ensures MASK_L1_PG_ADDR == MASK_L1_PG_ADDR_SPEC {
-    axiom_max_phyaddr_width_facts();
+    proof {
+        axiom_max_phyaddr_width_facts();
+    }
     bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1)
 }
 
@@ -166,7 +170,9 @@ pub spec const MASK_L2_PG_ADDR_SPEC: u64 = bitmask_inc!(21u64, MAX_PHYADDR_WIDTH
 
 #[verifier::when_used_as_spec(MASK_L2_PG_ADDR_SPEC)]
 pub exec const MASK_L2_PG_ADDR: u64 ensures MASK_L2_PG_ADDR == MASK_L2_PG_ADDR_SPEC {
-    axiom_max_phyaddr_width_facts();
+    proof {
+        axiom_max_phyaddr_width_facts();
+    }
     bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1)
 }
 
@@ -174,7 +180,9 @@ pub spec const MASK_L3_PG_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH
 
 #[verifier::when_used_as_spec(MASK_L3_PG_ADDR_SPEC)]
 pub exec const MASK_L3_PG_ADDR: u64 ensures MASK_L3_PG_ADDR == MASK_L3_PG_ADDR_SPEC {
-    axiom_max_phyaddr_width_facts();
+    proof {
+        axiom_max_phyaddr_width_facts();
+    }
     bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
 }
 
