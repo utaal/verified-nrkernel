@@ -11,7 +11,7 @@ use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 use crate::spec_t::hlspec::{
     candidate_mapping_overlaps_inflight_pmem, if_map_then_unique, inflight_maps_unique, inv, mem_domain_from_entry,
     mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains,
-    pmem_no_overlap, step_Map_end, step_Map_start, step_Unmap_start, AbstractArguments,
+    pmem_no_overlap, step_Map_end, step_Map_start, step_Unmap_start, ThreadState,
     AbstractConstants, AbstractVariables,
 };
 
@@ -93,6 +93,12 @@ pub proof fn lemma_mem_domain_from_mappings(
     };
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+//                                                                                                               //
+//                                        finite Lemmata                                                         //
+//                                                                                                               //
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 pub proof fn lemma_mem_domain_from_entry_finite(phys_mem_size: nat, base: nat, pte: PTE)
     ensures
         mem_domain_from_entry(phys_mem_size, base, pte).finite(),
@@ -106,17 +112,6 @@ pub proof fn lemma_mem_domain_from_entry_finite(phys_mem_size: nat, base: nat, p
     assert(vaddrs.finite());
 }
 
-pub proof fn lemma_mem_domain_from_empty_mappings_finite(
-    phys_mem_size: nat,
-    mappings: Map<nat, PTE>,
-)
-    requires
-        mappings.dom() === Set::empty(),
-    ensures
-        mem_domain_from_mappings(phys_mem_size, mappings).finite(),
-{
-    assert(mem_domain_from_mappings(phys_mem_size, mappings) === Set::empty())
-}
 
 pub proof fn lemma_mem_domain_from_mapping_finite(
     phys_mem_size: nat,
@@ -126,75 +121,28 @@ pub proof fn lemma_mem_domain_from_mapping_finite(
         mappings.dom().finite(),
     ensures
         mem_domain_from_mappings(phys_mem_size, mappings).finite(),
-{
-    if (exists|bs: nat| mappings.dom().contains(bs)) {
-        let bs = choose|bs: nat| mappings.dom().contains(bs);
-        let pt = mappings[bs];
-        let mappings_reduc = mappings.remove(bs);
-        assert(!mappings_reduc.dom().contains(bs));
-        assert(mappings_reduc.insert(bs, pt) == mappings);
-        assert(mappings_reduc.dom().subset_of(mappings.dom()));
-        lemma_subset_is_finite(mappings.dom(), mappings_reduc.dom());
-        lemma_mem_domain_from_mappings_finite_induction(phys_mem_size, mappings_reduc, bs, pt);
-    } else {
-        assert(mappings.dom() === Set::empty());
-        lemma_mem_domain_from_empty_mappings_finite(phys_mem_size, mappings);
-    }
-}
-
-pub proof fn lemma_mem_domain_from_mappings_finite_induction(
-    phys_mem_size: nat,
-    mappings: Map<nat, PTE>,
-    base: nat,
-    pte: PTE,
-)
-    requires
-        mappings.dom().finite(),
-        !mappings.dom().contains(base),
-    ensures
-        mem_domain_from_mappings(phys_mem_size, mappings.insert(base, pte)).finite(),
     decreases mappings.dom().len(),
 {
     if (exists|bs: nat| mappings.dom().contains(bs)) {
-        let bs = choose|bs: nat| mappings.dom().contains(bs);
-        let pt = mappings[bs];
-        let mappings_reduc = mappings.remove(bs);
-        assert(!mappings_reduc.dom().contains(bs));
-        assert(mappings_reduc.insert(bs, pt) == mappings);
-        assert(mappings_reduc.dom().subset_of(mappings.dom()));
-        lemma_subset_is_finite(mappings.dom(), mappings_reduc.dom());
-        lemma_mem_domain_from_mappings_finite_induction(phys_mem_size, mappings_reduc, bs, pt);
+        let base = choose|bs: nat| mappings.dom().contains(bs);
+        let pte = mappings[base];
+        let mappings_reduc = mappings.remove(base);
+        let mem_dom_ext = mem_domain_from_mappings(phys_mem_size, mappings_reduc.insert(base, pte));
+        let mem_dom_union = mem_domain_from_mappings(phys_mem_size, mappings_reduc).union( mem_domain_from_entry(phys_mem_size, base, pte),);
+        assert(mappings_reduc.insert(base, pte) == mappings);
+        //Induction Step:
+        lemma_mem_domain_from_mapping_finite(phys_mem_size, mappings_reduc);
+        //proof:  mem_dom_ext.subset_of(mem_dom_union); 
+        assert forall|wrd: nat| mem_dom_ext.contains(wrd) implies mem_dom_union.contains(wrd) by {
+            lemma_mem_domain_from_new_mappings_subset(phys_mem_size, mappings_reduc, base, pte, wrd);
+        }
+        lemma_mem_domain_from_entry_finite(phys_mem_size, base, pte);
+        assert(mem_dom_union.finite());
+        lemma_subset_is_finite(mem_dom_union, mem_dom_ext);
     } else {
         assert(mappings.dom() === Set::empty());
-        lemma_mem_domain_from_empty_mappings_finite(phys_mem_size, mappings);
+        assert(mem_domain_from_mappings(phys_mem_size, mappings) === Set::empty());
     }
-    lemma_finite_step(phys_mem_size, mappings, base, pte);
-}
-
-pub proof fn lemma_finite_step(
-    phys_mem_size: nat,
-    mappings: Map<nat, PTE>,
-    base: nat,
-    pte: PTE,
-)
-    requires
-        mem_domain_from_mappings(phys_mem_size, mappings).finite(),
-        mappings.dom().finite(),
-        !mappings.dom().contains(base),
-    ensures
-        mem_domain_from_mappings(phys_mem_size, mappings.insert(base, pte)).finite(),
-{
-    let mem_dom_ext = mem_domain_from_mappings(phys_mem_size, mappings.insert(base, pte));
-    let mem_dom_union = mem_domain_from_mappings(phys_mem_size, mappings).union(
-        mem_domain_from_entry(phys_mem_size, base, pte),
-    );
-    assert forall|wrd: nat| mem_dom_ext.contains(wrd) implies mem_dom_union.contains(wrd) by {
-        lemma_mem_domain_from_new_mappings_subset(phys_mem_size, mappings, base, pte, wrd);
-    }
-    assert(mem_dom_ext.subset_of(mem_dom_union));
-    lemma_mem_domain_from_entry_finite(phys_mem_size, base, pte);
-    assert(mem_dom_union.finite());
-    lemma_subset_is_finite(mem_dom_union, mem_dom_ext);
 }
 
 pub proof fn lemma_mem_domain_from_new_mappings_subset(
@@ -246,13 +194,13 @@ pub proof fn lemma_overlap(mappings: Map<nat, PTE>, base: nat, pte: PTE)
 }
 
 pub proof fn insert_non_map_preserves_unique(
-    thread_state: Map<nat, AbstractArguments>,
+    thread_state: Map<nat, ThreadState>,
     base: nat,
-    arg: AbstractArguments,
+    arg: ThreadState,
 )
     requires
         inflight_maps_unique(thread_state),
-        !is_map(arg),
+        !(arg is Map),
     ensures
         inflight_maps_unique(thread_state.insert(base, arg)),
 {
@@ -261,21 +209,16 @@ pub proof fn insert_non_map_preserves_unique(
         args,
         id,
     ) by {
-        if (args.dom().contains(id)) {
-            if (id == base) {
-            } else {
-                if let AbstractArguments::Map { vaddr, pte } = thread_state.index(id) {
+            if (id != base) {
+                if let ThreadState::Map { vaddr, pte } = thread_state.index(id) {
                     assert(args.remove(id) == thread_state.remove(id).insert(base, arg));
-                } else {
-                }
+                } 
             }
-        } else {
-        }
     }
 }
 
 pub proof fn insert_map_preserves_unique(
-    thread_state: Map<nat, AbstractArguments>,
+    thread_state: Map<nat, ThreadState>,
     thread_id: nat,
     vaddr: nat,
     pte: PTE,
@@ -284,55 +227,43 @@ pub proof fn insert_map_preserves_unique(
         inflight_maps_unique(thread_state),
         !candidate_mapping_overlaps_inflight_pmem(thread_state.values(), pte),
     ensures
-        inflight_maps_unique(thread_state.insert(thread_id, AbstractArguments::Map { vaddr, pte })),
+        inflight_maps_unique(thread_state.insert(thread_id, ThreadState::Map { vaddr, pte })),
 {
-    let arg = AbstractArguments::Map { vaddr, pte };
+    let arg = ThreadState::Map { vaddr, pte };
     let args = thread_state.insert(thread_id, arg);
     let p = pte;
     assert forall|id: nat| #[trigger] args.dom().contains(id) implies if_map_then_unique(
         args,
         id,
     ) by {
-        if (args.dom().contains(id)) {
             if (id == thread_id) {
                 assert forall|other_id: nat| #[trigger]
                     thread_state.dom().contains(other_id) implies arg != thread_state.index(
                     other_id,
                 ) by {
-                    if let AbstractArguments::Map { vaddr: x, pte: y } = thread_state.index(
+                    if let ThreadState::Map { vaddr: x, pte: y } = thread_state.index(
                         other_id,
                     ) {
                         assert(thread_state.values().contains(
-                            AbstractArguments::Map { vaddr: x, pte: y },
+                            ThreadState::Map { vaddr: x, pte: y },
                         ));
                         assert(!overlap(pte.frame, y.frame));
-                    } else {
-                    }
+                    } 
                 }
             } else {
-                if let AbstractArguments::Map { vaddr: x, pte: y } = thread_state.index(id) {
+                if let ThreadState::Map { vaddr: x, pte: y } = thread_state.index(id) {
                     assert(thread_state.dom().contains(id));
                     assert(thread_state.values().contains(
-                        AbstractArguments::Map { vaddr: x, pte: y },
+                        ThreadState::Map { vaddr: x, pte: y },
                     ));
                     assert(!overlap(pte.frame, y.frame));
                     assert(args.index(id) != arg);
                     assert(args.remove(id) == thread_state.remove(id).insert(thread_id, arg));
-                } else {
-                }
+                } 
             }
-        } else {
-        }
     }
 }
 
-pub open spec fn is_map(arg: AbstractArguments) -> bool {
-    if let AbstractArguments::Map { vaddr, pte } = arg {
-        true
-    } else {
-        false
-    }
-}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                               //
@@ -365,12 +296,12 @@ pub proof fn unmap_start_preserves_inv(
             Option::None
         };
         assert(s2.thread_state.values().subset_of(
-            s1.thread_state.values().insert(AbstractArguments::Unmap { vaddr, pte }),
+            s1.thread_state.values().insert(ThreadState::Unmap { vaddr, pte }),
         ));
         insert_non_map_preserves_unique(
             s1.thread_state,
             thread_id,
-            AbstractArguments::Unmap { vaddr, pte },
+            ThreadState::Unmap { vaddr, pte },
         );
     } 
 }
@@ -397,7 +328,7 @@ pub proof fn map_start_preserves_inv(
             #![auto]
             s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
         assert(s2.thread_state.values().subset_of(
-            s1.thread_state.values().insert(AbstractArguments::Map { vaddr, pte }),
+            s1.thread_state.values().insert(ThreadState::Map { vaddr, pte }),
         ));
         insert_map_preserves_unique(s1.thread_state, thread_id, vaddr, pte);
     } 
@@ -418,17 +349,17 @@ pub proof fn map_end_preserves_inv(
     ensures
         s2.sound ==> inv(c, s2),
 {
-    if let AbstractArguments::Map { vaddr, pte } = s1.thread_state.index(thread_id) {
+    if let ThreadState::Map { vaddr, pte } = s1.thread_state.index(thread_id) {
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
         assert(s2.thread_state.values().subset_of(
-            s1.thread_state.values().insert(AbstractArguments::Empty),
+            s1.thread_state.values().insert(ThreadState::Idle),
         ));
-        insert_non_map_preserves_unique(s1.thread_state, thread_id, AbstractArguments::Empty);
+        insert_non_map_preserves_unique(s1.thread_state, thread_id, ThreadState::Idle);
         if (result is Ok) {
-            assert(s1.thread_state.values().contains(AbstractArguments::Map { vaddr, pte }));
+            assert(s1.thread_state.values().contains(ThreadState::Map { vaddr, pte }));
             assert(s2.thread_state == s1.thread_state.remove(thread_id).insert(
                 thread_id,
-                AbstractArguments::Empty,
+                ThreadState::Idle,
             ));
         } 
     } 

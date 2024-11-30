@@ -27,7 +27,7 @@ pub struct AbstractConstants {
 pub struct AbstractVariables {
     /// Word-indexed virtual memory
     pub mem: Map<nat, nat>,
-    pub thread_state: Map<nat, AbstractArguments>,
+    pub thread_state: Map<nat, ThreadState>,
     /// `mappings` constrains the domain of mem and tracks the flags. We could instead move the
     /// flags into `map` as well and write the specification exclusively in terms of `map` but that
     /// also makes some of the enabling conditions awkward, e.g. full mappings have the same flags, etc.
@@ -47,10 +47,10 @@ pub enum AbstractStep {
 
 //To allow two-step transitions that preserve arguments
 #[allow(inconsistent_fields)]
-pub enum AbstractArguments {
+pub enum ThreadState {
     Map { vaddr: nat, pte: PTE },
     Unmap { vaddr: nat, pte: Option<PTE> },
-    Empty,
+    Idle,
 }
 
 pub open spec fn wf(c: AbstractConstants, s: AbstractVariables) -> bool {
@@ -62,7 +62,7 @@ pub open spec fn wf(c: AbstractConstants, s: AbstractVariables) -> bool {
 pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
     &&& s.mem === Map::empty()
     &&& s.mappings === Map::empty()
-    &&& forall|id: nat| id < c.thread_no ==> (s.thread_state[id] === AbstractArguments::Empty)
+    &&& forall|id: nat| id < c.thread_no ==> (s.thread_state[id] === ThreadState::Idle)
     &&& wf(c, s)
     &&& s.sound
 }
@@ -119,7 +119,7 @@ pub open spec fn state_unchanged_besides_thread_state(
     s1: AbstractVariables,
     s2: AbstractVariables,
     thread_id: nat,
-    thread_arguments: AbstractArguments,
+    thread_arguments: ThreadState,
 ) -> bool {
     &&& s2.thread_state === s1.thread_state.insert(thread_id, thread_arguments)
     &&& s2.mem === s1.mem
@@ -135,22 +135,22 @@ pub open spec fn unsound_state(s1: AbstractVariables, s2: AbstractVariables) -> 
 // Overlapping inflight memory helper functions
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(
-    inflightargs: Set<AbstractArguments>,
+    inflightargs: Set<ThreadState>,
     base: nat,
     candidate_size: nat,
 ) -> bool {
-    &&& exists|b: AbstractArguments|
+    &&& exists|b: ThreadState|
         #![auto]
         {
             &&& inflightargs.contains(b)
             &&& match b {
-                AbstractArguments::Map { vaddr, pte } => {
+                ThreadState::Map { vaddr, pte } => {
                     overlap(
                         MemRegion { base: vaddr, size: pte.frame.size },
                         MemRegion { base: base, size: candidate_size },
                     )
                 },
-                AbstractArguments::Unmap { vaddr, pte } => {
+                ThreadState::Unmap { vaddr, pte } => {
                     let size = if pte.is_some() {
                         pte.unwrap().frame.size
                     } else {
@@ -167,16 +167,16 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
 }
 
 pub open spec fn candidate_mapping_overlaps_inflight_pmem(
-    inflightargs: Set<AbstractArguments>,
+    inflightargs: Set<ThreadState>,
     candidate: PTE,
 ) -> bool {
-    &&& exists|b: AbstractArguments|
+    &&& exists|b: ThreadState|
         #![auto]
         {
             &&& inflightargs.contains(b)
             &&& match b {
-                AbstractArguments::Map { vaddr, pte } => { overlap(candidate.frame, pte.frame) },
-                AbstractArguments::Unmap { vaddr, pte } => {
+                ThreadState::Map { vaddr, pte } => { overlap(candidate.frame, pte.frame) },
+                ThreadState::Unmap { vaddr, pte } => {
                     &&& pte.is_some()
                     &&& overlap(candidate.frame, pte.unwrap().frame)
                 },
@@ -203,7 +203,7 @@ pub open spec fn step_ReadWrite(
     &&& aligned(vaddr, 8)
     &&& s2.mappings === s1.mappings
     &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
+    &&& s1.thread_state[thread_id] === ThreadState::Idle
     &&& s2.thread_state === s1.thread_state
     &&& match pte {
         Some((base, pte)) => {
@@ -259,7 +259,7 @@ pub open spec fn step_ReadWrite(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Map_sound(
     mappings: Map<nat, PTE>,
-    inflights: Set<AbstractArguments>,
+    inflights: Set<ThreadState>,
     vaddr: nat,
     pte: PTE,
 ) -> bool {
@@ -269,7 +269,7 @@ pub open spec fn step_Map_sound(
 }
 
 pub open spec fn step_Map_enabled(
-    inflight: Set<AbstractArguments>,
+    inflight: Set<ThreadState>,
     map: Map<nat, PTE>,
     vaddr: nat,
     pte: PTE,
@@ -296,13 +296,13 @@ pub open spec fn step_Map_start(
 ) -> bool {
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
+    &&& s1.thread_state[thread_id] === ThreadState::Idle
     &&& if step_Map_sound(s1.mappings, s1.thread_state.values(), vaddr, pte) {
         state_unchanged_besides_thread_state(
             s1,
             s2,
             thread_id,
-            AbstractArguments::Map { vaddr, pte },
+            ThreadState::Map { vaddr, pte },
         )
     } else {
         unsound_state(s1, s2)
@@ -318,9 +318,9 @@ pub open spec fn step_Map_end(
 ) -> bool {
     &&& s2.sound == s1.sound
     &&& valid_thread(c, thread_id)
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Idle)
     &&& match s1.thread_state[thread_id] {
-        AbstractArguments::Map { vaddr, pte } => {
+        ThreadState::Map { vaddr, pte } => {
             //&&& !candidate_mapping_overlaps_existing_pmem(s1.mappings, pte)
             &&& if (candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte)) {
                 &&& result is Err
@@ -343,7 +343,7 @@ pub open spec fn step_Map_end(
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Unmap_sound(
-    inflights: Set<AbstractArguments>,
+    inflights: Set<ThreadState>,
     vaddr: nat,
     pte_size: nat,
 ) -> bool {
@@ -381,11 +381,11 @@ pub open spec fn step_Unmap_start(
     };
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] === AbstractArguments::Empty
+    &&& s1.thread_state[thread_id] === ThreadState::Idle
     &&& if step_Unmap_sound(s1.thread_state.values(), vaddr, pte_size) {
         &&& s2.thread_state === s1.thread_state.insert(
             thread_id,
-            AbstractArguments::Unmap { vaddr, pte },
+            ThreadState::Unmap { vaddr, pte },
         )
         &&& if (pte is None) {
             &&& s2.mappings === s1.mappings
@@ -412,12 +412,12 @@ pub open spec fn step_Unmap_end(
     result: Result<(), ()>,
 ) -> bool {
     &&& valid_thread(c, thread_id)
-    &&& s2.thread_state === s1.thread_state.insert(thread_id, AbstractArguments::Empty)
+    &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Idle)
     &&& s2.sound == s1.sound
     &&& s2.mappings === s1.mappings
     &&& s2.mem === s1.mem
     &&& match s1.thread_state[thread_id] {
-        AbstractArguments::Unmap { vaddr, pte } => {
+        ThreadState::Unmap { vaddr, pte } => {
             &&& if pte is Some {
                 result is Ok
             } else {
@@ -506,14 +506,14 @@ pub open spec fn pmem_no_overlap(mappings: Map<nat, PTE>) -> bool {
 }
 
 pub open spec fn inflight_map_no_overlap_pmem(
-    inflightargs: Set<AbstractArguments>,
+    inflightargs: Set<ThreadState>,
     mappings: Map<nat, PTE>,
 ) -> bool {
-    forall|b: AbstractArguments|
+    forall|b: ThreadState|
         #![auto]
         {
             inflightargs.contains(b) ==> match b {
-                AbstractArguments::Map { vaddr, pte } => {
+                ThreadState::Map { vaddr, pte } => {
                     !candidate_mapping_overlaps_existing_pmem(mappings, pte)
                 },
                 _ => { true },
@@ -522,13 +522,13 @@ pub open spec fn inflight_map_no_overlap_pmem(
 }
 
 pub open spec fn inflight_map_no_overlap_inflight_pmem(
-    inflightargs: Set<AbstractArguments>,
+    inflightargs: Set<ThreadState>,
 ) -> bool {
-    forall|b: AbstractArguments|
+    forall|b: ThreadState|
         #![auto]
         {
             inflightargs.contains(b) ==> match b {
-                AbstractArguments::Map { vaddr, pte } => {
+                ThreadState::Map { vaddr, pte } => {
                     !candidate_mapping_overlaps_inflight_pmem(inflightargs.remove(b), pte)
                 },
                 _ => { true },
@@ -536,18 +536,18 @@ pub open spec fn inflight_map_no_overlap_inflight_pmem(
         }
 }
 
-pub open spec fn if_map_then_unique(thread_state: Map<nat, AbstractArguments>, id: nat) -> bool
+pub open spec fn if_map_then_unique(thread_state: Map<nat, ThreadState>, id: nat) -> bool
     recommends
         thread_state.dom().contains(id),
 {
-    if let AbstractArguments::Map { vaddr, pte } = thread_state.index(id) {
+    if let ThreadState::Map { vaddr, pte } = thread_state.index(id) {
         !thread_state.remove(id).values().contains(thread_state.index(id))
     } else {
         true
     }
 }
 
-pub open spec fn inflight_maps_unique(thread_state: Map<nat, AbstractArguments>) -> bool {
+pub open spec fn inflight_maps_unique(thread_state: Map<nat, ThreadState>) -> bool {
     forall|a: nat| #[trigger] thread_state.dom().contains(a) ==> if_map_then_unique(thread_state, a)
 }
 
@@ -589,13 +589,13 @@ pub proof fn next_step_preserves_inv(
             },
             AbstractStep::UnmapEnd { thread_id, result } => {
                 assert(s2.thread_state.values().subset_of(
-                    s1.thread_state.values().insert(AbstractArguments::Empty),
+                    s1.thread_state.values().insert(ThreadState::Idle),
                 ));
                 lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
                 insert_non_map_preserves_unique(
                     s1.thread_state,
                     thread_id,
-                    AbstractArguments::Empty,
+                    ThreadState::Idle,
                 );
             },
             AbstractStep::MapStart { thread_id, vaddr, pte } => {

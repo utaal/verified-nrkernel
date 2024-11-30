@@ -379,7 +379,7 @@ impl<M: mmu::MMU> OSVariables<M> {
 
     pub open spec fn interp_thread_state(self, c: OSConstants) -> Map<
         nat,
-        hlspec::AbstractArguments,
+        hlspec::ThreadState,
     > {
         Map::new(
             |ult_id: nat| c.valid_ULT(ult_id),
@@ -389,9 +389,9 @@ impl<M: mmu::MMU> OSVariables<M> {
                         CoreState::MapWaiting { ULT_id, vaddr, pte }
                         | CoreState::MapExecuting { ULT_id, vaddr, pte } => {
                             if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Map { vaddr, pte }
+                                hlspec::ThreadState::Map { vaddr, pte }
                             } else {
-                                hlspec::AbstractArguments::Empty
+                                hlspec::ThreadState::Idle
                             }
                         },
                         CoreState::UnmapWaiting { ULT_id, vaddr }
@@ -402,26 +402,26 @@ impl<M: mmu::MMU> OSVariables<M> {
                                 None
                             };
                             if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Unmap { vaddr, pte }
+                                hlspec::ThreadState::Unmap { vaddr, pte }
                             } else {
-                                hlspec::AbstractArguments::Empty
+                                hlspec::ThreadState::Idle
                             }
                         },
                         CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result) }
                         | CoreState::UnmapOpDone { ULT_id, vaddr, result }
                         | CoreState::UnmapShootdownWaiting { ULT_id, vaddr, result } => {
                             if ULT_id == ult_id {
-                                hlspec::AbstractArguments::Unmap { vaddr, pte:
+                                hlspec::ThreadState::Unmap { vaddr, pte:
                                     match result {
                                         Ok(pte) => Some(pte),
                                         Err(_) => None,
                                     }
                                 }
                             } else {
-                                hlspec::AbstractArguments::Empty
+                                hlspec::ThreadState::Idle
                             }
                         },
-                        CoreState::Idle => hlspec::AbstractArguments::Empty,
+                        CoreState::Idle => hlspec::ThreadState::Idle,
                     }
                 },
         )
@@ -430,7 +430,7 @@ impl<M: mmu::MMU> OSVariables<M> {
     pub open spec fn interp(self, c: OSConstants) -> hlspec::AbstractVariables {
         let mappings: Map<nat, PTE> = self.effective_mappings();
         let mem: Map<nat, nat> = self.interp_vmem(c);
-        let thread_state: Map<nat, hlspec::AbstractArguments> = self.interp_thread_state(c);
+        let thread_state: Map<nat, hlspec::ThreadState> = self.interp_thread_state(c);
         let sound: bool = self.sound;
         hlspec::AbstractVariables { mem, mappings, thread_state, sound }
     }
