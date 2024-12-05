@@ -165,6 +165,15 @@ impl PTMem {
         }
     }
 
+    pub broadcast proof fn lemma_pt_walk(mem: PTMem, va: usize)
+        ensures #![trigger mem.pt_walk(va)]
+            mem.pt_walk(va).complete,
+            0 < mem.pt_walk(va).path.len() <= 4,
+            forall|i| 0 <= i < mem.pt_walk(va).path.len() - 1 ==> #[trigger] mem.pt_walk(va).path[i].1 is Directory,
+            !(mem.pt_walk(va).path.last().1 is Directory),
+    {
+    }
+
     pub open spec fn is_base_pt_walk(self, vaddr: usize) -> bool {
         &&& self.pt_walk(vaddr).result() matches WalkResult::Valid { vbase, pte }
         &&& vbase == vaddr

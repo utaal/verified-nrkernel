@@ -154,18 +154,19 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     // .. and waits for inflight walks to complete.
     &&& pre.walks[core].is_empty()
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.walks == pre.walks
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks.insert(core, set![])
-    &&& post.hist.writes.all === set![]
-    &&& post.hist.writes.neg == pre.hist.writes.neg.insert(core, set![])
-    &&& post.hist.writes.core == pre.hist.writes.core
-    &&& post.hist.pending_maps === map![]
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        hist: History {
+            walks: pre.hist.walks.insert(core, set![]),
+            writes: Writes {
+                all: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.all },
+                neg: pre.hist.writes.neg.insert(core, set![]),
+                core: pre.hist.writes.core,
+            },
+            pending_maps: if core == pre.hist.writes.core { map![] } else { pre.hist.pending_maps },
+            ..pre.hist
+        },
+        ..pre
+    }
 }
 
 
@@ -177,16 +178,10 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.walks == pre.walks
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache.insert(core, pre.cache[core].insert(walk))
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        cache: pre.cache.insert(core, pre.walks[core].insert(walk)),
+        ..pre
+    }
 }
 
 pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
@@ -195,16 +190,10 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
     &&& c.valid_core(core)
     &&& pre.cache[core].contains(walk)
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        walks: pre.walks.insert(core, pre.walks[core].insert(walk)),
+        ..pre
+    }
 }
 
 pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
@@ -213,16 +202,10 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
     &&& c.valid_core(core)
     &&& pre.cache[core].contains(walk)
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache.insert(core, pre.cache[core].remove(walk))
-    &&& post.walks == pre.walks
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        cache: pre.cache.insert(core, pre.cache[core].remove(walk)),
+        ..pre
+    }
 }
 
 
@@ -239,16 +222,14 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     // can we just ignore them?
     &&& arbitrary() // TODO: conditions on va? max vaddr?
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].insert(walk))
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk))
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        walks: pre.walks.insert(core, pre.walks[core].insert(walk)),
+        hist: History {
+            walks: pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk)),
+            ..pre.hist
+        },
+        ..pre
+    }
 }
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Walk {
@@ -292,16 +273,14 @@ pub open spec fn step_WalkStep(
     &&& pre.walks[core].contains(walk)
     &&& !walk_next.complete
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk).insert(walk_next))
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk_next))
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        walks: pre.walks.insert(core, pre.walks[core].remove(walk).insert(walk_next)),
+        hist: History {
+            walks: pre.hist.walks.insert(core, pre.hist.walks[core].insert(walk_next)),
+            ..pre.hist
+        },
+        ..pre
+    }
 }
 
 /// Note: A valid walk's result is a region whose base and size depend on the path taken. E.g. a
@@ -326,17 +305,10 @@ pub open spec fn step_WalkDone(
     &&& walk_next.complete
     }
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks.insert(core, pre.walks[core].remove(walk))
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    //&&& post.hist.walks == pre.hist.walks.insert(core, pre.hist.walks[core].insert(res.walk()))
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        walks: pre.walks.insert(core, pre.walks[core].remove(walk)),
+        ..pre
+    }
 }
 
 
@@ -381,16 +353,11 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& c.valid_core(core)
     &&& 0 < pre.sbuf[core].len()
 
-    &&& post.pt_mem == pre.pt_mem.write(addr, value)
-    &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        pt_mem: pre.pt_mem.write(addr, value),
+        sbuf: pre.sbuf.insert(core, pre.sbuf[core].drop_first()),
+        ..pre
+    }
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl: Lbl) -> bool {
@@ -400,16 +367,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl:
     &&& aligned(addr as nat, 8)
     &&& value == pre.read_from_mem_tso(core, addr, r)
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes == pre.hist.writes
-    &&& post.hist.pending_maps == pre.hist.pending_maps
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == pre
 }
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
@@ -420,18 +378,17 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& c.valid_core(core)
     &&& pre.sbuf[core].len() == 0
 
-    &&& post.pt_mem == pre.pt_mem
-    &&& post.sbuf == pre.sbuf
-    &&& post.cache == pre.cache
-    &&& post.walks == pre.walks
-
-    &&& post.hist.happy == pre.hist.happy
-    &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes.all === set![]
-    &&& post.hist.writes.neg == pre.hist.writes.neg
-    &&& post.hist.writes.core == pre.hist.writes.core
-    &&& post.hist.pending_maps === map![]
-    //&&& post.hist.polarity == pre.hist.polarity
+    &&& post == State {
+        hist: History {
+            writes: Writes {
+                all: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.all },
+                ..pre.hist.writes
+            },
+            pending_maps: if core == pre.hist.writes.core { map![] } else { pre.hist.pending_maps },
+            ..pre.hist
+        },
+        ..pre
+    }
 }
 
 /// Any transition that reads from memory takes an arbitrary usize `r`, which is used to

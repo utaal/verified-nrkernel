@@ -93,23 +93,26 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
     &&& c.valid_core(core)
 
-    &&& post.happy      ==  pre.happy
-    &&& post.pt_mem     ==  pre.pt_mem
-    &&& post.writes.all === set![]
-    &&& post.writes.neg ==  pre.writes.neg.insert(core, set![])
-    &&& post.pending_maps  === map![] // This might not be correct when we have negative writes as well
-    //&&& post.polarity   == pre.polarity
+    &&& post == State {
+        writes: Writes {
+            all: if core == pre.writes.core { set![] } else { pre.writes.all },
+            neg: pre.writes.neg.insert(core, set![]),
+            core: pre.writes.core,
+        },
+        pending_maps: if core == pre.writes.core { map![] } else { pre.pending_maps },
+        ..pre
+    }
 }
 
 
 // ---- Non-atomic page table walks ----
 
 /// An atomic page table walk
-pub open spec fn step_Walk(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+pub open spec fn step_Walk(pre: State, post: State, c: Constants, vaddr: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_res)
 
     &&& c.valid_core(core)
-    &&& walk_res == rl3::iter_walk(pre.pt_mem, walk_res.vaddr()).result()
+    &&& walk_res == pre.pt_mem.pt_walk(vaddr).result()
 
     &&& post == pre
 }
@@ -168,12 +171,14 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
 
     &&& c.valid_core(core)
 
-    &&& post.happy      ==  pre.happy
-    &&& post.pt_mem     ==  pre.pt_mem
-    &&& post.writes.all === set![]
-    &&& post.writes.neg ==  pre.writes.neg
-    &&& post.pending_maps === map![] // This might not be correct when we have negative writes as well
-    //&&& post.polarity   == pre.polarity
+    &&& post == State {
+        writes: Writes {
+            all: if core == pre.writes.core { set![] } else { pre.writes.all },
+            ..pre.writes
+        },
+        pending_maps: if core == pre.writes.core { map![] } else { pre.pending_maps },
+        ..pre
+    }
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -185,7 +190,7 @@ pub enum Step {
     // Mixed
     Invlpg,
     // Atomic page table walk
-    Walk,
+    Walk { vaddr: usize },
     // Non-atomic page table walk
     WalkNA { vb: usize },
     // TSO
@@ -197,13 +202,13 @@ pub enum Step {
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg        => step_Invlpg(pre, post, c, lbl),
-        Step::Walk          => step_Walk(pre, post, c, lbl),
-        Step::WalkNA { vb } => step_WalkNA(pre, post, c, vb, lbl),
-        Step::Write         => step_Write(pre, post, c, lbl),
-        Step::Read          => step_Read(pre, post, c, lbl),
-        Step::Barrier       => step_Barrier(pre, post, c, lbl),
-        Step::Stutter       => step_Stutter(pre, post, c, lbl),
+        Step::Invlpg         => step_Invlpg(pre, post, c, lbl),
+        Step::Walk { vaddr } => step_Walk(pre, post, c, vaddr, lbl),
+        Step::WalkNA { vb }  => step_WalkNA(pre, post, c, vb, lbl),
+        Step::Write          => step_Write(pre, post, c, lbl),
+        Step::Read           => step_Read(pre, post, c, lbl),
+        Step::Barrier        => step_Barrier(pre, post, c, lbl),
+        Step::Stutter        => step_Stutter(pre, post, c, lbl),
     }
 }
 
