@@ -183,7 +183,7 @@ pub trait SeqTupExt: Sized {
 
 impl SeqTupExt for Seq<(usize, usize)> {
     open spec fn contains_addr(self, addr: usize) -> bool {
-        exists|i| 0 <= i < self.len() && #[trigger] self[i].0 == addr
+        exists|i| 0 <= i < self.len() && #[trigger] self[i] == (addr, self[i].1)
     }
 }
 
