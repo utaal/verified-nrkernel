@@ -749,8 +749,6 @@ proof fn next_step_preserves_inv_y(pre: State, post: State, c: Constants, step: 
             let (wraddr, value) = pre.sbuf[core][0];
             assert(core == post.writes.core);
             assert(post.writes.core == pre.writes.core);
-            //broadcast use lemma_writeback_preserves_writer_mem;
-            //assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
             assert forall|core2, addr: usize| c.valid_core(core2) && aligned(addr as nat, 8)
                     && core2 != post.writes.core
                     && #[trigger] post.mem_view_of_core(core2).read(addr) & 1 == 1
@@ -797,12 +795,30 @@ proof fn lemma_y(state: State, c: Constants, core: Core, addr: usize)
         aligned(addr as nat, 8),
         state.mem_view_of_core(core).read(addr) & 1 == 1,
         state.mem_view_of_core(core).mem.contains_key(addr),
-    ensures state.mem_view_of_writer().read(addr) == state.mem_view_of_core(core).read(addr)
+    ensures state.mem_view_of_core(core).read(addr) == state.mem_view_of_writer().read(addr)
 {
+    // XXX: Basic reasoning about mem_view. All the non-obvious stuff should follow from inv_y.
     admit();
     //broadcast use pt_mem::PTMem::lemma_write_seq_idle;
     assert(!state.sbuf[state.writes.core].contains_addr(addr));
 }
+
+proof fn lemma_yp(state: State, c: Constants, core: Core, va: usize)
+    requires
+        state.inv_y(c),
+        c.valid_core(core),
+        // TODO: maybe more?
+    ensures ({
+        let core_walk = state.mem_view_of_core(core).pt_walk(va);
+        let writer_walk = state.mem_view_of_writer().pt_walk(va);
+        core_walk.result() is Valid ==> core_walk == writer_walk
+    })
+{
+    // XXX: This proof shouldn't be too hard. Each entry in core_walk must have P bit 1, which by
+    // lemma_y implies that the value at each address is equal in the writer memory.
+    admit();
+}
+
 
 //broadcast proof fn lemma_writer_sbuf_empty_implies_writer_mem_equal(pre: State, post: State)
 //    requires
@@ -1243,15 +1259,18 @@ mod refinement {
             assert(walk_a_writer_core == walk_a_same_core);
             assert(rl2::step_Walk(pre.interp(), post.interp(), c, walk.vaddr, lbl));
         } else {
-            //assume(forall|va| #![auto] mem_core.pt_walk(va).path.is_prefix_of(mem_writer.pt_walk(va).path));
-            assume(forall|va|
-                match #[trigger] mem_core.pt_walk(va).result() {
-                    WalkResult::Valid { vbase, pte } =>
-                        mem_core.pt_walk(va) == mem_writer.pt_walk(va),
-                    WalkResult::Invalid { vaddr } =>
-                        !pre.pending_map_for(va)
-                          ==> mem_core.pt_walk(va).result() == mem_writer.pt_walk(va).result(),
-                });
+            assume(pre.inv_y(c));
+            // XXX: This lemma is not yet proved
+            super::lemma_yp(pre, c, core, walk.vaddr);
+            assume(forall|va| mem_core.pt_walk(va).result() is Invalid && !pre.pending_map_for(va) ==> #[trigger] mem_core.pt_walk(va).result() == mem_writer.pt_walk(va).result());
+            //assume(forall|va|
+            //    match #[trigger] mem_core.pt_walk(va).result() {
+            //        WalkResult::Valid { vbase, pte } =>
+            //            mem_core.pt_walk(va) == mem_writer.pt_walk(va),
+            //        WalkResult::Invalid { vaddr } =>
+            //            !pre.pending_map_for(va)
+            //              ==> mem_core.pt_walk(va).result() == mem_writer.pt_walk(va).result(),
+            //    });
 
             // XXX: From inv_walks_match_memory2. The inflight walk should agree with current memory,
             // i.e. with atomic walk.
@@ -1329,7 +1348,7 @@ mod refinement {
         }
     }
 
-    broadcast proof fn lemma_take_len<A>(s: Seq<A>)
+    pub broadcast proof fn lemma_take_len<A>(s: Seq<A>)
         ensures #[trigger] s.take(s.len() as int) == s
         decreases s.len()
     {
@@ -1340,7 +1359,7 @@ mod refinement {
         }
     }
 
-    broadcast proof fn lemma_submap_of_trans<K,V>(m1: Map<K,V>, m2: Map<K,V>, m3: Map<K,V>)
+    pub broadcast proof fn lemma_submap_of_trans<K,V>(m1: Map<K,V>, m2: Map<K,V>, m3: Map<K,V>)
         requires
             #[trigger] m1.submap_of(m2),
             m2.submap_of(m3),
