@@ -532,6 +532,47 @@ proof fn next_step_preserves_wf(pre: State, post: State, c: Constants, step: Ste
 }
 
 
+proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.happy,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.happy ==> post.inv_sbuf_facts(c)
+{
+    match step {
+        Step::Write => {
+            let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+            if post.happy {
+                if core == pre.writes.core {
+                    assert_by_contradiction!(post.writer_sbuf_entries_are_unique(), {
+                        //let sbuf = post.sbuf[core];
+                        //assert(exists|i1, i2, a: usize, v1: usize, v2: usize|
+                        //       0 <= i1 < sbuf.len() && 0 <= i2 < sbuf.len()
+                        //        && i1 != i2 && sbuf[i1] == (a, v1) && sbuf[i2] == (a, v2));
+                        //let (i1, i2, a, v1, v2): (int, int, _, _, _) =
+                        //    choose|i1, i2, a: usize, v1: usize, v2: usize|
+                        //        0 <= i1 < sbuf.len() && 0 <= i2 < sbuf.len()
+                        //        && i1 != i2 && sbuf[i1] == (a, v1) && sbuf[i2] == (a, v2);
+                        //assert(wraddr == a);
+                        //assert(v1 & 1 == 1);
+                        //assert(v2 & 1 == 1);
+                        // XXX: This follows from the uniqueness of addresses in sbuf
+                        assume(forall|i, a, v: usize| 0 <= i < pre.sbuf[core].len() && pre.sbuf[core][i] == (a, v) ==> pre.mem_view_of_writer().read(a) == v);
+                    });
+                } else {
+                    // XXX: need an invariant that shows this from the knowledge we have about
+                    // pre.writes from is_this_write_happy.
+                    assume(pre.sbuf[pre.writes.core] === seq![]);
+                    assert(post.non_writer_sbufs_are_empty(c));
+                }
+                assert(post.inv_sbuf_facts(c));
+            }
+        },
+        _ => assert(post.inv_sbuf_facts(c)),
+    }
+}
+
 proof fn next_step_preserves_inv_walks_disjoint_with_present_bit_0_addrs(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.happy,
@@ -540,73 +581,72 @@ proof fn next_step_preserves_inv_walks_disjoint_with_present_bit_0_addrs(pre: St
         next_step(pre, post, c, step, lbl),
     ensures post.happy ==> post.inv_walks_disjoint_with_present_bit_0_addrs(c)
 {
-    if pre.happy {
-        match step {
-            Step::Invlpg => {
-                let core = lbl->Invlpg_0;
-                //assume(pre.single_writer()); // prove this in separate invariant
-                // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
-                // though I mention all the triggers.
-                //broadcast use lemma_writer_sbuf_empty_implies_writer_mem_equal;
-                assert(pre.sbuf[core].len() == 0);
-                //lemma_writes_filter_empty_if_writer_core(pre, post);
-                assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::WalkInit { core, vaddr } => {
-                assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::WalkStep { core, walk } => {
-                let walk_next = walk_next(pre.mem_view_of_core(core), walk);
-                assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
-                assert forall|core2, addr, walk2, i| #![auto] {
-                    &&& c.valid_core(core2)
+    match step {
+        Step::Invlpg => {
+            let core = lbl->Invlpg_0;
+            //assume(pre.single_writer()); // prove this in separate invariant
+            // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
+            // though I mention all the triggers.
+            //broadcast use lemma_writer_sbuf_empty_implies_writer_mem_equal;
+            assert(pre.sbuf[core].len() == 0);
+            //lemma_writes_filter_empty_if_writer_core(pre, post);
+            assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::WalkInit { core, vaddr } => {
+            assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::WalkStep { core, walk } => {
+            let walk_next = walk_next(pre.mem_view_of_core(core), walk);
+            assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
+            assert forall|core2, addr, walk2, i| #![auto] {
+                &&& c.valid_core(core2)
                     &&& post.mem_view_of_writer().read(addr) & 1 == 0
                     &&& post.walks[core2].contains(walk2)
                     &&& 0 <= i < walk2.path.len()
-                } implies walk2.path[i].0 != addr by {
-                    if core2 == core && walk2 == walk_next {
-                        // walk_next adds one more entry to the path and the resulting walk is not
-                        // yet complete. This means the entry was a directory, which means the
-                        // present bit is set.
-                        admit();
-                        assert(walk2.path[i].0 != addr);
-                    } else {
-                        assert(walk2.path[i].0 != addr);
-                    }
-                };
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::WalkDone { walk } => {
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::Write => {
-                let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
-                assume(forall|addr| #[trigger] post.mem_view_of_writer().read(addr) == if addr == wraddr { value } else { pre.mem_view_of_writer().read(addr) });
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::Writeback { core } => {
-                broadcast use lemma_writeback_preserves_writer_mem;
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::Read => {
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c))
-            },
-            Step::Barrier => {
-                let core = lbl->Barrier_0;
-                //assume(pre.single_writer()); // prove this in separate invariant
-                // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
-                // though I mention all the triggers.
-                //broadcast use lemma_writer_sbuf_empty_implies_writer_mem_equal;
-                //lemma_writes_filter_empty_if_writer_core(pre, post);
-                assert(pre.sbuf[core].len() == 0);
-                assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
-                assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-            },
-            Step::Stutter => assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c)),
-        }
+            } implies walk2.path[i].0 != addr by {
+                if core2 == core && walk2 == walk_next {
+                    // walk_next adds one more entry to the path and the resulting walk is not
+                    // yet complete. This means the entry was a directory, which means the
+                    // present bit is set.
+                    admit();
+                    assert(walk2.path[i].0 != addr);
+                } else {
+                    assert(walk2.path[i].0 != addr);
+                }
+            };
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::WalkDone { walk } => {
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::Write => {
+            let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+            assume(forall|addr| #[trigger] post.mem_view_of_writer().read(addr) == if addr == wraddr { value } else { pre.mem_view_of_writer().read(addr) });
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::Writeback { core } => {
+            broadcast use lemma_writeback_preserves_writer_mem;
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::Read => {
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c))
+        },
+        Step::Barrier => {
+            let core = lbl->Barrier_0;
+            //assume(pre.single_writer()); // prove this in separate invariant
+            // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
+            // though I mention all the triggers.
+            //broadcast use lemma_writer_sbuf_empty_implies_writer_mem_equal;
+            //lemma_writes_filter_empty_if_writer_core(pre, post);
+            assert(pre.sbuf[core].len() == 0);
+            assert(post.mem_view_of_writer() == pre.mem_view_of_writer());
+            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
+        },
+        Step::Stutter => assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c)),
     }
+
 }
 
 proof fn next_step_preserves_inv_x(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
