@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 //use crate::definitions_t::{ PTE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
-use crate::definitions_t::{ PTE, bitmask_inc };
+use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE };
 use crate::spec_t::mmu::{ Walk, WalkResult, SeqTupExt };
 
 //use crate::definitions_t::{
@@ -121,10 +121,10 @@ impl PTMem {
     //}
 
     pub open spec fn pt_walk(self, vaddr: usize) -> Walk {
-        let l0_idx = l0_bits!(vaddr as u64) as usize;
-        let l1_idx = l1_bits!(vaddr as u64) as usize;
-        let l2_idx = l2_bits!(vaddr as u64) as usize;
-        let l3_idx = l3_bits!(vaddr as u64) as usize;
+        let l0_idx = (l0_bits!(vaddr as u64) * WORD_SIZE) as usize;
+        let l1_idx = (l1_bits!(vaddr as u64) * WORD_SIZE) as usize;
+        let l2_idx = (l2_bits!(vaddr as u64) * WORD_SIZE) as usize;
+        let l3_idx = (l3_bits!(vaddr as u64) * WORD_SIZE) as usize;
         let l0_addr = add(self.pml4, l0_idx);
         let l0e = PDE { entry: self.read(l0_addr) as u64, layer: Ghost(0) };
         match l0e@ {
