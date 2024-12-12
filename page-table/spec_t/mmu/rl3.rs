@@ -910,7 +910,7 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
         core_walk.result() is Valid ==> core_walk == writer_walk
     })
 {
-    state.pt_mem.lemma_write_seq_pml4(state.sbuf[state.writes.core]);
+    state.pt_mem.lemma_write_seq(state.sbuf[state.writes.core]);
     let core_mem = state.mem_view_of_core(core);
     let core_walk = core_mem.pt_walk(va);
     let writer_mem = state.mem_view_of_writer();
@@ -921,20 +921,20 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
     assert(forall|a1, a2| aligned(a1, 8) && aligned(a2, 8) ==> #[trigger] aligned(a1 + a2, 8));
 
     if core_walk.result() is Valid {
+        assert(l0_bits!(va as u64) < 512) by (bit_vector);
+        assert(l1_bits!(va as u64) < 512) by (bit_vector);
+        assert(l2_bits!(va as u64) < 512) by (bit_vector);
+        assert(l3_bits!(va as u64) < 512) by (bit_vector);
         let l0_idx = (l0_bits!(va as u64) * WORD_SIZE) as usize;
         let l1_idx = (l1_bits!(va as u64) * WORD_SIZE) as usize;
         let l2_idx = (l2_bits!(va as u64) * WORD_SIZE) as usize;
         let l3_idx = (l3_bits!(va as u64) * WORD_SIZE) as usize;
         assume(core_mem.pml4 + l0_idx < u64::MAX);
-        assert(l0_bits!(va as u64) < 512) by (bit_vector);
-        assert(l1_bits!(va as u64) < 512) by (bit_vector);
-        assert(l2_bits!(va as u64) < 512) by (bit_vector);
-        assert(l3_bits!(va as u64) < 512) by (bit_vector);
         assert(forall|a: usize| #[trigger] (a * 8 % 8) == 0);
         let l0_addr = add(core_mem.pml4, l0_idx);
         let l0e = PDE { entry: core_mem.read(l0_addr) as u64, layer: Ghost(0) };
-        // XXX: follows from state.wf()
-        assume(core_mem.mem.contains_key(l0_addr));
+        assert(aligned(l0_addr as nat, 8));
+        assert(core_mem.mem.contains_key(l0_addr));
         match l0e@ {
             GPDE::Directory { addr: l1_daddr, .. } => {
                 lemma_valid_implies_equal_reads(state, c, core, l0_addr);
@@ -943,8 +943,8 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
                 assume(aligned(l1_daddr as nat, 8));
                 let l1_addr = add(l1_daddr, l1_idx);
                 let l1e = PDE { entry: core_mem.read(l1_addr) as u64, layer: Ghost(1) };
-                // XXX: follows from state.wf()
-                assume(core_mem.mem.contains_key(l1_addr));
+                assert(aligned(l1_addr as nat, 8));
+                assert(core_mem.mem.contains_key(l1_addr));
                 match l1e@ {
                     GPDE::Directory { addr: l2_daddr, .. } => {
                         lemma_valid_implies_equal_reads(state, c, core, l1_addr);
@@ -953,8 +953,8 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
                         assume(aligned(l2_daddr as nat, 8));
                         let l2_addr = add(l2_daddr, l2_idx);
                         let l2e = PDE { entry: core_mem.read(l2_addr) as u64, layer: Ghost(2) };
-                        // XXX: follows from state.wf()
-                        assume(core_mem.mem.contains_key(l2_addr));
+                        assert(aligned(l2_addr as nat, 8));
+                        assert(core_mem.mem.contains_key(l2_addr));
                         match l2e@ {
                             GPDE::Directory { addr: l3_daddr, .. } => {
                                 lemma_valid_implies_equal_reads(state, c, core, l2_addr);
@@ -963,8 +963,8 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
                                 assume(aligned(l3_daddr as nat, 8));
                                 let l3_addr = add(l3_daddr, l3_idx);
                                 let l3e = PDE { entry: core_mem.read(l3_addr) as u64, layer: Ghost(3) };
-                                // XXX: follows from state.wf()
-                                assume(core_mem.mem.contains_key(l3_addr));
+                                assert(aligned(l3_addr as nat, 8));
+                                assert(core_mem.mem.contains_key(l3_addr));
                                 match l3e@ {
                                     GPDE::Directory { .. } => {
                                         assert(false);
@@ -1023,7 +1023,7 @@ proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core:
     ensures
         state.mem_view_of_core(core).pt_walk(va) == state.mem_view_of_writer().pt_walk(va)
 {
-    state.pt_mem.lemma_write_seq_pml4(state.sbuf[state.writes.core]);
+    state.pt_mem.lemma_write_seq(state.sbuf[state.writes.core]);
     let path = state.mem_view_of_writer().pt_walk(va).path;
 
     assert(state.mem_view_of_writer().pt_walk(va).result() is Valid);
