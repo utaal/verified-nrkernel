@@ -178,12 +178,15 @@ pub open spec fn get_last<A,B>(s: Seq<(A, B)>, a: A) -> Option<(int, B)> {
 }
 
 pub trait SeqTupExt: Sized {
-    spec fn contains_addr(self, addr: usize) -> bool;
+    type A;
+    spec fn contains_fst(self, fst: Self::A) -> bool;
 }
 
-impl SeqTupExt for Seq<(usize, usize)> {
-    open spec fn contains_addr(self, addr: usize) -> bool {
-        exists|i| 0 <= i < self.len() && #[trigger] self[i] == (addr, self[i].1)
+impl<A,B> SeqTupExt for Seq<(A, B)> {
+    type A = A;
+
+    open spec fn contains_fst(self, fst: Self::A) -> bool {
+        exists|i| 0 <= i < self.len() && #[trigger] self[i] == (fst, self[i].1)
     }
 }
 

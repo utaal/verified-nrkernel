@@ -189,10 +189,20 @@ impl PTMem {
     pub broadcast proof fn lemma_write_seq_idle(self, writes: Seq<(usize, usize)>, addr: usize)
         requires
             self.mem.contains_key(addr),
-            !writes.contains_addr(addr),
+            !writes.contains_fst(addr),
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)
     {
         admit();
+    }
+
+    pub broadcast proof fn lemma_write_seq_pml4(self, writes: Seq<(usize, usize)>)
+        ensures #[trigger] self.write_seq(writes).pml4 == self.pml4
+        decreases writes.len()
+    {
+        if writes.len() == 0 {
+        } else {
+            self.lemma_write_seq_pml4(writes.drop_last())
+        }
     }
 }
 
