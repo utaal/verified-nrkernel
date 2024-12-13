@@ -116,7 +116,8 @@ impl State {
     //}
 
     pub open spec fn non_writer_sbufs_are_empty(self, c: Constants) -> bool {
-        forall|core| #[trigger] c.valid_core(core) && core != self.writes.core ==> self.sbuf[core] === seq![]
+        forall|core| #[trigger] c.valid_core(core) && core != self.writes.core
+            ==> self.sbuf[core] === seq![]
     }
 
     pub open spec fn writer_sbuf_entries_are_unique(self) -> bool {
@@ -147,6 +148,8 @@ impl State {
                 &&& aligned(walk.vaddr as nat, 8)
                 &&& walk.path.len() <= 4
                 &&& walk.path.len() == 3 ==> walk.complete
+                //&&& forall|addr| #[trigger] walk.path.contains_fst(addr)
+                //    ==> self.mem_view_of_core(core).read(addr) & 1 == 1
             }
     }
 
@@ -571,12 +574,9 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
             let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
             if post.happy {
                 if core == pre.writes.core {
-                    assert_by_contradiction!(post.writer_sbuf_entries_are_unique(), {
-                        // XXX: This follows from the uniqueness of addresses in sbuf
-                        assume(forall|i, a, v: usize|
-                                0 <= i < pre.sbuf[core].len() && pre.sbuf[core][i] == (a, v)
-                                    ==> pre.mem_view_of_writer().read(a) == v);
-                    });
+                    assert(post.writer_sbuf_entries_are_unique()) by {
+                        broadcast use lemma_writer_read_from_sbuf;
+                    };
                 } else {
                     // XXX: need an invariant that shows this from the knowledge we have about
                     // pre.writes from is_this_write_happy.
@@ -588,6 +588,21 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
         },
         _ => assert(post.inv_sbuf_facts(c)),
     }
+}
+
+// Verus selects `(addr, value)` as part of the trigger, which is technically invalid:
+// https://github.com/verus-lang/verus/issues/1363
+// (but there are no other valid triggers in this function)
+broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: int, addr: usize, value: usize)
+    requires
+        state.wf(c),
+        state.inv_sbuf_facts(c),
+        0 <= i < state.sbuf[state.writes.core].len(),
+        state.sbuf[state.writes.core][i] == (addr, value),
+    ensures #![auto]
+        state.mem_view_of_writer().read(addr) == value
+{
+    admit();
 }
 
 //proof fn next_step_preserves_inv_walks_disjoint_with_present_bit_0_addrs(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
@@ -743,6 +758,7 @@ proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, po
         Step::Write => {
             let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
             assert(post.writes.core == core);
+            assert(pre.mem_view_of_writer().read(wraddr) & 1 == 0);
             assert forall|va:usize,addr|
                 post.mem_view_of_writer().pt_walk(va).result() is Valid
                 && !post.pending_map_for(va)
@@ -752,12 +768,20 @@ proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, po
                 // XXX: If the thing was already in pending_maps there's no way a non-negative
                 // write could have changed the pt walk for va. And thus we didn't add it to
                 // pending_maps.
-                assume(!pre.pending_map_for(va));
+                assert(!pre.pending_map_for(va)) by {
+                    assume(pre.hist.pending_maps.submap_of(post.hist.pending_maps));
+                    admit();
+                    //assert(forall|va| pre.hist.pending_maps.contains_key(va) ==> post.hist.pending_maps[va] == pre.hist.pending_maps[va]);
+                };
                 // XXX: If the walk had become valid during this transition, it would have been
                 // added to pending_maps.
                 assume(pre.mem_view_of_writer().pt_walk(va).result() is Valid);
                 // XXX: And if the walk was valid, its path can't have changed.
-                assume(post.mem_view_of_writer().pt_walk(va).path == pre.mem_view_of_writer().pt_walk(va).path);
+                assert(post.mem_view_of_writer().pt_walk(va).path == pre.mem_view_of_writer().pt_walk(va).path) by {
+                    let path = post.mem_view_of_writer().pt_walk(va).path;
+                    admit();
+                    //assume(forall|i| 0 <= i < path.len() ==> post.mem_view_of_writer().read(path[i].0) == pre.mem_view_of_writer().read(path[i].0));
+                };
                 assert(pre.mem_view_of_writer().pt_walk(va).path.contains_fst(addr));
                 // XXX: If a valid ptwalk used this address, it must have the P bit set.
                 // (Which means it can't be the address we're writing to)
@@ -839,7 +863,6 @@ proof fn next_step_preserves_inv_valid_is_not_in_sbuf(pre: State, post: State, c
                             assert(pre.mem_view_of_writer().read(addr) == pre.pt_mem.read(addr));
                         };
                     } else {
-                        assert(addr != wraddr);
                         assert(pre.mem_view_of_core(core2).read(addr) & 1 == 1);
                         assert(!post.sbuf[core].contains_fst(addr));
                     }

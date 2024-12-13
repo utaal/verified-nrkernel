@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 //use crate::definitions_t::{ PTE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
-use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE };
+use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit };
 use crate::spec_t::mmu::{ Walk, WalkResult, SeqTupExt };
 
 //use crate::definitions_t::{
@@ -169,9 +169,14 @@ impl PTMem {
         ensures #![trigger mem.pt_walk(va)]
             mem.pt_walk(va).complete,
             0 < mem.pt_walk(va).path.len() <= 4,
-            forall|i| 0 <= i < mem.pt_walk(va).path.len() - 1 ==> #[trigger] mem.pt_walk(va).path[i].1 is Directory,
+            forall|i| 0 <= i < mem.pt_walk(va).path.len() - 1
+                ==> #[trigger] mem.pt_walk(va).path[i].1 is Directory,
+            mem.pt_walk(va).result() is Valid
+                ==> forall|i| 0 <= i < mem.pt_walk(va).path.len()
+                    ==> #[trigger] mem.read(mem.pt_walk(va).path[i].0) & 1 == 1,
             !(mem.pt_walk(va).path.last().1 is Directory),
     {
+        assert(bit!(0u64) == 1) by (bit_vector);
     }
 
     pub open spec fn is_base_pt_walk(self, vaddr: usize) -> bool {
