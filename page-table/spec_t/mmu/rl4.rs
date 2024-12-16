@@ -98,13 +98,13 @@ impl State {
     }
 
     /// The view of the memory from the writer core's perspective.
-    pub open spec fn writer_mem(self) -> PTMem {
+    pub open spec fn mem_view_of_writer(self) -> PTMem {
         self.mem_view_of_core(self.hist.writes.core)
     }
 
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& !self.hist.writes.all.is_empty() ==> core == self.hist.writes.core
-        &&& self.writer_mem().is_nonneg_write(addr, value)
+        &&& self.mem_view_of_writer().is_nonneg_write(addr, value)
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -332,18 +332,19 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, c)
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all == pre.hist.writes.all.insert(addr)
-    &&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
+    &&& post.hist.writes.neg == if !pre.mem_view_of_writer().is_nonneg_write(addr, value) {
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     &&& post.hist.writes.core == core
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
         Map::new(
-            |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
-            |vbase| post.pt_mem@[vbase]
+            |vbase| post.mem_view_of_writer()@.contains_key(vbase)
+                    && !pre.mem_view_of_writer()@.contains_key(vbase),
+            |vbase| post.mem_view_of_writer()@[vbase]
         ))
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
-    //&&& post.hist.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    //&&& post.hist.polarity == if pre.mem_view_of_writer().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {

@@ -1,8 +1,7 @@
 use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-//use crate::definitions_t::{ PTE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, bitmask_inc, aligned };
-use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit };
+use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit, align_to_usize, L1_ENTRY_SIZE };
 use crate::spec_t::mmu::{ Walk, WalkResult, SeqTupExt };
 
 //use crate::definitions_t::{
@@ -60,6 +59,10 @@ impl PTMem {
     pub open spec fn write_seq(self, writes: Seq<(usize, usize)>) -> Self {
         writes.fold_left(self, |acc: PTMem, wr: (_, _)| acc.write(wr.0, wr.1))
     }
+
+    //proof fn test() {
+    //    assert((PTMem { pml4: 0, mem: map![] }).write_seq(seq![(1usize,1), (1,2)]).read(1) == 2) by (compute);
+    //}
 
     // Using present bits doesn't work because mb0 bits can still make it invalid and those are
     // different depending on the entry
@@ -165,16 +168,107 @@ impl PTMem {
         }
     }
 
+    //pub proof fn lemma_pt_walk_valid_(mem: PTMem, va: usize)
+    //    requires
+    //        mem.pt_walk(va).result() is Valid,
+    //    ensures
+    //        mem.pt_walk(mem.pt_walk(va).result()->vbase).path == mem.pt_walk(va).path,
+    //        mem.pt_walk(mem.pt_walk(va).result()->vbase).result() is Valid <==> mem.pt_walk(va).result() is Valid
+    //{
+    //    Self::lemma_pt_walk_vbase_bitmask(mem, va);
+    //    Self::lemma_pt_walk_base(mem, va, mem.pt_walk(va).result()->vbase);
+    //}
+
+    pub proof fn lemma_pt_walk_base(mem: PTMem, va1: usize, va2: usize)
+        requires
+            va1 & (bitmask_inc!(39u64,63u64) as usize) == va2 & (bitmask_inc!(39u64,63u64) as usize),
+            mem.pt_walk(va1).path.len() >= 2
+                ==> va1 & (bitmask_inc!(30u64,63u64) as usize)
+                 == va2 & (bitmask_inc!(30u64,63u64) as usize),
+            mem.pt_walk(va1).path.len() >= 3
+                ==> va1 & (bitmask_inc!(21u64,63u64) as usize)
+                 == va2 & (bitmask_inc!(21u64,63u64) as usize),
+            mem.pt_walk(va1).path.len() >= 4
+                ==> va1 & (bitmask_inc!(12u64,63u64) as usize)
+                 == va2 & (bitmask_inc!(12u64,63u64) as usize),
+        ensures
+            mem.pt_walk(va1).path == mem.pt_walk(va2).path,
+            mem.pt_walk(va1).result() is Valid <==> mem.pt_walk(va2).result() is Valid
+    {
+        assert(l0_bits!(va1 as u64) == l0_bits!(va2 as u64)) by (bit_vector)
+            requires va1 & (bitmask_inc!(39u64,63u64) as usize) == va2 & (bitmask_inc!(39u64,63u64) as usize);
+        if mem.pt_walk(va1).path.len() >= 2 {
+            assert(l1_bits!(va1 as u64) == l1_bits!(va2 as u64)) by (bit_vector)
+                requires va1 & (bitmask_inc!(30u64,63u64) as usize) == va2 & (bitmask_inc!(30u64,63u64) as usize);
+        }
+        if mem.pt_walk(va1).path.len() >= 3 {
+            assert(l2_bits!(va1 as u64) == l2_bits!(va2 as u64)) by (bit_vector)
+                requires va1 & (bitmask_inc!(21u64,63u64) as usize) == va2 & (bitmask_inc!(21u64,63u64) as usize);
+        }
+        if mem.pt_walk(va1).path.len() >= 4 {
+            assert(l3_bits!(va1 as u64) == l3_bits!(va2 as u64)) by (bit_vector)
+                requires va1 & (bitmask_inc!(12u64,63u64) as usize) == va2 & (bitmask_inc!(12u64,63u64) as usize);
+        }
+    }
+
+    pub proof fn lemma_pt_walk_vbase_bitmask(mem: PTMem, va: usize)
+        requires mem.pt_walk(va).result() is Valid,
+        ensures ({
+            let vbase = mem.pt_walk(va).result()->vbase;
+            &&& vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)
+            &&& mem.pt_walk(va).path.len() >= 2
+                    ==> vbase & (bitmask_inc!(30u64,63u64) as usize)
+                        == va & (bitmask_inc!(30u64,63u64) as usize)
+            &&& mem.pt_walk(va).path.len() >= 3
+                    ==> vbase & (bitmask_inc!(21u64,63u64) as usize)
+                        == va & (bitmask_inc!(21u64,63u64) as usize)
+            &&& mem.pt_walk(va).path.len() >= 4
+                    ==> vbase & (bitmask_inc!(12u64,63u64) as usize)
+                        == va & (bitmask_inc!(12u64,63u64) as usize)
+        })
+    {
+        assert(bit!(0u64) == 1) by (bit_vector);
+        let vbase = mem.pt_walk(va).result()->vbase;
+        if mem.pt_walk(va).path.len() == 2 {
+            assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % mul(512, mul(512, 4096)));
+            assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % mul(512, mul(512, 4096)));
+        } else if mem.pt_walk(va).path.len() == 3 {
+            assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % mul(512, 4096));
+            assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % mul(512, 4096));
+            assert(vbase & (bitmask_inc!(21u64,63u64) as usize) == va & (bitmask_inc!(21u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % mul(512, 4096));
+        } else if mem.pt_walk(va).path.len() == 4 {
+            assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % 4096);
+            assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % 4096);
+            assert(vbase & (bitmask_inc!(21u64,63u64) as usize) == va & (bitmask_inc!(21u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % 4096);
+            assert(vbase & (bitmask_inc!(12u64,63u64) as usize) == va & (bitmask_inc!(12u64,63u64) as usize)) by (bit_vector)
+                requires vbase == sub(va, va % 4096);
+        }
+    }
+
     pub broadcast proof fn lemma_pt_walk(mem: PTMem, va: usize)
         ensures #![trigger mem.pt_walk(va)]
             mem.pt_walk(va).complete,
             0 < mem.pt_walk(va).path.len() <= 4,
             forall|i| 0 <= i < mem.pt_walk(va).path.len() - 1
                 ==> #[trigger] mem.pt_walk(va).path[i].1 is Directory,
-            mem.pt_walk(va).result() is Valid
-                ==> forall|i| 0 <= i < mem.pt_walk(va).path.len()
-                    ==> #[trigger] mem.read(mem.pt_walk(va).path[i].0) & 1 == 1,
             !(mem.pt_walk(va).path.last().1 is Directory),
+            forall|i| 0 <= i < mem.pt_walk(va).path.len()
+                ==> (#[trigger] mem.pt_walk(va).path[i].1)
+                        == (PDE {
+                            entry: mem.read(mem.pt_walk(va).path[i].0) as u64,
+                            layer: Ghost(i as nat),
+                        }@),
+            mem.pt_walk(va).result() is Valid
+                ==> forall|vap| mem.pt_walk(va).path.contains_fst(vap)
+                    ==> #[trigger] mem.read(vap) & 1 == 1,
     {
         assert(bit!(0u64) == 1) by (bit_vector);
     }
@@ -198,6 +292,28 @@ impl PTMem {
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)
     {
         admit();
+    }
+
+    pub proof fn lemma_write_seq_push(self, writes: Seq<(usize, usize)>, addr: usize, value: usize)
+        ensures
+            self.write_seq(writes.push((addr, value)))
+                == (PTMem {
+                    pml4: self.pml4,
+                    mem: self.write_seq(writes).mem.insert(addr, value),
+                }),
+        decreases writes.len()
+    {
+        reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
+        if writes.len() == 0 {
+        } else {
+            self.lemma_write_seq_push(writes.drop_last(), addr, value);
+            assert(self.write_seq(writes.drop_last().push((addr, value)))
+                    == (PTMem {
+                        pml4: self.pml4,
+                        mem: self.write_seq(writes.drop_last()).mem.insert(addr, value),
+                    }));
+            admit();
+        }
     }
 
     pub broadcast proof fn lemma_write_seq(self, writes: Seq<(usize, usize)>)
