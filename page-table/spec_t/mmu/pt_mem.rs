@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit, align_to_usize, L1_ENTRY_SIZE };
+use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit };
 use crate::spec_t::mmu::{ Walk, WalkResult, SeqTupExt };
 
 //use crate::definitions_t::{
