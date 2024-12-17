@@ -7,6 +7,18 @@ use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
+//// FIXME: make sure this thing is okay. Then either get it changed in vstd or use Map<A,Option<B>>
+//// to make it true.
+//broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
+//    requires
+//        m.dom().contains(key1),
+//        key1 != key2,
+//    ensures
+//        #[trigger] m.insert(key2, value)[key1] == m[key1],
+//{
+//    admit();
+//}
+
 // This file contains refinement layer 3 of the MMU. Compared to layer 4, it expresses translation
 // caching and non-atomic walks as a single concept, and it doesn't explicitly consider the values
 // of dirty/accessed bits.

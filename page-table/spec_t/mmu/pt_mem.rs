@@ -303,17 +303,8 @@ impl PTMem {
                 }),
         decreases writes.len()
     {
-        reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
-        if writes.len() == 0 {
-        } else {
-            self.lemma_write_seq_push(writes.drop_last(), addr, value);
-            assert(self.write_seq(writes.drop_last().push((addr, value)))
-                    == (PTMem {
-                        pml4: self.pml4,
-                        mem: self.write_seq(writes.drop_last()).mem.insert(addr, value),
-                    }));
-            admit();
-        }
+        broadcast use PTMem::lemma_write_seq;
+        lemma_fold_left_push(writes, (addr, value), self, |acc: PTMem, wr: (_, _)| acc.write(wr.0, wr.1));
     }
 
     pub broadcast proof fn lemma_write_seq(self, writes: Seq<(usize, usize)>)
@@ -328,6 +319,13 @@ impl PTMem {
         }
     }
 }
+
+proof fn lemma_fold_left_push<A,B>(s: Seq<A>, a: A, b: B, f: spec_fn(B, A) -> B)
+    ensures s.push(a).fold_left(b, f) == f(s.fold_left(b, f), a)
+{
+    assert(s.push(a).drop_last() == s);
+}
+
 
 ///// Only complete page table walks
 //pub open spec fn pt_walk_pred(pt_mem: PTMem, walk: Walk) -> bool {
