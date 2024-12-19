@@ -258,7 +258,8 @@ impl PTMem {
             mem.pt_walk(va).complete,
             0 < mem.pt_walk(va).path.len() <= 4,
             forall|i| 0 <= i < mem.pt_walk(va).path.len() - 1
-                ==> #[trigger] mem.pt_walk(va).path[i].1 is Directory,
+                ==> #[trigger] mem.pt_walk(va).path[i].1 is Directory
+                            && mem.read(mem.pt_walk(va).path[i].0) & 1 == 1,
             !(mem.pt_walk(va).path.last().1 is Directory),
             forall|i| 0 <= i < mem.pt_walk(va).path.len()
                 ==> (#[trigger] mem.pt_walk(va).path[i].1)
@@ -266,9 +267,9 @@ impl PTMem {
                             entry: mem.read(mem.pt_walk(va).path[i].0) as u64,
                             layer: Ghost(i as nat),
                         }@),
-            mem.pt_walk(va).result() is Valid
-                ==> forall|vap| mem.pt_walk(va).path.contains_fst(vap)
-                    ==> #[trigger] mem.read(vap) & 1 == 1,
+            mem.pt_walk(va).result() is Valid ==> mem.read(mem.pt_walk(va).path.last().0) & 1 == 1,
+            //    ==> forall|vap| mem.pt_walk(va).path.contains_fst(vap)
+            //        ==> #[trigger] mem.read(vap) & 1 == 1,
     {
         assert(bit!(0u64) == 1) by (bit_vector);
     }

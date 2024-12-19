@@ -134,19 +134,17 @@ impl State {
     }
 
     pub open spec fn writer_sbuf_entries_are_unique(self) -> bool {
-        forall|i1, i2, a1: usize, a2: usize, v1: usize, v2: usize|
+        forall|i1, i2| #![auto]
                0 <= i1 < self.writer_sbuf().len()
             && 0 <= i2 < self.writer_sbuf().len()
             && i1 != i2
-            && self.writer_sbuf()[i1] == (a1, v1)
-            && self.writer_sbuf()[i2] == (a2, v2)
-                ==> a2 != a1
+            //&& self.writer_sbuf()[i1] == (a1, v1)
+            //&& self.writer_sbuf()[i2] == (a2, v2)
+                ==> self.writer_sbuf()[i2].0 != self.writer_sbuf()[i1].0
     }
 
     pub open spec fn writer_sbuf_entries_have_P_bit(self) -> bool {
-        forall|i, a: usize, v: usize|
-            0 <= i < self.writer_sbuf().len() && self.writer_sbuf()[i] == (a, v)
-                ==> v & 1 == 1
+        forall|i| #![auto] 0 <= i < self.writer_sbuf().len() ==> self.writer_sbuf()[i].1 & 1 == 1
     }
 
     pub open spec fn writer_sbuf_subset_all_writes(self) -> bool {
@@ -611,17 +609,13 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
     }
 }
 
-// Verus selects `(addr, value)` as part of the trigger, which is technically invalid:
-// https://github.com/verus-lang/verus/issues/1363
-// (but there are no other valid triggers in this function)
-broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: int, addr: usize, value: usize)
+broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: int)
     requires
         state.wf(c),
         state.inv_sbuf_facts(c),
         0 <= i < state.writer_sbuf().len(),
-        state.writer_sbuf()[i] == (addr, value),
     ensures #![auto]
-        state.mem_view_of_writer().read(addr) == value
+        state.mem_view_of_writer().read(state.writer_sbuf()[i].0) == state.writer_sbuf()[i].1
 {
     admit();
 }
@@ -759,6 +753,31 @@ broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: in
 //    }
 //}
 
+proof fn lemma_step_write_mem_view(pre: State, post: State, c: Constants, lbl: Lbl)
+    requires
+        pre.happy,
+        post.happy,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        step_Write(pre, post, c, lbl),
+    ensures
+        post.mem_view_of_writer()
+            == (PTMem {
+                    pml4: pre.pt_mem.pml4,
+                    mem: pre.mem_view_of_writer().mem.insert(lbl->Write_1, lbl->Write_2),
+            })
+{
+    let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+    reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
+    if post.writes.core == pre.writes.core {
+        pre.pt_mem.lemma_write_seq_push(pre.writer_sbuf(), wraddr, value);
+    } else {
+        assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
+            assert(pre.writes.all.contains(pre.writer_sbuf()[0].0));
+        });
+    }
+}
+
 proof fn lemma_step_write_valid_path_unchanged(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
     requires
         pre.happy,
@@ -773,112 +792,15 @@ proof fn lemma_step_write_valid_path_unchanged(pre: State, post: State, c: Const
 {
     let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
     assert(bit!(0u64) == 1) by (bit_vector);
-    if pre.writes.core != core {
-        assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
-            assert(pre.writes.all.contains(pre.writer_sbuf()[0].0));
-        });
-    }
-    //assert(forall|a1, a2| aligned(a1, 8) && aligned(a2, 8) ==> #[trigger] aligned(a1 + a2, 8));
-    let pre_mem = pre.mem_view_of_writer();
-    let post_mem = post.mem_view_of_writer();
-    let pre_walk = pre_mem.pt_walk(va);
-    let post_walk = post_mem.pt_walk(va);
+    //if pre.writes.core != core {
+    //    assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
+    //        assert(pre.writes.all.contains(pre.writer_sbuf()[0].0));
+    //    });
+    //}
     pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
     post.pt_mem.lemma_write_seq(post.writer_sbuf());
-    // XXX: The problem here is that the map insert axiom requires that the pre map contains the key.
-    // TODO: This is extremely frustrating. Can't we have axiom_map_insert_different that works
-    // without the extra precondition? I could use maps that map everything to none and define a
-    // new non-none domain. The alternative is probably to copy paste the whole pt_walk definition
-    // in each one of these lemmas.
-    //assert forall|a| aligned(a as nat, 8) implies #[trigger] post_mem.read(a) == if a == wraddr { value } else { pre_mem.read(a) } by { };
     broadcast use axiom_map_insert_different_strong;
-    assert forall|a| #[trigger] post_mem.read(a) == if a == wraddr { value } else { pre_mem.read(a) } by {
-        reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
-        if post.writes.core == pre.writes.core {
-            pre.pt_mem.lemma_write_seq_push(pre.writer_sbuf(), wraddr, value);
-        }
-        //} else {
-        //    assert(pre.writer_sbuf() === seq![]);
-        //    assert(post.writer_sbuf() === seq![(wraddr, value)]);
-        //    assert(pre_mem == pre.pt_mem);
-        //    assert(post_mem.pml4 == post.pt_mem.pml4);
-        //    assert(post_mem.mem == post.pt_mem.mem.insert(wraddr, value));
-        //    assert(post_mem.mem == pre.pt_mem.mem.insert(wraddr, value));
-        //    if a == wraddr {
-        //    } else {
-        //    }
-        //}
-    };
-    if post.writes.core == pre.writes.core {
-        //assert(l0_bits!(va as u64) < 512) by (bit_vector);
-        //assert(l1_bits!(va as u64) < 512) by (bit_vector);
-        //assert(l2_bits!(va as u64) < 512) by (bit_vector);
-        //assert(l3_bits!(va as u64) < 512) by (bit_vector);
-        //let l0_idx = (l0_bits!(va as u64) * WORD_SIZE) as usize;
-        //let l1_idx = (l1_bits!(va as u64) * WORD_SIZE) as usize;
-        //let l2_idx = (l2_bits!(va as u64) * WORD_SIZE) as usize;
-        //let l3_idx = (l3_bits!(va as u64) * WORD_SIZE) as usize;
-        //assert(post_mem.pml4 == pre_mem.pml4);
-        //assert(pre_mem.pml4 + l0_idx < u64::MAX);
-        ////assert(forall|a: usize| #[trigger] (a * 8 % 8) == 0);
-        //let l0_addr = add(pre_mem.pml4, l0_idx);
-        //let l0e = PDE { entry: pre_mem.read(l0_addr) as u64, layer: Ghost(0) };
-        //match l0e@ {
-        //    GPDE::Directory { addr: l1_daddr, .. } => {
-        //        //lemma_valid_implies_equal_reads(state, c, core, l0_addr);
-        //        assert(l0e == PDE { entry: pre_mem.read(l0_addr) as u64, layer: Ghost(0) });
-        //        assume(aligned(l1_daddr as nat, 4096));
-        //        assert(l1_daddr + l1_idx < u64::MAX);
-        //        assert(aligned(l1_daddr as nat, 8)) by (nonlinear_arith)
-        //            requires aligned(l1_daddr as nat, 4096);
-        //        let l1_addr = add(l1_daddr, l1_idx);
-        //        let l1e = PDE { entry: pre_mem.read(l1_addr) as u64, layer: Ghost(1) };
-        //        assert(aligned(l1_addr as nat, 8));
-        //        assert(pre_mem.mem.contains_key(l1_addr));
-        //        match l1e@ {
-        //            GPDE::Directory { addr: l2_daddr, .. } => {
-        //                //lemma_valid_implies_equal_reads(state, c, core, l1_addr);
-        //                assert(l1e == PDE { entry: pre_mem.read(l1_addr) as u64, layer: Ghost(1) });
-        //                assume(aligned(l2_daddr as nat, 4096));
-        //                assert(l2_daddr + l2_idx < u64::MAX);
-        //                assert(aligned(l2_daddr as nat, 8)) by (nonlinear_arith)
-        //                    requires aligned(l2_daddr as nat, 4096);
-        //                let l2_addr = add(l2_daddr, l2_idx);
-        //                let l2e = PDE { entry: pre_mem.read(l2_addr) as u64, layer: Ghost(2) };
-        //                assert(aligned(l2_addr as nat, 8));
-        //                assert(pre_mem.mem.contains_key(l2_addr));
-        //                match l2e@ {
-        //                    GPDE::Directory { addr: l3_daddr, .. } => {
-        //                        //lemma_valid_implies_equal_reads(state, c, core, l2_addr);
-        //                        assert(l2e == PDE { entry: pre_mem.read(l2_addr) as u64, layer: Ghost(2) });
-        //                        assume(aligned(l3_daddr as nat, 4096));
-        //                        assert(l3_daddr + l3_idx < u64::MAX);
-        //                        assert(aligned(l3_daddr as nat, 8)) by (nonlinear_arith)
-        //                            requires aligned(l3_daddr as nat, 4096);
-        //                        let l3_addr = add(l3_daddr, l3_idx);
-        //                        let l3e = PDE { entry: pre_mem.read(l3_addr) as u64, layer: Ghost(3) };
-        //                        assert(aligned(l3_addr as nat, 8));
-        //                        assert(pre_mem.mem.contains_key(l3_addr));
-        //                    },
-        //                    GPDE::Page { .. } => {},
-        //                    GPDE::Empty => {},
-        //                }
-        //            },
-        //            GPDE::Page { .. } => {},
-        //            GPDE::Empty => {},
-        //        }
-        //    },
-        //    _ => {},
-        //}
-        //assert(core_walk == writer_walk);
-    } else {
-        assert(forall|core| c.valid_core(core) ==> #[trigger] pre.sbuf[core] === seq![]);
-        assert(pre_mem == pre.pt_mem);
-        reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
-        assert(post_mem == PTMem { pml4: pre.pt_mem.pml4, mem: pre.pt_mem.mem.insert(wraddr, value) });
-        //assert(pre.pt_mem.mem.insert(wraddr, value).pt_walk(va) == pre.pt_mem.pt_walk(va));
-        assert(post_mem.pt_walk(va) == pre.pt_mem.pt_walk(va));
-    }
+    lemma_step_write_mem_view(pre, post, c, lbl);
 }
 
 //proof fn lemma_step_write_new_walk(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
@@ -910,101 +832,7 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
     ensures
         post.pending_map_for(va)
 {
-    // XXX: case distinction on writer_core =?= pre.writes.core
-
-    //pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
-    //assert(bit!(0u64) == 1) by (bit_vector);
-    //assert(forall|a1, a2| aligned(a1, 8) && aligned(a2, 8) ==> #[trigger] aligned(a1 + a2, 8));
-    //let pre_mem = pre.mem_view_of_writer();
-    //let post_mem = post.mem_view_of_writer();
-    //let pre_walk = pre_mem.pt_walk(va);
-    //let post_walk = post_mem.pt_walk(va);
-    //assert(l0_bits!(va as u64) < 512) by (bit_vector);
-    //assert(l1_bits!(va as u64) < 512) by (bit_vector);
-    //assert(l2_bits!(va as u64) < 512) by (bit_vector);
-    //assert(l3_bits!(va as u64) < 512) by (bit_vector);
-    //let l0_idx = (l0_bits!(va as u64) * WORD_SIZE) as usize;
-    //let l1_idx = (l1_bits!(va as u64) * WORD_SIZE) as usize;
-    //let l2_idx = (l2_bits!(va as u64) * WORD_SIZE) as usize;
-    //let l3_idx = (l3_bits!(va as u64) * WORD_SIZE) as usize;
-    //assert(post.pt_mem.pml4 == pre.pt_mem.pml4);
-    //assert(pre_mem.pml4 + l0_idx < u64::MAX);
-    //assert(forall|a: usize| #[trigger] (a * 8 % 8) == 0);
-    //let l0_addr = add(pre_mem.pml4, l0_idx);
-    //let l0e = PDE { entry: pre_mem.read(l0_addr) as u64, layer: Ghost(0) };
-    //assert(aligned(l0_addr as nat, 8));
-    //assert(pre_mem.mem.contains_key(l0_addr));
-    //match l0e@ {
-    //    GPDE::Directory { addr: l1_daddr, .. } => {
-    //        //lemma_valid_implies_equal_reads(state, c, core, l0_addr);
-    //        assert(l0e == PDE { entry: pre_mem.read(l0_addr) as u64, layer: Ghost(0) });
-    //        assume(aligned(l1_daddr as nat, 4096));
-    //        assert(l1_daddr + l1_idx < u64::MAX);
-    //        assert(aligned(l1_daddr as nat, 8)) by (nonlinear_arith)
-    //            requires aligned(l1_daddr as nat, 4096);
-    //        let l1_addr = add(l1_daddr, l1_idx);
-    //        let l1e = PDE { entry: pre_mem.read(l1_addr) as u64, layer: Ghost(1) };
-    //        assert(aligned(l1_addr as nat, 8));
-    //        assert(pre_mem.mem.contains_key(l1_addr));
-    //admit();
-    //        match l1e@ {
-    //            GPDE::Directory { addr: l2_daddr, .. } => {
-    //                //lemma_valid_implies_equal_reads(state, c, core, l1_addr);
-    //                assert(l1e == PDE { entry: pre_mem.read(l1_addr) as u64, layer: Ghost(1) });
-    //                assume(aligned(l2_daddr as nat, 4096));
-    //                assert(l2_daddr + l2_idx < u64::MAX);
-    //                assert(aligned(l2_daddr as nat, 8)) by (nonlinear_arith)
-    //                    requires aligned(l2_daddr as nat, 4096);
-    //                let l2_addr = add(l2_daddr, l2_idx);
-    //                let l2e = PDE { entry: pre_mem.read(l2_addr) as u64, layer: Ghost(2) };
-    //                assert(aligned(l2_addr as nat, 8));
-    //                assert(pre_mem.mem.contains_key(l2_addr));
-    //                match l2e@ {
-    //                    GPDE::Directory { addr: l3_daddr, .. } => {
-    //                        //lemma_valid_implies_equal_reads(state, c, core, l2_addr);
-    //                        assert(l2e == PDE { entry: pre_mem.read(l2_addr) as u64, layer: Ghost(2) });
-    //                        assume(aligned(l3_daddr as nat, 4096));
-    //                        assert(l3_daddr + l3_idx < u64::MAX);
-    //                        assert(aligned(l3_daddr as nat, 8)) by (nonlinear_arith)
-    //                            requires aligned(l3_daddr as nat, 4096);
-    //                        let l3_addr = add(l3_daddr, l3_idx);
-    //                        let l3e = PDE { entry: pre_mem.read(l3_addr) as u64, layer: Ghost(3) };
-    //                        assert(aligned(l3_addr as nat, 8));
-    //                        assert(pre_mem.mem.contains_key(l3_addr));
-    //                        match l3e@ {
-    //                            GPDE::Directory { .. } => {
-    //                                assert(false);
-    //                            },
-    //                            GPDE::Page { .. } => {
-    //                                //lemma_valid_implies_equal_reads(state, c, core, l3_addr);
-    //                                assert(l3e == PDE { entry: pre_mem.read(l3_addr) as u64, layer: Ghost(3) });
-    //                            },
-    //                            GPDE::Empty => {},
-    //
-    //                        }
-    //                    },
-    //                    GPDE::Page { .. } => {
-    //                        //lemma_valid_implies_equal_reads(state, c, core, l2_addr);
-    //                        assert(l2e == PDE { entry: pre_mem.read(l2_addr) as u64, layer: Ghost(2) });
-    //                    },
-    //                    GPDE::Empty => {},
-    //                }
-    //            },
-    //            GPDE::Page { .. } => {
-    //                //lemma_valid_implies_equal_reads(state, c, core, l1_addr);
-    //                assert(l1e == PDE { entry: pre_mem.read(l1_addr) as u64, layer: Ghost(1) });
-    //            },
-    //            GPDE::Empty => {},
-    //        }
-    //    },
-    //    _ => {
-    //        //assert(core_walk.result() is Invalid);
-    //    },
-    //}
-    ////assert(core_walk == writer_walk);
-
-    // A single write to an address with P=0 happened.
-    // In post we have a valid walk. The first 
+    broadcast use axiom_map_insert_different_strong;
     let pre_mem = pre.mem_view_of_writer();
     let post_mem = post.mem_view_of_writer();
     let pre_walk = pre_mem.pt_walk(va);
@@ -1023,7 +851,7 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
     lemma_pt_walk_result_vbase_equal(post_mem, va);
     assert(post_base_walk.result() is Valid);
     // TODO: unstable (maybe prove in lemma_pt_walk_result_vbase_equal)
-    assume(post_base_walk.result()->vbase == vbase);
+    assert(post_base_walk.result()->vbase == vbase);
     assert(post_mem.is_base_pt_walk(vbase));
     assert(post.mem_view_of_writer()@.contains_key(vbase));
 
@@ -1036,8 +864,12 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
         //lemma_pt_walk_result_vbase_equal(pre_mem, va);
         pt_mem::PTMem::lemma_pt_walk_vbase_bitmask(post_mem, vbase);
         //pt_mem:PTMem::lemma_pt_walk_base();
-        assume(pre_mem.pt_walk(vbase).path == pre_mem.pt_walk(va).path);
-        assume(pre_mem.pt_walk(vbase).result() is Valid <==> pre_mem.pt_walk(va).result() is Valid);
+        // XXX: vbase is less specific
+        assert(pre_base_walk.path == pre_walk.path) by {
+            assume(forall|i| #![auto] 0 <= i < pre_base_walk.path.len() ==> post_base_walk.path[i].0 == pre_base_walk.path[i].0);
+            assume(forall|i| #![auto] 0 <= i < pre_walk.path.len() ==> post_walk.path[i].0 == pre_walk.path[i].0);
+        };
+        assert(pre_base_walk.result() is Valid ==> pre_walk.result() is Valid);
         lemma_pt_walk_result_vbase_equal(pre_mem, vbase);
         assert(pre_base_walk.result() is Invalid);
     };
@@ -1074,6 +906,138 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
 
 }
 
+//proof fn lemma_step_write_invalid_path_maybe_extend(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
+//    requires
+//        pre.happy,
+//        post.happy,
+//        pre.wf(c),
+//        pre.inv_sbuf_facts(c),
+//        //pre.inv_walks_basic(c),
+//        step_Write(pre, post, c, lbl),
+//        pre.mem_view_of_writer().pt_walk(va).result() is Invalid,
+//        post.mem_view_of_writer().pt_walk(va).result() is Valid,
+//    ensures
+//        forall|i| 0 <= i < pre.mem_view_of_writer().pt_walk(va).path.len() - 1
+//            ==> post.mem_view_of_writer().pt_walk(va).path[i] == pre.mem_view_of_writer().pt_walk(va).path[i],
+//        //post.mem_view_of_writer().pt_walk(post.mem_view_of_writer().pt_walk(va).result()->vbase) == post.mem_view_of_writer().pt_walk(va),
+//        pre.mem_view_of_writer().pt_walk(pre.mem_view_of_writer().pt_walk(va).result()->vbase).path == pre.mem_view_of_writer().pt_walk(va).path,
+//{
+//    broadcast use axiom_map_insert_different_strong;
+//    let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+//    assert(bit!(0u64) == 1) by (bit_vector);
+//    if pre.writes.core != core {
+//        assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
+//            assert(pre.writes.all.contains(pre.writer_sbuf()[0].0));
+//        });
+//    }
+//    assert(forall|a1, a2| aligned(a1, 8) && aligned(a2, 8) ==> #[trigger] aligned(a1 + a2, 8));
+//    let pre_mem = pre.mem_view_of_writer();
+//    let post_mem = post.mem_view_of_writer();
+//    let pre_walk = pre_mem.pt_walk(va);
+//    let post_walk = post_mem.pt_walk(va);
+//    pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+//    post.pt_mem.lemma_write_seq(post.writer_sbuf());
+//    lemma_step_write_mem_view(pre, post, c, lbl);
+//
+//    assert forall|a| #[trigger] post_mem.read(a) == if a == wraddr { value } else { pre_mem.read(a) } by {
+//    };
+//    axiom_max_phyaddr_width_facts();
+//    let w = MAX_PHYADDR_WIDTH;
+//    assert(forall|v: u64| (v & bitmask_inc!(12u64, w - 1)) % 4096 == 0) by (bit_vector)
+//        requires 32 <= w <= 52;
+//    //assume(forall|i| 0 <= i < core_walk.path.len() ==> #[trigger] aligned(core_walk.path[i].0 as nat, 8));
+//
+//    assert(l0_bits!(va as u64) < 512) by (bit_vector);
+//    assert(l1_bits!(va as u64) < 512) by (bit_vector);
+//    assert(l2_bits!(va as u64) < 512) by (bit_vector);
+//    assert(l3_bits!(va as u64) < 512) by (bit_vector);
+//    let l0_idx = (l0_bits!(va as u64) * WORD_SIZE) as usize;
+//    let l1_idx = (l1_bits!(va as u64) * WORD_SIZE) as usize;
+//    let l2_idx = (l2_bits!(va as u64) * WORD_SIZE) as usize;
+//    let l3_idx = (l3_bits!(va as u64) * WORD_SIZE) as usize;
+//    assert(pre_mem.pml4 + l0_idx < u64::MAX);
+//    assert(forall|a: usize| #[trigger] (a * 8 % 8) == 0);
+//    let l0_addr = add(pre_mem.pml4, l0_idx);
+//    let l0e = PDE { entry: pre_mem.read(l0_addr) as u64, layer: Ghost(0) };
+//    assert(aligned(l0_addr as nat, 8));
+//    assert(pre_mem.mem.contains_key(l0_addr));
+//    assert(pre_mem.read(l0_addr) & 1 == 1) by {
+//        pt_mem::PTMem::lemma_pt_walk(pre.mem_view_of_writer(), va);
+//    };
+//    assert(post_mem.read(l0_addr) == pre_mem.read(l0_addr));
+//    match l0e@ {
+//        GPDE::Directory { addr: l1_daddr, .. } => {
+//            admit();
+//            //lemma_valid_implies_equal_reads(state, c, core, l0_addr);
+//            //assert(l0e == PDE { entry: writer_mem.read(l0_addr) as u64, layer: Ghost(0) });
+//            //assert(aligned(l1_daddr as nat, 4096));
+//            //assert(l1_daddr + l1_idx < u64::MAX);
+//            //assert(aligned(l1_daddr as nat, 8)) by (nonlinear_arith)
+//            //    requires aligned(l1_daddr as nat, 4096);
+//            //let l1_addr = add(l1_daddr, l1_idx);
+//            //let l1e = PDE { entry: core_mem.read(l1_addr) as u64, layer: Ghost(1) };
+//            //assert(aligned(l1_addr as nat, 8));
+//            //assert(core_mem.mem.contains_key(l1_addr));
+//            //match l1e@ {
+//            //    GPDE::Directory { addr: l2_daddr, .. } => {
+//            //        lemma_valid_implies_equal_reads(state, c, core, l1_addr);
+//            //        assert(l1e == PDE { entry: writer_mem.read(l1_addr) as u64, layer: Ghost(1) });
+//            //        assert(aligned(l2_daddr as nat, 4096));
+//            //        assert(l2_daddr + l2_idx < u64::MAX);
+//            //        assert(aligned(l2_daddr as nat, 8)) by (nonlinear_arith)
+//            //            requires aligned(l2_daddr as nat, 4096);
+//            //        let l2_addr = add(l2_daddr, l2_idx);
+//            //        let l2e = PDE { entry: core_mem.read(l2_addr) as u64, layer: Ghost(2) };
+//            //        assert(aligned(l2_addr as nat, 8));
+//            //        assert(core_mem.mem.contains_key(l2_addr));
+//            //        match l2e@ {
+//            //            GPDE::Directory { addr: l3_daddr, .. } => {
+//            //                lemma_valid_implies_equal_reads(state, c, core, l2_addr);
+//            //                assert(l2e == PDE { entry: writer_mem.read(l2_addr) as u64, layer: Ghost(2) });
+//            //                assert(aligned(l3_daddr as nat, 4096));
+//            //                assert(l3_daddr + l3_idx < u64::MAX);
+//            //                assert(aligned(l3_daddr as nat, 8)) by (nonlinear_arith)
+//            //                    requires aligned(l3_daddr as nat, 4096);
+//            //                let l3_addr = add(l3_daddr, l3_idx);
+//            //                let l3e = PDE { entry: core_mem.read(l3_addr) as u64, layer: Ghost(3) };
+//            //                assert(aligned(l3_addr as nat, 8));
+//            //                assert(core_mem.mem.contains_key(l3_addr));
+//            //                match l3e@ {
+//            //                    GPDE::Directory { .. } => {
+//            //                        assert(false);
+//            //                    },
+//            //                    GPDE::Page { .. } => {
+//            //                        lemma_valid_implies_equal_reads(state, c, core, l3_addr);
+//            //                        assert(l3e == PDE { entry: writer_mem.read(l3_addr) as u64, layer: Ghost(3) });
+//            //                    },
+//            //                    GPDE::Empty => {},
+//            //
+//            //                }
+//            //            },
+//            //            GPDE::Page { .. } => {
+//            //                lemma_valid_implies_equal_reads(state, c, core, l2_addr);
+//            //                assert(l2e == PDE { entry: writer_mem.read(l2_addr) as u64, layer: Ghost(2) });
+//            //            },
+//            //            GPDE::Empty => {},
+//            //        }
+//            //    },
+//            //    GPDE::Page { .. } => {
+//            //        lemma_valid_implies_equal_reads(state, c, core, l1_addr);
+//            //        assert(l1e == PDE { entry: writer_mem.read(l1_addr) as u64, layer: Ghost(1) });
+//            //    },
+//            //    GPDE::Empty => {},
+//            //}
+//        },
+//        GPDE::Page { .. } => {
+//            admit();
+//        },
+//        GPDE::Empty => {
+//        assert(!(post.mem_view_of_writer().pt_walk(va).result() is Valid));
+//        },
+//    }
+//    //assert(core_walk == writer_walk);
+//}
+
 proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.happy,
@@ -1106,7 +1070,7 @@ proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, po
                 let pre_walk  = pre.mem_view_of_writer().pt_walk(va);
                 let post_walk = post.mem_view_of_writer().pt_walk(va);
                 assert(pre.hist.pending_maps.dom().subset_of(post.hist.pending_maps.dom()));
-                // XXX: needs invariant
+                // XXX: needs invariant, which should be very easy to prove with lemma_step_write_valid_path_unchanged
                 assume(forall|va| #![auto] pre.hist.pending_maps.contains_key(va) ==> pre.mem_view_of_writer()@.contains_key(va));
                 assert(pre.hist.pending_maps.submap_of(post.hist.pending_maps));
                 assert_by_contradiction!(!pre.pending_map_for(va), {
@@ -1306,6 +1270,7 @@ proof fn lemma_valid_implies_equal_reads(state: State, c: Constants, core: Core,
     assert(state.mem_view_of_writer().read(addr) == state.pt_mem.read(addr));
 }
 
+// unstable (and i changed some triggers, so now it might stably fail)
 proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core, va: usize)
     requires
         state.wf(c),
