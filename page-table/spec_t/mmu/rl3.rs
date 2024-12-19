@@ -7,17 +7,16 @@ use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
-//// FIXME: make sure this thing is okay. Then either get it changed in vstd or use Map<A,Option<B>>
-//// to make it true.
-//broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
-//    requires
-//        m.dom().contains(key1),
-//        key1 != key2,
-//    ensures
-//        #[trigger] m.insert(key2, value)[key1] == m[key1],
-//{
-//    admit();
-//}
+// This axiom should be fine: https://gist.github.com/matthias-brun/4fe59e719971078ea9f2f886cb791851
+// TODO: PR to change it in vstd
+broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
+    requires
+        key1 != key2,
+    ensures
+        #[trigger] m.insert(key2, value)[key1] == m[key1],
+{
+    admit();
+}
 
 // This file contains refinement layer 3 of the MMU. Compared to layer 4, it expresses translation
 // caching and non-atomic walks as a single concept, and it doesn't explicitly consider the values
@@ -118,7 +117,7 @@ impl State {
         &&& forall|core| #[trigger] self.walks.contains_key(core) ==> self.walks[core].finite()
         &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
         // TODO: maybe change this?
-        &&& forall|va|   #[trigger] aligned(va as nat, 8) ==> self.pt_mem.mem.contains_key(va)
+        &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.pt_mem.mem.contains_key(va)
         &&& aligned(self.pt_mem.pml4 as nat, 4096)
         //&&& self.pt_mem.pml4 <= u64::MAX - 4096
     }
@@ -792,23 +791,23 @@ proof fn lemma_step_write_valid_path_unchanged(pre: State, post: State, c: Const
     // new non-none domain. The alternative is probably to copy paste the whole pt_walk definition
     // in each one of these lemmas.
     //assert forall|a| aligned(a as nat, 8) implies #[trigger] post_mem.read(a) == if a == wraddr { value } else { pre_mem.read(a) } by { };
+    broadcast use axiom_map_insert_different_strong;
     assert forall|a| #[trigger] post_mem.read(a) == if a == wraddr { value } else { pre_mem.read(a) } by {
         reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
         if post.writes.core == pre.writes.core {
             pre.pt_mem.lemma_write_seq_push(pre.writer_sbuf(), wraddr, value);
-            admit();
-        } else {
-            assert(pre.writer_sbuf() === seq![]);
-            assert(post.writer_sbuf() === seq![(wraddr, value)]);
-            assert(pre_mem == pre.pt_mem);
-            assert(post_mem.pml4 == post.pt_mem.pml4);
-            assert(post_mem.mem == post.pt_mem.mem.insert(wraddr, value));
-            assert(post_mem.mem == pre.pt_mem.mem.insert(wraddr, value));
-            if a == wraddr {
-            } else {
-                admit();
-            }
         }
+        //} else {
+        //    assert(pre.writer_sbuf() === seq![]);
+        //    assert(post.writer_sbuf() === seq![(wraddr, value)]);
+        //    assert(pre_mem == pre.pt_mem);
+        //    assert(post_mem.pml4 == post.pt_mem.pml4);
+        //    assert(post_mem.mem == post.pt_mem.mem.insert(wraddr, value));
+        //    assert(post_mem.mem == pre.pt_mem.mem.insert(wraddr, value));
+        //    if a == wraddr {
+        //    } else {
+        //    }
+        //}
     };
     if post.writes.core == pre.writes.core {
         //assert(l0_bits!(va as u64) < 512) by (bit_vector);
