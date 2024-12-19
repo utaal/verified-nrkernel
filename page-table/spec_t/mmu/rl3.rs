@@ -847,11 +847,11 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
     //assume(forall|va| pre.hist.pending_maps.contains_key(va) ==> pre.mem_view_of_writer()@.contains_key(va));
     //assert(pre.hist.pending_maps.submap_of(post.hist.pending_maps));
 
-    //lemma_pt_walk_result_vbase_equal(pre_mem, va);
     lemma_pt_walk_result_vbase_equal(post_mem, va);
     assert(post_base_walk.result() is Valid);
     // TODO: unstable (maybe prove in lemma_pt_walk_result_vbase_equal)
-    assert(post_base_walk.result()->vbase == vbase);
+    // XXX: should be unnecessary now
+    //assert(post_base_walk.result()->vbase == vbase);
     assert(post_mem.is_base_pt_walk(vbase));
     assert(post.mem_view_of_writer()@.contains_key(vbase));
 
@@ -1137,7 +1137,7 @@ proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, po
             assert(post.inv_valid_not_pending_is_not_in_sbuf(c));
         },
         Step::Writeback { core } => {
-            broadcast use lemma_writeback_preserves_writer_mem;
+            lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
             assert(forall|a| post.writer_sbuf().contains_fst(a)
                     ==> pre.writer_sbuf().contains_fst(a));
             assert(post.inv_valid_not_pending_is_not_in_sbuf(c));
@@ -1270,7 +1270,7 @@ proof fn lemma_valid_implies_equal_reads(state: State, c: Constants, core: Core,
     assert(state.mem_view_of_writer().read(addr) == state.pt_mem.read(addr));
 }
 
-// unstable (and i changed some triggers, so now it might stably fail)
+// This needs rlimit ~30. Should try to refactor it probably.
 proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core, va: usize)
     requires
         state.wf(c),
@@ -1432,26 +1432,14 @@ proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core:
 
 
 
-broadcast proof fn lemma_writeback_preserves_writer_mem(pre: State, post: State, c: Constants, core: Core, addr: usize, value: usize)
+proof fn lemma_writeback_preserves_writer_mem(pre: State, post: State, c: Constants, core: Core, lbl: Lbl)
     requires
-        #[trigger] c.valid_core(core),
-        0 < pre.sbuf[core].len(),
-        (addr, value) == pre.sbuf[core][0],
-        post.pt_mem == #[trigger] pre.pt_mem.write(addr, value),
-        post.sbuf   == pre.sbuf.insert(core, pre.sbuf[core].drop_first())
-    ensures #[trigger] post.mem_view_of_writer() == pre.mem_view_of_writer()
+        pre.inv_sbuf_facts(c),
+        step_Writeback(pre, post, c, core, lbl),
+    ensures post.mem_view_of_writer() == pre.mem_view_of_writer()
 {
-    //broadcast use lemma_foo;
-    //lemma_foo(pre.mem_view_of_writer(), pre.sbuf[core]);
-    //assert(pre.mem_view_of_writer() == pre.sbuf[core]);
-    admit();
-}
-
-broadcast proof fn lemma_foo(m: PTMem, writes: Seq<(usize, usize)>)
-    requires writes.len() > 0,
-    ensures m.write_seq(writes) == #[trigger] m.write(writes[0].0, writes[0].1).write_seq(writes.drop_first())
-{
-    admit();
+    assert(post.writes.core == core);
+    pt_mem::PTMem::lemma_write_seq_first(pre.pt_mem, pre.sbuf[core]);
 }
 
 pub open spec fn iter_walk(mem: PTMem, vaddr: usize) -> Walk {
@@ -1523,14 +1511,33 @@ broadcast proof fn lemma_iter_walk_equals_pt_walk(mem: PTMem, vaddr: usize)
 proof fn lemma_iter_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
     ensures
         iter_walk(mem, iter_walk(mem, vaddr).result().vaddr()).path == iter_walk(mem, vaddr).path,
-        //iter_walk(mem, iter_walk(mem, vaddr).result().vaddr()).result().vaddr() == iter_walk(mem, vaddr).result().vaddr(),
+        iter_walk(mem, iter_walk(mem, vaddr).result().vaddr()).result().vaddr() == iter_walk(mem, vaddr).result().vaddr(),
+{
+    lemma_iter_walk_result_vbase_equal_aux1(mem, vaddr);
+    lemma_iter_walk_result_vbase_equal_aux2(mem, vaddr);
+}
+
+proof fn lemma_iter_walk_result_vbase_equal_aux1(mem: PTMem, vaddr: usize)
+    ensures
+        iter_walk(mem, iter_walk(mem, vaddr).result().vaddr()).path == iter_walk(mem, vaddr).path,
+{
+    reveal(rl3::walk_next);
+    broadcast use lemma_bits_align_to_usize;
+}
+
+// unstable
+proof fn lemma_iter_walk_result_vbase_equal_aux2(mem: PTMem, vaddr: usize)
+    ensures
+        iter_walk(mem, iter_walk(mem, vaddr).result().vaddr()).result().vaddr() == iter_walk(mem, vaddr).result().vaddr(),
 {
     reveal(rl3::walk_next);
     broadcast use lemma_bits_align_to_usize;
 }
 
 proof fn lemma_pt_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
-    ensures mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).path == mem.pt_walk(vaddr).path
+    ensures
+        mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).path == mem.pt_walk(vaddr).path,
+        mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).result().vaddr() == mem.pt_walk(vaddr).result().vaddr(),
 {
     broadcast use lemma_iter_walk_equals_pt_walk;
     lemma_iter_walk_result_vbase_equal(mem, mem.pt_walk(vaddr).result().vaddr());
@@ -1669,7 +1676,8 @@ mod refinement {
                 assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Writeback { core } => {
-                broadcast use super::lemma_writeback_preserves_writer_mem;
+                assume(pre.inv_sbuf_facts(c));
+                super::lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
                 assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Read => {

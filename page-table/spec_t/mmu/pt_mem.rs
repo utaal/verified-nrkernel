@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit };
-use crate::spec_t::mmu::{ Walk, WalkResult, SeqTupExt };
+use crate::spec_t::mmu::{ Walk, WalkResult };
 
 //use crate::definitions_t::{
 //    aligned, WORD_SIZE,
@@ -289,10 +289,15 @@ impl PTMem {
     pub broadcast proof fn lemma_write_seq_idle(self, writes: Seq<(usize, usize)>, addr: usize)
         requires
             self.mem.contains_key(addr),
-            !writes.contains_fst(addr),
+            forall|i| 0 <= i < writes.len() ==> (#[trigger] writes[i]).0 != addr
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)
+        decreases writes.len()
     {
-        admit();
+        if writes.len() == 0 {
+        } else {
+            broadcast use PTMem::lemma_write_seq;
+            self.lemma_write_seq_idle(writes.drop_last(), addr)
+        }
     }
 
     pub proof fn lemma_write_seq_push(self, writes: Seq<(usize, usize)>, addr: usize, value: usize)
@@ -306,6 +311,16 @@ impl PTMem {
     {
         broadcast use PTMem::lemma_write_seq;
         lemma_fold_left_push(writes, (addr, value), self, |acc: PTMem, wr: (_, _)| acc.write(wr.0, wr.1));
+    }
+
+    pub broadcast proof fn lemma_write_seq_first(m: PTMem, writes: Seq<(usize, usize)>)
+        requires writes.len() > 0,
+        ensures m.write_seq(writes) == #[trigger] m.write(writes[0].0, writes[0].1).write_seq(writes.drop_first())
+    {
+        let f = |acc: PTMem, wr: (_, _)| acc.write(wr.0, wr.1);
+        let new_m = m.write(writes[0].0, writes[0].1);
+        writes.lemma_fold_left_alt(m, f);
+        writes.subrange(1, writes.len() as int).lemma_fold_left_alt(new_m, f);
     }
 
     pub broadcast proof fn lemma_write_seq(self, writes: Seq<(usize, usize)>)
