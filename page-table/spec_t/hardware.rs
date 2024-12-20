@@ -201,10 +201,53 @@ pub struct PDE {
     pub layer: Ghost<nat>,
 }
 
+// Don't broadcast this. It refuses to trigger for some reason.
+pub proof fn lemma_bit_indices_less_512(va: u64)
+    ensures
+        l0_bits!(va) < 512,
+        l1_bits!(va) < 512,
+        l2_bits!(va) < 512,
+        l3_bits!(va) < 512,
+{
+    assert(l0_bits!(va as u64) < 512) by (bit_vector);
+    assert(l1_bits!(va as u64) < 512) by (bit_vector);
+    assert(l2_bits!(va as u64) < 512) by (bit_vector);
+    assert(l3_bits!(va as u64) < 512) by (bit_vector);
+}
+
 // This impl defines everything necessary for the page table walk semantics.
 // PDE is reused in the implementation, which has an additional impl block for it in
 // `impl_u::l2_impl`.
 impl PDE {
+    // Could prove that the address is smaller than MAX_PHYADDR but this bound is sufficient sof ar
+    pub broadcast proof fn lemma_view_addr_aligned(self)
+        requires self.layer@ < 4
+        ensures #![trigger self.view()]
+            self@ is Directory ==> {
+                &&& aligned(self@->Directory_addr as nat, 4096)
+                &&& aligned(self@->Directory_addr as nat, 8)
+                &&& self@->Directory_addr < u64::MAX - 4096
+            },
+            self@ is Page ==> {
+                &&& aligned(self@->Page_addr as nat, 4096)
+                &&& aligned(self@->Page_addr as nat, 8)
+                &&& self@->Page_addr < u64::MAX - 4096
+            },
+    {
+        axiom_max_phyaddr_width_facts();
+        let mw = MAX_PHYADDR_WIDTH;
+        let e = self.entry;
+        assert((e & bitmask_inc!(12u64, mw - 1)) % 4096 == 0) by (bit_vector);
+        assert((e & bitmask_inc!(21u64, mw - 1)) % 4096 == 0) by (bit_vector);
+        assert((e & bitmask_inc!(30u64, mw - 1)) % 4096 == 0) by (bit_vector);
+        assert((e & bitmask_inc!(12u64, mw - 1)) < u64::MAX - 4096) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert((e & bitmask_inc!(21u64, mw - 1)) < u64::MAX - 4096) by (bit_vector)
+            requires 32 <= mw <= 52;
+        assert((e & bitmask_inc!(30u64, mw - 1)) < u64::MAX - 4096) by (bit_vector)
+            requires 32 <= mw <= 52;
+    }
+
     pub open spec fn view(self) -> GPDE {
         let v = self.entry;
         let P   = v & MASK_FLAG_P    == MASK_FLAG_P;
