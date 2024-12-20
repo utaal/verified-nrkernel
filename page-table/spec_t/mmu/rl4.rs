@@ -84,7 +84,7 @@ impl State {
     /// `page_addrs` instead, which contains all addresses that might be used in a page table walk.
     /// But that's not true.............
     pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, r: usize) -> usize {
-        self.mem_view_of_core(core).read(addr) ^ (r & MASK_DIRTY_ACCESS)
+        self.core_mem(core).read(addr) ^ (r & MASK_DIRTY_ACCESS)
     }
 
     pub open spec fn init(self) -> bool {
@@ -93,18 +93,18 @@ impl State {
 
     /// The memory as seen by the given core. I.e. taking into consideration the core's store
     /// buffers.
-    pub open spec fn mem_view_of_core(self, core: Core) -> PTMem {
+    pub open spec fn core_mem(self, core: Core) -> PTMem {
         self.pt_mem.write_seq(self.sbuf[core])
     }
 
     /// The view of the memory from the writer core's perspective.
-    pub open spec fn mem_view_of_writer(self) -> PTMem {
-        self.mem_view_of_core(self.hist.writes.core)
+    pub open spec fn writer_mem(self) -> PTMem {
+        self.core_mem(self.hist.writes.core)
     }
 
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& !self.hist.writes.all.is_empty() ==> core == self.hist.writes.core
-        &&& self.mem_view_of_writer().is_nonneg_write(addr, value)
+        &&& self.writer_mem().is_nonneg_write(addr, value)
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -332,19 +332,19 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, c)
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all == pre.hist.writes.all.insert(addr)
-    &&& post.hist.writes.neg == if !pre.mem_view_of_writer().is_nonneg_write(addr, value) {
+    &&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
             pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
         } else { pre.hist.writes.neg }
     &&& post.hist.writes.core == core
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
         Map::new(
-            |vbase| post.mem_view_of_writer()@.contains_key(vbase)
-                    && !pre.mem_view_of_writer()@.contains_key(vbase),
-            |vbase| post.mem_view_of_writer()@[vbase]
+            |vbase| post.writer_mem()@.contains_key(vbase)
+                    && !pre.writer_mem()@.contains_key(vbase),
+            |vbase| post.writer_mem()@[vbase]
         ))
     // Whenever this causes polarity to change and happy isn't set to false, the
     // conditions for polarity to change are satisfied (`can_change_polarity`)
-    //&&& post.hist.polarity == if pre.mem_view_of_writer().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    //&&& post.hist.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -504,7 +504,7 @@ mod refinement {
 
     /// The value of r is irrelevant, so we can just ignore it.
     broadcast proof fn rl4_walk_next_is_rl3_walk_next(state: rl4::State, core: Core, walk: Walk, r: usize)
-        ensures #[trigger] rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp().mem_view_of_core(core), walk)
+        ensures #[trigger] rl4::walk_next(state, core, walk, r) == rl3::walk_next(state.interp().core_mem(core), walk)
     {
         admit();
     }

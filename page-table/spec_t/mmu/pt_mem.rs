@@ -179,79 +179,79 @@ impl PTMem {
     //    Self::lemma_pt_walk_base(mem, va, mem.pt_walk(va).result()->vbase);
     //}
 
-    pub proof fn lemma_pt_walk_base(mem: PTMem, va1: usize, va2: usize)
-        requires
-            va1 & (bitmask_inc!(39u64,63u64) as usize) == va2 & (bitmask_inc!(39u64,63u64) as usize),
-            mem.pt_walk(va1).path.len() >= 2
-                ==> va1 & (bitmask_inc!(30u64,63u64) as usize)
-                 == va2 & (bitmask_inc!(30u64,63u64) as usize),
-            mem.pt_walk(va1).path.len() >= 3
-                ==> va1 & (bitmask_inc!(21u64,63u64) as usize)
-                 == va2 & (bitmask_inc!(21u64,63u64) as usize),
-            mem.pt_walk(va1).path.len() >= 4
-                ==> va1 & (bitmask_inc!(12u64,63u64) as usize)
-                 == va2 & (bitmask_inc!(12u64,63u64) as usize),
-        ensures
-            mem.pt_walk(va1).path == mem.pt_walk(va2).path,
-            mem.pt_walk(va1).result() is Valid <==> mem.pt_walk(va2).result() is Valid
-    {
-        assert(l0_bits!(va1 as u64) == l0_bits!(va2 as u64)) by (bit_vector)
-            requires va1 & (bitmask_inc!(39u64,63u64) as usize) == va2 & (bitmask_inc!(39u64,63u64) as usize);
-        if mem.pt_walk(va1).path.len() >= 2 {
-            assert(l1_bits!(va1 as u64) == l1_bits!(va2 as u64)) by (bit_vector)
-                requires va1 & (bitmask_inc!(30u64,63u64) as usize) == va2 & (bitmask_inc!(30u64,63u64) as usize);
-        }
-        if mem.pt_walk(va1).path.len() >= 3 {
-            assert(l2_bits!(va1 as u64) == l2_bits!(va2 as u64)) by (bit_vector)
-                requires va1 & (bitmask_inc!(21u64,63u64) as usize) == va2 & (bitmask_inc!(21u64,63u64) as usize);
-        }
-        if mem.pt_walk(va1).path.len() >= 4 {
-            assert(l3_bits!(va1 as u64) == l3_bits!(va2 as u64)) by (bit_vector)
-                requires va1 & (bitmask_inc!(12u64,63u64) as usize) == va2 & (bitmask_inc!(12u64,63u64) as usize);
-        }
-    }
+    //pub proof fn lemma_pt_walk_base(mem: PTMem, va1: usize, va2: usize)
+    //    requires
+    //        va1 & (bitmask_inc!(39u64,63u64) as usize) == va2 & (bitmask_inc!(39u64,63u64) as usize),
+    //        mem.pt_walk(va1).path.len() >= 2
+    //            ==> va1 & (bitmask_inc!(30u64,63u64) as usize)
+    //             == va2 & (bitmask_inc!(30u64,63u64) as usize),
+    //        mem.pt_walk(va1).path.len() >= 3
+    //            ==> va1 & (bitmask_inc!(21u64,63u64) as usize)
+    //             == va2 & (bitmask_inc!(21u64,63u64) as usize),
+    //        mem.pt_walk(va1).path.len() >= 4
+    //            ==> va1 & (bitmask_inc!(12u64,63u64) as usize)
+    //             == va2 & (bitmask_inc!(12u64,63u64) as usize),
+    //    ensures
+    //        mem.pt_walk(va1).path == mem.pt_walk(va2).path,
+    //        mem.pt_walk(va1).result() is Valid <==> mem.pt_walk(va2).result() is Valid
+    //{
+    //    assert(l0_bits!(va1 as u64) == l0_bits!(va2 as u64)) by (bit_vector)
+    //        requires va1 & (bitmask_inc!(39u64,63u64) as usize) == va2 & (bitmask_inc!(39u64,63u64) as usize);
+    //    if mem.pt_walk(va1).path.len() >= 2 {
+    //        assert(l1_bits!(va1 as u64) == l1_bits!(va2 as u64)) by (bit_vector)
+    //            requires va1 & (bitmask_inc!(30u64,63u64) as usize) == va2 & (bitmask_inc!(30u64,63u64) as usize);
+    //    }
+    //    if mem.pt_walk(va1).path.len() >= 3 {
+    //        assert(l2_bits!(va1 as u64) == l2_bits!(va2 as u64)) by (bit_vector)
+    //            requires va1 & (bitmask_inc!(21u64,63u64) as usize) == va2 & (bitmask_inc!(21u64,63u64) as usize);
+    //    }
+    //    if mem.pt_walk(va1).path.len() >= 4 {
+    //        assert(l3_bits!(va1 as u64) == l3_bits!(va2 as u64)) by (bit_vector)
+    //            requires va1 & (bitmask_inc!(12u64,63u64) as usize) == va2 & (bitmask_inc!(12u64,63u64) as usize);
+    //    }
+    //}
 
-    pub proof fn lemma_pt_walk_vbase_bitmask(mem: PTMem, va: usize)
-        requires mem.pt_walk(va).result() is Valid,
-        ensures ({
-            let vbase = mem.pt_walk(va).result()->vbase;
-            &&& vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)
-            &&& mem.pt_walk(va).path.len() >= 2
-                    ==> vbase & (bitmask_inc!(30u64,63u64) as usize)
-                        == va & (bitmask_inc!(30u64,63u64) as usize)
-            &&& mem.pt_walk(va).path.len() >= 3
-                    ==> vbase & (bitmask_inc!(21u64,63u64) as usize)
-                        == va & (bitmask_inc!(21u64,63u64) as usize)
-            &&& mem.pt_walk(va).path.len() >= 4
-                    ==> vbase & (bitmask_inc!(12u64,63u64) as usize)
-                        == va & (bitmask_inc!(12u64,63u64) as usize)
-        })
-    {
-        assert(bit!(0u64) == 1) by (bit_vector);
-        let vbase = mem.pt_walk(va).result()->vbase;
-        if mem.pt_walk(va).path.len() == 2 {
-            assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % mul(512, mul(512, 4096)));
-            assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % mul(512, mul(512, 4096)));
-        } else if mem.pt_walk(va).path.len() == 3 {
-            assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % mul(512, 4096));
-            assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % mul(512, 4096));
-            assert(vbase & (bitmask_inc!(21u64,63u64) as usize) == va & (bitmask_inc!(21u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % mul(512, 4096));
-        } else if mem.pt_walk(va).path.len() == 4 {
-            assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % 4096);
-            assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % 4096);
-            assert(vbase & (bitmask_inc!(21u64,63u64) as usize) == va & (bitmask_inc!(21u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % 4096);
-            assert(vbase & (bitmask_inc!(12u64,63u64) as usize) == va & (bitmask_inc!(12u64,63u64) as usize)) by (bit_vector)
-                requires vbase == sub(va, va % 4096);
-        }
-    }
+    //pub proof fn lemma_pt_walk_vbase_bitmask(mem: PTMem, va: usize)
+    //    requires mem.pt_walk(va).result() is Valid,
+    //    ensures ({
+    //        let vbase = mem.pt_walk(va).result()->vbase;
+    //        &&& vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)
+    //        &&& mem.pt_walk(va).path.len() >= 2
+    //                ==> vbase & (bitmask_inc!(30u64,63u64) as usize)
+    //                    == va & (bitmask_inc!(30u64,63u64) as usize)
+    //        &&& mem.pt_walk(va).path.len() >= 3
+    //                ==> vbase & (bitmask_inc!(21u64,63u64) as usize)
+    //                    == va & (bitmask_inc!(21u64,63u64) as usize)
+    //        &&& mem.pt_walk(va).path.len() >= 4
+    //                ==> vbase & (bitmask_inc!(12u64,63u64) as usize)
+    //                    == va & (bitmask_inc!(12u64,63u64) as usize)
+    //    })
+    //{
+    //    assert(bit!(0u64) == 1) by (bit_vector);
+    //    let vbase = mem.pt_walk(va).result()->vbase;
+    //    if mem.pt_walk(va).path.len() == 2 {
+    //        assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % mul(512, mul(512, 4096)));
+    //        assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % mul(512, mul(512, 4096)));
+    //    } else if mem.pt_walk(va).path.len() == 3 {
+    //        assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % mul(512, 4096));
+    //        assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % mul(512, 4096));
+    //        assert(vbase & (bitmask_inc!(21u64,63u64) as usize) == va & (bitmask_inc!(21u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % mul(512, 4096));
+    //    } else if mem.pt_walk(va).path.len() == 4 {
+    //        assert(vbase & (bitmask_inc!(39u64,63u64) as usize) == va & (bitmask_inc!(39u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % 4096);
+    //        assert(vbase & (bitmask_inc!(30u64,63u64) as usize) == va & (bitmask_inc!(30u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % 4096);
+    //        assert(vbase & (bitmask_inc!(21u64,63u64) as usize) == va & (bitmask_inc!(21u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % 4096);
+    //        assert(vbase & (bitmask_inc!(12u64,63u64) as usize) == va & (bitmask_inc!(12u64,63u64) as usize)) by (bit_vector)
+    //            requires vbase == sub(va, va % 4096);
+    //    }
+    //}
 
     pub broadcast proof fn lemma_pt_walk(mem: PTMem, va: usize)
         ensures #![trigger mem.pt_walk(va)]
