@@ -820,6 +820,26 @@ proof fn lemma_step_write_valid_path_unchanged(pre: State, post: State, c: Const
 //{
 //}
 
+proof fn lemma_step_write_path_addrs_match(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
+    requires
+        pre.happy,
+        post.happy,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        step_Write(pre, post, c, lbl),
+    ensures
+        forall|i| #![auto]
+            0 <= i < pre.mem_view_of_writer().pt_walk(va).path.len()
+                ==> post.mem_view_of_writer().pt_walk(va).path[i].0
+                  == pre.mem_view_of_writer().pt_walk(va).path[i].0
+{
+    broadcast use axiom_map_insert_different_strong;
+    lemma_step_write_mem_view(pre, post, c, lbl);
+    pt_mem::PTMem::lemma_pt_walk(pre.mem_view_of_writer(), va);
+    pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+    post.pt_mem.lemma_write_seq(post.writer_sbuf());
+}
+
 proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
     requires
         pre.happy,
@@ -832,7 +852,6 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
     ensures
         post.pending_map_for(va)
 {
-    broadcast use axiom_map_insert_different_strong;
     let pre_mem = pre.mem_view_of_writer();
     let post_mem = post.mem_view_of_writer();
     let pre_walk = pre_mem.pt_walk(va);
@@ -844,30 +863,17 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
     let pre_base_walk = pre_mem.pt_walk(vbase);
     let post_base_walk = post_mem.pt_walk(vbase);
 
-    //assume(forall|va| pre.hist.pending_maps.contains_key(va) ==> pre.mem_view_of_writer()@.contains_key(va));
-    //assert(pre.hist.pending_maps.submap_of(post.hist.pending_maps));
-
     lemma_pt_walk_result_vbase_equal(post_mem, va);
     assert(post_base_walk.result() is Valid);
-    // TODO: unstable (maybe prove in lemma_pt_walk_result_vbase_equal)
-    // XXX: should be unnecessary now
-    //assert(post_base_walk.result()->vbase == vbase);
     assert(post_mem.is_base_pt_walk(vbase));
     assert(post.mem_view_of_writer()@.contains_key(vbase));
 
     assert(!pre_mem.is_base_pt_walk(vbase)) by {
         pt_mem::PTMem::lemma_pt_walk(post_mem, va);
-        //assert(post_walk.result().vaddr() == post_walk.result()->vbase);
-        //assume(vbase & (bitmask_inc!(12u64,63u64) as usize)
-        //    == va & (bitmask_inc!(12u64,63u64) as usize));
-        //pt_mem::PTMem::lemma_pt_walk_base(pre_mem, vbase, va);
-        //lemma_pt_walk_result_vbase_equal(pre_mem, va);
         pt_mem::PTMem::lemma_pt_walk_vbase_bitmask(post_mem, vbase);
-        //pt_mem:PTMem::lemma_pt_walk_base();
-        // XXX: vbase is less specific
         assert(pre_base_walk.path == pre_walk.path) by {
-            assume(forall|i| #![auto] 0 <= i < pre_base_walk.path.len() ==> post_base_walk.path[i].0 == pre_base_walk.path[i].0);
-            assume(forall|i| #![auto] 0 <= i < pre_walk.path.len() ==> post_walk.path[i].0 == pre_walk.path[i].0);
+            lemma_step_write_path_addrs_match(pre, post, c, lbl, va);
+            lemma_step_write_path_addrs_match(pre, post, c, lbl, vbase);
         };
         assert(pre_base_walk.result() is Valid ==> pre_walk.result() is Valid);
         lemma_pt_walk_result_vbase_equal(pre_mem, vbase);
@@ -875,35 +881,8 @@ proof fn lemma_step_write_new_walk_has_pending_map(pre: State, post: State, c: C
     };
     assert(!pre.mem_view_of_writer()@.contains_key(vbase));
 
-    //assert(!pre.pt_mem@.contains_key(vbase));
-
     assert(post.hist.pending_maps.contains_key(vbase));
     assert(vbase <= va < vbase + post.hist.pending_maps[vbase].frame.size);
-    // XXX: These walks may not be base walks, so we need to show that the
-    // corresponding base walk (the vaddr in the result of post_walk) would also
-    // have the same result in both pre and post and that it would be in
-    // pending_maps.
-    //let base_va = post_walk.result()->vbase;
-    ////lemma_pt_walk_result_vbase_equal(pre.mem_view_of_writer(), va);
-    //lemma_pt_walk_result_vbase_equal(post.mem_view_of_writer(), va);
-    //let pre_basewalk = pre.mem_view_of_writer().pt_walk(base_va);
-    //let post_basewalk = post.mem_view_of_writer().pt_walk(base_va);
-    //assert(post_walk.path == post_basewalk.path);
-    //assert(post_basewalk.result() is Valid);
-    //assert_by_contradiction!(pre_basewalk.result() is Valid, {
-    //    assume(base_va == post_basewalk.result()->vbase);
-    //    assert(base_va <= va < base_va + post_basewalk.result()->pte.frame.size);
-    //    assert(post.mem_view_of_writer().is_base_pt_walk(base_va));
-    //    //assert(!pre.mem_view_of_writer().is_base_pt_walk(base_va));
-    //    //assert(!pre.hist.pending_maps.contains_key(base_va));
-    //    admit();
-    //    assert(post.hist.pending_maps.contains_key(base_va));
-    //    admit();
-    //});
-    //assume(va & (bitmask_inc!(12u64,63u64) as usize) == base_va & (bitmask_inc!(12u64,63u64) as usize));
-    //pt_mem::PTMem::lemma_pt_walk_base(pre.mem_view_of_writer(), va, base_va);
-    //assert(pre_basewalk.result() is Valid <==> pre_walk.result() is Valid);
-
 }
 
 //proof fn lemma_step_write_invalid_path_maybe_extend(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
