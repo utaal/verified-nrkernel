@@ -334,6 +334,24 @@ impl PTMem {
             self.lemma_write_seq(writes.drop_last())
         }
     }
+
+    pub proof fn lemma_write_seq_read(self, writes: Seq<(usize, usize)>, i: int)
+        requires
+            0 <= i < writes.len(),
+            forall|j| #![auto] 0 <= j < writes.len() && writes[j].0 == writes[i].0 ==> i == j,
+        ensures
+            self.write_seq(writes).mem[writes[i].0] == writes[i].1
+        decreases writes.len()
+    {
+        broadcast use crate::spec_t::mmu::rl3::axiom_map_insert_different_strong;
+        if writes.len() == 0 {
+        } else {
+            if i == writes.len() - 1 {
+            } else {
+                self.lemma_write_seq_read(writes.drop_last(), i);
+            }
+        }
+    }
 }
 
 proof fn lemma_fold_left_push<A,B>(s: Seq<A>, a: A, b: B, f: spec_fn(B, A) -> B)

@@ -9,7 +9,7 @@ verus! {
 
 // This axiom should be fine: https://gist.github.com/matthias-brun/4fe59e719971078ea9f2f886cb791851
 // TODO: PR to change it in vstd
-broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
+pub broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
     requires
         key1 != key2,
     ensures
@@ -623,7 +623,7 @@ broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: in
     ensures #![auto]
         state.writer_mem().read(state.writer_sbuf()[i].0) == state.writer_sbuf()[i].1
 {
-    admit();
+    state.pt_mem.lemma_write_seq_read(state.writer_sbuf(), i);
 }
 
 //proof fn next_step_preserves_inv_walks_disjoint_with_present_bit_0_addrs(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
