@@ -217,10 +217,10 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& lbl is Tau
 
     &&& c.valid_core(core)
-    //&&& aligned(vbase as nat, L3_ENTRY_SIZE as nat)
+    &&& aligned(vaddr as nat, 8)
     // FIXME: What about bits in the virtual address above the indices? Do they need to be zero or
     // can we just ignore them?
-    &&& arbitrary() // TODO: conditions on va? max vaddr?
+    //&&& arbitrary() // TODO: conditions on va? max vaddr?
 
     &&& post == State {
         walks: pre.walks.insert(core, pre.walks[core].insert(walk)),
@@ -234,7 +234,6 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 
 pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Walk {
     let vaddr = walk.vaddr; let path = walk.path;
-    // TODO: do this better
     let addr = if path.len() == 0 {
         add(state.pt_mem.pml4, l0_bits!(vaddr as u64) as usize)
     } else if path.len() == 1 {
@@ -329,7 +328,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
-    &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, c)
+    &&& post.hist.happy == (pre.hist.happy && pre.is_this_write_happy(core, addr, value, c))
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.all == pre.hist.writes.all.insert(addr)
     &&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {

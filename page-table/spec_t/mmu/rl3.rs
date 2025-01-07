@@ -7,8 +7,7 @@ use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
-// This axiom should be fine: https://gist.github.com/matthias-brun/4fe59e719971078ea9f2f886cb791851
-// TODO: PR to change it in vstd
+// This axiom should be fine: https://github.com/verus-lang/verus/pull/1367
 pub broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
     requires
         key1 != key2,
@@ -159,16 +158,22 @@ impl State {
         &&& self.writer_sbuf_subset_all_writes()
     }
 
-    pub open spec fn inv_walks_basic(self, c: Constants) -> bool {
-        forall|core, walk|
-            c.valid_core(core) && self.walks[core].contains(walk) ==> {
-                &&& aligned(walk.vaddr as nat, 8)
-                &&& walk.path.len() <= 4
-                &&& walk.path.len() == 3 ==> walk.complete
-                //&&& forall|i| 0 <= i < walk.path.len() ==> #[trigger] aligned(walk.path[i].0 as nat, 8)
-                //&&& forall|addr| #[trigger] walk.path.contains_fst(addr)
-                //    ==> self.core_mem(core).read(addr) & 1 == 1
-            }
+    pub open spec fn inv_inflight_walks(self, c: Constants) -> bool {
+        forall|core, walk| c.valid_core(core) && self.walks[core].contains(walk) ==> {
+            &&& aligned(walk.vaddr as nat, 8)
+            &&& walk.path.len() <= 3
+            &&& !walk.complete
+            &&& forall|i| 0 <= i < walk.path.len() ==>
+                    (#[trigger] walk.path[i]).0 == walk.addr_for_idx(i, self.core_mem(core).pml4)
+            &&& forall|i| 0 <= i < walk.path.len() ==>
+                    (#[trigger] walk.path[i]).1
+                        == PDE {
+                            // could also use `self.writer_mem().read(walk.path[i].0)`
+                            // relatively easily. (lsb is 1, so addr is not in sbuf)
+                            entry: self.core_mem(core).read(walk.path[i].0) as u64,
+                            layer: Ghost(i as nat),
+                        }@
+        }
     }
 
     ///// Any inflight page table walks didn't read from addresses that currently have P=0.
@@ -221,6 +226,13 @@ impl State {
     //    } ==> walk.path[i] == self.writer_mem().pt_walk(walk.vaddr).path[i]
     //}
 
+    pub open spec fn inv_walks_match_memory(self, c: Constants) -> bool {
+        forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
+            &&& walk.path.is_prefix_of(iter_walk(self.core_mem(core), walk.vaddr).path)
+            //&&& walk.complete ==> walk.path.len() == self.core_mem(core).pt_walk(walk.vaddr).len()
+        }
+    }
+
     //pub open spec fn inv_walks_match_memory2(self, c: Constants) -> bool {
     //    forall|core, walk, n| {
     //        &&& c.valid_core(core)
@@ -233,14 +245,14 @@ impl State {
     //pub open spec fn inv_x(self, c: Constants) -> bool {
     //    forall|core, addr| #![trigger self.core_mem(core).pt_walk(addr)]
     //        c.valid_core(core) ==> {
-    //            let mem_core = self.core_mem(core);
-    //            let mem_writer = self.writer_mem();
-    //            match mem_core.pt_walk(addr).result() {
+    //            let core_mem = self.core_mem(core);
+    //            let writer_mem = self.writer_mem();
+    //            match core_mem.pt_walk(addr).result() {
     //                WalkResult::Valid { .. } =>
-    //                    mem_core.pt_walk(addr) == mem_writer.pt_walk(addr),
+    //                    core_mem.pt_walk(addr) == writer_mem.pt_walk(addr),
     //                WalkResult::Invalid { .. } =>
     //                    !self.pending_map_for(addr)
-    //                        ==> mem_core.pt_walk(addr).result() == mem_writer.pt_walk(addr).result(),
+    //                        ==> core_mem.pt_walk(addr).result() == writer_mem.pt_walk(addr).result(),
     //            }
     //        }
     //}
@@ -310,7 +322,11 @@ impl State {
     pub open spec fn inv(self, c: Constants) -> bool {
         self.happy ==> {
         &&& self.wf(c)
-        &&& self.inv_walks_basic(c)
+        &&& self.inv_inflight_walks(c)
+        &&& self.inv_pending_map_is_base_walk(c)
+        &&& self.inv_sbuf_facts(c)
+        &&& self.inv_valid_is_not_in_sbuf(c)
+        &&& self.inv_valid_not_pending_is_not_in_sbuf(c)
         }
     }
 }
@@ -344,7 +360,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& lbl is Tau
 
     &&& c.valid_core(core)
-    //&&& aligned(vaddr as nat, L3_ENTRY_SIZE as nat)
+    &&& aligned(vaddr as nat, 8)
     //&&& arbitrary() // TODO: conditions on va? max vaddr?
 
     &&& post.happy == pre.happy
@@ -360,7 +376,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 // with how we use this function in `iter_walk`.
 #[verifier(opaque)]
 pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
-    let vaddr = walk.vaddr; let path = walk.path;
+    let Walk { vaddr, path, .. } = walk;
     let addr = if path.len() == 0 {
         add(mem.pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
     } else if path.len() == 1 {
@@ -375,7 +391,7 @@ pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
     let walk = Walk {
         vaddr,
         path: path.push((addr, entry)),
-        complete: !(entry is Directory)
+        complete: !(entry is Directory),
     };
     walk
 }
@@ -453,7 +469,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
-    &&& post.happy == pre.happy && pre.is_this_write_happy(core, addr, value, c)
+    &&& post.happy == (pre.happy && pre.is_this_write_happy(core, addr, value, c))
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
@@ -564,35 +580,67 @@ proof fn init_implies_inv(pre: State, c: Constants)
     ensures pre.inv(c)
 { admit(); }
 
+proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.inv(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv(c)
+{
+    if pre.happy && post.happy {
+        next_step_preserves_wf(pre, post, c, step, lbl);
+        next_step_preserves_inv_inflight_walks(pre, post, c, step, lbl);
+        next_step_preserves_inv_sbuf_facts(pre, post, c, step, lbl);
+        next_step_preserves_inv_pending_map_is_base_walk(pre, post, c, step, lbl);
+        next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre, post, c, step, lbl);
+        next_step_preserves_inv_valid_is_not_in_sbuf(pre, post, c, step, lbl);
+    }
+}
+
 proof fn next_step_preserves_wf(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.wf(c),
         next_step(pre, post, c, step, lbl),
     ensures post.wf(c)
+{}
+
+proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.wf(c),
+        pre.happy,
+        post.happy,
+        pre.inv_sbuf_facts(c),
+        pre.inv_inflight_walks(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_inflight_walks(c)
 {
-    //if pre.happy {
-    //    match step {
-    //        Step::Invlpg                         => assert(post.inv(c)),
-    //        Step::WalkInit { core, vaddr }       => assert(post.inv(c)),
-    //        Step::WalkStep { core, walk, value } => assert(post.inv(c)),
-    //        Step::WalkDone { walk, value }       => assert(post.inv(c)),
-    //        Step::Write                          => assert(post.inv(c)),
-    //        Step::Writeback { core }             => assert(post.inv(c)),
-    //        Step::Read                           => assert(post.inv(c)),
-    //        Step::Barrier                        => assert(post.inv(c)),
-    //        Step::Stutter                        => assert(post.inv(c)),
-    //    }
-    //}
+    if pre.happy {
+        match step {
+            Step::WalkStep { core, walk } => {
+                reveal(rl3::walk_next);
+                assert(post.inv_inflight_walks(c));
+            },
+            Step::Write => {
+                admit();
+                assert(post.inv_inflight_walks(c));
+            },
+            Step::Writeback { core } => {
+                admit();
+                assert(post.inv_inflight_walks(c));
+            },
+            _ => assert(post.inv_inflight_walks(c)),
+        }
+    }
 }
 
 
 proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.happy,
+        post.happy,
         pre.wf(c),
         pre.inv_sbuf_facts(c),
         next_step(pre, post, c, step, lbl),
-    ensures post.happy ==> post.inv_sbuf_facts(c)
+    ensures post.inv_sbuf_facts(c)
 {
     if post.happy {
         match step {
@@ -771,7 +819,7 @@ proof fn next_step_preserves_inv_pending_map_is_base_walk(pre: State, post: Stat
 {
     match step {
         Step::Write => {
-            broadcast use lemma_step_write_valid_path_unchanged;
+            broadcast use lemma_step_write_valid_walk_unchanged;
             assert(post.inv_pending_map_is_base_walk(c));
         },
         Step::Writeback { core } => {
@@ -807,7 +855,7 @@ proof fn lemma_step_write_mem_view(pre: State, post: State, c: Constants, lbl: L
     }
 }
 
-broadcast proof fn lemma_step_write_valid_path_unchanged(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
+broadcast proof fn lemma_step_write_valid_walk_unchanged(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
     requires
         pre.happy,
         post.happy,
@@ -949,7 +997,7 @@ proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, po
                 });
                 // And if the walk was valid, its path hasn't changed.
                 assert(post.writer_mem().pt_walk(va).path == pre_walk.path) by {
-                    lemma_step_write_valid_path_unchanged(pre, post, c, lbl, va);
+                    lemma_step_write_valid_walk_unchanged(pre, post, c, lbl, va);
                 };
                 assert(pre.writer_mem().read(addr) & 1 == 1) by {
                     pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), va);
@@ -1153,24 +1201,16 @@ proof fn lemma_writeback_preserves_writer_mem(pre: State, post: State, c: Consta
 }
 
 pub open spec fn iter_walk(mem: PTMem, vaddr: usize) -> Walk {
-    iter_walk_aux(mem, vaddr, 4)
-}
-
-pub open spec fn iter_walk_aux(mem: PTMem, vaddr: usize, steps: nat) -> Walk {
-    let walk = Walk { vaddr, path: seq![], complete: false };
-    if steps > 0 {
+    let walk = rl3::walk_next(mem, Walk { vaddr, path: seq![], complete: false });
+    if walk.complete { walk } else {
         let walk = rl3::walk_next(mem, walk);
-        if !walk.complete && steps > 1 {
+        if walk.complete { walk } else {
             let walk = rl3::walk_next(mem, walk);
-            if !walk.complete && steps > 2 {
-                let walk = rl3::walk_next(mem, walk);
-                if !walk.complete && steps > 3 {
-                    let walk = rl3::walk_next(mem, walk);
-                    walk
-                } else { walk }
-            } else { walk }
-        } else { walk }
-    } else { walk }
+            if walk.complete { walk } else {
+                rl3::walk_next(mem, walk)
+            }
+        }
+    }
 }
 
 broadcast proof fn lemma_iter_walk_equals_pt_walk(mem: PTMem, vaddr: usize)
@@ -1254,6 +1294,45 @@ proof fn lemma_pt_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
     lemma_iter_walk_result_vbase_equal(mem, vaddr);
 }
 
+proof fn lemma_walk_prefix_extend_walk_next(pre: State, c: Constants, core: Core, walk: Walk)
+    requires
+        pre.wf(c),
+        pre.inv_inflight_walks(c),
+        //pre.inv_walks_match_memory(c),
+        c.valid_core(core),
+        pre.walks[core].contains(walk),
+        walk_next(pre.core_mem(core), walk).complete,
+    ensures
+        walk_next(pre.core_mem(core), walk) == rl3::iter_walk(pre.core_mem(core), walk.vaddr)
+{
+    assert(!walk.complete);
+    reveal(walk_next);
+    let core_mem = pre.core_mem(core);
+    let pml4 = pre.core_mem(core).pml4;
+    let walk_na = rl3::iter_walk(core_mem, walk.vaddr);
+    let walk_a  = walk_next(core_mem, walk);
+    assert(walk.path.is_prefix_of(walk_a.path));
+    assert(walk.path.len() <= walk_a.path.len());
+    assert(walk.addr_for_idx(0, pml4) == walk_a.addr_for_idx(0, pml4));
+    admit();
+    //if walk.path.len() == 0 {
+    //} else if walk.path.len() == 1 {
+    //    assert(walk.path[0] == walk_a.path[0]);
+    //    assert(walk_a.path.len() >= 1);
+    //    assert(walk_a.complete);
+    //    let entry = PDE { entry: core_mem.read(walk.addr_for_idx(0, pml4)) as u64, layer: Ghost(0) }@;
+    //    assert(entry == walk_a.path[0].1);
+    //    if walk_a.path.len() == 1 {
+    //        assert(!(walk_a.path[0].1 is Directory));
+    //        assert(walk.complete);
+    //    }
+    //    assert(walk.addr_for_idx(1, pml4) == walk_a.addr_for_idx(1, pml4));
+    //    assert(walk.path.len() < walk_a.path.len());
+    //} else {
+    //    admit();
+    //}
+}
+
 broadcast proof fn lemma_bits_align_to_usize(vaddr: usize)
     ensures
         #![trigger align_to_usize(vaddr, L1_ENTRY_SIZE)]
@@ -1306,7 +1385,7 @@ mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl2;
     use crate::spec_t::mmu::rl3;
-    //use crate::definitions_t::{ aligned };
+    //use crate::definitions_t::{ WORD_SIZE };
 
     impl rl3::State {
         pub open spec fn interp(self) -> rl2::State {
@@ -1386,7 +1465,6 @@ mod refinement {
                 assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Writeback { core } => {
-                assume(pre.inv_sbuf_facts(c));
                 super::lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
                 assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
@@ -1413,10 +1491,10 @@ mod refinement {
     {
         let rl3::Step::WalkDone { walk } = step else { arbitrary() };
         let Lbl::Walk(core, walk_na_res) = lbl else { arbitrary() };
-        let mem_core = pre.core_mem(core);
-        let mem_writer = pre.writer_mem();
+        let core_mem = pre.core_mem(core);
+        let writer_mem = pre.writer_mem();
         // We get a completed walk, `walk_na`, with the result `walk_na_res`
-        let walk_na = rl3::walk_next(mem_core, walk);
+        let walk_na = rl3::walk_next(core_mem, walk);
         assert(walk_na.complete);
         assert(walk_na.result() == walk_na_res);
         assert(walk_na.path.len() == walk.path.len() + 1) by {
@@ -1427,24 +1505,46 @@ mod refinement {
         };
 
         // STEP 1: This walk has the same result if done on the same core but atomically.
-        let walk_a_same_core = rl3::iter_walk(mem_core, walk.vaddr);
+        let walk_a_same_core = rl3::iter_walk(core_mem, walk.vaddr);
         assert(walk_a_same_core == walk_na) by {
-            //rl3::lemma_iter_walk_result_vbase_equal(mem_core, walk.vaddr);
+            rl3::lemma_walk_prefix_extend_walk_next(pre, c, core, walk);
+            //assert(walk_na.path.is_prefix_of(walk_a_same_core.path));
+            //assert(walk_na.path.len() <= 4);
+            //assume(walk_na.complete ==> walk_na.path.len() == walk_a_same_core.path.len());
+            //assert(walk_na.path =~= walk_a_same_core.path);
+            //reveal(rl3::walk_next);
+            //assume(walk_na.path[0].0 == add(core_mem.pml4, (l0_bits!(walk.vaddr as u64) * WORD_SIZE) as usize));
+            //assume(forall|i| 1 <= i < walk_na.path.len() ==> walk_na.path[i].0 == add(walk_na.path[i-1].1->Directory_addr, (l1_bits!(walk.vaddr as u64) * WORD_SIZE) as usize));
+            //assume(forall|i| 0 <= i < walk_na.path.len() ==> PDE { entry: core_mem.read((#[trigger] walk_na.path[i]).0) as u64, layer: Ghost(i as nat), }@ == walk_na.path[i].1);
+            //assume(walk_na.path.len() == walk_a_same_core.path.len());
+            //if walk_na.path.len() == 1 {
+            //    assert(walk_na.path[0] == walk_a_same_core.path[0]);
+            //} else if walk_na.path.len() == 2 {
+            //    assert(walk_na.path[0] == walk_a_same_core.path[0]);
+            //    assert(walk_na.path[1] == walk_a_same_core.path[1]);
+            //} else if walk_na.path.len() == 3 {
+            //    assert(forall|i| 0 <= i < walk_na.path.len() ==> walk_na.path[i] == walk_a_same_core.path[i]);
+            //} else if walk_na.path.len() == 4 {
+            //    assert(forall|i| 0 <= i < walk_na.path.len() ==> walk_na.path[i] == walk_a_same_core.path[i]);
+            //}
+            //admit();
+            //assert(walk_na.path =~= walk_a_same_core.path);
+
+            //rl3::lemma_iter_walk_result_vbase_equal(core_mem, walk.vaddr);
             // XXX: Should follow from path prefix being same in memory and last read being
             // done on current state (pre). Non-trivial but shouldn't be too hard.
             // Maybe something like inv_walks_match_memory2 (not sure i want that invariant).
-            assume(walk_na == rl3::iter_walk(mem_core, walk.vaddr));
-            reveal(rl3::walk_next);
+            assert(walk_na == walk_a_same_core);
         };
         assert(walk_a_same_core.result() == walk_na_res);
 
         // STEP 2: The atomic walk on this core is the same as an atomic walk on the writer's view
         // of the memory. (Or if not, it's in a region in `pre.pending_maps`.)
-        let walk_a_writer_core = rl3::iter_walk(mem_writer, walk.vaddr);
+        let walk_a_writer_core = rl3::iter_walk(writer_mem, walk.vaddr);
 
-        rl3::lemma_iter_walk_equals_pt_walk(mem_core, walk.vaddr);
-        rl3::lemma_iter_walk_equals_pt_walk(mem_writer, walk.vaddr);
-        assert(walk_a_writer_core == mem_writer.pt_walk(walk.vaddr));
+        rl3::lemma_iter_walk_equals_pt_walk(core_mem, walk.vaddr);
+        rl3::lemma_iter_walk_equals_pt_walk(writer_mem, walk.vaddr);
+        assert(walk_a_writer_core == writer_mem.pt_walk(walk.vaddr));
 
         if core == pre.writes.core {
             // If the walk happens on the writer core, the two atomic walks are done on the same
@@ -1452,17 +1552,10 @@ mod refinement {
             assert(walk_a_writer_core == walk_a_same_core);
             assert(rl2::step_Walk(pre.interp(), post.interp(), c, walk.vaddr, lbl));
         } else {
-            assume(pre.inv_sbuf_facts(c));
-            assume(pre.inv_valid_is_not_in_sbuf(c));
-            super::lemma_valid_implies_equal_walks(pre, c, core, walk.vaddr);
-            assert forall|va| mem_writer.pt_walk(va).result() is Valid && !pre.pending_map_for(va)
-                implies #[trigger] mem_core.pt_walk(va).result() == mem_writer.pt_walk(va).result()
-            by {
-                assume(pre.inv_valid_not_pending_is_not_in_sbuf(c));
-                super::lemma_valid_not_pending_implies_equal(pre, c, core, va);
-            };
-            //assume(forall|va| mem_core.pt_walk(va).result() is Invalid && !pre.pending_map_for(va)
-            //    ==> #[trigger] mem_core.pt_walk(va).result() == mem_writer.pt_walk(va).result());
+            rl3::lemma_valid_implies_equal_walks(pre, c, core, walk.vaddr);
+            assert forall|va| writer_mem.pt_walk(va).result() is Valid && !pre.pending_map_for(va)
+                implies #[trigger] core_mem.pt_walk(va).result() == writer_mem.pt_walk(va).result()
+            by { rl3::lemma_valid_not_pending_implies_equal(pre, c, core, va); };
             match walk_a_same_core.result() {
                 WalkResult::Valid { vbase, pte } => {
                     assert(walk_a_same_core == walk_a_writer_core);
@@ -1485,27 +1578,27 @@ mod refinement {
         }
     }
 
-    pub broadcast proof fn lemma_take_len<A>(s: Seq<A>)
-        ensures #[trigger] s.take(s.len() as int) == s
-        decreases s.len()
-    {
-        vstd::seq_lib::lemma_seq_properties::<A>();
-        if s === seq![] {
-        } else {
-            lemma_take_len(s.drop_first());
-        }
-    }
+    //pub broadcast proof fn lemma_take_len<A>(s: Seq<A>)
+    //    ensures #[trigger] s.take(s.len() as int) == s
+    //    decreases s.len()
+    //{
+    //    vstd::seq_lib::lemma_seq_properties::<A>();
+    //    if s === seq![] {
+    //    } else {
+    //        lemma_take_len(s.drop_first());
+    //    }
+    //}
 
-    pub broadcast proof fn lemma_submap_of_trans<K,V>(m1: Map<K,V>, m2: Map<K,V>, m3: Map<K,V>)
-        requires
-            #[trigger] m1.submap_of(m2),
-            m2.submap_of(m3),
-        ensures #[trigger] m1.submap_of(m3)
-    {
-        assert forall|k: K| #[trigger]
-            m1.dom().contains(k) implies #[trigger] m3.dom().contains(k) && m1[k] == m3[k]
-        by { assert(m2.dom().contains(k)); };
-    }
+    //pub broadcast proof fn lemma_submap_of_trans<K,V>(m1: Map<K,V>, m2: Map<K,V>, m3: Map<K,V>)
+    //    requires
+    //        #[trigger] m1.submap_of(m2),
+    //        m2.submap_of(m3),
+    //    ensures #[trigger] m1.submap_of(m3)
+    //{
+    //    assert forall|k: K| #[trigger]
+    //        m1.dom().contains(k) implies #[trigger] m3.dom().contains(k) && m1[k] == m3[k]
+    //    by { assert(m2.dom().contains(k)); };
+    //}
 
     //proof fn lemma_mem_interp_is_submap_of_writer_mem_interp(state: rl3::State, c: Constants)
     //    requires state.inv_view_plus_sbuf_is_submap(c)
@@ -1534,18 +1627,18 @@ mod refinement {
     //    }
     //}
 
-    //proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
-    //    requires
-    //        pre.inv(c),
-    //        rl3::next(pre, post, c, lbl),
-    //    ensures
-    //        rl2::next(pre.interp(), post.interp(), c, lbl),
-    //{
-    //    if pre.happy {
-    //        let step = choose|step: rl3::Step| rl3::next_step(pre, post, c, step, lbl);
-    //        next_step_refines(pre, post, c, step, lbl);
-    //    }
-    //}
+    proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
+        requires
+            pre.inv(c),
+            rl3::next(pre, post, c, lbl),
+        ensures
+            rl2::next(pre.interp(), post.interp(), c, lbl),
+    {
+        if pre.happy {
+            let step = choose|step: rl3::Step| rl3::next_step(pre, post, c, step, lbl);
+            next_step_refines(pre, post, c, step, lbl);
+        }
+    }
 }
 
 

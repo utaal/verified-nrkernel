@@ -6,7 +6,7 @@ pub mod pt_mem;
 
 use vstd::prelude::*;
 use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize };
+use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize, WORD_SIZE };
 
 verus! {
 
@@ -32,6 +32,22 @@ impl WalkResult {
 }
 
 impl Walk {
+    pub open spec fn addr_for_idx(self, i: int, pml4: usize) -> usize
+        recommends i < 4
+    {
+        let Walk { vaddr, path, .. } = self;
+        if i == 0 {
+            add(pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        } else if i == 1 {
+            add(path[0].1->Directory_addr, (l1_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        } else if i == 2 {
+            add(path[1].1->Directory_addr, (l2_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        } else if i == 3 {
+            add(path[2].1->Directory_addr, (l3_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        } else {
+            arbitrary()
+        }
+    }
 
     //pub open spec fn valid(self, pt_mem: PTMem) -> bool {
     //    arbitrary() // basically the pt_walk_path

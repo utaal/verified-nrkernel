@@ -121,8 +121,8 @@ pub open spec fn step_Walk(pre: State, post: State, c: Constants, vaddr: usize, 
 pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, vb: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, WalkResult::Invalid { vaddr })
 
-    // TODO: aligned(vaddr, 8)
     &&& c.valid_core(core)
+    //&&& aligned(vaddr as nat, 8)
     &&& pre.pending_maps.contains_key(vb)
     &&& vb <= vaddr < vb + pre.pending_maps[vb].frame.size
 
@@ -139,7 +139,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
-    &&& post.happy      == pre.happy && pre.is_this_write_happy(core, addr, value, c)
+    &&& post.happy      == (pre.happy && pre.is_this_write_happy(core, addr, value, c))
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
     &&& post.writes.all == pre.writes.all.insert(addr)
     &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
