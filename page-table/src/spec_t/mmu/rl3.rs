@@ -70,14 +70,6 @@ impl State {
         self.core_mem(self.writes.core)
     }
 
-    //pub open spec fn writer_mem_prefix(self, n: int) -> PTMem
-    //    recommends 0 <= n <= self.writer_sbuf().len()
-    //{
-    //    self.pt_mem.write_seq(self.writer_sbuf().take(n))
-    //}
-
-    // TODO: I may want/need to add these conditions as well:
-    // - when unmapping directory, it must be empty
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& !self.writes.all.is_empty() ==> core == self.writes.core
         &&& self.writer_mem().is_nonneg_write(addr, value)
@@ -87,12 +79,6 @@ impl State {
         //    // and the polarity must match
         //    &&& if self.polarity is Pos { self.writer_mem().is_nonneg_write(addr) } else { self.writer_mem().is_neg_write(addr) }
         //}
-        // The write must be to a location that's currently a leaf of the page table.
-        // FIXME: i'm not sure this is doing what i want it to do.
-        // TODO: maybe bad trigger
-        //&&& exists|path, i| #![auto]
-        //    self.writer_mem().page_table_paths().contains(path)
-        //    && 0 <= i < path.len() && path[i].0 == addr
     }
 
     pub open spec fn pending_map_for(self, va: usize) -> bool {
@@ -115,17 +101,10 @@ impl State {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
         &&& forall|core| #[trigger] self.walks.contains_key(core) ==> self.walks[core].finite()
         &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
-        // TODO: maybe change this?
         &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.pt_mem.mem.contains_key(va)
         &&& aligned(self.pt_mem.pml4 as nat, 4096)
         &&& self.pt_mem.pml4 <= u64::MAX - 4096
     }
-
-    // Since we only have positive writes, all currently inflight walks are prefixes of existing
-    // paths.
-    //pub open spec fn inv_walks_are_prefixes(self, c: Constants) -> bool {
-    //    forall|walk| self.walks.contains(walk) ==> ...
-    //}
 
     pub open spec fn non_writer_sbufs_are_empty(self, c: Constants) -> bool {
         forall|core| #[trigger] c.valid_core(core) && core != self.writes.core
@@ -137,8 +116,6 @@ impl State {
                0 <= i1 < self.writer_sbuf().len()
             && 0 <= i2 < self.writer_sbuf().len()
             && i1 != i2
-            //&& self.writer_sbuf()[i1] == (a1, v1)
-            //&& self.writer_sbuf()[i2] == (a2, v2)
                 ==> self.writer_sbuf()[i2].0 != self.writer_sbuf()[i1].0
     }
 
@@ -159,103 +136,13 @@ impl State {
     }
 
     pub open spec fn inv_inflight_walks(self, c: Constants) -> bool {
-        forall|core, walk| c.valid_core(core) && self.walks[core].contains(walk) ==> {
+        forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
             &&& aligned(walk.vaddr as nat, 8)
             &&& walk.path.len() <= 3
             &&& !walk.complete
-            &&& forall|i| 0 <= i < walk.path.len() ==>
-                    (#[trigger] walk.path[i]).0 == walk.addr_for_idx(i, self.core_mem(core).pml4)
-            &&& forall|i| 0 <= i < walk.path.len() ==>
-                    (#[trigger] walk.path[i]).1
-                        == PDE {
-                            // could also use `self.writer_mem().read(walk.path[i].0)`
-                            // relatively easily. (lsb is 1, so addr is not in sbuf)
-                            entry: self.core_mem(core).read(walk.path[i].0) as u64,
-                            layer: Ghost(i as nat),
-                        }@
+            &&& is_iter_walk_prefix(self.core_mem(core), walk)
         }
     }
-
-    ///// Any inflight page table walks didn't read from addresses that currently have P=0.
-    ///// TODO: might be better to instead show that values at addresses in walk paths have P=1.
-    //pub open spec fn inv_walks_disjoint_with_present_bit_0_addrs(self, c: Constants) -> bool {
-    //    forall|core, addr, walk, i| #![auto] {
-    //        &&& c.valid_core(core)
-    //        &&& self.writer_mem().read(addr) & 1 == 0
-    //        &&& self.walks[core].contains(walk)
-    //        &&& 0 <= i < walk.path.len()
-    //    } ==> walk.path[i].0 != addr
-    //}
-    //
-    //pub open spec fn inv_invalid_on_writer_is_invalid(self, c: Constants) -> bool {
-    //    forall|core, addr| #![auto] {
-    //        &&& c.valid_core(core)
-    //        &&& self.writer_mem().read(addr) & 1 == 0
-    //    } ==> self.core_mem(core).read(addr) & 1 == 0
-    //}
-
-    //// XXX: too weak to preserve currently. E.g. sbuf could contain (addr, 0), (addr, 1), (addr, 0)
-    //// Problem during writeback step preservation proof.
-    //pub open spec fn inv_walk_addr_is_same_on_writer(self, c: Constants) -> bool {
-    //    forall|core, walk, i| #![auto] {
-    //        &&& c.valid_core(core)
-    //        &&& self.walks[core].contains(walk)
-    //        &&& 0 <= i < walk.path.len()
-    //    } ==> self.core_mem(core).read(walk.path[i].0)
-    //            == self.writer_mem().read(walk.path[i].0)
-    //}
-
-    //pub open spec fn inv_walk_entry_matches_current(self, c: Constants) -> bool {
-    //    forall|core, walk, i| {
-    //        &&& c.valid_core(core)
-    //        &&& #[trigger] self.walks[core].contains(walk)
-    //        &&& 0 <= i < walk.path.len()
-    //    } ==> {
-    //        let mem = self.core_mem(core);
-    //        let addr = (#[trigger] walk.path[i]).0;
-    //        let entry = PDE { entry: mem.read(addr) as u64, layer: Ghost(i as nat) }@;
-    //        walk.path[i].1 == entry
-    //    }
-    //}
-
-    //pub open spec fn inv_walks_match_memory(self, c: Constants) -> bool {
-    //    forall|core, walk, i| #![auto] {
-    //        &&& c.valid_core(core)
-    //        &&& self.walks[core].contains(walk)
-    //        &&& 0 <= i < walk.path.len()
-    //    } ==> walk.path[i] == self.writer_mem().pt_walk(walk.vaddr).path[i]
-    //}
-
-    pub open spec fn inv_walks_match_memory(self, c: Constants) -> bool {
-        forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
-            &&& walk.path.is_prefix_of(iter_walk(self.core_mem(core), walk.vaddr).path)
-            //&&& walk.complete ==> walk.path.len() == self.core_mem(core).pt_walk(walk.vaddr).len()
-        }
-    }
-
-    //pub open spec fn inv_walks_match_memory2(self, c: Constants) -> bool {
-    //    forall|core, walk, n| {
-    //        &&& c.valid_core(core)
-    //        &&& self.walks[core].contains(walk)
-    //        &&& n == walk.path.len()
-    //    } ==> walk == #[trigger] iter_walk_aux(self.core_mem(core), walk.vaddr, sub(4, n))
-    //}
-
-    //// FIXME: rename
-    //pub open spec fn inv_x(self, c: Constants) -> bool {
-    //    forall|core, addr| #![trigger self.core_mem(core).pt_walk(addr)]
-    //        c.valid_core(core) ==> {
-    //            let core_mem = self.core_mem(core);
-    //            let writer_mem = self.writer_mem();
-    //            match core_mem.pt_walk(addr).result() {
-    //                WalkResult::Valid { .. } =>
-    //                    core_mem.pt_walk(addr) == writer_mem.pt_walk(addr),
-    //                WalkResult::Invalid { .. } =>
-    //                    !self.pending_map_for(addr)
-    //                        ==> core_mem.pt_walk(addr).result() == writer_mem.pt_walk(addr).result(),
-    //            }
-    //        }
-    //}
 
     /// If any non-writer core reads a value that has the P bit set, we know that no write for that address is
     /// in the writer's store buffer.
@@ -283,41 +170,6 @@ impl State {
             self.hist.pending_maps.contains_key(va)
                 ==> self.writer_mem().is_base_pt_walk(va)
     }
-
-    //pub open spec fn inv_pending_map_is_in_writes(self, c: Constants) -> bool {
-    //    self.pending_map_for(addr) ==> {
-    //        let path = self.writer_mem().pt_walk(addr).path;
-    //        exists|i| 0 <= i < path.len() && self.writes.all.contains(path[i].0)
-    //    }
-    //}
-    //
-    //pub open spec fn inv_notin_writes_notin_sbuf(self, c: Constants) -> bool {
-    //    forall|addr: usize|
-    //        !self.writes.all.contains(addr) ==> !self.writer_sbuf().contains_fst(addr)
-    //}
-    //
-    //pub open spec fn inv_walks_match_memory(self, c: Constants) -> bool {
-    //    forall|core, walk, i| #![auto] {
-    //        &&& c.valid_core(core)
-    //        &&& self.walks[core].contains(walk)
-    //        &&& 0 <= i < walk.path.len()
-    //    } ==> PDE {
-    //            entry: self.writer_mem().read(walk.path[i].0) as u64,
-    //            layer: Ghost(i as nat)
-    //        }@ == walk.path[i].1
-    //}
-
-    //// I think this is strong enough to preserve during writeback and implies (mem@ is submap of
-    //// writer_mem@)
-    //pub open spec fn inv_view_plus_sbuf_is_submap(self, c: Constants) -> bool {
-    //    forall|n| 0 <= n < self.writer_sbuf().len()
-    //        ==> (#[trigger] self.writer_mem_prefix(n))@.submap_of(self.writer_mem_prefix(n + 1)@)
-    //}
-
-    //pub open spec fn inv_1(self, c: Constants) -> bool {
-    //    forall|vbase, pte| !self.pt_mem@.contains_key(vbase) && self.writer_mem()@.contains_pair(vbase, pte)
-    //        ==> self.hist.pending_maps.contains_pair(vbase, pte)
-    //}
 
     pub open spec fn inv(self, c: Constants) -> bool {
         self.happy ==> {
@@ -395,23 +247,6 @@ pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
     };
     walk
 }
-
-//// TODO: might be easier to just spell out the whole thing and do case distinctions
-//// Or may want to generate the path prefix set...
-//pub open spec fn complete_walk(state: State, core: Core, walk: Walk) -> Walk
-//    recommends walk.path.len() < 4 && !walk.complete
-//    decreases 4 - walk.path.len()
-//{
-//    if walk.path.len() < 4 {
-//        if walk.complete {
-//            walk
-//        } else {
-//            complete_walk(state, core, walk_next(state, core, walk))
-//        }
-//    } else {
-//        arbitrary()
-//    }
-//}
 
 pub open spec fn step_WalkStep(
     pre: State,
@@ -588,8 +423,8 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
 {
     if pre.happy && post.happy {
         next_step_preserves_wf(pre, post, c, step, lbl);
-        next_step_preserves_inv_inflight_walks(pre, post, c, step, lbl);
         next_step_preserves_inv_sbuf_facts(pre, post, c, step, lbl);
+        next_step_preserves_inv_inflight_walks(pre, post, c, step, lbl);
         next_step_preserves_inv_pending_map_is_base_walk(pre, post, c, step, lbl);
         next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre, post, c, step, lbl);
         next_step_preserves_inv_valid_is_not_in_sbuf(pre, post, c, step, lbl);
@@ -609,26 +444,118 @@ proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Cons
         pre.happy,
         post.happy,
         pre.inv_sbuf_facts(c),
+        post.inv_sbuf_facts(c),
+        pre.inv_valid_is_not_in_sbuf(c),
         pre.inv_inflight_walks(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_inflight_walks(c)
 {
-    if pre.happy {
-        match step {
-            Step::WalkStep { core, walk } => {
-                reveal(rl3::walk_next);
-                assert(post.inv_inflight_walks(c));
-            },
-            Step::Write => {
-                admit();
-                assert(post.inv_inflight_walks(c));
-            },
-            Step::Writeback { core } => {
-                admit();
-                assert(post.inv_inflight_walks(c));
-            },
-            _ => assert(post.inv_inflight_walks(c)),
-        }
+    match step {
+        Step::WalkStep { core, walk } => {
+            reveal(rl3::walk_next);
+            assert(post.inv_inflight_walks(c));
+        },
+        Step::Write => {
+            let Lbl::Write(wrcore, wraddr, value) = lbl else { arbitrary() };
+            assert(post.inv_inflight_walks(c)) by {
+                assert forall|core, walk|
+                    c.valid_core(core) && #[trigger] post.walks[core].contains(walk)
+                implies is_iter_walk_prefix(post.core_mem(core), walk) by {
+                    if wrcore == core {
+                        // TODO: can probably extract some of these things into a lemma that
+                        // collects facts about step_Write. Using very similar assertions in other
+                        // proofs.
+                        reveal(rl3::walk_next);
+                        broadcast use axiom_map_insert_different_strong;
+                        lemma_step_write_mem_view(pre, post, c, lbl);
+                        pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
+                        pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+                        post.pt_mem.lemma_write_seq(post.writer_sbuf());
+                        assert(post.core_mem(core) == post.writer_mem());
+                        if post.writes.core == pre.writes.core {
+                        } else {
+                            assert(pre.core_mem(core) == pre.writer_mem());
+                        }
+                    }
+                };
+            };
+        },
+        Step::Writeback { core: wrcore } => {
+            let wraddr = pre.writer_sbuf()[0].0;
+            let value = pre.writer_sbuf()[0].1;
+            assert(wrcore == pre.writes.core);
+            assert(wrcore == post.writes.core);
+            assert(post.inv_inflight_walks(c)) by {
+                assert forall|core, walk|
+                    c.valid_core(core) && #[trigger] post.walks[core].contains(walk)
+                implies is_iter_walk_prefix(post.core_mem(core), walk) by {
+                    if wrcore == core {
+                        lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
+                    } else {
+                        // TODO: Kind of unstable and really ugly proof
+                        let pre_walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
+                        let pre_walkp1 = walk_next(pre.core_mem(core), pre_walkp0);
+                        let pre_walkp2 = walk_next(pre.core_mem(core), pre_walkp1);
+                        let pre_walkp3 = walk_next(pre.core_mem(core), pre_walkp2);
+                        let pre_walkp4 = walk_next(pre.core_mem(core), pre_walkp3);
+                        let post_walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
+                        let post_walkp1 = walk_next(post.core_mem(core), post_walkp0);
+                        let post_walkp2 = walk_next(post.core_mem(core), post_walkp1);
+                        let post_walkp3 = walk_next(post.core_mem(core), post_walkp2);
+                        let post_walkp4 = walk_next(post.core_mem(core), post_walkp3);
+                        reveal(rl3::walk_next);
+                        broadcast use axiom_map_insert_different_strong;
+                        //lemma_step_write_mem_view(pre, post, c, lbl);
+                        //pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
+                        pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+                        post.pt_mem.lemma_write_seq(post.writer_sbuf());
+                        assert(bit!(0u64) == 1) by (bit_vector);
+                        assert(pre.core_mem(core) == pre.pt_mem);
+                        assert(post.core_mem(core) == post.pt_mem);
+                        // TODO: extract to lemma, also used in lemma_valid_not_pending_implies_equal
+                        assert(forall|i| #![auto] 0 <= i < walk.path.len() ==> aligned(walk.path[i].0 as nat, 8)) by {
+                            broadcast use PDE::lemma_view_addr_aligned;
+                            crate::spec_t::hardware::lemma_bit_indices_less_512(walk.vaddr as u64);
+                        };
+                        if walk.path.len() == 0 {
+                            assert(walk == pre_walkp0);
+                        } else if walk.path.len() == 1 {
+                            assert(walk == pre_walkp1);
+
+                            assert(post_walkp1.path[0] == pre_walkp1.path[0]);
+                        } else if walk.path.len() == 2 {
+                            assert(walk == pre_walkp2);
+                            assert(!pre_walkp1.complete);
+
+                            assert(post_walkp2.path.len() == pre_walkp2.path.len());
+                            assert(post_walkp2.path[0] == pre_walkp2.path[0]);
+                            assert(post_walkp2.path[1] == pre_walkp2.path[1]);
+                        } else if walk.path.len() == 3 {
+                            assert(walk == pre_walkp3);
+                            assert(!pre_walkp1.complete);
+                            assert(!pre_walkp2.complete);
+
+                            assert(post_walkp3.path.len() == pre_walkp3.path.len());
+                            assert(post_walkp3.path[0] == pre_walkp3.path[0]);
+                            assert(post_walkp3.path[1] == pre_walkp3.path[1]);
+                            //assert(post_walkp3.path[2] == pre_walkp3.path[2]);
+                        } else if walk.path.len() == 4 {
+                            assert(walk == pre_walkp4);
+                            assert(!pre_walkp1.complete);
+                            assert(!pre_walkp2.complete);
+                            assert(!pre_walkp3.complete);
+
+                            assert(post_walkp4.path.len() == pre_walkp4.path.len());
+                            //assert(post_walkp4.path[0] == pre_walkp4.path[0]);
+                            //assert(post_walkp4.path[1] == pre_walkp4.path[1]);
+                        } else {
+                            assert(false);
+                        }
+                    }
+                };
+            };
+        },
+        _ => assert(post.inv_inflight_walks(c)),
     }
 }
 
@@ -673,139 +600,6 @@ broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: in
 {
     state.pt_mem.lemma_write_seq_read(state.writer_sbuf(), i);
 }
-
-//proof fn next_step_preserves_inv_walks_disjoint_with_present_bit_0_addrs(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
-//    requires
-//        pre.happy,
-//        pre.wf(c),
-//        pre.inv_walks_disjoint_with_present_bit_0_addrs(c),
-//        next_step(pre, post, c, step, lbl),
-//    ensures post.happy ==> post.inv_walks_disjoint_with_present_bit_0_addrs(c)
-//{
-//    match step {
-//        Step::Invlpg => {
-//            let core = lbl->Invlpg_0;
-//            //assume(pre.single_writer()); // prove this in separate invariant
-//            // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
-//            // though I mention all the triggers.
-//            //broadcast use lemma_writer_sbuf_empty_implies_writer_mem_equal;
-//            assert(pre.sbuf[core].len() == 0);
-//            //lemma_writes_filter_empty_if_writer_core(pre, post);
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::WalkInit { core, vaddr } => {
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::WalkStep { core, walk } => {
-//            let walk_next = walk_next(pre.core_mem(core), walk);
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assert forall|core2, addr, walk2, i| #![auto] {
-//                &&& c.valid_core(core2)
-//                    &&& post.writer_mem().read(addr) & 1 == 0
-//                    &&& post.walks[core2].contains(walk2)
-//                    &&& 0 <= i < walk2.path.len()
-//            } implies walk2.path[i].0 != addr by {
-//                if core2 == core && walk2 == walk_next {
-//                    // walk_next adds one more entry to the path and the resulting walk is not
-//                    // yet complete. This means the entry was a directory, which means the
-//                    // present bit is set.
-//                    admit();
-//                    assert(walk2.path[i].0 != addr);
-//                } else {
-//                    assert(walk2.path[i].0 != addr);
-//                }
-//            };
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::WalkDone { walk } => {
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::Write => {
-//            let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
-//            assume(forall|addr| #[trigger] post.writer_mem().read(addr) == if addr == wraddr { value } else { pre.writer_mem().read(addr) });
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::Writeback { core } => {
-//            broadcast use lemma_writeback_preserves_writer_mem;
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::Read => {
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c))
-//        },
-//        Step::Barrier => {
-//            let core = lbl->Barrier_0;
-//            //assume(pre.single_writer()); // prove this in separate invariant
-//            // TODO: Why do I have to manually call this lemma? Broadcast doesn't work even
-//            // though I mention all the triggers.
-//            //broadcast use lemma_writer_sbuf_empty_implies_writer_mem_equal;
-//            //lemma_writes_filter_empty_if_writer_core(pre, post);
-//            assert(pre.sbuf[core].len() == 0);
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c));
-//        },
-//        Step::Stutter => assert(post.inv_walks_disjoint_with_present_bit_0_addrs(c)),
-//    }
-//}
-
-//proof fn next_step_preserves_inv_x(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
-//    requires
-//        pre.happy,
-//        pre.wf(c),
-//        pre.inv_x(c),
-//        next_step(pre, post, c, step, lbl),
-//        post.happy,
-//    ensures post.inv_x(c)
-//{
-//    assume(pre.writer_sbuf().len() == 0 ==> forall|core| c.valid_core(core) ==> pre.core_mem(core) == pre.writer_mem());
-//    match step {
-//        Step::Invlpg => {
-//            let core = lbl->Invlpg_0;
-//            //assert(pre.sbuf[core].len() == 0);
-//            //lemma_writes_filter_empty_if_writer_core(pre, post);
-//            //assert(post.writer_mem() == pre.writer_mem());
-//            //assert(forall|core| c.valid_core(core) ==> post.core_mem(core) == pre.core_mem(core));
-//            assert(post.hist.pending_maps == if core == pre.writes.core { map![] } else { pre.hist.pending_maps });
-//            assert(post.inv_x(c));
-//        },
-//        Step::WalkInit { core, vaddr } => {
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assert(forall|core| c.valid_core(core) ==> post.core_mem(core) == pre.core_mem(core));
-//            assert(post.inv_x(c));
-//        },
-//        Step::WalkStep { core, walk } => {
-//            let walk_next = walk_next(pre.core_mem(core), walk);
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assert(forall|core| c.valid_core(core) ==> post.core_mem(core) == pre.core_mem(core));
-//            assert(post.inv_x(c));
-//        },
-//        Step::WalkDone { walk } => {
-//            assert(post.inv_x(c));
-//        },
-//        Step::Write => {
-//            let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
-//            assume(forall|addr| #[trigger] post.writer_mem().read(addr) == if addr == wraddr { value } else { pre.writer_mem().read(addr) });
-//            broadcast use pt_mem::PTMem::lemma_pt_walk;
-//            admit();
-//            assert(post.inv_x(c));
-//        },
-//        Step::Writeback { core } => {
-//            broadcast use lemma_writeback_preserves_writer_mem;
-//            assert(post.writer_mem() == pre.writer_mem());
-//            assume(post.inv_x(c));
-//        },
-//        Step::Read => {
-//            assert(post.inv_x(c))
-//        },
-//        Step::Barrier => {
-//            let core = lbl->Barrier_0;
-//            assert(post.hist.pending_maps == if core == pre.writes.core { map![] } else { pre.hist.pending_maps });
-//            assert(post.inv_x(c));
-//        },
-//        Step::Stutter => assert(post.inv_x(c)),
-//    }
-//}
 
 proof fn next_step_preserves_inv_pending_map_is_base_walk(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
@@ -873,23 +667,6 @@ broadcast proof fn lemma_step_write_valid_walk_unchanged(pre: State, post: State
     broadcast use axiom_map_insert_different_strong;
     lemma_step_write_mem_view(pre, post, c, lbl);
 }
-
-//proof fn lemma_step_write_new_walk(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
-//    requires
-//        pre.happy,
-//        post.happy,
-//        pre.wf(c),
-//        pre.inv_sbuf_facts(c),
-//        step_Write(pre, post, c, lbl),
-//        pre.writer_mem().pt_walk(va).result() is Invalid,
-//        post.writer_mem().pt_walk(va).result() is Valid,
-//    ensures
-//        forall|i:int|
-//            0 <= i < pre.writer_mem().pt_walk(va).path.len()
-//                ==> post.writer_mem().pt_walk(va).path[i] == pre.writer_mem().pt_walk(va).path[i],
-//        post.writer_mem().pt_walk(va).path.last().0 == lbl->Write_1,
-//{
-//}
 
 proof fn lemma_step_write_path_addrs_match(pre: State, post: State, c: Constants, lbl: Lbl, va: usize)
     requires
@@ -1200,6 +977,33 @@ proof fn lemma_writeback_preserves_writer_mem(pre: State, post: State, c: Consta
     pt_mem::PTMem::lemma_write_seq_first(pre.pt_mem, pre.sbuf[core]);
 }
 
+pub open spec fn is_iter_walk_prefix(mem: PTMem, walk: Walk) -> bool {
+    let walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
+    let walkp1 = walk_next(mem, walkp0);
+    let walkp2 = walk_next(mem, walkp1);
+    let walkp3 = walk_next(mem, walkp2);
+    let walkp4 = walk_next(mem, walkp3);
+    if walk.path.len() == 0 {
+        walk == walkp0
+    } else if walk.path.len() == 1 {
+        walk == walkp1
+    } else if walk.path.len() == 2 {
+        &&& walk == walkp2
+        &&& !walkp1.complete
+    } else if walk.path.len() == 3 {
+        &&& walk == walkp3
+        &&& !walkp1.complete
+        &&& !walkp2.complete
+    } else if walk.path.len() == 4 {
+        &&& walk == walkp4
+        &&& !walkp1.complete
+        &&& !walkp2.complete
+        &&& !walkp3.complete
+    } else {
+        false
+    }
+}
+
 pub open spec fn iter_walk(mem: PTMem, vaddr: usize) -> Walk {
     let walk = rl3::walk_next(mem, Walk { vaddr, path: seq![], complete: false });
     if walk.complete { walk } else {
@@ -1292,45 +1096,6 @@ proof fn lemma_pt_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
     broadcast use lemma_iter_walk_equals_pt_walk;
     lemma_iter_walk_result_vbase_equal(mem, mem.pt_walk(vaddr).result().vaddr());
     lemma_iter_walk_result_vbase_equal(mem, vaddr);
-}
-
-proof fn lemma_walk_prefix_extend_walk_next(pre: State, c: Constants, core: Core, walk: Walk)
-    requires
-        pre.wf(c),
-        pre.inv_inflight_walks(c),
-        //pre.inv_walks_match_memory(c),
-        c.valid_core(core),
-        pre.walks[core].contains(walk),
-        walk_next(pre.core_mem(core), walk).complete,
-    ensures
-        walk_next(pre.core_mem(core), walk) == rl3::iter_walk(pre.core_mem(core), walk.vaddr)
-{
-    assert(!walk.complete);
-    reveal(walk_next);
-    let core_mem = pre.core_mem(core);
-    let pml4 = pre.core_mem(core).pml4;
-    let walk_na = rl3::iter_walk(core_mem, walk.vaddr);
-    let walk_a  = walk_next(core_mem, walk);
-    assert(walk.path.is_prefix_of(walk_a.path));
-    assert(walk.path.len() <= walk_a.path.len());
-    assert(walk.addr_for_idx(0, pml4) == walk_a.addr_for_idx(0, pml4));
-    admit();
-    //if walk.path.len() == 0 {
-    //} else if walk.path.len() == 1 {
-    //    assert(walk.path[0] == walk_a.path[0]);
-    //    assert(walk_a.path.len() >= 1);
-    //    assert(walk_a.complete);
-    //    let entry = PDE { entry: core_mem.read(walk.addr_for_idx(0, pml4)) as u64, layer: Ghost(0) }@;
-    //    assert(entry == walk_a.path[0].1);
-    //    if walk_a.path.len() == 1 {
-    //        assert(!(walk_a.path[0].1 is Directory));
-    //        assert(walk.complete);
-    //    }
-    //    assert(walk.addr_for_idx(1, pml4) == walk_a.addr_for_idx(1, pml4));
-    //    assert(walk.path.len() < walk_a.path.len());
-    //} else {
-    //    admit();
-    //}
 }
 
 broadcast proof fn lemma_bits_align_to_usize(vaddr: usize)
@@ -1507,33 +1272,7 @@ mod refinement {
         // STEP 1: This walk has the same result if done on the same core but atomically.
         let walk_a_same_core = rl3::iter_walk(core_mem, walk.vaddr);
         assert(walk_a_same_core == walk_na) by {
-            rl3::lemma_walk_prefix_extend_walk_next(pre, c, core, walk);
-            //assert(walk_na.path.is_prefix_of(walk_a_same_core.path));
-            //assert(walk_na.path.len() <= 4);
-            //assume(walk_na.complete ==> walk_na.path.len() == walk_a_same_core.path.len());
-            //assert(walk_na.path =~= walk_a_same_core.path);
-            //reveal(rl3::walk_next);
-            //assume(walk_na.path[0].0 == add(core_mem.pml4, (l0_bits!(walk.vaddr as u64) * WORD_SIZE) as usize));
-            //assume(forall|i| 1 <= i < walk_na.path.len() ==> walk_na.path[i].0 == add(walk_na.path[i-1].1->Directory_addr, (l1_bits!(walk.vaddr as u64) * WORD_SIZE) as usize));
-            //assume(forall|i| 0 <= i < walk_na.path.len() ==> PDE { entry: core_mem.read((#[trigger] walk_na.path[i]).0) as u64, layer: Ghost(i as nat), }@ == walk_na.path[i].1);
-            //assume(walk_na.path.len() == walk_a_same_core.path.len());
-            //if walk_na.path.len() == 1 {
-            //    assert(walk_na.path[0] == walk_a_same_core.path[0]);
-            //} else if walk_na.path.len() == 2 {
-            //    assert(walk_na.path[0] == walk_a_same_core.path[0]);
-            //    assert(walk_na.path[1] == walk_a_same_core.path[1]);
-            //} else if walk_na.path.len() == 3 {
-            //    assert(forall|i| 0 <= i < walk_na.path.len() ==> walk_na.path[i] == walk_a_same_core.path[i]);
-            //} else if walk_na.path.len() == 4 {
-            //    assert(forall|i| 0 <= i < walk_na.path.len() ==> walk_na.path[i] == walk_a_same_core.path[i]);
-            //}
-            //admit();
-            //assert(walk_na.path =~= walk_a_same_core.path);
-
-            //rl3::lemma_iter_walk_result_vbase_equal(core_mem, walk.vaddr);
-            // XXX: Should follow from path prefix being same in memory and last read being
-            // done on current state (pre). Non-trivial but shouldn't be too hard.
-            // Maybe something like inv_walks_match_memory2 (not sure i want that invariant).
+            assert(rl3::is_iter_walk_prefix(pre.core_mem(core), walk));
             assert(walk_na == walk_a_same_core);
         };
         assert(walk_a_same_core.result() == walk_na_res);
@@ -1577,55 +1316,6 @@ mod refinement {
             }
         }
     }
-
-    //pub broadcast proof fn lemma_take_len<A>(s: Seq<A>)
-    //    ensures #[trigger] s.take(s.len() as int) == s
-    //    decreases s.len()
-    //{
-    //    vstd::seq_lib::lemma_seq_properties::<A>();
-    //    if s === seq![] {
-    //    } else {
-    //        lemma_take_len(s.drop_first());
-    //    }
-    //}
-
-    //pub broadcast proof fn lemma_submap_of_trans<K,V>(m1: Map<K,V>, m2: Map<K,V>, m3: Map<K,V>)
-    //    requires
-    //        #[trigger] m1.submap_of(m2),
-    //        m2.submap_of(m3),
-    //    ensures #[trigger] m1.submap_of(m3)
-    //{
-    //    assert forall|k: K| #[trigger]
-    //        m1.dom().contains(k) implies #[trigger] m3.dom().contains(k) && m1[k] == m3[k]
-    //    by { assert(m2.dom().contains(k)); };
-    //}
-
-    //proof fn lemma_mem_interp_is_submap_of_writer_mem_interp(state: rl3::State, c: Constants)
-    //    requires state.inv_view_plus_sbuf_is_submap(c)
-    //    ensures state.pt_mem@.submap_of(state.writer_mem()@)
-    //{
-    //    lemma_take_len(state.writer_sbuf());
-    //    lemma_mem_interp_is_submap_of_writer_mem_interp_aux(state, c, state.writer_sbuf().len() as int);
-    //}
-    //
-    //proof fn lemma_mem_interp_is_submap_of_writer_mem_interp_aux(state: rl3::State, c: Constants, n: int)
-    //    requires
-    //        state.inv_view_plus_sbuf_is_submap(c),
-    //        0 <= n <= state.writer_sbuf().len(),
-    //    ensures state.pt_mem@.submap_of(state.writer_mem_prefix(n)@)
-    //    decreases n
-    //{
-    //    if n == 0 {
-    //    } else {
-    //        lemma_mem_interp_is_submap_of_writer_mem_interp_aux(state, c, n - 1);
-    //        assert(state.pt_mem@.submap_of(state.writer_mem_prefix(n - 1)@));
-    //        let (addr, value) = state.writer_sbuf()[n - 1];
-    //        assume(state.writer_mem_prefix(n) == state.writer_mem_prefix(n - 1).write(addr, value));
-    //        broadcast use lemma_submap_of_trans;
-    //        assert(state.writer_mem_prefix(n - 1)@.submap_of(state.writer_mem_prefix(n)@));
-    //        assert(state.pt_mem@.submap_of(state.writer_mem_prefix(n)@));
-    //    }
-    //}
 
     proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
         requires
