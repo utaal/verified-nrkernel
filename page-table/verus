@@ -1,4 +1,0 @@
-#! /bin/bash 
-
-~/Documents/verus/source/target-verus/release/verus ~/Documents/verified-nrkernel/page-table/lib.rs --crate-type=lib --multiple-errors 10 "$@"
-
