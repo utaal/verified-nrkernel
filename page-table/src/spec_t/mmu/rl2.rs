@@ -14,17 +14,7 @@ pub struct State {
     pub happy: bool,
     /// Page table memory
     pub pt_mem: PTMem,
-    ///// In-progress page table walks
-    //pub walks: Map<Core, Set<Walk>>,
-    ///// Store buffers
-    //pub sbuf: Map<Core, Seq<(usize, usize)>>,
     pub writes: Writes,
-    ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
-    ///// flipped when neg and writes are all empty.
-    ///// A non-flipping write with the wrong polarity sets happy to false.
-    ///// Additionally tracks the current writer core.
-    ///// Technically we could probably infer the polarity from the write tracking but this is easier.
-    //pub polarity: Polarity,
     /// Tracks the virtual address ranges for which we cannot guarantee atomic walk results
     /// If polarity is negative, we give no guarantees about the results in these ranges; If it's
     /// positive, the possible results are atomic semantics or an "invalid" result.
@@ -34,34 +24,10 @@ pub struct State {
 
 
 impl State {
-    // TODO: I may want/need to add these conditions as well:
-    // - when unmapping directory, it must be empty
-    //   - and its entries must not be modified
-    //      - not necessary because these would only be problematic if positive which is not allowed
-    // - the location corresponds to *exactly* one leaf entry in the page table
-    //   - previous conditions are important for this: i cannot know if there's exactly one leaf
-    //     entry, if e.g. allow unmapping non-empty
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize) -> bool {
         &&& !self.writes.all.is_empty() ==> core == self.writes.core
         &&& self.pt_mem.is_nonneg_write(addr, value)
-        //&&& !self.can_change_polarity(c) ==> {
-        //    // If we're not at the start of an operation, the writer must stay the same
-        //    &&& self.polarity.core() == core
-        //    // and the polarity must match
-        //    &&& if self.polarity is Pos { self.pt_mem.is_nonneg_write(addr) } else { self.pt_mem.is_neg_write(addr) }
-        //}
-        // The write must be to a location that's currently a leaf of the page table.
-        // FIXME: i'm not sure this is doing what i want it to do.
-        // TODO: maybe bad trigger
-        //&&& exists|path, i| #![auto]
-        //    self.pt_mem.page_table_paths().contains(path)
-        //    && 0 <= i < path.len() && path[i].0 == addr
     }
-
-    //pub open spec fn can_change_polarity(self, c: Constants) -> bool {
-    //    &&& self.writes.all.is_empty()
-    //    &&& forall|core| #![auto] c.valid_core(core) ==> self.writes.neg[core].is_empty()
-    //}
 
     pub open spec fn is_tso_read_deterministic(self, core: Core, addr: usize) -> bool {
         self.writes.all.contains(addr) ==> self.writes.core == core
@@ -69,8 +35,6 @@ impl State {
 
     pub open spec fn wf(self, c: Constants) -> bool {
         true
-        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
-        //&&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
@@ -149,7 +113,6 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
             |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
             |vbase| post.pt_mem@[vbase]
         ))
-    //&&& post.polarity   == if pre.pt_mem.is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
