@@ -69,8 +69,8 @@ pub ghost enum GPDE {
         PWT: bool,
         /// Page-level cache disable
         PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        A: bool,
+        ///// Accessed; indicates whether software has accessed the page referenced by this entry
+        //A: bool,
         /// If IA32_EFER.NXE = 1, execute-disable (if 1, instruction fetches are not allowed from
         /// the page controlled by this entry); otherwise, reserved (must be 0)
         XD: bool,
@@ -87,10 +87,10 @@ pub ghost enum GPDE {
         PWT: bool,
         /// Page-level cache disable
         PCD: bool,
-        /// Accessed; indicates whether software has accessed the page referenced by this entry
-        A: bool,
-        /// Dirty; indicates whether software has written to the page referenced by this entry
-        D: bool,
+        ///// Accessed; indicates whether software has accessed the page referenced by this entry
+        //A: bool,
+        ///// Dirty; indicates whether software has written to the page referenced by this entry
+        //D: bool,
         // /// Page size; must be 1 (otherwise, this entry references a directory)
         // PS: Option<bool>,
         // PS is entirely determined by the Page variant and the layer
@@ -124,13 +124,13 @@ pub const MASK_FLAG_PWT: u64 = bit!(3u64);
 
 pub const MASK_FLAG_PCD: u64 = bit!(4u64);
 
-pub const MASK_FLAG_A: u64 = bit!(5u64);
+//pub const MASK_FLAG_A: u64 = bit!(5u64);
 
 pub const MASK_FLAG_XD: u64 = bit!(63u64);
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
-pub const MASK_PG_FLAG_D: u64 = bit!(6u64);
+//pub const MASK_PG_FLAG_D: u64 = bit!(6u64);
 
 pub const MASK_PG_FLAG_G: u64 = bit!(8u64);
 
@@ -141,6 +141,9 @@ pub const MASK_L1_PG_FLAG_PS: u64 = bit!(7u64);
 pub const MASK_L2_PG_FLAG_PS: u64 = bit!(7u64);
 
 pub const MASK_L3_PG_FLAG_PAT: u64 = bit!(7u64);
+
+pub const MASK_DIRTY_ACCESS: usize = (bit!(5) | bit!(6)) as usize;
+pub const MASK_NEG_DIRTY_ACCESS: usize = !(bit!(5) | bit!(6)) as usize;
 
 // In the implementation we can always use the 12:52 mask as the invariant guarantees that in the
 // other cases, the lower bits are already zero anyway.
@@ -248,6 +251,52 @@ impl PDE {
             requires 32 <= mw <= 52;
     }
 
+    pub proof fn lemma_view_unchanged_dirty_access(self, other: PDE)
+        requires
+            self.layer@ < 4,
+            self.entry & MASK_NEG_DIRTY_ACCESS as u64 == other.entry & MASK_NEG_DIRTY_ACCESS as u64,
+            self.layer == other.layer,
+        ensures other@ == self@
+    {
+        reveal(PDE::all_mb0_bits_are_zero);
+        let v1 = self.entry;
+        let v2 = other.entry;
+        assert(forall|b: u64| 0 <= b < 5 ==> #[trigger] (v1 & bit!(b)) == v2 & bit!(b)) by (bit_vector)
+            requires v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6));
+        assert(forall|b: u64| 6 < b < 64 ==> #[trigger] (v1 & bit!(b)) == v2 & bit!(b)) by (bit_vector)
+            requires v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6));
+        axiom_max_phyaddr_width_facts();
+        let mw = MAX_PHYADDR_WIDTH;
+
+        assert(v1 & bitmask_inc!(12u64, mw - 1)
+            == v2 & bitmask_inc!(12u64, mw - 1)) by (bit_vector)
+            requires
+                v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
+                32 <= mw <= 52;
+        assert(v1 & bitmask_inc!(21u64, mw - 1)
+            == v2 & bitmask_inc!(21u64, mw - 1)) by (bit_vector)
+            requires
+                v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
+                32 <= mw <= 52;
+        assert(v1 & bitmask_inc!(30u64, mw - 1)
+            == v2 & bitmask_inc!(30u64, mw - 1)) by (bit_vector)
+            requires
+                v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
+                32 <= mw <= 52;
+        assert(v1 & bitmask_inc!(mw, 51) == v2 & bitmask_inc!(mw, 51)) by (bit_vector)
+            requires
+                v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
+                32 <= mw <= 52;
+        assert(v1 & bitmask_inc!(mw, 62) == v2 & bitmask_inc!(mw, 62)) by (bit_vector)
+            requires
+                v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
+                32 <= mw <= 52;
+        assert(v1 & bitmask_inc!(13, 29) == v2 & bitmask_inc!(13, 29)) by (bit_vector)
+            requires v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6));
+        assert(v1 & bitmask_inc!(13, 20) == v2 & bitmask_inc!(13, 20)) by (bit_vector)
+            requires v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6));
+    }
+
     pub open spec fn view(self) -> GPDE {
         let v = self.entry;
         let P   = v & MASK_FLAG_P    == MASK_FLAG_P;
@@ -255,38 +304,36 @@ impl PDE {
         let US  = v & MASK_FLAG_US   == MASK_FLAG_US;
         let PWT = v & MASK_FLAG_PWT  == MASK_FLAG_PWT;
         let PCD = v & MASK_FLAG_PCD  == MASK_FLAG_PCD;
-        let A   = v & MASK_FLAG_A    == MASK_FLAG_A;
         let XD  = v & MASK_FLAG_XD   == MASK_FLAG_XD;
-        let D   = v & MASK_PG_FLAG_D == MASK_PG_FLAG_D;
         let G   = v & MASK_PG_FLAG_G == MASK_PG_FLAG_G;
         if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
             if self.layer == 0 {
                 let addr = (v & MASK_ADDR) as usize;
-                GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
+                GPDE::Directory { addr, P, RW, US, PWT, PCD, XD }
             } else if self.layer == 1 {
                 if v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
                     // super page mapping
                     let addr = (v & MASK_L1_PG_ADDR) as usize;
                     let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
-                    GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
+                    GPDE::Page { addr, P, RW, US, PWT, PCD, G, PAT, XD }
                 } else {
                     let addr = (v & MASK_ADDR) as usize;
-                    GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
+                    GPDE::Directory { addr, P, RW, US, PWT, PCD, XD }
                 }
             } else if self.layer == 2 {
                 if v & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
                     // huge page mapping
                     let addr = (v & MASK_L2_PG_ADDR) as usize;
                     let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
-                    GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
+                    GPDE::Page { addr, P, RW, US, PWT, PCD, G, PAT, XD }
                 } else {
                     let addr = (v & MASK_ADDR) as usize;
-                    GPDE::Directory { addr, P, RW, US, PWT, PCD, A, XD }
+                    GPDE::Directory { addr, P, RW, US, PWT, PCD, XD }
                 }
             } else if self.layer == 3 {
                 let addr = (v & MASK_L3_PG_ADDR) as usize;
                 let PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
-                GPDE::Page { addr, P, RW, US, PWT, PCD, A, D, G, PAT, XD }
+                GPDE::Page { addr, P, RW, US, PWT, PCD, G, PAT, XD }
             } else {
                 arbitrary()
             }

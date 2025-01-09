@@ -2,7 +2,8 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 use crate::definitions_t::{ aligned, Core };
-use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
+use crate::spec_t::mmu::rl4::{ Writes };
+use crate::spec_t::hardware::{ MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
@@ -33,10 +34,6 @@ pub struct State {
 
 
 impl State {
-    pub open spec fn init(self) -> bool {
-        arbitrary()
-    }
-
     // TODO: I may want/need to add these conditions as well:
     // - when unmapping directory, it must be empty
     //   - and its entries must not be modified
@@ -44,7 +41,7 @@ impl State {
     // - the location corresponds to *exactly* one leaf entry in the page table
     //   - previous conditions are important for this: i cannot know if there's exactly one leaf
     //     entry, if e.g. allow unmapping non-empty
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
+    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize) -> bool {
         &&& !self.writes.all.is_empty() ==> core == self.writes.core
         &&& self.pt_mem.is_nonneg_write(addr, value)
         //&&& !self.can_change_polarity(c) ==> {
@@ -71,18 +68,15 @@ impl State {
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
-        &&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
-        &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
+        true
+        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
+        //&&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
         self.happy ==> {
         &&& self.wf(c)
         }
-    }
-    
-    pub open spec fn writes_neg_contains(self, addr: usize) -> bool {
-        exists|core| #![auto] self.writes.neg.contains_key(core) && self.writes.neg[core].contains(addr)
     }
 }
 
@@ -91,12 +85,13 @@ impl State {
 pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Invlpg(core, va)
 
+    &&& pre.happy
     &&& c.valid_core(core)
 
     &&& post == State {
         writes: Writes {
             all: if core == pre.writes.core { set![] } else { pre.writes.all },
-            neg: pre.writes.neg.insert(core, set![]),
+            //neg: pre.writes.neg.insert(core, set![]),
             core: pre.writes.core,
         },
         pending_maps: if core == pre.writes.core { map![] } else { pre.pending_maps },
@@ -111,6 +106,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 pub open spec fn step_Walk(pre: State, post: State, c: Constants, vaddr: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, walk_res)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& walk_res == pre.pt_mem.pt_walk(vaddr).result()
 
@@ -121,6 +117,7 @@ pub open spec fn step_Walk(pre: State, post: State, c: Constants, vaddr: usize, 
 pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, vb: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Walk(core, WalkResult::Invalid { vaddr })
 
+    &&& pre.happy
     &&& c.valid_core(core)
     //&&& aligned(vaddr as nat, 8)
     &&& pre.pending_maps.contains_key(vb)
@@ -136,15 +133,17 @@ pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, vb: usize, l
 pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
+    &&& pre.is_this_write_happy(core, addr, value)
 
-    &&& post.happy      == (pre.happy && pre.is_this_write_happy(core, addr, value, c))
+    &&& post.happy      == pre.happy
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
     &&& post.writes.all == pre.writes.all.insert(addr)
-    &&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
-            pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-        } else { pre.writes.neg }
+    //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
+    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
+    //    } else { pre.writes.neg }
     &&& post.pending_maps == pre.pending_maps.union_prefer_right(
         Map::new(
             |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
@@ -156,6 +155,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.is_tso_read_deterministic(core, addr)
@@ -169,6 +169,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
 pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
+    &&& pre.happy
     &&& c.valid_core(core)
 
     &&& post == State {
@@ -186,6 +187,19 @@ pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post == pre
 }
 
+pub open spec fn step_SadWrite(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    // If we do a write without fulfilling the right conditions, we set happy to false.
+    &&& lbl matches Lbl::Write(core, addr, value)
+    &&& !pre.is_this_write_happy(core, addr, value)
+    &&& !post.happy
+}
+
+pub open spec fn step_Sadness(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    // If happy is unset, arbitrary steps are allowed.
+    &&& !pre.happy
+    &&& !post.happy
+}
+
 pub enum Step {
     // Mixed
     Invlpg,
@@ -197,6 +211,8 @@ pub enum Step {
     Write,
     Read,
     Barrier,
+    SadWrite,
+    Sadness,
     Stutter,
 }
 
@@ -208,43 +224,40 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::Write          => step_Write(pre, post, c, lbl),
         Step::Read           => step_Read(pre, post, c, lbl),
         Step::Barrier        => step_Barrier(pre, post, c, lbl),
+        Step::SadWrite       => step_SadWrite(pre, post, c, lbl),
+        Step::Sadness        => step_Sadness(pre, post, c, lbl),
         Step::Stutter        => step_Stutter(pre, post, c, lbl),
     }
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
-    if pre.happy {
-        exists|step| next_step(pre, post, c, step, lbl)
-    } else {
-        post.happy == pre.happy
-    }
+    exists|step| next_step(pre, post, c, step, lbl)
+}
+
+pub open spec fn init(pre: State, c: Constants) -> bool {
+    //&&& pre.pt_mem == ..
+    &&& pre.happy == true
+    //&&& pre.writes.core == ..
+    &&& pre.writes.all === set![]
+    &&& pre.pending_maps === map![]
+
+    &&& c.valid_core(pre.writes.core)
+    &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
+    &&& aligned(pre.pt_mem.pml4 as nat, 4096)
+    &&& pre.pt_mem.pml4 <= u64::MAX - 4096
 }
 
 proof fn init_implies_inv(pre: State, c: Constants)
-    requires pre.init()
+    requires init(pre, c)
     ensures pre.inv(c)
-{ admit(); }
+{}
 
 proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.inv(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv(c)
-{
-    //if pre.happy {
-    //    match step {
-    //        Step::Invlpg                         => assert(post.inv(c)),
-    //        Step::WalkInit { core, vaddr }       => assert(post.inv(c)),
-    //        Step::WalkStep { core, walk, value } => assert(post.inv(c)),
-    //        Step::WalkDone { walk, value }       => assert(post.inv(c)),
-    //        Step::Write                          => assert(post.inv(c)),
-    //        Step::Writeback { core }             => assert(post.inv(c)),
-    //        Step::Read                           => assert(post.inv(c)),
-    //        Step::Barrier                        => assert(post.inv(c)),
-    //        Step::Stutter                        => assert(post.inv(c)),
-    //    }
-    //}
-}
+{}
 
 
 } // verus!

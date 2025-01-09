@@ -3,7 +3,8 @@ use vstd::assert_by_contradiction;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 use crate::definitions_t::{ aligned, Core, bit, WORD_SIZE, MAX_PHYADDR_WIDTH, axiom_max_phyaddr_width_facts };
-use crate::spec_t::mmu::rl4::{ Writes, MASK_NEG_DIRTY_ACCESS };
+use crate::spec_t::mmu::rl4::{ Writes };
+use crate::spec_t::hardware::{ MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
@@ -49,10 +50,6 @@ impl State {
         self.core_mem(core).read(addr)
     }
 
-    pub open spec fn init(self) -> bool {
-        arbitrary()
-    }
-
     #[verifier(inline)]
     pub open spec fn writer_sbuf(self) -> Seq<(usize, usize)> {
         self.sbuf[self.writes.core]
@@ -70,7 +67,7 @@ impl State {
         self.core_mem(self.writes.core)
     }
 
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
+    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize) -> bool {
         &&& !self.writes.all.is_empty() ==> core == self.writes.core
         &&& self.writer_mem().is_nonneg_write(addr, value)
         //&&& !self.can_change_polarity(c) ==> {
@@ -98,9 +95,9 @@ impl State {
         &&& self.writes.all.finite()
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
-        &&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
+        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
         &&& forall|core| #[trigger] self.walks.contains_key(core) ==> self.walks[core].finite()
-        &&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
+        //&&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
         &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.pt_mem.mem.contains_key(va)
         &&& aligned(self.pt_mem.pml4 as nat, 4096)
         &&& self.pt_mem.pml4 <= u64::MAX - 4096
@@ -188,6 +185,7 @@ impl State {
 pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Invlpg(core, va)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     // Invlpg is a serializing instruction
     &&& pre.sbuf[core].len() == 0
@@ -196,7 +194,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
         walks: pre.walks.insert(core, set![]),
         writes: Writes {
             all: if core == pre.writes.core { set![] } else { pre.writes.all },
-            neg: pre.writes.neg.insert(core, set![]),
+            //neg: pre.writes.neg.insert(core, set![]),
             core: pre.writes.core,
         },
         hist: if core == pre.writes.core { History { pending_maps: map![] } } else { pre.hist },
@@ -211,6 +209,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     let walk = Walk { vaddr, path: seq![], complete: false };
     &&& lbl is Tau
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(vaddr as nat, 8)
     //&&& arbitrary() // TODO: conditions on va? max vaddr?
@@ -260,6 +259,7 @@ pub open spec fn step_WalkStep(
     let walk_next = walk_next(pre.core_mem(core), walk);
     &&& lbl is Tau
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
     &&& !walk_next.complete
@@ -283,6 +283,7 @@ pub open spec fn step_WalkDone(
 {
     &&& lbl matches Lbl::Walk(core, walk_result)
 
+    &&& pre.happy
     &&& {
     let walk_next = walk_next(pre.core_mem(core), walk);
     &&& c.valid_core(core)
@@ -301,17 +302,19 @@ pub open spec fn step_WalkDone(
 pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
+    &&& pre.is_this_write_happy(core, addr, value)
 
-    &&& post.happy == (pre.happy && pre.is_this_write_happy(core, addr, value, c))
+    &&& post.happy == pre.happy
     &&& post.pt_mem == pre.pt_mem
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.writes.all === pre.writes.all.insert(addr)
-    &&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
-            pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-        } else { pre.writes.neg }
+    //&&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
+    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
+    //    } else { pre.writes.neg }
     &&& post.writes.core == core
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
         Map::new(
@@ -328,6 +331,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     let (addr, value) = pre.sbuf[core][0];
     &&& lbl is Tau
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& 0 < pre.sbuf[core].len()
 
@@ -343,6 +347,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& value & MASK_NEG_DIRTY_ACCESS == pre.read_from_mem_tso(core, addr) & MASK_NEG_DIRTY_ACCESS
@@ -355,6 +360,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
 pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
+    &&& pre.happy
     &&& c.valid_core(core)
     &&& pre.sbuf[core].len() == 0
 
@@ -366,6 +372,19 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
         hist: if core == pre.writes.core { History { pending_maps: map![] } } else { pre.hist },
         ..pre
     }
+}
+
+pub open spec fn step_SadWrite(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    // If we do a write without fulfilling the right conditions, we set happy to false.
+    &&& lbl matches Lbl::Write(core, addr, value)
+    &&& !pre.is_this_write_happy(core, addr, value)
+    &&& !post.happy
+}
+
+pub open spec fn step_Sadness(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    // If happy is unset, arbitrary steps are allowed.
+    &&& !pre.happy
+    &&& !post.happy
 }
 
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -385,6 +404,8 @@ pub enum Step {
     Writeback { core: Core },
     Read,
     Barrier,
+    SadWrite,
+    Sadness,
     Stutter,
 }
 
@@ -398,22 +419,35 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::Writeback { core }       => step_Writeback(pre, post, c, core, lbl),
         Step::Read                     => step_Read(pre, post, c, lbl),
         Step::Barrier                  => step_Barrier(pre, post, c, lbl),
+        Step::SadWrite                 => step_SadWrite(pre, post, c, lbl),
+        Step::Sadness                  => step_Sadness(pre, post, c, lbl),
         Step::Stutter                  => step_Stutter(pre, post, c, lbl),
     }
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
-    if pre.happy {
-        exists|step| next_step(pre, post, c, step, lbl)
-    } else {
-        post.happy == pre.happy
-    }
+    exists|step| next_step(pre, post, c, step, lbl)
+}
+
+pub open spec fn init(pre: State, c: Constants) -> bool {
+    //&&& pre.pt_mem == ..
+    &&& pre.walks === Map::new(|core| c.valid_core(core), |core| set![])
+    &&& pre.sbuf  === Map::new(|core| c.valid_core(core), |core| seq![])
+    &&& pre.happy == true
+    //&&& pre.writes.core == ..
+    &&& pre.writes.all === set![]
+    &&& pre.hist.pending_maps === map![]
+
+    &&& c.valid_core(pre.writes.core)
+    &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
+    &&& aligned(pre.pt_mem.pml4 as nat, 4096)
+    &&& pre.pt_mem.pml4 <= u64::MAX - 4096
 }
 
 proof fn init_implies_inv(pre: State, c: Constants)
-    requires pre.init()
+    requires init(pre, c)
     ensures pre.inv(c)
-{ admit(); }
+{}
 
 proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
@@ -434,6 +468,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
 proof fn next_step_preserves_wf(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.wf(c),
+        post.happy,
         next_step(pre, post, c, step, lbl),
     ensures post.wf(c)
 {}
@@ -463,8 +498,8 @@ proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Cons
                 implies is_iter_walk_prefix(post.core_mem(core), walk) by {
                     if wrcore == core {
                         // TODO: can probably extract some of these things into a lemma that
-                        // collects facts about step_Write. Using very similar assertions in other
-                        // proofs.
+                        // collects facts about step_Write. Using very similar assertions in
+                        // other proofs.
                         reveal(rl3::walk_next);
                         broadcast use axiom_map_insert_different_strong;
                         lemma_step_write_mem_view(pre, post, c, lbl);
@@ -898,6 +933,8 @@ proof fn next_step_preserves_inv_valid_is_not_in_sbuf(pre: State, post: State, c
             let core = lbl->Barrier_0;
             assert(post.inv_valid_is_not_in_sbuf(c));
         },
+        Step::SadWrite => assert(false),
+        Step::Sadness => assert(false),
         Step::Stutter => assert(post.inv_valid_is_not_in_sbuf(c)),
     }
 }
@@ -1197,6 +1234,8 @@ mod refinement {
                 rl3::Step::Writeback { core } => rl2::Step::Stutter,
                 rl3::Step::Read => rl2::Step::Read,
                 rl3::Step::Barrier => rl2::Step::Barrier,
+                rl3::Step::SadWrite => rl2::Step::SadWrite,
+                rl3::Step::Sadness => rl2::Step::Sadness,
                 rl3::Step::Stutter => rl2::Step::Stutter,
             }
         }
@@ -1204,7 +1243,6 @@ mod refinement {
 
     proof fn next_step_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, step: rl3::Step, lbl: Lbl)
         requires
-            pre.happy,
             pre.inv(c),
             rl3::next_step(pre, post, c, step, lbl),
         ensures rl2::next_step(pre.interp(), post.interp(), c, step.interp(pre, lbl), lbl)
@@ -1223,22 +1261,34 @@ mod refinement {
                 next_step_WalkDone_refines(pre, post, c, step, lbl);
             },
             rl3::Step::Write => {
-                // XXX: This doesn't refine in the case where (pre.happy && !post.happy)
-                //      (Should be fairly simple fix, just add happy conditions to problematic
-                //      update or something)
-                admit();
-                assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
+                let Lbl::Write(core, addr, value) = lbl else { arbitrary() };
+                    rl3::lemma_step_write_mem_view(pre, post, c, lbl);
+                    pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+                    assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Writeback { core } => {
                 super::lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
                 assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Read => {
-                admit(); // XXX
+                let Lbl::Read(core, addr, value) = lbl else { arbitrary() };
+                if pre.interp().is_tso_read_deterministic(core, addr) {
+                    if !pre.writes.all.contains(addr) {
+                        assert(forall|i| #![auto] 0 <= i < pre.writer_sbuf().len() ==> pre.writer_sbuf()[i].0 != addr);
+                        broadcast use pt_mem::PTMem::lemma_write_seq_idle;
+                    }
+                    assert(pre.read_from_mem_tso(core, addr) == pre.writer_mem().read(addr));
+                }
                 assert(rl2::step_Read(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Barrier => {
                 assert(rl2::step_Barrier(pre.interp(), post.interp(), c, lbl));
+            },
+            rl3::Step::SadWrite => {
+                assert(rl2::step_SadWrite(pre.interp(), post.interp(), c, lbl));
+            },
+            rl3::Step::Sadness => {
+                assert(rl2::step_Sadness(pre.interp(), post.interp(), c, lbl));
             },
             rl3::Step::Stutter => {
                 assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
@@ -1317,6 +1367,13 @@ mod refinement {
         }
     }
 
+    proof fn init_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
+        requires
+            rl3::init(pre, c),
+        ensures
+            rl2::init(pre.interp(), c),
+    {}
+
     proof fn next_refines(pre: rl3::State, post: rl3::State, c: rl3::Constants, lbl: Lbl)
         requires
             pre.inv(c),
@@ -1324,10 +1381,8 @@ mod refinement {
         ensures
             rl2::next(pre.interp(), post.interp(), c, lbl),
     {
-        if pre.happy {
-            let step = choose|step: rl3::Step| rl3::next_step(pre, post, c, step, lbl);
-            next_step_refines(pre, post, c, step, lbl);
-        }
+        let step = choose|step: rl3::Step| rl3::next_step(pre, post, c, step, lbl);
+        next_step_refines(pre, post, c, step, lbl);
     }
 }
 

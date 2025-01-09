@@ -288,11 +288,14 @@ impl PTMem {
 
     pub broadcast proof fn lemma_write_seq_idle(self, writes: Seq<(usize, usize)>, addr: usize)
         requires
+            // TODO: the first precondition is unnecessary with the stronger axiom. But it makes
+            // another lemma timeout where it's broadcast.
             self.mem.contains_key(addr),
             forall|i| 0 <= i < writes.len() ==> (#[trigger] writes[i]).0 != addr
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)
         decreases writes.len()
     {
+        broadcast use crate::spec_t::mmu::rl3::axiom_map_insert_different_strong;
         if writes.len() == 0 {
         } else {
             broadcast use PTMem::lemma_write_seq;
