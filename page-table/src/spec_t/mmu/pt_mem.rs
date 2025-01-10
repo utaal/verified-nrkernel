@@ -295,7 +295,7 @@ impl PTMem {
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)
         decreases writes.len()
     {
-        broadcast use crate::spec_t::mmu::rl3::axiom_map_insert_different_strong;
+        broadcast use crate::spec_t::mmu::rl2::axiom_map_insert_different_strong;
         if writes.len() == 0 {
         } else {
             broadcast use PTMem::lemma_write_seq;
@@ -346,7 +346,7 @@ impl PTMem {
             self.write_seq(writes).mem[writes[i].0] == writes[i].1
         decreases writes.len()
     {
-        broadcast use crate::spec_t::mmu::rl3::axiom_map_insert_different_strong;
+        broadcast use crate::spec_t::mmu::rl2::axiom_map_insert_different_strong;
         if writes.len() == 0 {
         } else {
             if i == writes.len() - 1 {
