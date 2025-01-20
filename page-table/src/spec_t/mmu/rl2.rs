@@ -8,16 +8,6 @@ use crate::spec_t::hardware::{ MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
-// This axiom should be fine: https://github.com/verus-lang/verus/pull/1367
-pub broadcast proof fn axiom_map_insert_different_strong<K, V>(m: Map<K, V>, key1: K, key2: K, value: V)
-    requires
-        key1 != key2,
-    ensures
-        #[trigger] m.insert(key2, value)[key1] == m[key1],
-{
-    admit();
-}
-
 // This file contains refinement layer 3 of the MMU. Compared to layer 4, it expresses translation
 // caching and non-atomic walks as a single concept, and it doesn't explicitly consider the values
 // of dirty/accessed bits.
@@ -501,7 +491,6 @@ proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Cons
                         // collects facts about step_Write. Using very similar assertions in
                         // other proofs.
                         reveal(rl2::walk_next);
-                        broadcast use axiom_map_insert_different_strong;
                         lemma_step_write_mem_view(pre, post, c, lbl);
                         pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
                         pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
@@ -539,7 +528,6 @@ proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Cons
                         let post_walkp3 = walk_next(post.core_mem(core), post_walkp2);
                         let post_walkp4 = walk_next(post.core_mem(core), post_walkp3);
                         reveal(rl2::walk_next);
-                        broadcast use axiom_map_insert_different_strong;
                         //lemma_step_write_mem_view(pre, post, c, lbl);
                         //pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
                         pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
@@ -699,7 +687,6 @@ broadcast proof fn lemma_step_write_valid_walk_unchanged(pre: State, post: State
     assert(bit!(0u64) == 1) by (bit_vector);
     pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
     post.pt_mem.lemma_write_seq(post.writer_sbuf());
-    broadcast use axiom_map_insert_different_strong;
     lemma_step_write_mem_view(pre, post, c, lbl);
 }
 
@@ -716,7 +703,6 @@ proof fn lemma_step_write_path_addrs_match(pre: State, post: State, c: Constants
                 ==> post.writer_mem().pt_walk(va).path[i].0
                   == pre.writer_mem().pt_walk(va).path[i].0
 {
-    broadcast use axiom_map_insert_different_strong;
     lemma_step_write_mem_view(pre, post, c, lbl);
     pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), va);
     pre.pt_mem.lemma_write_seq(pre.writer_sbuf());

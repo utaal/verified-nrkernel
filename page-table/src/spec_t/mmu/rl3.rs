@@ -509,6 +509,15 @@ mod refinement {
         }
     }
 
+    broadcast proof fn lemma_mask_dirty_access_after_xor(v: usize, r: usize)
+        ensures
+            #[trigger] (v ^ (r & MASK_DIRTY_ACCESS)) & MASK_NEG_DIRTY_ACCESS
+                            == v & MASK_NEG_DIRTY_ACCESS
+    {
+        assert((v ^ (r & ((bit!(5) | bit!(6)) as usize))) & (!(bit!(5) | bit!(6)) as usize)
+                == v & (!(bit!(5) | bit!(6)) as usize)) by (bit_vector);
+    }
+
     /// The value of r is irrelevant, so we can just ignore it.
     broadcast proof fn rl3_walk_next_is_rl2_walk_next(state: rl3::State, core: Core, walk: Walk, r: usize)
         requires walk.path.len() <= 3
@@ -550,16 +559,9 @@ mod refinement {
         let rl2_value = rl2_mem.read(rl2_addr);
         let rl2_entry = PDE { entry: rl2_value as u64, layer: Ghost(path.len()) };
 
-
-        assert(rl3_addr == rl2_addr);
-
-        assume(rl2_value & MASK_NEG_DIRTY_ACCESS == rl3_value & MASK_NEG_DIRTY_ACCESS);
+        broadcast use lemma_mask_dirty_access_after_xor;
         rl2_entry.lemma_view_unchanged_dirty_access(rl3_entry);
         assert(rl2_entry@ == rl3_entry@);
-
-
-        //let value = state.read_from_mem_tso(core, addr, r);
-
     }
 
     proof fn next_step_refines(pre: rl3::State, post: rl3::State, c: Constants, step: rl3::Step, lbl: Lbl)
@@ -606,14 +608,7 @@ mod refinement {
                     assert(rl2::step_Writeback(pre.interp(), post.interp(), c, core, lbl));
                 },
                 rl3::Step::Read { r }                => {
-                    assert(forall|val: usize, r: usize| #![auto]
-                        (val ^ (r & MASK_DIRTY_ACCESS)) & MASK_NEG_DIRTY_ACCESS
-                            == val & MASK_NEG_DIRTY_ACCESS)
-                    by {
-                        assert(forall|val: usize, r: usize| #![auto]
-                            (val ^ (r & ((bit!(5) | bit!(6)) as usize))) & (!(bit!(5) | bit!(6)) as usize)
-                                == val & (!(bit!(5) | bit!(6)) as usize)) by (bit_vector);
-                    };
+                    broadcast use lemma_mask_dirty_access_after_xor;
                     assert(rl2::step_Read(pre.interp(), post.interp(), c, lbl));
                 },
                 rl3::Step::Barrier                   => {

@@ -158,40 +158,7 @@ impl MMU for DummyAtomicMMU {
 
 
 
-// TODO: Auxiliary stuff, should go somewhere else
-
-pub broadcast proof fn lemma_get_last<A,B>(s: Seq<(A, B)>, a: A)
-    ensures
-        match #[trigger] get_last(s, a) {
-            Some((i, b)) => {
-                &&& s[i].0 == a && s[i].1 == b
-                &&& forall|j| i < j < s.len() ==> #[trigger] s[j].0 != a
-            },
-            None => forall|j| 0 <= j < s.len() ==> #[trigger] s[j].0 != a
-        }
-{
-    admit();
-}
-
-#[verifier(opaque)]
-pub open spec fn get_last_aux<A,B>(s: Seq<(A, B)>, i: int, a: A) -> Option<(int, B)>
-    decreases i + 1
-{
-    if i < 0 {
-        None
-    } else {
-        if s[i].0 == a {
-            Some((i, s[i].1))
-        } else {
-            get_last_aux(s, i - 1, a)
-        }
-    }
-}
-
-pub open spec fn get_last<A,B>(s: Seq<(A, B)>, a: A) -> Option<(int, B)> {
-    get_last_aux(s, s.len() - 1, a)
-}
-
+// TODO: Should probably see if I can get rid of this. Only made triggering hard.
 pub trait SeqTupExt: Sized {
     type A;
     spec fn contains_fst(self, fst: Self::A) -> bool;
