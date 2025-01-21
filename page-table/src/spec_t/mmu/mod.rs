@@ -36,21 +36,17 @@ impl Walk {
     {
         let Walk { vaddr, path, .. } = self;
         if i == 0 {
-            add(pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(pml4, mul(l0_bits!(vaddr), WORD_SIZE))
         } else if i == 1 {
-            add(path[0].1->Directory_addr, (l1_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path[0].1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
         } else if i == 2 {
-            add(path[1].1->Directory_addr, (l2_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path[1].1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
         } else if i == 3 {
-            add(path[2].1->Directory_addr, (l3_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path[2].1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
         } else {
             arbitrary()
         }
     }
-
-    //pub open spec fn valid(self, pt_mem: PTMem) -> bool {
-    //    arbitrary() // basically the pt_walk_path
-    //}
 
     pub open spec fn result(self) -> WalkResult {
         let path = self.path;

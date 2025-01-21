@@ -124,24 +124,24 @@ impl PTMem {
     //}
 
     pub open spec fn pt_walk(self, vaddr: usize) -> Walk {
-        let l0_idx = (l0_bits!(vaddr as u64) * WORD_SIZE) as usize;
-        let l1_idx = (l1_bits!(vaddr as u64) * WORD_SIZE) as usize;
-        let l2_idx = (l2_bits!(vaddr as u64) * WORD_SIZE) as usize;
-        let l3_idx = (l3_bits!(vaddr as u64) * WORD_SIZE) as usize;
+        let l0_idx = mul(l0_bits!(vaddr), WORD_SIZE);
+        let l1_idx = mul(l1_bits!(vaddr), WORD_SIZE);
+        let l2_idx = mul(l2_bits!(vaddr), WORD_SIZE);
+        let l3_idx = mul(l3_bits!(vaddr), WORD_SIZE);
         let l0_addr = add(self.pml4, l0_idx);
-        let l0e = PDE { entry: self.read(l0_addr) as u64, layer: Ghost(0) };
+        let l0e = PDE { entry: self.read(l0_addr), layer: Ghost(0) };
         match l0e@ {
             GPDE::Directory { addr: l1_daddr, .. } => {
                 let l1_addr = add(l1_daddr, l1_idx);
-                let l1e = PDE { entry: self.read(l1_addr) as u64, layer: Ghost(1) };
+                let l1e = PDE { entry: self.read(l1_addr), layer: Ghost(1) };
                 match l1e@ {
                     GPDE::Directory { addr: l2_daddr, .. } => {
                         let l2_addr = add(l2_daddr, l2_idx);
-                        let l2e = PDE { entry: self.read(l2_addr) as u64, layer: Ghost(2) };
+                        let l2e = PDE { entry: self.read(l2_addr), layer: Ghost(2) };
                         match l2e@ {
                             GPDE::Directory { addr: l3_daddr, .. } => {
                                 let l3_addr = add(l3_daddr, l3_idx);
-                                let l3e = PDE { entry: self.read(l3_addr) as u64, layer: Ghost(3) };
+                                let l3e = PDE { entry: self.read(l3_addr), layer: Ghost(3) };
                                 Walk {
                                     vaddr,
                                     path: seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)],
@@ -264,14 +264,12 @@ impl PTMem {
             forall|i| 0 <= i < mem.pt_walk(va).path.len()
                 ==> (#[trigger] mem.pt_walk(va).path[i].1)
                         == (PDE {
-                            entry: mem.read(mem.pt_walk(va).path[i].0) as u64,
+                            entry: mem.read(mem.pt_walk(va).path[i].0),
                             layer: Ghost(i as nat),
                         }@),
             mem.pt_walk(va).result() is Valid ==> mem.read(mem.pt_walk(va).path.last().0) & 1 == 1,
-            //    ==> forall|vap| mem.pt_walk(va).path.contains_fst(vap)
-            //        ==> #[trigger] mem.read(vap) & 1 == 1,
     {
-        assert(bit!(0u64) == 1) by (bit_vector);
+        assert(bit!(0usize) == 1) by (bit_vector);
     }
 
     pub open spec fn is_base_pt_walk(self, vaddr: usize) -> bool {

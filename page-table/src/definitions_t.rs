@@ -10,7 +10,7 @@ verus! {
 
 macro_rules! bitmask_inc {
     ($low:expr,$high:expr) => {
-        (!(!0u64 << (($high+1u64)-$low))) << $low
+        (!(!0usize << (($high+1usize)-$low))) << $low
     }
 }
 
@@ -18,7 +18,7 @@ pub(crate) use bitmask_inc;
 
 macro_rules! bit {
     ($v:expr) => {
-        1u64 << $v
+        1usize << $v
     }
 }
 
@@ -30,7 +30,7 @@ pub const X86_NUM_ENTRIES: usize = 512;
 
 // The maximum physical address width is between 32 and 52 bits.
 #[verifier(external_body)]
-pub const MAX_PHYADDR_WIDTH: u64 = 52;
+pub const MAX_PHYADDR_WIDTH: usize = 52;
 
 #[verifier(external_body)]
 pub proof fn axiom_max_phyaddr_width_facts()
@@ -40,19 +40,17 @@ pub proof fn axiom_max_phyaddr_width_facts()
 
 // We cannot use a dual exec/spec constant for MAX_PHYADDR, because for those Verus currently
 // doesn't support manually guiding the no-overflow proofs.
-pub spec const MAX_PHYADDR_SPEC: u64 = ((1u64 << MAX_PHYADDR_WIDTH) - 1u64) as u64;
+pub spec const MAX_PHYADDR_SPEC: usize = ((1usize << MAX_PHYADDR_WIDTH) - 1usize) as usize;
 
 #[verifier::when_used_as_spec(MAX_PHYADDR_SPEC)]
-pub exec const MAX_PHYADDR: u64
+pub exec const MAX_PHYADDR: usize
     ensures
         MAX_PHYADDR == MAX_PHYADDR_SPEC,
 {
-    proof {
-        axiom_max_phyaddr_width_facts();
-    }
-    assert(1u64 << 32 == 0x100000000) by (compute);
-    assert(forall|m: u64, n: u64| n < m < 64 ==> 1u64 << n < 1u64 << m) by (bit_vector);
-    (1u64 << MAX_PHYADDR_WIDTH) - 1u64
+    proof { axiom_max_phyaddr_width_facts(); }
+    assert(1usize << 32 == 0x100000000) by (compute);
+    assert(forall|m: usize, n: usize| n < m < 64 ==> 1usize << n < 1usize << m) by (bit_vector);
+    (1usize << MAX_PHYADDR_WIDTH) - 1usize
 }
 
 pub const WORD_SIZE: usize = 8;

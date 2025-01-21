@@ -232,16 +232,16 @@ pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Wa
     let Walk { vaddr, path, .. } = walk;
     let mem = state.pt_mem;
     let addr = if path.len() == 0 {
-        add(mem.pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
     } else if path.len() == 1 {
-        add(path.last().1->Directory_addr, (l1_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
     } else if path.len() == 2 {
-        add(path.last().1->Directory_addr, (l2_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
     } else if path.len() == 3 {
-        add(path.last().1->Directory_addr, (l3_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
     } else { arbitrary() };
     let value = state.read_from_mem_tso(core, addr, r);
-    let entry = PDE { entry: value as u64, layer: Ghost(path.len()) }@;
+    let entry = PDE { entry: value, layer: Ghost(path.len()) }@;
     let walk = Walk {
         vaddr,
         path: path.push((addr, entry)),
@@ -514,8 +514,8 @@ mod refinement {
             #[trigger] (v ^ (r & MASK_DIRTY_ACCESS)) & MASK_NEG_DIRTY_ACCESS
                             == v & MASK_NEG_DIRTY_ACCESS
     {
-        assert((v ^ (r & ((bit!(5) | bit!(6)) as usize))) & (!(bit!(5) | bit!(6)) as usize)
-                == v & (!(bit!(5) | bit!(6)) as usize)) by (bit_vector);
+        assert((v ^ (r & ((bit!(5) | bit!(6))))) & (!(bit!(5) | bit!(6)))
+                == v & (!(bit!(5) | bit!(6)))) by (bit_vector);
     }
 
     /// The value of r is irrelevant, so we can just ignore it.
@@ -530,16 +530,16 @@ mod refinement {
 
         let rl3_mem = state.pt_mem;
         let rl3_addr = if path.len() == 0 {
-            add(rl3_mem.pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(rl3_mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
         } else if path.len() == 1 {
-            add(path.last().1->Directory_addr, (l1_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
         } else if path.len() == 2 {
-            add(path.last().1->Directory_addr, (l2_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
         } else if path.len() == 3 {
-            add(path.last().1->Directory_addr, (l3_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
         } else { arbitrary() };
         let rl3_value = state.read_from_mem_tso(core, rl3_addr, r);
-        let rl3_entry = PDE { entry: rl3_value as u64, layer: Ghost(path.len()) };
+        let rl3_entry = PDE { entry: rl3_value, layer: Ghost(path.len()) };
 
         let rl2_mem = state.interp().core_mem(core);
         assert(rl2_mem == rl3_mem.write_seq(state.sbuf[core]));
@@ -548,16 +548,16 @@ mod refinement {
         assert(rl2_mem.pml4 == rl3_mem.pml4);
 
         let rl2_addr = if path.len() == 0 {
-            add(rl2_mem.pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(rl2_mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
         } else if path.len() == 1 {
-            add(path.last().1->Directory_addr, (l1_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
         } else if path.len() == 2 {
-            add(path.last().1->Directory_addr, (l2_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
         } else if path.len() == 3 {
-            add(path.last().1->Directory_addr, (l3_bits!(vaddr as u64) * WORD_SIZE) as usize)
+            add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
         } else { arbitrary() };
         let rl2_value = rl2_mem.read(rl2_addr);
-        let rl2_entry = PDE { entry: rl2_value as u64, layer: Ghost(path.len()) };
+        let rl2_entry = PDE { entry: rl2_value, layer: Ghost(path.len()) };
 
         broadcast use lemma_mask_dirty_access_after_xor;
         rl2_entry.lemma_view_unchanged_dirty_access(rl3_entry);

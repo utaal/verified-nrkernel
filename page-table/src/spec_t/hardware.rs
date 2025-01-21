@@ -114,85 +114,85 @@ pub ghost enum GPDE {
 // 2 -> PD, Page Directory
 // 3 -> PT, Page Table
 // MASK_FLAG_* are flags valid for entries at all levels.
-pub const MASK_FLAG_P: u64 = bit!(0u64);
+pub const MASK_FLAG_P: usize = bit!(0usize);
 
-pub const MASK_FLAG_RW: u64 = bit!(1u64);
+pub const MASK_FLAG_RW: usize = bit!(1usize);
 
-pub const MASK_FLAG_US: u64 = bit!(2u64);
+pub const MASK_FLAG_US: usize = bit!(2usize);
 
-pub const MASK_FLAG_PWT: u64 = bit!(3u64);
+pub const MASK_FLAG_PWT: usize = bit!(3usize);
 
-pub const MASK_FLAG_PCD: u64 = bit!(4u64);
+pub const MASK_FLAG_PCD: usize = bit!(4usize);
 
-//pub const MASK_FLAG_A: u64 = bit!(5u64);
+//pub const MASK_FLAG_A: usize = bit!(5usize);
 
-pub const MASK_FLAG_XD: u64 = bit!(63u64);
+pub const MASK_FLAG_XD: usize = bit!(63usize);
 
 // MASK_PG_FLAG_* are flags valid for all page mapping entries, unless a specialized version for that
 // layer exists, e.g. for layer 3 MASK_L3_PG_FLAG_PAT is used rather than MASK_PG_FLAG_PAT.
-//pub const MASK_PG_FLAG_D: u64 = bit!(6u64);
+//pub const MASK_PG_FLAG_D: usize = bit!(6usize);
 
-pub const MASK_PG_FLAG_G: u64 = bit!(8u64);
+pub const MASK_PG_FLAG_G: usize = bit!(8usize);
 
-pub const MASK_PG_FLAG_PAT: u64 = bit!(12u64);
+pub const MASK_PG_FLAG_PAT: usize = bit!(12usize);
 
-pub const MASK_L1_PG_FLAG_PS: u64 = bit!(7u64);
+pub const MASK_L1_PG_FLAG_PS: usize = bit!(7usize);
 
-pub const MASK_L2_PG_FLAG_PS: u64 = bit!(7u64);
+pub const MASK_L2_PG_FLAG_PS: usize = bit!(7usize);
 
-pub const MASK_L3_PG_FLAG_PAT: u64 = bit!(7u64);
+pub const MASK_L3_PG_FLAG_PAT: usize = bit!(7usize);
 
-pub const MASK_DIRTY_ACCESS: usize = (bit!(5) | bit!(6)) as usize;
-pub const MASK_NEG_DIRTY_ACCESS: usize = !(bit!(5) | bit!(6)) as usize;
+pub const MASK_DIRTY_ACCESS: usize = bit!(5) | bit!(6);
+pub const MASK_NEG_DIRTY_ACCESS: usize = !MASK_DIRTY_ACCESS;
 
 // In the implementation we can always use the 12:52 mask as the invariant guarantees that in the
 // other cases, the lower bits are already zero anyway.
 // We cannot use dual exec/spec constants here because for those Verus currently doesn't support
 // manually guiding the no-overflow proofs.
-pub spec const MASK_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
+pub spec const MASK_ADDR_SPEC: usize = bitmask_inc!(12usize, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_ADDR_SPEC)]
-pub exec const MASK_ADDR: u64 ensures MASK_ADDR == MASK_ADDR_SPEC {
+pub exec const MASK_ADDR: usize ensures MASK_ADDR == MASK_ADDR_SPEC {
     proof {
         axiom_max_phyaddr_width_facts();
     }
-    bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
+    bitmask_inc!(12usize, MAX_PHYADDR_WIDTH - 1)
 }
 
-pub spec const MASK_L1_PG_ADDR_SPEC: u64 = bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1);
+pub spec const MASK_L1_PG_ADDR_SPEC: usize = bitmask_inc!(30usize, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_L1_PG_ADDR_SPEC)]
-pub exec const MASK_L1_PG_ADDR: u64 ensures MASK_L1_PG_ADDR == MASK_L1_PG_ADDR_SPEC {
+pub exec const MASK_L1_PG_ADDR: usize ensures MASK_L1_PG_ADDR == MASK_L1_PG_ADDR_SPEC {
     proof {
         axiom_max_phyaddr_width_facts();
     }
-    bitmask_inc!(30u64, MAX_PHYADDR_WIDTH - 1)
+    bitmask_inc!(30usize, MAX_PHYADDR_WIDTH - 1)
 }
 
-pub spec const MASK_L2_PG_ADDR_SPEC: u64 = bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1);
+pub spec const MASK_L2_PG_ADDR_SPEC: usize = bitmask_inc!(21usize, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_L2_PG_ADDR_SPEC)]
-pub exec const MASK_L2_PG_ADDR: u64 ensures MASK_L2_PG_ADDR == MASK_L2_PG_ADDR_SPEC {
+pub exec const MASK_L2_PG_ADDR: usize ensures MASK_L2_PG_ADDR == MASK_L2_PG_ADDR_SPEC {
     proof {
         axiom_max_phyaddr_width_facts();
     }
-    bitmask_inc!(21u64, MAX_PHYADDR_WIDTH - 1)
+    bitmask_inc!(21usize, MAX_PHYADDR_WIDTH - 1)
 }
 
-pub spec const MASK_L3_PG_ADDR_SPEC: u64 = bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1);
+pub spec const MASK_L3_PG_ADDR_SPEC: usize = bitmask_inc!(12usize, MAX_PHYADDR_WIDTH - 1);
 
 #[verifier::when_used_as_spec(MASK_L3_PG_ADDR_SPEC)]
-pub exec const MASK_L3_PG_ADDR: u64 ensures MASK_L3_PG_ADDR == MASK_L3_PG_ADDR_SPEC {
+pub exec const MASK_L3_PG_ADDR: usize ensures MASK_L3_PG_ADDR == MASK_L3_PG_ADDR_SPEC {
     proof {
         axiom_max_phyaddr_width_facts();
     }
-    bitmask_inc!(12u64, MAX_PHYADDR_WIDTH - 1)
+    bitmask_inc!(12usize, MAX_PHYADDR_WIDTH - 1)
 }
 
-pub spec const MASK_DIR_ADDR_SPEC: u64 = MASK_ADDR;
+pub spec const MASK_DIR_ADDR_SPEC: usize = MASK_ADDR;
 
 #[verifier::when_used_as_spec(MASK_DIR_ADDR_SPEC)]
-pub exec const MASK_DIR_ADDR: u64 ensures MASK_DIR_ADDR == MASK_DIR_ADDR_SPEC {
+pub exec const MASK_DIR_ADDR: usize ensures MASK_DIR_ADDR == MASK_DIR_ADDR_SPEC {
     MASK_ADDR
 }
 
@@ -200,22 +200,22 @@ pub exec const MASK_DIR_ADDR: u64 ensures MASK_DIR_ADDR == MASK_DIR_ADDR_SPEC {
 // An entry in any page directory (i.e. in PML4, PDPT, PD or PT)
 #[repr(transparent)]
 pub struct PDE {
-    pub entry: u64,
+    pub entry: usize,
     pub layer: Ghost<nat>,
 }
 
 // Don't broadcast this. It refuses to trigger for some reason.
-pub proof fn lemma_bit_indices_less_512(va: u64)
+pub proof fn lemma_bit_indices_less_512(va: usize)
     ensures
         l0_bits!(va) < 512,
         l1_bits!(va) < 512,
         l2_bits!(va) < 512,
         l3_bits!(va) < 512,
 {
-    assert(l0_bits!(va as u64) < 512) by (bit_vector);
-    assert(l1_bits!(va as u64) < 512) by (bit_vector);
-    assert(l2_bits!(va as u64) < 512) by (bit_vector);
-    assert(l3_bits!(va as u64) < 512) by (bit_vector);
+    assert(l0_bits!(va) < 512) by (bit_vector);
+    assert(l1_bits!(va) < 512) by (bit_vector);
+    assert(l2_bits!(va) < 512) by (bit_vector);
+    assert(l3_bits!(va) < 512) by (bit_vector);
 }
 
 // This impl defines everything necessary for the page table walk semantics.
@@ -229,57 +229,57 @@ impl PDE {
             self@ is Directory ==> {
                 &&& aligned(self@->Directory_addr as nat, 4096)
                 &&& aligned(self@->Directory_addr as nat, 8)
-                &&& self@->Directory_addr < u64::MAX - 4096
+                &&& self@->Directory_addr < usize::MAX - 4096
             },
             self@ is Page ==> {
                 &&& aligned(self@->Page_addr as nat, 4096)
                 &&& aligned(self@->Page_addr as nat, 8)
-                &&& self@->Page_addr < u64::MAX - 4096
+                &&& self@->Page_addr < usize::MAX - 4096
             },
     {
         axiom_max_phyaddr_width_facts();
         let mw = MAX_PHYADDR_WIDTH;
         let e = self.entry;
-        assert((e & bitmask_inc!(12u64, mw - 1)) % 4096 == 0) by (bit_vector);
-        assert((e & bitmask_inc!(21u64, mw - 1)) % 4096 == 0) by (bit_vector);
-        assert((e & bitmask_inc!(30u64, mw - 1)) % 4096 == 0) by (bit_vector);
-        assert((e & bitmask_inc!(12u64, mw - 1)) < u64::MAX - 4096) by (bit_vector)
+        assert((e & bitmask_inc!(12usize, mw - 1)) % 4096 == 0) by (bit_vector);
+        assert((e & bitmask_inc!(21usize, mw - 1)) % 4096 == 0) by (bit_vector);
+        assert((e & bitmask_inc!(30usize, mw - 1)) % 4096 == 0) by (bit_vector);
+        assert((e & bitmask_inc!(12usize, mw - 1)) < u64::MAX - 4096) by (bit_vector)
             requires 32 <= mw <= 52;
-        assert((e & bitmask_inc!(21u64, mw - 1)) < u64::MAX - 4096) by (bit_vector)
+        assert((e & bitmask_inc!(21usize, mw - 1)) < u64::MAX - 4096) by (bit_vector)
             requires 32 <= mw <= 52;
-        assert((e & bitmask_inc!(30u64, mw - 1)) < u64::MAX - 4096) by (bit_vector)
+        assert((e & bitmask_inc!(30usize, mw - 1)) < u64::MAX - 4096) by (bit_vector)
             requires 32 <= mw <= 52;
     }
 
     pub proof fn lemma_view_unchanged_dirty_access(self, other: PDE)
         requires
             self.layer@ < 4,
-            self.entry & MASK_NEG_DIRTY_ACCESS as u64 == other.entry & MASK_NEG_DIRTY_ACCESS as u64,
+            self.entry & MASK_NEG_DIRTY_ACCESS == other.entry & MASK_NEG_DIRTY_ACCESS,
             self.layer == other.layer,
         ensures other@ == self@
     {
         reveal(PDE::all_mb0_bits_are_zero);
         let v1 = self.entry;
         let v2 = other.entry;
-        assert(forall|b: u64| 0 <= b < 5 ==> #[trigger] (v1 & bit!(b)) == v2 & bit!(b)) by (bit_vector)
+        assert(forall|b: usize| 0 <= b < 5 ==> #[trigger] (v1 & bit!(b)) == v2 & bit!(b)) by (bit_vector)
             requires v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6));
-        assert(forall|b: u64| 6 < b < 64 ==> #[trigger] (v1 & bit!(b)) == v2 & bit!(b)) by (bit_vector)
+        assert(forall|b: usize| 6 < b < 64 ==> #[trigger] (v1 & bit!(b)) == v2 & bit!(b)) by (bit_vector)
             requires v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6));
         axiom_max_phyaddr_width_facts();
         let mw = MAX_PHYADDR_WIDTH;
 
-        assert(v1 & bitmask_inc!(12u64, mw - 1)
-            == v2 & bitmask_inc!(12u64, mw - 1)) by (bit_vector)
+        assert(v1 & bitmask_inc!(12usize, mw - 1)
+            == v2 & bitmask_inc!(12usize, mw - 1)) by (bit_vector)
             requires
                 v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
                 32 <= mw <= 52;
-        assert(v1 & bitmask_inc!(21u64, mw - 1)
-            == v2 & bitmask_inc!(21u64, mw - 1)) by (bit_vector)
+        assert(v1 & bitmask_inc!(21usize, mw - 1)
+            == v2 & bitmask_inc!(21usize, mw - 1)) by (bit_vector)
             requires
                 v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
                 32 <= mw <= 52;
-        assert(v1 & bitmask_inc!(30u64, mw - 1)
-            == v2 & bitmask_inc!(30u64, mw - 1)) by (bit_vector)
+        assert(v1 & bitmask_inc!(30usize, mw - 1)
+            == v2 & bitmask_inc!(30usize, mw - 1)) by (bit_vector)
             requires
                 v1 & !(bit!(5) | bit!(6)) == v2 & !(bit!(5) | bit!(6)),
                 32 <= mw <= 52;
@@ -308,30 +308,30 @@ impl PDE {
         let G   = v & MASK_PG_FLAG_G == MASK_PG_FLAG_G;
         if v & MASK_FLAG_P == MASK_FLAG_P && self.all_mb0_bits_are_zero() {
             if self.layer == 0 {
-                let addr = (v & MASK_ADDR) as usize;
+                let addr = v & MASK_ADDR;
                 GPDE::Directory { addr, P, RW, US, PWT, PCD, XD }
             } else if self.layer == 1 {
                 if v & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
                     // super page mapping
-                    let addr = (v & MASK_L1_PG_ADDR) as usize;
+                    let addr = v & MASK_L1_PG_ADDR;
                     let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
                     GPDE::Page { addr, P, RW, US, PWT, PCD, G, PAT, XD }
                 } else {
-                    let addr = (v & MASK_ADDR) as usize;
+                    let addr = v & MASK_ADDR;
                     GPDE::Directory { addr, P, RW, US, PWT, PCD, XD }
                 }
             } else if self.layer == 2 {
                 if v & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
                     // huge page mapping
-                    let addr = (v & MASK_L2_PG_ADDR) as usize;
+                    let addr = v & MASK_L2_PG_ADDR;
                     let PAT = v & MASK_PG_FLAG_PAT == MASK_PG_FLAG_PAT;
                     GPDE::Page { addr, P, RW, US, PWT, PCD, G, PAT, XD }
                 } else {
-                    let addr = (v & MASK_ADDR) as usize;
+                    let addr = v & MASK_ADDR;
                     GPDE::Directory { addr, P, RW, US, PWT, PCD, XD }
                 }
             } else if self.layer == 3 {
-                let addr = (v & MASK_L3_PG_ADDR) as usize;
+                let addr = v & MASK_L3_PG_ADDR;
                 let PAT = v & MASK_L3_PG_FLAG_PAT == MASK_L3_PG_FLAG_PAT;
                 GPDE::Page { addr, P, RW, US, PWT, PCD, G, PAT, XD }
             } else {
@@ -349,26 +349,26 @@ impl PDE {
             if self.layer == 0 {  // PML4, always directory
                 // 51:M, 7
                 &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
-                &&& self.entry & bit!(7u64) == 0
+                &&& self.entry & bit!(7usize) == 0
             } else if self.layer == 1 {  // PDPT
                 if self.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
                     // 51:M, 29:13
                     &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
-                    &&& self.entry & bitmask_inc!(13u64,29u64) == 0
+                    &&& self.entry & bitmask_inc!(13usize,29usize) == 0
                 } else {
                     // 51:M, 7
                     &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
-                    &&& self.entry & bit!(7u64) == 0
+                    &&& self.entry & bit!(7usize) == 0
                 }
             } else if self.layer == 2 {  // PD
                 if self.entry & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
                     // 62:M, 20:13
                     &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
-                    &&& self.entry & bitmask_inc!(13u64,20u64) == 0
+                    &&& self.entry & bitmask_inc!(13usize,20usize) == 0
                 } else {
                     // 62:M, 7
                     &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
-                    &&& self.entry & bit!(7u64) == 0
+                    &&& self.entry & bit!(7usize) == 0
                 }
             } else if self.layer == 3 {  // PT, always frame
                 // 62:M
@@ -417,28 +417,28 @@ impl Flags {
 
 #[allow(unused_macros)]
 macro_rules! l0_bits {
-    ($addr:expr) => { ($addr & bitmask_inc!(39u64,47u64)) >> 39u64 }
+    ($addr:expr) => { ($addr & bitmask_inc!(39usize,47usize)) >> 39usize }
 }
 
 pub(crate) use l0_bits;
 
 #[allow(unused_macros)]
 macro_rules! l1_bits {
-    ($addr:expr) => { ($addr & bitmask_inc!(30u64,38u64)) >> 30u64 }
+    ($addr:expr) => { ($addr & bitmask_inc!(30usize,38usize)) >> 30usize }
 }
 
 pub(crate) use l1_bits;
 
 #[allow(unused_macros)]
 macro_rules! l2_bits {
-    ($addr:expr) => { ($addr & bitmask_inc!(21u64,29u64)) >> 21u64 }
+    ($addr:expr) => { ($addr & bitmask_inc!(21usize,29usize)) >> 21usize }
 }
 
 pub(crate) use l2_bits;
 
 #[allow(unused_macros)]
 macro_rules! l3_bits {
-    ($addr:expr) => { ($addr & bitmask_inc!(12u64,20u64)) >> 12u64 }
+    ($addr:expr) => { ($addr & bitmask_inc!(12usize,20usize)) >> 12usize }
 }
 
 pub(crate) use l3_bits;
@@ -474,7 +474,7 @@ pub open spec fn read_entry(
 /// mapped at address 0, then we have `valid_pt_walk(.., 0, ..)` but not `valid_pt_walk(.., 1, ..)`.
 pub open spec fn valid_pt_walk(
     pt_mem: mem::PageTableMemory,
-    addr: u64,
+    addr: usize,
     pte: PTE,
 ) -> bool {
     let l0_idx: nat = l0_bits!(addr) as nat;
@@ -539,11 +539,11 @@ pub open spec fn valid_pt_walk(
     }
 }
 
-// Can't use `n as u64` in triggers because it's an arithmetic expression
-pub open spec fn nat_to_u64(n: nat) -> u64
-    recommends n <= u64::MAX,
+// Can't use `n as usize` in triggers because it's an arithmetic expression
+pub open spec fn nat_to_usize(n: nat) -> usize
+    recommends n <= usize::MAX,
 {
-    n as u64
+    n as usize
 }
 
 /// Page table walker interpretation of the page table memory
@@ -554,9 +554,9 @@ pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<nat, PTE> {
     //    |addr: nat|
     //        addr
     //            < MAX_BASE
-    //        // Casting addr to u64 is okay since addr < MAX_BASE < u64::MAX
-    //         && exists|pte: PTE| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
-    //    |addr: nat| choose|pte: PTE| valid_pt_walk(pt_mem, nat_to_u64(addr), pte),
+    //        // Casting addr to usize is okay since addr < MAX_BASE < usize::MAX
+    //         && exists|pte: PTE| valid_pt_walk(pt_mem, nat_to_usize(addr), pte),
+    //    |addr: nat| choose|pte: PTE| valid_pt_walk(pt_mem, nat_to_usize(addr), pte),
     //)
 }
 

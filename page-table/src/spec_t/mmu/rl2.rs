@@ -219,16 +219,16 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
     let Walk { vaddr, path, .. } = walk;
     let addr = if path.len() == 0 {
-        add(mem.pml4, (l0_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
     } else if path.len() == 1 {
-        add(path.last().1->Directory_addr, (l1_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
     } else if path.len() == 2 {
-        add(path.last().1->Directory_addr, (l2_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
     } else if path.len() == 3 {
-        add(path.last().1->Directory_addr, (l3_bits!(vaddr as u64) * WORD_SIZE) as usize)
+        add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
     } else { arbitrary() };
 
-    let entry = PDE { entry: mem.read(addr) as u64, layer: Ghost(path.len()) }@;
+    let entry = PDE { entry: mem.read(addr), layer: Ghost(path.len()) }@;
     let walk = Walk {
         vaddr,
         path: path.push((addr, entry)),
@@ -532,13 +532,13 @@ proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Cons
                         //pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
                         pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
                         post.pt_mem.lemma_write_seq(post.writer_sbuf());
-                        assert(bit!(0u64) == 1) by (bit_vector);
+                        assert(bit!(0usize) == 1) by (bit_vector);
                         assert(pre.core_mem(core) == pre.pt_mem);
                         assert(post.core_mem(core) == post.pt_mem);
                         // TODO: extract to lemma, also used in lemma_valid_not_pending_implies_equal
                         assert(forall|i| #![auto] 0 <= i < walk.path.len() ==> aligned(walk.path[i].0 as nat, 8)) by {
                             broadcast use PDE::lemma_view_addr_aligned;
-                            crate::spec_t::hardware::lemma_bit_indices_less_512(walk.vaddr as u64);
+                            crate::spec_t::hardware::lemma_bit_indices_less_512(walk.vaddr);
                         };
                         if walk.path.len() == 0 {
                             assert(walk == pre_walkp0);
@@ -684,7 +684,7 @@ broadcast proof fn lemma_step_write_valid_walk_unchanged(pre: State, post: State
         #[trigger] post.writer_mem().pt_walk(va) == pre.writer_mem().pt_walk(va)
 {
     let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
-    assert(bit!(0u64) == 1) by (bit_vector);
+    assert(bit!(0usize) == 1) by (bit_vector);
     pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
     post.pt_mem.lemma_write_seq(post.writer_sbuf());
     lemma_step_write_mem_view(pre, post, c, lbl);
@@ -955,12 +955,12 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
     })
 {
     state.pt_mem.lemma_write_seq(state.writer_sbuf());
-    assert(bit!(0u64) == 1) by (bit_vector);
+    assert(bit!(0usize) == 1) by (bit_vector);
     axiom_max_phyaddr_width_facts();
     let mw = MAX_PHYADDR_WIDTH;
-    assert(forall|v: u64| (v & bitmask_inc!(12u64, mw - 1)) % 4096 == 0) by (bit_vector)
+    assert(forall|v: usize| (v & bitmask_inc!(12usize, sub(mw, 1))) % 4096 == 0) by (bit_vector)
         requires 32 <= mw <= 52;
-    crate::spec_t::hardware::lemma_bit_indices_less_512(va as u64);
+    crate::spec_t::hardware::lemma_bit_indices_less_512(va);
     broadcast use lemma_valid_implies_equal_reads;
 }
 
@@ -979,7 +979,7 @@ proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core:
     let path = state.writer_mem().pt_walk(va).path;
     assert(forall|i| #![auto] 0 <= i < path.len() ==> aligned(path[i].0 as nat, 8)) by {
         broadcast use PDE::lemma_view_addr_aligned;
-        crate::spec_t::hardware::lemma_bit_indices_less_512(va as u64);
+        crate::spec_t::hardware::lemma_bit_indices_less_512(va);
     };
     assert(forall|i,a,v:GPDE| #![auto] 0 <= i < path.len() && path[i] == (a, v)
         ==> !state.writer_sbuf().contains_fst(a));
@@ -1046,27 +1046,27 @@ broadcast proof fn lemma_iter_walk_equals_pt_walk(mem: PTMem, vaddr: usize)
     reveal(walk_next);
     let walk = Walk { vaddr, path: seq![], complete: false };
     let walk = rl2::walk_next(mem, walk);
-    let l0_idx = (l0_bits!(vaddr as u64) * WORD_SIZE) as usize;
-    let l1_idx = (l1_bits!(vaddr as u64) * WORD_SIZE) as usize;
-    let l2_idx = (l2_bits!(vaddr as u64) * WORD_SIZE) as usize;
-    let l3_idx = (l3_bits!(vaddr as u64) * WORD_SIZE) as usize;
+    let l0_idx = mul(l0_bits!(vaddr), WORD_SIZE);
+    let l1_idx = mul(l1_bits!(vaddr), WORD_SIZE);
+    let l2_idx = mul(l2_bits!(vaddr), WORD_SIZE);
+    let l3_idx = mul(l3_bits!(vaddr), WORD_SIZE);
     let l0_addr = add(mem.pml4, l0_idx);
-    let l0e = PDE { entry: mem.read(l0_addr) as u64, layer: Ghost(0) };
+    let l0e = PDE { entry: mem.read(l0_addr), layer: Ghost(0) };
     match l0e@ {
         GPDE::Directory { addr: l1_daddr, .. } => {
             let walk = rl2::walk_next(mem, walk);
             let l1_addr = add(l1_daddr, l1_idx);
-            let l1e = PDE { entry: mem.read(l1_addr) as u64, layer: Ghost(1) };
+            let l1e = PDE { entry: mem.read(l1_addr), layer: Ghost(1) };
             match l1e@ {
                 GPDE::Directory { addr: l2_daddr, .. } => {
                     let walk = rl2::walk_next(mem, walk);
                     let l2_addr = add(l2_daddr, l2_idx);
-                    let l2e = PDE { entry: mem.read(l2_addr) as u64, layer: Ghost(2) };
+                    let l2e = PDE { entry: mem.read(l2_addr), layer: Ghost(2) };
                     match l2e@ {
                         GPDE::Directory { addr: l3_daddr, .. } => {
                             let walk = rl2::walk_next(mem, walk);
                             let l3_addr = add(l3_daddr, l3_idx);
-                            let l3e = PDE { entry: mem.read(l3_addr) as u64, layer: Ghost(3) };
+                            let l3e = PDE { entry: mem.read(l3_addr), layer: Ghost(3) };
                             assert(walk.path == seq![(l0_addr, l0e@), (l1_addr, l1e@), (l2_addr, l2e@), (l3_addr, l3e@)]);
                         },
                         _ => {
@@ -1127,24 +1127,23 @@ broadcast proof fn lemma_bits_align_to_usize(vaddr: usize)
         #![trigger align_to_usize(vaddr, L2_ENTRY_SIZE)]
         #![trigger align_to_usize(vaddr, L3_ENTRY_SIZE)]
         #![trigger align_to_usize(vaddr, 8)]
-        l0_bits!(align_to_usize(vaddr, L1_ENTRY_SIZE) as u64) == l0_bits!(vaddr as u64),
-        l1_bits!(align_to_usize(vaddr, L1_ENTRY_SIZE) as u64) == l1_bits!(vaddr as u64),
-        l0_bits!(align_to_usize(vaddr, L2_ENTRY_SIZE) as u64) == l0_bits!(vaddr as u64),
-        l1_bits!(align_to_usize(vaddr, L2_ENTRY_SIZE) as u64) == l1_bits!(vaddr as u64),
-        l2_bits!(align_to_usize(vaddr, L2_ENTRY_SIZE) as u64) == l2_bits!(vaddr as u64),
-        l0_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE) as u64) == l0_bits!(vaddr as u64),
-        l1_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE) as u64) == l1_bits!(vaddr as u64),
-        l2_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE) as u64) == l2_bits!(vaddr as u64),
-        l3_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE) as u64) == l3_bits!(vaddr as u64),
-        l0_bits!(align_to_usize(vaddr, 8) as u64) == l0_bits!(vaddr as u64),
-        l1_bits!(align_to_usize(vaddr, 8) as u64) == l1_bits!(vaddr as u64),
-        l2_bits!(align_to_usize(vaddr, 8) as u64) == l2_bits!(vaddr as u64),
-        l3_bits!(align_to_usize(vaddr, 8) as u64) == l3_bits!(vaddr as u64),
+        l0_bits!(align_to_usize(vaddr, L1_ENTRY_SIZE)) == l0_bits!(vaddr),
+        l1_bits!(align_to_usize(vaddr, L1_ENTRY_SIZE)) == l1_bits!(vaddr),
+        l0_bits!(align_to_usize(vaddr, L2_ENTRY_SIZE)) == l0_bits!(vaddr),
+        l1_bits!(align_to_usize(vaddr, L2_ENTRY_SIZE)) == l1_bits!(vaddr),
+        l2_bits!(align_to_usize(vaddr, L2_ENTRY_SIZE)) == l2_bits!(vaddr),
+        l0_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE)) == l0_bits!(vaddr),
+        l1_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE)) == l1_bits!(vaddr),
+        l2_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE)) == l2_bits!(vaddr),
+        l3_bits!(align_to_usize(vaddr, L3_ENTRY_SIZE)) == l3_bits!(vaddr),
+        l0_bits!(align_to_usize(vaddr, 8)) == l0_bits!(vaddr),
+        l1_bits!(align_to_usize(vaddr, 8)) == l1_bits!(vaddr),
+        l2_bits!(align_to_usize(vaddr, 8)) == l2_bits!(vaddr),
+        l3_bits!(align_to_usize(vaddr, 8)) == l3_bits!(vaddr),
 {
-    let vaddr = vaddr as u64;
-    let l1_es = L1_ENTRY_SIZE as u64;
-    let l2_es = L2_ENTRY_SIZE as u64;
-    let l3_es = L3_ENTRY_SIZE as u64;
+    let l1_es = L1_ENTRY_SIZE;
+    let l2_es = L2_ENTRY_SIZE;
+    let l3_es = L3_ENTRY_SIZE;
     assert(l0_bits!(sub(vaddr, vaddr % l1_es)) == l0_bits!(vaddr)) by (bit_vector)
         requires l1_es == 512 * 512 * 4096;
     assert(l1_bits!(sub(vaddr, vaddr % l1_es)) == l1_bits!(vaddr)) by (bit_vector)

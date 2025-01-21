@@ -41,8 +41,8 @@ pub open spec fn word_index_spec(addr: nat) -> nat
 #[verifier(external_body)]
 pub struct PageTableMemory {
     /// `phys_mem_ref` is the starting address of the physical memory linear mapping
-    phys_mem_ref: *mut u64,
-    cr3: u64,
+    phys_mem_ref: *mut usize,
+    cr3: usize,
 }
 
 impl PageTableMemory {
@@ -50,7 +50,7 @@ impl PageTableMemory {
 
     pub spec fn regions(self) -> Set<MemRegion>;
 
-    pub spec fn region_view(self, r: MemRegion) -> Seq<u64>;
+    pub spec fn region_view(self, r: MemRegion) -> Seq<usize>;
 
     pub open spec fn inv(self) -> bool {
         &&& self.phys_mem_ref_as_usize_spec() <= 0x7FE0_0000_0000_0000
@@ -93,7 +93,7 @@ impl PageTableMemory {
             aligned(r@.base, PAGE_SIZE as nat),
             !old(self).regions().contains(r@),
             self.regions() === old(self).regions().insert(r@),
-            self.region_view(r@) === new_seq::<u64>(512nat, 0u64),
+            self.region_view(r@) === new_seq::<usize>(512nat, 0usize),
             forall|r2: MemRegion|
                 r2 !== r@ ==> #[trigger] self.region_view(r2) === old(self).region_view(r2),
             self.cr3_spec() == old(self).cr3_spec(),
@@ -122,7 +122,7 @@ impl PageTableMemory {
 
     #[verifier(external_body)]
     /// Write value to physical address `pbase + idx * WORD_SIZE`
-    pub fn write(&mut self, pbase: usize, idx: usize, region: Ghost<MemRegion>, value: u64)
+    pub fn write(&mut self, pbase: usize, idx: usize, region: Ghost<MemRegion>, value: usize)
         requires
             pbase == region@.base,
             aligned(pbase as nat, WORD_SIZE as nat),
@@ -145,7 +145,7 @@ impl PageTableMemory {
 
     #[verifier(external_body)]
     /// Read value at physical address `pbase + idx * WORD_SIZE`
-    pub fn read(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>) -> (res: u64)
+    pub fn read(&self, pbase: usize, idx: usize, region: Ghost<MemRegion>) -> (res: usize)
         requires
             pbase == region@.base,
             aligned(pbase as nat, WORD_SIZE as nat),
@@ -158,7 +158,7 @@ impl PageTableMemory {
         unsafe { self.phys_mem_ref.offset(word_offset).read() }
     }
 
-    pub open spec fn spec_read(self, idx: nat, region: MemRegion) -> (res: u64) {
+    pub open spec fn spec_read(self, idx: nat, region: MemRegion) -> (res: usize) {
         self.region_view(region)[idx as int]
     }
 
