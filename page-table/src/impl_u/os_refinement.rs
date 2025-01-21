@@ -22,7 +22,7 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-proof fn lemma_inflight_vaddr_equals_hl_unmap<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
+proof fn lemma_inflight_vaddr_equals_hl_unmap<M: mmu::MMU>(c: os::Constants, s: os::State<M>)
     requires
         s.basic_inv(c),
     ensures
@@ -102,9 +102,9 @@ proof fn lemma_inflight_vaddr_equals_hl_unmap<M: mmu::MMU>(c: os::OSConstants, s
 }
 
 proof fn lemma_effective_mappings_unaffected_if_thread_state_constant<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
 )
     requires
         s1.basic_inv(c),
@@ -123,8 +123,8 @@ proof fn lemma_effective_mappings_unaffected_if_thread_state_constant<M: mmu::MM
 // soundness lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 proof fn lemma_map_soundness_equality<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     vaddr: nat,
     pte: PTE,
 )
@@ -188,8 +188,8 @@ proof fn lemma_map_soundness_equality<M: mmu::MMU>(
 }
 
 proof fn lemma_unmap_soundness_equality<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     vaddr: nat,
     pte_size: nat,
 )
@@ -204,8 +204,8 @@ proof fn lemma_unmap_soundness_equality<M: mmu::MMU>(
 }
 
 proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     vaddr: nat,
     pte: PTE,
 )
@@ -274,7 +274,7 @@ proof fn lemma_os_overlap_vmem_implies_hl_or_inflight_overlap_vmem<M: mmu::MMU>(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Refinement proof
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-proof fn os_init_refines_hl_init<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
+proof fn os_init_refines_hl_init<M: mmu::MMU>(c: os::Constants, s: os::State<M>)
     requires
         os::init(c, s),
     ensures
@@ -294,22 +294,22 @@ proof fn os_init_refines_hl_init<M: mmu::MMU>(c: os::OSConstants, s: os::OSVaria
     assert(abs_s.mappings === Map::empty());
 }
 
-proof fn os_next_refines_hl_next<M: mmu::MMU>(c: os::OSConstants, s1: os::OSVariables<M>, s2: os::OSVariables<M>)
+proof fn os_next_refines_hl_next<M: mmu::MMU>(c: os::Constants, s1: os::State<M>, s2: os::State<M>)
     requires
         os::next(c, s1, s2),
         s1.inv(c),
     ensures
         hlspec::next(c.interp(), s1.interp(c), s2.interp(c)),
 {
-    let step = choose|step: os::OSStep| os::next_step(c, s1, s2, step);
+    let step = choose|step: os::Step| os::next_step(c, s1, s2, step);
     next_step_refines_hl_next_step(c, s1, s2, step);
 }
 
 proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
-    step: os::OSStep,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
+    step: os::Step,
 )
     requires
         os::next_step(c, s1, s2, step),
@@ -319,49 +319,49 @@ proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
 {
     next_step_preserves_inv(c, s1, s2, step);
     match step {
-        os::OSStep::HW { ULT_id, step } => match step {
-            hardware::HWStep::ReadWrite { vaddr, paddr, op, walk_result, core } => {
+        os::Step::HW { ULT_id, step } => match step {
+            hardware::Step::ReadWrite { vaddr, paddr, op, walk_result, core } => {
                 step_ReadWrite_refines(c, s1, s2, ULT_id, vaddr, paddr, op, walk_result, core)
             },
             _ => {},
         },
         //Map steps
-        os::OSStep::MapStart { ULT_id, vaddr, pte } => {
+        os::Step::MapStart { ULT_id, vaddr, pte } => {
             step_Map_Start_refines(c, s1, s2, ULT_id, vaddr, pte);
         },
-        os::OSStep::MapOpStart { core } => {
+        os::Step::MapOpStart { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::MapEnd { core, paddr, value, result } => {
+        os::Step::MapEnd { core, paddr, value, result } => {
             if (s1.sound) {
                 step_Map_End_refines(c, s1, s2, core, paddr, value, result);
             }
         },
         //Unmap steps
-        os::OSStep::UnmapStart { ULT_id, vaddr } => {
+        os::Step::UnmapStart { ULT_id, vaddr } => {
             if (s1.sound) {
                 step_Unmap_Start_refines(c, s1, s2, ULT_id, vaddr);
             }
         },
-        os::OSStep::UnmapOpStart { core } => {
+        os::Step::UnmapOpStart { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::UnmapOpChange { core, paddr, value, result } => {
+        os::Step::UnmapOpChange { core, paddr, value, result } => {
             if s1.sound {
                 step_Unmap_Op_Change_refines(c, s1, s2, core, paddr, value, result);
             }
         }
-        os::OSStep::UnmapOpEnd { core } => {
+        os::Step::UnmapOpEnd { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::UnmapInitiateShootdown { core } => {
+        os::Step::UnmapInitiateShootdown { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
         },
-        os::OSStep::UnmapEnd { core } => {
+        os::Step::UnmapEnd { core } => {
             step_Unmap_End_refines(c, s1, s2, core);
         },
         _ => {},
@@ -390,9 +390,9 @@ proof fn next_step_refines_hl_next_step<M: mmu::MMU>(
 
 //TODO
 proof fn step_ReadWrite_refines<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
     ULT_id: nat,
     vaddr: nat,
     paddr: nat,
@@ -403,7 +403,7 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
     requires
         s1.inv(c),
         s2.inv(c),
-        os::step_HW(c, s1, s2, ULT_id, hardware::HWStep::ReadWrite { vaddr, paddr, op, walk_result, core }),
+        os::step_HW(c, s1, s2, ULT_id, hardware::Step::ReadWrite { vaddr, paddr, op, walk_result, core }),
     ensures
         ({
             let hl_pte = match walk_result {
@@ -584,9 +584,9 @@ proof fn step_ReadWrite_refines<M: mmu::MMU>(
 }
 
 proof fn step_Map_Start_refines<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
     ULT_id: nat,
     vaddr: nat,
     pte: PTE,
@@ -661,9 +661,9 @@ proof fn step_Map_Start_refines<M: mmu::MMU>(
 }
 
 proof fn step_Map_End_refines<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
     core: Core,
     paddr: usize,
     value: usize,
@@ -1048,9 +1048,9 @@ proof fn step_Map_End_refines<M: mmu::MMU>(
 }
 
 proof fn step_Unmap_Start_refines<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
     ULT_id: nat,
     vaddr: nat,
 )
@@ -1286,9 +1286,9 @@ proof fn step_Unmap_Start_refines<M: mmu::MMU>(
 }
 
 proof fn step_Unmap_Op_Change_refines<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
     core: Core,
     paddr: usize,
     value: usize,
@@ -1408,9 +1408,9 @@ proof fn step_Unmap_Op_Change_refines<M: mmu::MMU>(
 }
 
 proof fn step_Unmap_End_refines<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
     core: Core,
 )
     requires

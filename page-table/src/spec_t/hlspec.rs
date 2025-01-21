@@ -18,13 +18,13 @@ use crate::spec_t::hlproof::{
 
 verus! {
 
-pub struct AbstractConstants {
+pub struct Constants {
     //so far const
     pub thread_no: nat,
     pub phys_mem_size: nat,
 }
 
-pub struct AbstractVariables {
+pub struct State {
     /// Word-indexed virtual memory
     pub mem: Map<nat, nat>,
     pub thread_state: Map<nat, ThreadState>,
@@ -36,7 +36,7 @@ pub struct AbstractVariables {
 }
 
 #[allow(inconsistent_fields)]
-pub enum AbstractStep {
+pub enum Step {
     ReadWrite { thread_id: nat, vaddr: nat, op: RWOp, pte: Option<(nat, PTE)> },
     MapStart { thread_id: nat, vaddr: nat, pte: PTE },
     MapEnd { thread_id: nat, result: Result<(), ()> },
@@ -53,13 +53,13 @@ pub enum ThreadState {
     Idle,
 }
 
-pub open spec fn wf(c: AbstractConstants, s: AbstractVariables) -> bool {
+pub open spec fn wf(c: Constants, s: State) -> bool {
     &&& forall|id: nat| id < c.thread_no <==> s.thread_state.contains_key(id)
     &&& s.mappings.dom().finite()
     &&& s.mem.dom().finite()
 }
 
-pub open spec fn init(c: AbstractConstants, s: AbstractVariables) -> bool {
+pub open spec fn init(c: Constants, s: State) -> bool {
     &&& s.mem === Map::empty()
     &&& s.mappings === Map::empty()
     &&& forall|id: nat| id < c.thread_no ==> (s.thread_state[id] === ThreadState::Idle)
@@ -108,7 +108,7 @@ pub open spec fn mem_domain_from_entry(phys_mem_size: nat, base: nat, pte: PTE) 
     )
 }
 
-pub open spec fn valid_thread(c: AbstractConstants, thread_id: nat) -> bool {
+pub open spec fn valid_thread(c: Constants, thread_id: nat) -> bool {
     thread_id < c.thread_no
 }
 
@@ -116,8 +116,8 @@ pub open spec fn valid_thread(c: AbstractConstants, thread_id: nat) -> bool {
 // Helper function to specify relation between 2 states
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn state_unchanged_besides_thread_state(
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    s1: State,
+    s2: State,
     thread_id: nat,
     thread_arguments: ThreadState,
 ) -> bool {
@@ -127,7 +127,7 @@ pub open spec fn state_unchanged_besides_thread_state(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn unsound_state(s1: AbstractVariables, s2: AbstractVariables) -> bool {
+pub open spec fn unsound_state(s1: State, s2: State) -> bool {
     !s2.sound
 }
 
@@ -190,9 +190,9 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //since unmap deleted pte inflight pte == pagefault
 pub open spec fn step_ReadWrite(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     vaddr: nat,
     op: RWOp,
@@ -287,9 +287,9 @@ pub open spec fn step_Map_enabled(
 
 //think about weather or not map start is valid if it overlaps with existing vmem
 pub open spec fn step_Map_start(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     vaddr: nat,
     pte: PTE,
@@ -310,9 +310,9 @@ pub open spec fn step_Map_start(
 }
 
 pub open spec fn step_Map_end(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     result: Result<(), ()>,
 ) -> bool {
@@ -363,9 +363,9 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
 // if its being mapped rn then itll cause Err anyways
 // if its being unmapped rn then vmem is the way to go.
 pub open spec fn step_Unmap_start(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     vaddr: nat,
 ) -> bool {
@@ -405,9 +405,9 @@ pub open spec fn step_Unmap_start(
 }
 
 pub open spec fn step_Unmap_end(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     result: Result<(), ()>,
 ) -> bool {
@@ -432,23 +432,23 @@ pub open spec fn step_Unmap_end(
 // Stutter
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_Stutter(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
 ) -> bool {
     s1 === s2
 }
 
 //if s1.sound then match else !s2.sound
 pub open spec fn next_step(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
-    step: AbstractStep,
+    c: Constants,
+    s1: State,
+    s2: State,
+    step: Step,
 ) -> bool {
     if (s1.sound) {
         match step {
-            AbstractStep::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(
+            Step::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(
                 c,
                 s1,
                 s2,
@@ -457,7 +457,7 @@ pub open spec fn next_step(
                 op,
                 pte,
             ),
-            AbstractStep::MapStart { thread_id, vaddr, pte } => step_Map_start(
+            Step::MapStart { thread_id, vaddr, pte } => step_Map_start(
                 c,
                 s1,
                 s2,
@@ -465,36 +465,36 @@ pub open spec fn next_step(
                 vaddr,
                 pte,
             ),
-            AbstractStep::MapEnd { thread_id, result } => step_Map_end(
+            Step::MapEnd { thread_id, result } => step_Map_end(
                 c,
                 s1,
                 s2,
                 thread_id,
                 result,
             ),
-            AbstractStep::UnmapStart { thread_id, vaddr } => step_Unmap_start(
+            Step::UnmapStart { thread_id, vaddr } => step_Unmap_start(
                 c,
                 s1,
                 s2,
                 thread_id,
                 vaddr,
             ),
-            AbstractStep::UnmapEnd { thread_id, result } => step_Unmap_end(
+            Step::UnmapEnd { thread_id, result } => step_Unmap_end(
                 c,
                 s1,
                 s2,
                 thread_id,
                 result,
             ),
-            AbstractStep::Stutter => step_Stutter(c, s1, s2),
+            Step::Stutter => step_Stutter(c, s1, s2),
         }
     } else {
         !s2.sound
     }
 }
 
-pub open spec fn next(c: AbstractConstants, s1: AbstractVariables, s2: AbstractVariables) -> bool {
-    exists|step: AbstractStep| next_step(c, s1, s2, step)
+pub open spec fn next(c: Constants, s1: State, s2: State) -> bool {
+    exists|step: Step| next_step(c, s1, s2, step)
 }
 
 pub open spec fn pmem_no_overlap(mappings: Map<nat, PTE>) -> bool {
@@ -551,7 +551,7 @@ pub open spec fn inflight_maps_unique(thread_state: Map<nat, ThreadState>) -> bo
     forall|a: nat| #[trigger] thread_state.dom().contains(a) ==> if_map_then_unique(thread_state, a)
 }
 
-pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool {
+pub open spec fn inv(c: Constants, s: State) -> bool {
     &&& wf(c, s)
     &&& pmem_no_overlap(
         s.mappings,
@@ -562,7 +562,7 @@ pub open spec fn inv(c: AbstractConstants, s: AbstractVariables) -> bool {
     &&& inflight_maps_unique(s.thread_state)
 }
 
-pub proof fn init_implies_inv(c: AbstractConstants, s: AbstractVariables)
+pub proof fn init_implies_inv(c: Constants, s: State)
     requires
         init(c, s),
     ensures
@@ -571,9 +571,9 @@ pub proof fn init_implies_inv(c: AbstractConstants, s: AbstractVariables)
 }
 
 pub proof fn next_step_preserves_inv(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
 )
     requires
         next(c, s1, s2),
@@ -582,12 +582,12 @@ pub proof fn next_step_preserves_inv(
         s2.sound ==> inv(c, s2),
 {
     if (s1.sound) {
-        let p = choose|step: AbstractStep| next_step(c, s1, s2, step);
+        let p = choose|step: Step| next_step(c, s1, s2, step);
         match p {
-            AbstractStep::UnmapStart { thread_id, vaddr } => {
+            Step::UnmapStart { thread_id, vaddr } => {
                 unmap_start_preserves_inv(c, s1, s2, thread_id, vaddr);
             },
-            AbstractStep::UnmapEnd { thread_id, result } => {
+            Step::UnmapEnd { thread_id, result } => {
                 assert(s2.thread_state.values().subset_of(
                     s1.thread_state.values().insert(ThreadState::Idle),
                 ));
@@ -598,10 +598,10 @@ pub proof fn next_step_preserves_inv(
                     ThreadState::Idle,
                 );
             },
-            AbstractStep::MapStart { thread_id, vaddr, pte } => {
+            Step::MapStart { thread_id, vaddr, pte } => {
                 map_start_preserves_inv(c, s1, s2, thread_id, vaddr, pte);
             },
-            AbstractStep::MapEnd { thread_id, result } => {
+            Step::MapEnd { thread_id, result } => {
                 map_end_preserves_inv(c, s1, s2, thread_id, result);
             },
             _ => {},

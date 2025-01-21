@@ -3,42 +3,42 @@
 // this defines the page table structure as interpreted by the hardware
 // and the hardware state machine
 
+use vstd::prelude::*;
 use crate::definitions_t::{
     aligned, axiom_max_phyaddr_width_facts, between, bit, bitmask_inc, Flags, HWRWOp, MemRegion,
     PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR_WIDTH,
     PAGE_SIZE, Core,
 };
 use crate::spec_t::mem::{self, word_index_spec};
-use vstd::prelude::*;
 use crate::spec_t::mmu::{self, pt_mem, WalkResult};
 
 verus! {
 
-pub struct HWConstants {
-    pub NUMA_no: nat,
-    pub core_no: nat,
+pub struct Constants {
+    pub node_count: nat,
+    pub core_count: nat,
     pub phys_mem_size: nat,
 }
 
-pub struct HWVariables<M: mmu::MMU> {
+pub struct State<M: mmu::MMU> {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
-    pub NUMAs: Map<nat, NUMAVariables>,
-    //one global page_table , handled by spec_pt, unconstrained by hw state
-    //pub global_pt: mem::PageTableMemory,
+    pub nodes: Map<nat, PerNumaState>,
     pub mmu: M,
 }
 
-pub struct NUMAVariables {
-    pub cores: Map<nat, CoreVariables>,
+// State for each NUMA node
+pub struct PerNumaState {
+    pub cores: Map<nat, PerCoreState>,
 }
 
-pub struct CoreVariables {
+// State for each core
+pub struct PerCoreState {
     pub tlb: Map<nat, PTE>,
 }
 
 #[allow(inconsistent_fields)]
-pub enum HWStep {
+pub enum Step {
     Invlpg { core: Core, vaddr: usize },
     MMUStep { lbl: mmu::Lbl },
     ReadWrite {
@@ -560,41 +560,41 @@ pub open spec fn interp_pt_mem(pt_mem: pt_mem::PTMem) -> Map<nat, PTE> {
     //)
 }
 
-pub open spec fn init<M: mmu::MMU>(c: HWConstants, s: HWVariables<M>) -> bool {
-    &&& c.NUMA_no > 0
-    &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) == s.NUMAs.contains_key(id)
-    &&& forall|id: nat| #[trigger] valid_NUMA_id(c, id) ==> NUMA_init(c, s.NUMAs[id])
+pub open spec fn init<M: mmu::MMU>(c: Constants, s: State<M>) -> bool {
+    &&& c.node_count > 0
+    &&& forall|id: nat| #[trigger] valid_node_id(c, id) == s.nodes.contains_key(id)
+    &&& forall|id: nat| #[trigger] valid_node_id(c, id) ==> NUMA_init(c, s.nodes[id])
     &&& s.mmu.init()
 }
 
-pub open spec fn NUMA_init(c: HWConstants, n: NUMAVariables) -> bool {
-    &&& c.core_no > 0
+pub open spec fn NUMA_init(c: Constants, n: PerNumaState) -> bool {
+    &&& c.core_count > 0
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) == n.cores.contains_key(id)
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==> n.cores[id].tlb.dom() === Set::empty()
 }
 
-pub open spec fn step_MMUStep<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, lbl: mmu::Lbl) -> bool {
+pub open spec fn step_MMUStep<M: mmu::MMU>(c: Constants, s1: State<M>, s2: State<M>, lbl: mmu::Lbl) -> bool {
     // TODO: Make barrier separate transition and include in map end
     &&& !(lbl is Walk || lbl is Invlpg)
     &&& M::next(s1.mmu, s2.mmu, lbl)
 
     &&& s2.mem === s1.mem
-    &&& s2.NUMAs === s1.NUMAs
+    &&& s2.nodes === s1.nodes
 }
 
-pub open spec fn step_Invlpg<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, core: Core, addr: usize) -> bool {
+pub open spec fn step_Invlpg<M: mmu::MMU>(c: Constants, s1: State<M>, s2: State<M>, core: Core, addr: usize) -> bool {
     &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Invlpg(core, addr))
 
     &&& s2.mem === s1.mem
-    &&& s2.NUMAs === s1.NUMAs
+    &&& s2.nodes === s1.nodes
 }
 
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
 pub open spec fn step_ReadWrite<M: mmu::MMU>(
-    c: HWConstants,
-    s1: HWVariables<M>,
-    s2: HWVariables<M>,
+    c: Constants,
+    s1: State<M>,
+    s2: State<M>,
     vaddr: nat,
     paddr: nat,
     op: HWRWOp,
@@ -604,7 +604,7 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
     &&& aligned(vaddr, 8)
 
     //page tables and TLBs stay the same
-    &&& s2.NUMAs === s1.NUMAs
+    &&& s2.nodes === s1.nodes
     &&& valid_core(c, core)
     // TODO: matching on the walk_result is a bit awkward here
     &&& match walk_result {
@@ -612,7 +612,7 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
             let pmem_idx = word_index_spec(paddr);
             &&& s2.mmu == s1.mmu
             // If we have a `Valid` walk result, it must be a TLB-cached mapping that maps vaddr to paddr..
-            &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_pair(vbase as nat, pte)
+            &&& s1.nodes[core.node_id].cores[core.core_id].tlb.contains_pair(vbase as nat, pte)
             &&& between(vaddr, vbase as nat, vbase as nat + pte.frame.size)
             &&& paddr === (pte.frame.base + (vaddr - vbase)) as nat
             // .. and the result depends on the flags.
@@ -654,10 +654,10 @@ pub open spec fn step_ReadWrite<M: mmu::MMU>(
     }
 }
 
-pub open spec fn other_NUMAs_and_cores_unchanged<M: mmu::MMU>(
-    c: HWConstants,
-    s1: HWVariables<M>,
-    s2: HWVariables<M>,
+pub open spec fn other_nodes_and_cores_unchanged<M: mmu::MMU>(
+    c: Constants,
+    s1: State<M>,
+    s2: State<M>,
     core: Core,
 ) -> bool
     recommends valid_core(c, core),
@@ -665,103 +665,103 @@ pub open spec fn other_NUMAs_and_cores_unchanged<M: mmu::MMU>(
     //Memory stays the same
     &&& s2.mem === s1.mem
     //Number of Numa nodes stays the same
-    //all NUMA states are the same besides the one of NUMA_id
+    //all NUMA states are the same besides the one of node_id
 
-    &&& s2.NUMAs.dom() === s1.NUMAs.dom()
-    &&& s2.NUMAs.remove(core.NUMA_id) === s1.NUMAs.remove(core.NUMA_id)
-    //all cores_states of NUMA_id stay the same besides core_id
+    &&& s2.nodes.dom() === s1.nodes.dom()
+    &&& s2.nodes.remove(core.node_id) === s1.nodes.remove(core.node_id)
+    //all cores_states of node_id stay the same besides core_id
 
-    &&& s2.NUMAs[core.NUMA_id].cores.dom() === s1.NUMAs[core.NUMA_id].cores.dom()
-    &&& s2.NUMAs[core.NUMA_id].cores.remove(core.core_id) == s1.NUMAs[core.NUMA_id].cores.remove(core.core_id)
+    &&& s2.nodes[core.node_id].cores.dom() === s1.nodes[core.node_id].cores.dom()
+    &&& s2.nodes[core.node_id].cores.remove(core.core_id) == s1.nodes[core.node_id].cores.remove(core.core_id)
 }
 
-pub open spec fn valid_NUMA_id(c: HWConstants, id: nat) -> bool {
-    id < c.NUMA_no
+pub open spec fn valid_node_id(c: Constants, id: nat) -> bool {
+    id < c.node_count
 }
 
-pub open spec fn valid_core_id(c: HWConstants, id: nat) -> bool {
-    id < c.core_no
+pub open spec fn valid_core_id(c: Constants, id: nat) -> bool {
+    id < c.core_count
 }
 
-pub open spec fn valid_core(c: HWConstants, core: Core) -> bool {
-    &&& valid_NUMA_id(c, core.NUMA_id)
+pub open spec fn valid_core(c: Constants, core: Core) -> bool {
+    &&& valid_node_id(c, core.node_id)
     &&& valid_core_id(c, core.core_id)
 }
 
 pub open spec fn step_TLBFill<M: mmu::MMU>(
-    c: HWConstants,
-    s1: HWVariables<M>,
-    s2: HWVariables<M>,
+    c: Constants,
+    s1: State<M>,
+    s2: State<M>,
     core: Core,
     vbase: usize,
     pte: PTE,
 ) -> bool {
     &&& valid_core(c, core)
     &&& M::next(s1.mmu, s2.mmu, mmu::Lbl::Walk(core, WalkResult::Valid { vbase, pte }))
-    &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
-        == s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.insert(vbase as nat, pte)
-    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
+    &&& s2.nodes[core.node_id].cores[core.core_id].tlb
+        == s1.nodes[core.node_id].cores[core.core_id].tlb.insert(vbase as nat, pte)
+    &&& other_nodes_and_cores_unchanged(c, s1, s2, core)
 }
 
 pub open spec fn step_TLBEvict<M: mmu::MMU>(
-    c: HWConstants,
-    s1: HWVariables<M>,
-    s2: HWVariables<M>,
+    c: Constants,
+    s1: State<M>,
+    s2: State<M>,
     vaddr: nat,
     core: Core,
 ) -> bool {
     &&& valid_core(c, core)
-    &&& s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.contains_key(vaddr)
-    &&& s2.NUMAs[core.NUMA_id].cores[core.core_id].tlb
-        === s1.NUMAs[core.NUMA_id].cores[core.core_id].tlb.remove(vaddr)
-    &&& other_NUMAs_and_cores_unchanged(c, s1, s2, core)
+    &&& s1.nodes[core.node_id].cores[core.core_id].tlb.contains_key(vaddr)
+    &&& s2.nodes[core.node_id].cores[core.core_id].tlb
+        === s1.nodes[core.node_id].cores[core.core_id].tlb.remove(vaddr)
+    &&& other_nodes_and_cores_unchanged(c, s1, s2, core)
     &&& s2.mmu == s1.mmu
 }
 
-pub open spec fn step_Stutter<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>) -> bool {
+pub open spec fn step_Stutter<M: mmu::MMU>(c: Constants, s1: State<M>, s2: State<M>) -> bool {
     &&& s2 == s1
 }
 
-pub open spec fn next_step<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>, step: HWStep) -> bool {
+pub open spec fn next_step<M: mmu::MMU>(c: Constants, s1: State<M>, s2: State<M>, step: Step) -> bool {
     match step {
-        HWStep::Invlpg { core, vaddr }       => step_Invlpg(c, s1, s2, core, vaddr),
-        HWStep::Stutter                      => step_Stutter(c, s1, s2),
-        HWStep::ReadWrite { vaddr, paddr, op, walk_result, core }
-                                             => step_ReadWrite(c, s1, s2, vaddr, paddr, op, walk_result, core),
-        HWStep::MMUStep { lbl }              => step_MMUStep(c, s1, s2, lbl),
-        HWStep::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, core, vaddr, pte),
-        HWStep::TLBEvict { vaddr, core }     => step_TLBEvict(c, s1, s2, vaddr, core),
+        Step::Invlpg { core, vaddr }       => step_Invlpg(c, s1, s2, core, vaddr),
+        Step::Stutter                      => step_Stutter(c, s1, s2),
+        Step::ReadWrite { vaddr, paddr, op, walk_result, core }
+                                           => step_ReadWrite(c, s1, s2, vaddr, paddr, op, walk_result, core),
+        Step::MMUStep { lbl }              => step_MMUStep(c, s1, s2, lbl),
+        Step::TLBFill { vaddr, pte, core } => step_TLBFill(c, s1, s2, core, vaddr, pte),
+        Step::TLBEvict { vaddr, core }     => step_TLBEvict(c, s1, s2, vaddr, core),
     }
 }
 
-pub open spec fn next<M: mmu::MMU>(c: HWConstants, s1: HWVariables<M>, s2: HWVariables<M>) -> bool {
-    exists|step: HWStep| next_step(c, s1, s2, step)
+pub open spec fn next<M: mmu::MMU>(c: Constants, s1: State<M>, s2: State<M>) -> bool {
+    exists|step: Step| next_step(c, s1, s2, step)
 }
 
-// pub closed spec fn inv(s: HWVariables) -> bool {
+// pub closed spec fn inv(s: State) -> bool {
 //     true
 // }
 //
-// proof fn init_implies_inv(s: HWVariables)
+// proof fn init_implies_inv(s: State)
 //     requires
 //         init(s),
 //     ensures
 //         inv(s)
 // { }
 //
-// proof fn next_preserves_inv(s1: HWVariables, s2: HWVariables)
+// proof fn next_preserves_inv(s1: State, s2: State)
 //     requires
 //         next(s1, s2),
 //         inv(s1),
 //     ensures
 //         inv(s2),
 // {
-//     let step = choose|step: HWStep| next_step(s1, s2, step);
+//     let step = choose|step: Step| next_step(s1, s2, step);
 //     match step {
-//         HWStep::ReadWrite { vaddr, paddr, op , pte} => (),
-//         HWStep::PTWrite                             => (),
-//         HWStep::TLBFill  { vaddr, pte }             => (),
-//         HWStep::TLBEvict { vaddr }                  => (),
+//         Step::ReadWrite { vaddr, paddr, op , pte} => (),
+//         Step::PTWrite                             => (),
+//         Step::TLBFill  { vaddr, pte }             => (),
+//         Step::TLBEvict { vaddr }                  => (),
 //     }
 // }
 } // verus!

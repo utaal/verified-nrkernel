@@ -9,7 +9,7 @@ verus!{
 // Lemma 1: OS state machine with the atomic MMU refines the high-level spec
 // TODO: proper labels
 
-proof fn lemma1_init(c: os::OSConstants, pre: os::OSVariables<DummyAtomicMMU>)
+proof fn lemma1_init(c: os::Constants, pre: os::State<DummyAtomicMMU>)
     requires os::init(c, pre)
     ensures hlspec::init(c.interp(), pre.interp(c))
 {
@@ -17,9 +17,9 @@ proof fn lemma1_init(c: os::OSConstants, pre: os::OSVariables<DummyAtomicMMU>)
 }
 
 proof fn lemma1_next(
-    c: os::OSConstants,
-    pre: os::OSVariables<DummyAtomicMMU>,
-    post: os::OSVariables<DummyAtomicMMU>,
+    c: os::Constants,
+    pre: os::State<DummyAtomicMMU>,
+    post: os::State<DummyAtomicMMU>,
 )
     requires os::next(c, pre, post)
     ensures hlspec::next(c.interp(), pre.interp(c), post.interp(c))

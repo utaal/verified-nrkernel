@@ -22,6 +22,22 @@ pub struct State {
     pub pending_maps: Map<usize, PTE>,
 }
 
+pub enum Step {
+    // Mixed
+    Invlpg,
+    // Atomic page table walk
+    Walk { vaddr: usize },
+    // Non-atomic page table walk
+    WalkNA { vb: usize },
+    // TSO
+    Write,
+    Read,
+    Barrier,
+    SadWrite,
+    Sadness,
+    Stutter,
+}
+
 
 impl State {
     pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize) -> bool {
@@ -161,22 +177,6 @@ pub open spec fn step_Sadness(pre: State, post: State, c: Constants, lbl: Lbl) -
     // If happy is unset, arbitrary steps are allowed.
     &&& !pre.happy
     &&& !post.happy
-}
-
-pub enum Step {
-    // Mixed
-    Invlpg,
-    // Atomic page table walk
-    Walk { vaddr: usize },
-    // Non-atomic page table walk
-    WalkNA { vb: usize },
-    // TSO
-    Write,
-    Read,
-    Barrier,
-    SadWrite,
-    Sadness,
-    Stutter,
 }
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {

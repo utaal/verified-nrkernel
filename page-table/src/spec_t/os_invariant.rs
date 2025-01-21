@@ -11,7 +11,7 @@ verus! {
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of Invariant
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn init_implies_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
+pub proof fn init_implies_inv<M: mmu::MMU>(c: os::Constants, s: os::State<M>)
     requires
         os::init(c, s),
     ensures
@@ -21,7 +21,7 @@ pub proof fn init_implies_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariable
     init_implies_tlb_inv(c, s);
 }
 
-pub proof fn next_preserves_inv<M: mmu::MMU>(c: os::OSConstants, s1: os::OSVariables<M>, s2: os::OSVariables<M>)
+pub proof fn next_preserves_inv<M: mmu::MMU>(c: os::Constants, s1: os::State<M>, s2: os::State<M>)
     requires
         s1.inv(c),
         os::next(c, s1, s2),
@@ -33,10 +33,10 @@ pub proof fn next_preserves_inv<M: mmu::MMU>(c: os::OSConstants, s1: os::OSVaria
 }
 
 pub proof fn next_step_preserves_inv<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
-    step: os::OSStep,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
+    step: os::Step,
 )
     requires
         s1.inv(c),
@@ -80,7 +80,7 @@ pub proof fn next_step_preserves_inv<M: mmu::MMU>(
             | os::CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
                 if s2.interp_pt_mem().contains_key(vaddr) {
                     assert(s1.interp_pt_mem().contains_key(vaddr));
-                    if step matches os::OSStep::UnmapStart { ULT_id, vaddr } {
+                    if step matches os::Step::UnmapStart { ULT_id, vaddr } {
                         // Not sure how this would be provable here but I think the proof worked at
                         // some point?
                         // May have to split invariant into two:
@@ -109,7 +109,7 @@ pub proof fn next_step_preserves_inv<M: mmu::MMU>(
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of TLB Invariants
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn init_implies_tlb_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVariables<M>)
+pub proof fn init_implies_tlb_inv<M: mmu::MMU>(c: os::Constants, s: os::State<M>)
     requires
         os::init(c, s),
     ensures
@@ -120,7 +120,7 @@ pub proof fn init_implies_tlb_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVari
     assert(s.TLB_Shootdown.open_requests === Set::empty());
     assert(forall|core| #[trigger]
         hardware::valid_core(c.hw, core)
-            ==> s.hw.NUMAs[core.NUMA_id].cores[core.core_id].tlb.dom().is_empty());
+            ==> s.hw.nodes[core.node_id].cores[core.core_id].tlb.dom().is_empty());
     assert(s.shootdown_cores_valid(c));
     assert(s.successful_IPI(c));
     //assert(s.successful_shootdown(c));
@@ -128,10 +128,10 @@ pub proof fn init_implies_tlb_inv<M: mmu::MMU>(c: os::OSConstants, s: os::OSVari
 }
 
 pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
-    step: os::OSStep,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
+    step: os::Step,
 )
     requires
         s1.tlb_inv(c),
@@ -142,20 +142,20 @@ pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
         s2.tlb_inv(c),
 {
     match step {
-        os::OSStep::HW { ULT_id, step } => {
+        os::Step::HW { ULT_id, step } => {
             assert(s2.shootdown_cores_valid(c));
             assume(s2.successful_IPI(c));
             assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
         //Map steps
-        os::OSStep::MapStart { ULT_id, vaddr, pte } => {
+        os::Step::MapStart { ULT_id, vaddr, pte } => {
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
             assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::MapOpStart { core } => {
+        os::Step::MapOpStart { core } => {
             assume(s2.Unmap_vaddr() == Set::<nat>::empty());
             assume(s1.Unmap_vaddr() == Set::<nat>::empty());
             assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
@@ -164,10 +164,10 @@ pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::MapOpStutter { core, paddr, value } => {
+        os::Step::MapOpStutter { core, paddr, value } => {
             assume(false);
         },
-        os::OSStep::MapEnd { core, result, paddr, value } => {
+        os::Step::MapEnd { core, result, paddr, value } => {
             assert(s2.shootdown_cores_valid(c));
             assume(s2.successful_IPI(c));
             assume(s2.Unmap_vaddr() == Set::<nat>::empty());
@@ -177,13 +177,13 @@ pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
 
         },
         //Unmap steps
-        os::OSStep::UnmapStart { ULT_id, vaddr } => {
+        os::Step::UnmapStart { ULT_id, vaddr } => {
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
             assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::UnmapOpStart { core } => {
+        os::Step::UnmapOpStart { core } => {
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
             assume(s2.Unmap_vaddr() == Set::<nat>::empty());
@@ -192,30 +192,30 @@ pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::UnmapOpChange { .. } => {
+        os::Step::UnmapOpChange { .. } => {
             assume(false);
         },
-        os::OSStep::UnmapOpStutter { .. } => {
+        os::Step::UnmapOpStutter { .. } => {
             assume(false);
         },
-        os::OSStep::UnmapOpEnd { core } => {
+        os::Step::UnmapOpEnd { core } => {
             assert(s2.shootdown_cores_valid(c));
             assume(s2.successful_IPI(c));
             assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::UnmapInitiateShootdown { core } => {
+        os::Step::UnmapInitiateShootdown { core } => {
             assert(s2.shootdown_cores_valid(c));
             assume(s2.successful_IPI(c));
             assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
-        os::OSStep::UnmapEnd { core } => {
+        os::Step::UnmapEnd { core } => {
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
             assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 
         },
-        os::OSStep::AckShootdownIPI { core } => {
+        os::Step::AckShootdownIPI { core } => {
             assert(s2.shootdown_cores_valid(c));
             assume(s2.successful_IPI(c));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
@@ -228,10 +228,10 @@ pub proof fn next_step_preserves_tlb_inv<M: mmu::MMU>(
 // Proof of overlapping virtual memory Invariants
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
-    c: os::OSConstants,
-    s1: os::OSVariables<M>,
-    s2: os::OSVariables<M>,
-    step: os::OSStep,
+    c: os::Constants,
+    s1: os::State<M>,
+    s2: os::State<M>,
+    step: os::Step,
 )
     requires
         s1.inv(c),
@@ -243,7 +243,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
     if s2.sound {
         match step {
             //Map steps
-            os::OSStep::MapStart { ULT_id, vaddr, pte } => {
+            os::Step::MapStart { ULT_id, vaddr, pte } => {
                 let core = c.ULT2core[ULT_id];
                 let corestate = os::CoreState::MapWaiting { ULT_id, vaddr, pte };
                 lemma_insert_no_overlap_preserves_no_overlap(
@@ -256,7 +256,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::OSStep::MapOpStart { core } => {
+            os::Step::MapOpStart { core } => {
                 let vaddr = s1.core_states[core]->MapWaiting_vaddr;
                 let pte = s1.core_states[core]->MapWaiting_pte;
                 let ULT_id = s1.core_states[core]->MapWaiting_ULT_id;
@@ -271,7 +271,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::OSStep::MapEnd { core, result, paddr, value } => {
+            os::Step::MapEnd { core, result, paddr, value } => {
                 let vaddr = s1.core_states[core]->MapWaiting_vaddr;
                 assert(unique_CoreStates(s2.core_states));
                 assert forall|state1: os::CoreState, state2: os::CoreState|
@@ -317,7 +317,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 assume(s2.existing_map_no_overlap_existing_vmem(c));
             },
             //Unmap steps
-            os::OSStep::UnmapStart { ULT_id, vaddr } => {
+            os::Step::UnmapStart { ULT_id, vaddr } => {
                 let core = c.ULT2core[ULT_id];
                 let corestate = os::CoreState::UnmapWaiting { ULT_id, vaddr };
                 lemma_insert_no_overlap_preserves_no_overlap(
@@ -330,7 +330,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::OSStep::UnmapOpStart { core } => {
+            os::Step::UnmapOpStart { core } => {
                 let vaddr = s1.core_states[core]->UnmapWaiting_vaddr;
                 let ULT_id = s1.core_states[core]->UnmapWaiting_ULT_id;
                 let corestate = os::CoreState::UnmapOpExecuting { ULT_id, vaddr, result: None };
@@ -344,7 +344,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::OSStep::UnmapOpChange { core, result, .. } => {
+            os::Step::UnmapOpChange { core, result, .. } => {
                 let vaddr = s1.core_states[core]->UnmapOpExecuting_vaddr;
                 let ULT_id = s1.core_states[core]->UnmapOpExecuting_ULT_id;
                 let corestate = os::CoreState::UnmapOpExecuting { ULT_id, vaddr, result: Some(result) };
@@ -387,7 +387,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 }
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::OSStep::UnmapOpEnd { core } => {
+            os::Step::UnmapOpEnd { core } => {
                 let vaddr = s1.core_states[core]->UnmapOpExecuting_vaddr;
                 let ULT_id = s1.core_states[core]->UnmapOpExecuting_ULT_id;
                 let result = s1.core_states[core]->UnmapOpExecuting_result->Some_0;
@@ -402,7 +402,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::OSStep::UnmapInitiateShootdown { core } => {
+            os::Step::UnmapInitiateShootdown { core } => {
                 let vaddr = s1.core_states[core]->UnmapOpDone_vaddr;
                 let ULT_id = s1.core_states[core]->UnmapOpDone_ULT_id;
                 let result = s1.core_states[core]->UnmapOpDone_result;
@@ -417,8 +417,8 @@ pub proof fn next_step_preserves_overlap_vmem_inv<M: mmu::MMU>(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            //os::OSStep::HW { ULT_id, step } => {},
-            //os::OSStep::UnmapEnd { core } => {},
+            //os::Step::HW { ULT_id, step } => {},
+            //os::Step::UnmapEnd { core } => {},
             _ => {},
         }
     }
@@ -445,8 +445,8 @@ pub open spec fn no_overlap_vmem_values(
 }
 
 //pub proof fn lemma_overlapping_inv_implies_unique_and_overlap_values<M: mmu::MMU>(
-//    c: os::OSConstants,
-//    s: os::OSVariables<M>,
+//    c: os::Constants,
+//    s: os::State<M>,
 //)
 //    requires
 //        s.basic_inv(c),
@@ -458,8 +458,8 @@ pub open spec fn no_overlap_vmem_values(
 //}
 
 pub proof fn lemma_unique_and_overlap_values_implies_overlap_vmem<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
 )
     requires
         unique_CoreStates(s.core_states),
@@ -475,7 +475,7 @@ pub proof fn lemma_unique_and_overlap_values_implies_overlap_vmem<M: mmu::MMU>(
 // Lemmata to help proof inflight_map_no_overlap_inflight_vmem
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //pub proof fn lemma_insert_idle_corestate_preserves_no_overlap(
-//    c: os::OSConstants,
+//    c: os::Constants,
 //    core_states: Map<Core, os::CoreState>,
 //    pt: Map<nat, PTE>,
 //    core: Core,
@@ -516,7 +516,7 @@ pub proof fn lemma_unique_and_overlap_values_implies_overlap_vmem<M: mmu::MMU>(
 //}
 
 pub proof fn lemma_insert_preserves_no_overlap(
-    c: os::OSConstants,
+    c: os::Constants,
     core_states: Map<Core, os::CoreState>,
     pt: Map<nat, PTE>,
     core: Core,
@@ -596,7 +596,7 @@ pub proof fn lemma_insert_preserves_no_overlap(
 }
 
 pub proof fn lemma_insert_no_overlap_preserves_no_overlap(
-    c: os::OSConstants,
+    c: os::Constants,
     core_states: Map<Core, os::CoreState>,
     pt: Map<nat, PTE>,
     core: Core,
@@ -682,7 +682,7 @@ pub proof fn lemma_insert_no_overlap_preserves_no_overlap(
 }
 
 pub proof fn lemma_submap_preserves_no_overlap(
-    c: os::OSConstants,
+    c: os::Constants,
     core_states: Map<Core, os::CoreState>,
     pt: Map<nat, PTE>,
     sub_pt: Map<nat, PTE>,
@@ -711,8 +711,8 @@ pub proof fn lemma_submap_preserves_no_overlap(
 // soundness lemmata
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     base: nat,
     candidate_size: nat,
 )
@@ -819,8 +819,8 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl<M: mmu:
 }
 
 pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     base: nat,
     candidate_size: nat,
 )
@@ -973,8 +973,8 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os<M: mmu:
 }
 
 pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     candidate: PTE,
 )
     requires
@@ -1089,8 +1089,8 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl<M: mmu:
 }
 
 pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os<M: mmu::MMU>(
-    c: os::OSConstants,
-    s: os::OSVariables<M>,
+    c: os::Constants,
+    s: os::State<M>,
     candidate: PTE,
 )
     requires

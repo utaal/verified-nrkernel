@@ -12,7 +12,7 @@ use crate::spec_t::hlspec::{
     candidate_mapping_overlaps_inflight_pmem, if_map_then_unique, inflight_maps_unique, inv, mem_domain_from_entry,
     mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains,
     pmem_no_overlap, step_Map_end, step_Map_start, step_Unmap_start, ThreadState,
-    AbstractConstants, AbstractVariables,
+    Constants, State,
 };
 
 verus! {
@@ -232,35 +232,33 @@ pub proof fn insert_map_preserves_unique(
     let arg = ThreadState::Map { vaddr, pte };
     let args = thread_state.insert(thread_id, arg);
     let p = pte;
-    assert forall|id: nat| #[trigger] args.dom().contains(id) implies if_map_then_unique(
-        args,
-        id,
-    ) by {
-            if (id == thread_id) {
-                assert forall|other_id: nat| #[trigger]
-                    thread_state.dom().contains(other_id) implies arg != thread_state.index(
+    assert forall|id: nat| #[trigger] args.dom().contains(id) implies if_map_then_unique(args, id)
+    by {
+        if (id == thread_id) {
+            assert forall|other_id: nat| #[trigger]
+                thread_state.dom().contains(other_id) implies arg != thread_state.index(
+                other_id,
+            ) by {
+                if let ThreadState::Map { vaddr: x, pte: y } = thread_state.index(
                     other_id,
-                ) by {
-                    if let ThreadState::Map { vaddr: x, pte: y } = thread_state.index(
-                        other_id,
-                    ) {
-                        assert(thread_state.values().contains(
-                            ThreadState::Map { vaddr: x, pte: y },
-                        ));
-                        assert(!overlap(pte.frame, y.frame));
-                    } 
-                }
-            } else {
-                if let ThreadState::Map { vaddr: x, pte: y } = thread_state.index(id) {
-                    assert(thread_state.dom().contains(id));
+                ) {
                     assert(thread_state.values().contains(
                         ThreadState::Map { vaddr: x, pte: y },
                     ));
                     assert(!overlap(pte.frame, y.frame));
-                    assert(args.index(id) != arg);
-                    assert(args.remove(id) == thread_state.remove(id).insert(thread_id, arg));
                 } 
             }
+        } else {
+            if let ThreadState::Map { vaddr: x, pte: y } = thread_state.index(id) {
+                assert(thread_state.dom().contains(id));
+                assert(thread_state.values().contains(
+                    ThreadState::Map { vaddr: x, pte: y },
+                ));
+                assert(!overlap(pte.frame, y.frame));
+                assert(args.index(id) != arg);
+                assert(args.remove(id) == thread_state.remove(id).insert(thread_id, arg));
+            } 
+        }
     }
 }
 
@@ -271,9 +269,9 @@ pub proof fn insert_map_preserves_unique(
 //                                                                                                               //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 pub proof fn unmap_start_preserves_inv(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     vaddr: nat,
 )
@@ -307,9 +305,9 @@ pub proof fn unmap_start_preserves_inv(
 }
 
 pub proof fn map_start_preserves_inv(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     vaddr: nat,
     pte: PTE,
@@ -335,9 +333,9 @@ pub proof fn map_start_preserves_inv(
 }
 
 pub proof fn map_end_preserves_inv(
-    c: AbstractConstants,
-    s1: AbstractVariables,
-    s2: AbstractVariables,
+    c: Constants,
+    s1: State,
+    s2: State,
     thread_id: nat,
     result: Result<(), ()>,
 )
