@@ -24,16 +24,16 @@ proof fn program_1() {
     lemma_max_phyaddr_at_least();
     x86_arch_spec_upper_bound();
 
-    let c = AbstractConstants { thread_no: 4, phys_mem_size: 4096 * 4096 };
+    let c = Constants { thread_no: 4, phys_mem_size: 4096 * 4096 };
 
-    let s1 = AbstractVariables {
+    let s1 = State {
         mem: Map::empty(),
         thread_state:
             map![
-            0 => AbstractArguments::Empty,
-            1 => AbstractArguments::Empty,
-            2 => AbstractArguments::Empty,
-            3 => AbstractArguments::Empty,
+            0 => ThreadState::Idle,
+            1 => ThreadState::Idle,
+            2 => ThreadState::Idle,
+            3 => ThreadState::Idle,
         ],
         mappings: Map::empty(),
         sound: true,
@@ -50,10 +50,10 @@ proof fn program_1() {
     assert(candidate_mapping_in_bounds(4096 * 3, pte1));
     assert(step_Map_enabled(set![], s1.mappings, 4096 * 3, pte1));
 
-    let s2 = AbstractVariables {
+    let s2 = State {
         thread_state: s1.thread_state.insert(
             1,
-            AbstractArguments::Map { vaddr: 4096 * 3, pte: pte1 },
+            ThreadState::Map { vaddr: 4096 * 3, pte: pte1 },
         ),
         ..s1
     };
@@ -63,13 +63,13 @@ proof fn program_1() {
         c,
         s1,
         s2,
-        AbstractStep::MapStart { thread_id: 1, vaddr: 4096 * 3, pte: pte1 },
+        Step::MapStart { thread_id: 1, vaddr: 4096 * 3, pte: pte1 },
     ));
     assert(next(c, s1, s2));
 
     let mem3 = lemma_extend_mem_domain(s2.mem, 4096 * 3, 4096);
-    let s3 = AbstractVariables {
-        thread_state: s2.thread_state.insert(1, AbstractArguments::Empty),
+    let s3 = State {
+        thread_state: s2.thread_state.insert(1, ThreadState::Idle),
         mappings: s2.mappings.insert(4096 * 3, pte1),
         mem: mem3,
         ..s2
@@ -85,9 +85,9 @@ proof fn program_1() {
     assert(s3.mappings.contains_pair(4096 * 3, pte1));  // discharge exists in `mem_domain_from_mappings_contains`
     assert(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
 
-    assert(next_step(c, s2, s3, AbstractStep::MapEnd { thread_id: 1, result: Ok(()) }));
+    assert(next_step(c, s2, s3, Step::MapEnd { thread_id: 1, result: Ok(()) }));
 
-    let s4 = AbstractVariables { mem: s3.mem.insert(512 * 3, 42), ..s3 };
+    let s4 = State { mem: s3.mem.insert(512 * 3, 42), ..s3 };
 
     assert(crate::spec_t::mem::word_index_spec(4096 * 3) == 512 * 3) by (nonlinear_arith){
         assert(aligned(4096 * 3, WORD_SIZE as nat));
@@ -96,7 +96,7 @@ proof fn program_1() {
         c,
         s3,
         s4,
-        AbstractStep::ReadWrite {
+        Step::ReadWrite {
             thread_id: 1,
             vaddr: 4096 * 3,
             op: RWOp::Store { new_value: 42, result: StoreResult::Ok },
@@ -109,7 +109,7 @@ proof fn program_1() {
         c,
         s4,
         s5,
-        AbstractStep::ReadWrite {
+        Step::ReadWrite {
             thread_id: 1,
             vaddr: 4096 * 3,
             op: RWOp::Load { is_exec: false, result: LoadResult::Value(42) },
@@ -118,10 +118,10 @@ proof fn program_1() {
     ));
 
     let mem6 = lemma_contract_mem_domain(s5.mem, 4096 * 3, 4096);
-    let s6 = AbstractVariables {
+    let s6 = State {
         thread_state: s5.thread_state.insert(
             2,
-            AbstractArguments::Unmap { vaddr: 4096 * 3, pte: Some(pte1) },
+            ThreadState::Unmap { vaddr: 4096 * 3, pte: Some(pte1) },
         ),
         mappings: s5.mappings.remove(4096 * 3),
         mem: mem6,
@@ -130,7 +130,7 @@ proof fn program_1() {
     // assume(false);  //TODO
 
     assert(s6.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s6.mappings));
-    assert(next_step(c, s5, s6, AbstractStep::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
+    assert(next_step(c, s5, s6, Step::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
 
 }
 

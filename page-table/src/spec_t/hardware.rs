@@ -23,12 +23,12 @@ pub struct Constants {
 pub struct State<M: mmu::MMU> {
     /// Word-indexed physical memory
     pub mem: Seq<nat>,
-    pub nodes: Map<nat, PerNumaState>,
+    pub nodes: Map<nat, PerNodeState>,
     pub mmu: M,
 }
 
 // State for each NUMA node
-pub struct PerNumaState {
+pub struct PerNodeState {
     pub cores: Map<nat, PerCoreState>,
 }
 
@@ -567,7 +567,7 @@ pub open spec fn init<M: mmu::MMU>(c: Constants, s: State<M>) -> bool {
     &&& s.mmu.init()
 }
 
-pub open spec fn NUMA_init(c: Constants, n: PerNumaState) -> bool {
+pub open spec fn NUMA_init(c: Constants, n: PerNodeState) -> bool {
     &&& c.core_count > 0
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) == n.cores.contains_key(id)
     &&& forall|id: nat| #[trigger] valid_core_id(c, id) ==> n.cores[id].tlb.dom() === Set::empty()
