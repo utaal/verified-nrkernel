@@ -492,7 +492,10 @@ mod refinement {
                     rl3::Step::WalkStep { core, walk, value, r } => rl2::Step::WalkStep { core, walk },
                     rl3::Step::WalkDone { walk, value, r }       => rl2::Step::WalkDone { walk },
                     rl3::Step::Write                             => {
-                        let Lbl::Write(core, addr, value) = lbl else { arbitrary() };
+                        let (core, addr, value) =
+                            if let Lbl::Write(core, addr, value) = lbl {
+                                (core, addr, value)
+                            } else { arbitrary() };
                         if pre.interp().is_this_write_happy(core, addr, value) {
                             rl2::Step::Write
                         } else {
@@ -565,7 +568,10 @@ mod refinement {
                     assert(rl2::step_WalkDone(pre.interp(), post.interp(), c, walk, lbl));
                 },
                 rl3::Step::Write => {
-                    let Lbl::Write(core, addr, value) = lbl else { arbitrary() };
+                    let (core, addr, value) =
+                        if let Lbl::Write(core, addr, value) = lbl {
+                            (core, addr, value)
+                        } else { arbitrary() };
                     if pre.interp().is_this_write_happy(core, addr, value) {
                         assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
                     } else {

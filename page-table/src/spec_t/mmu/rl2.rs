@@ -481,7 +481,10 @@ proof fn next_step_preserves_inv_inflight_walks(pre: State, post: State, c: Cons
             assert(post.inv_inflight_walks(c));
         },
         Step::Write => {
-            let Lbl::Write(wrcore, wraddr, value) = lbl else { arbitrary() };
+            let (wrcore, wraddr, value) =
+                if let Lbl::Write(core, addr, value) = lbl {
+                    (core, addr, value)
+                } else { arbitrary() };
             assert(post.inv_inflight_walks(c)) by {
                 assert forall|core, walk|
                     c.valid_core(core) && #[trigger] post.walks[core].contains(walk)
@@ -595,7 +598,10 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
     if post.happy {
         match step {
             Step::Write => {
-                let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+                let (core, wraddr, value) =
+                    if let Lbl::Write(core, addr, value) = lbl {
+                        (core, addr, value)
+                    } else { arbitrary() };
                 if core == pre.writes.core {
                     assert(post.writer_sbuf_entries_are_unique()) by {
                         broadcast use lemma_writer_read_from_sbuf;
@@ -661,7 +667,10 @@ proof fn lemma_step_write_mem_view(pre: State, post: State, c: Constants, lbl: L
                     mem: pre.writer_mem().mem.insert(lbl->Write_1, lbl->Write_2),
             })
 {
-    let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+    let (core, wraddr, value) =
+        if let Lbl::Write(core, addr, value) = lbl {
+            (core, addr, value)
+        } else { arbitrary() };
     reveal_with_fuel(vstd::seq::Seq::fold_left, 5);
     if post.writes.core == pre.writes.core {
         pre.pt_mem.lemma_write_seq_push(pre.writer_sbuf(), wraddr, value);
@@ -683,7 +692,10 @@ broadcast proof fn lemma_step_write_valid_walk_unchanged(pre: State, post: State
     ensures
         #[trigger] post.writer_mem().pt_walk(va) == pre.writer_mem().pt_walk(va)
 {
-    let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+    let (core, wraddr, value) =
+        if let Lbl::Write(core, addr, value) = lbl {
+            (core, addr, value)
+        } else { arbitrary() };
     assert(bit!(0usize) == 1) by (bit_vector);
     pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
     post.pt_mem.lemma_write_seq(post.writer_sbuf());
@@ -766,7 +778,10 @@ proof fn next_step_preserves_inv_valid_not_pending_is_not_in_sbuf(pre: State, po
             assert(post.inv_valid_not_pending_is_not_in_sbuf(c));
         },
         Step::Write => {
-            let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+            let (core, wraddr, value) =
+                if let Lbl::Write(core, addr, value) = lbl {
+                    (core, addr, value)
+                } else { arbitrary() };
             assert forall|va:usize,addr|
                     post.writer_mem().pt_walk(va).result() is Valid
                     && !post.pending_map_for(va)
@@ -847,7 +862,10 @@ proof fn next_step_preserves_inv_valid_is_not_in_sbuf(pre: State, post: State, c
             assert(post.inv_valid_is_not_in_sbuf(c));
         },
         Step::Write => {
-            let Lbl::Write(core, wraddr, value) = lbl else { arbitrary() };
+            let (core, wraddr, value) =
+                if let Lbl::Write(core, addr, value) = lbl {
+                    (core, addr, value)
+                } else { arbitrary() };
             assert(post.writes.core == core);
             assert forall|core2, addr: usize| c.valid_core(core2) && aligned(addr as nat, 8)
                     && core2 != core
@@ -1192,7 +1210,10 @@ mod refinement {
                 rl2::Step::WalkInit { core, vaddr } => rl1::Step::Stutter,
                 rl2::Step::WalkStep { core, walk } => rl1::Step::Stutter,
                 rl2::Step::WalkDone { walk } => {
-                    let Lbl::Walk(core, walk_na_res) = lbl else { arbitrary() };
+                    let (core, walk_na_res) =
+                        if let Lbl::Walk(core, walk_na_res) = lbl {
+                            (core, walk_na_res)
+                        } else { arbitrary() };
                     if core == pre.writes.core {
                         rl1::Step::Walk { vaddr: walk.vaddr }
                     } else {
@@ -1246,17 +1267,23 @@ mod refinement {
                 next_step_WalkDone_refines(pre, post, c, step, lbl);
             },
             rl2::Step::Write => {
-                let Lbl::Write(core, addr, value) = lbl else { arbitrary() };
-                    rl2::lemma_step_write_mem_view(pre, post, c, lbl);
-                    pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
-                    assert(rl1::step_Write(pre.interp(), post.interp(), c, lbl));
+                let (core, addr, value) =
+                    if let Lbl::Write(core, addr, value) = lbl {
+                        (core, addr, value)
+                    } else { arbitrary() };
+                rl2::lemma_step_write_mem_view(pre, post, c, lbl);
+                pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+                assert(rl1::step_Write(pre.interp(), post.interp(), c, lbl));
             },
             rl2::Step::Writeback { core } => {
                 super::lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
                 assert(rl1::step_Stutter(pre.interp(), post.interp(), c, lbl));
             },
             rl2::Step::Read => {
-                let Lbl::Read(core, addr, value) = lbl else { arbitrary() };
+                let (core, addr, value) =
+                    if let Lbl::Read(core, addr, value) = lbl {
+                        (core, addr, value)
+                    } else { arbitrary() };
                 if pre.interp().is_tso_read_deterministic(core, addr) {
                     if !pre.writes.all.contains(addr) {
                         assert(forall|i| #![auto] 0 <= i < pre.writer_sbuf().len() ==> pre.writer_sbuf()[i].0 != addr);
@@ -1289,8 +1316,11 @@ mod refinement {
             rl2::next_step(pre, post, c, step, lbl),
         ensures rl1::next_step(pre.interp(), post.interp(), c, step.interp(pre, lbl), lbl)
     {
-        let rl2::Step::WalkDone { walk } = step else { arbitrary() };
-        let Lbl::Walk(core, walk_na_res) = lbl else { arbitrary() };
+        let walk = step->WalkDone_walk;
+        let (core, walk_na_res) =
+            if let Lbl::Walk(core, walk_na_res) = lbl {
+                (core, walk_na_res)
+            } else { arbitrary() };
         let core_mem = pre.core_mem(core);
         let writer_mem = pre.writer_mem();
         // We get a completed walk, `walk_na`, with the result `walk_na_res`
