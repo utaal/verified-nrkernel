@@ -526,42 +526,10 @@ mod refinement {
                 == rl2::walk_next(state.interp().core_mem(core), walk)
     {
         reveal(rl2::walk_next);
-        let Walk { vaddr, path, .. } = walk;
-
-        let rl3_mem = state.pt_mem;
-        let rl3_addr = if path.len() == 0 {
-            add(rl3_mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
-        } else if path.len() == 1 {
-            add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
-        } else if path.len() == 2 {
-            add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
-        } else if path.len() == 3 {
-            add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
-        } else { arbitrary() };
-        let rl3_value = state.read_from_mem_tso(core, rl3_addr, r);
-        let rl3_entry = PDE { entry: rl3_value, layer: Ghost(path.len()) };
-
-        let rl2_mem = state.interp().core_mem(core);
-        assert(rl2_mem == rl3_mem.write_seq(state.sbuf[core]));
-
-        rl3_mem.lemma_write_seq(state.interp().sbuf[core]);
-        assert(rl2_mem.pml4 == rl3_mem.pml4);
-
-        let rl2_addr = if path.len() == 0 {
-            add(rl2_mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
-        } else if path.len() == 1 {
-            add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
-        } else if path.len() == 2 {
-            add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
-        } else if path.len() == 3 {
-            add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
-        } else { arbitrary() };
-        let rl2_value = rl2_mem.read(rl2_addr);
-        let rl2_entry = PDE { entry: rl2_value, layer: Ghost(path.len()) };
-
-        broadcast use lemma_mask_dirty_access_after_xor;
-        rl2_entry.lemma_view_unchanged_dirty_access(rl3_entry);
-        assert(rl2_entry@ == rl3_entry@);
+        state.pt_mem.lemma_write_seq(state.interp().sbuf[core]);
+        broadcast use
+            lemma_mask_dirty_access_after_xor,
+            PDE::lemma_view_unchanged_dirty_access;
     }
 
     proof fn next_step_refines(pre: rl3::State, post: rl3::State, c: Constants, step: rl3::Step, lbl: Lbl)

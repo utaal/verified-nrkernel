@@ -251,10 +251,11 @@ impl PDE {
             requires 32 <= mw <= 52;
     }
 
-    pub proof fn lemma_view_unchanged_dirty_access(self, other: PDE)
+    pub broadcast proof fn lemma_view_unchanged_dirty_access(self, other: PDE)
         requires
             self.layer@ < 4,
-            self.entry & MASK_NEG_DIRTY_ACCESS == other.entry & MASK_NEG_DIRTY_ACCESS,
+            #[trigger] (self.entry & MASK_NEG_DIRTY_ACCESS)
+                == #[trigger] (other.entry & MASK_NEG_DIRTY_ACCESS),
             self.layer == other.layer,
         ensures other@ == self@
     {
