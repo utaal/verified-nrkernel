@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 
-use crate::definitions_t::{
+use crate::spec_t::mmu::defs::{
     aligned, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound,
     Flags, LoadResult, MemRegion, PTE, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
 };

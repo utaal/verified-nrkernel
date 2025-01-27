@@ -180,9 +180,16 @@ pub enum HWStoreResult {
 }
 
 #[allow(inconsistent_fields)]
-pub enum HWRWOp {
-    Store { new_value: nat, result: HWStoreResult },
+pub enum HWMemOp {
     Load { is_exec: bool, result: HWLoadResult },
+    Store { new_value: usize, result: HWStoreResult },
+}
+
+impl HWMemOp {
+    pub open spec fn is_pagefault(self) -> bool {
+        ||| self matches HWMemOp::Load { result: HWLoadResult::Pagefault, .. }
+        ||| self matches HWMemOp::Store { result: HWStoreResult::Pagefault, .. }
+    }
 }
 
 pub struct MemRegion {
@@ -198,8 +205,7 @@ impl MemRegion {
 
 pub open spec fn overlap(region1: MemRegion, region2: MemRegion) -> bool {
     if region1.base <= region2.base {
-        ||| region1.base == region2.base
-        ||| region2.base < region1.base + region1.size
+        region1.base == region2.base || region2.base < region1.base + region1.size
     } else {
         region1.base < region2.base + region2.size
     }

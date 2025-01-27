@@ -1,5 +1,5 @@
 #![verus::trusted]
-use crate::definitions_t::{
+use crate::spec_t::mmu::defs::{
     between, candidate_mapping_overlaps_existing_pmem, overlap,
     PTE, WORD_SIZE,
 };

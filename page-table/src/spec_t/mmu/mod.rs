@@ -2,10 +2,15 @@ pub mod rl1;
 pub mod rl2;
 pub mod rl3;
 pub mod pt_mem;
+pub mod translation;
+pub mod defs;
 
 use vstd::prelude::*;
-use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core, align_to_usize, WORD_SIZE };
+use crate::spec_t::mmu::defs::{
+    PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core,
+    align_to_usize, WORD_SIZE, HWMemOp, PAGE_SIZE,
+};
+use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 
 verus! {
 
@@ -31,23 +36,6 @@ impl WalkResult {
 }
 
 impl Walk {
-    pub open spec fn addr_for_idx(self, i: int, pml4: usize) -> usize
-        recommends i < 4
-    {
-        let Walk { vaddr, path, .. } = self;
-        if i == 0 {
-            add(pml4, mul(l0_bits!(vaddr), WORD_SIZE))
-        } else if i == 1 {
-            add(path[0].1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
-        } else if i == 2 {
-            add(path[1].1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
-        } else if i == 3 {
-            add(path[2].1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
-        } else {
-            arbitrary()
-        }
-    }
-
     pub open spec fn result(self) -> WalkResult {
         let path = self.path;
         if path.last().1 is Page {
@@ -66,8 +54,8 @@ impl Walk {
                 }
             }
         } else if path.last().1 is Empty {
-            // The result holds for an 8-byte aligned address
-            WalkResult::Invalid { vaddr: align_to_usize(self.vaddr, 8) }
+            // The result holds for one page
+            WalkResult::Invalid { vaddr: align_to_usize(self.vaddr, PAGE_SIZE) }
         } else {
             arbitrary()
         }
@@ -91,26 +79,33 @@ impl Walk {
     }
 }
 
+/// Each refinement layer uses the same set of constants.
 pub struct Constants {
-    pub cores: Set<Core>,
+    pub node_count: nat,
+    pub core_count: nat,
+    pub phys_mem_size: nat,
 }
 
 impl Constants {
+    /// We basically never need to reason about the body of this predicate but it can cause
+    /// instability in some places, hence opaque.
+    #[verifier(opaque)]
     pub open spec fn valid_core(self, core: Core) -> bool {
-        self.cores.contains(core)
+        &&& core.node_id < self.node_count
+        &&& core.core_id < self.core_count
     }
 }
 
 pub enum Lbl {
     /// Internal event
     Tau,
-    /// Completion of a page table walk.
-    /// Core, virtual address, walk result
-    Walk(Core, WalkResult),
-    /// Write to physical memory.
+    /// Memory operation on non-page-table memory
+    /// Core, virtual address, memory operation
+    MemOp(Core, usize, HWMemOp),
+    /// Write to page table memory.
     /// Core, physical address, written value
     Write(Core, usize, usize),
-    /// Read from physical memory.
+    /// Read from page table memory.
     /// Core, physical address, read value
     Read(Core, usize, usize),
     /// Invlpg instruction
@@ -121,40 +116,6 @@ pub enum Lbl {
 }
 
 
-pub trait MMU: Sized {
-    spec fn init(self) -> bool;
-    spec fn next(pre: Self, post: Self, lbl: Lbl) -> bool;
-    spec fn inv(self) -> bool;
-    proof fn init_implies_inv(self)
-        requires self.init()
-        ensures self.inv()
-    ;
-    proof fn next_preserves_inv(pre: Self, post: Self, lbl: Lbl)
-        requires
-            pre.inv(),
-            Self::next(pre, post, lbl)
-        ensures post.inv()
-    ;
-}
-
-pub struct DummyAtomicMMU { }
-
-impl MMU for DummyAtomicMMU {
-    spec fn init(self) -> bool;
-    spec fn next(pre: Self, post: Self, lbl: Lbl) -> bool;
-    spec fn inv(self) -> bool;
-    proof fn init_implies_inv(self) {
-        admit();
-    }
-    proof fn next_preserves_inv(pre: Self, post: Self, lbl: Lbl) {
-        admit();
-    }
-}
-
-
-
-
-// TODO: Should probably see if I can get rid of this. Only made triggering hard.
 pub trait SeqTupExt: Sized {
     type A;
     spec fn contains_fst(self, fst: Self::A) -> bool;

@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 
-use crate::spec_t::hardware::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::definitions_t::{ PTE, bitmask_inc, WORD_SIZE, bit };
+use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
+use crate::spec_t::mmu::defs::{ PTE, bitmask_inc, WORD_SIZE, bit };
 use crate::spec_t::mmu::{ Walk, WalkResult };
 
 verus! {
@@ -127,6 +127,9 @@ impl PTMem {
         &&& vbase == vaddr
     }
 
+    /// Making this opaque so `pt_walk` isn't immediately visible in all the OS state machine
+    /// proofs.
+    #[verifier(opaque)]
     pub open spec fn view(self) -> Map<usize,PTE> {
         Map::new(
             |va| self.is_base_pt_walk(va),
@@ -138,6 +141,7 @@ impl PTMem {
         requires
             // TODO: the first precondition is unnecessary with the stronger axiom. But it makes
             // another lemma timeout where it's broadcast.
+            // (But the thing that times out doesn't even use this..)
             self.mem.contains_key(addr),
             forall|i| 0 <= i < writes.len() ==> (#[trigger] writes[i]).0 != addr
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)

@@ -1,6 +1,9 @@
 use vstd::prelude::*;
 
-use crate::definitions_t::{MAX_PHYADDR, axiom_max_phyaddr_width_facts, aligned, new_seq, Flags, ArchExec, ArchLayerExec};
+use crate::spec_t::mmu::defs::{
+    MAX_PHYADDR, axiom_max_phyaddr_width_facts, aligned, new_seq, Flags, ArchExec, ArchLayerExec,
+    Arch, ArchLayer, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES, x86_arch_spec, X86_NUM_LAYERS
+};
 
 verus! {
 pub proof fn lemma_maxphyaddr_facts()
@@ -73,8 +76,6 @@ pub proof fn overflow_bounds()
 // [     #  512 , 512 , 512 , 512 ]
 // [     #  9   , 9   , 9   , 9   , 12  ]
 
-use crate::definitions_t::{Arch, ArchLayer, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES, x86_arch_spec, X86_NUM_LAYERS};
-
 impl Clone for ArchLayerExec {
     fn clone(&self) -> Self {
         ArchLayerExec {
@@ -121,7 +122,7 @@ impl ArchExec {
             vaddr >= base,
         ensures
             res == self@.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-            res == crate::definitions_t::index_from_base_and_addr(base as nat, vaddr as nat, self@.entry_size(layer as nat)),
+            res == crate::spec_t::mmu::defs::index_from_base_and_addr(base as nat, vaddr as nat, self@.entry_size(layer as nat)),
     {
         let es = self.entry_size(layer);
         let offset = vaddr - base;

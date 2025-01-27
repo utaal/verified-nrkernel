@@ -1,19 +1,25 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::definitions_t::{ aligned, Core };
+use crate::spec_t::mem::word_index_spec;
+use crate::spec_t::mmu::defs::{ aligned, Core, HWLoadResult };
 use crate::spec_t::mmu::rl3::{ Writes };
-use crate::spec_t::hardware::{ MASK_NEG_DIRTY_ACCESS };
+use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 
 verus! {
 
-// This file contains refinement layer 2 of the MMU. Compared to layer 3, it removes store buffers
-// and defines an atomic semantics to page table walks.
+// This file contains refinement layer 1 of the MMU. Compared to layer 2, it removes store buffers
+// and defines an atomic semantics to page table walks. This is the most abstract version of the
+// MMU model.
 
 pub struct State {
     pub happy: bool,
+    /// Word-indexed physical (non-page-table) memory
+    pub phys_mem: Seq<nat>,
     /// Page table memory
     pub pt_mem: PTMem,
+    /// Per-node state (TLBs)
+    pub tlbs: Map<Core, Map<usize, PTE>>,
     pub writes: Writes,
     /// Tracks the virtual address ranges for which we cannot guarantee atomic walk results
     /// If polarity is negative, we give no guarantees about the results in these ranges; If it's
@@ -25,10 +31,16 @@ pub struct State {
 pub enum Step {
     // Mixed
     Invlpg,
-    // Atomic page table walk
-    Walk { vaddr: usize },
-    // Non-atomic page table walk
-    WalkNA { vb: usize },
+    // Faulting memory op due to failed translation
+    // (atomic walk)
+    MemOpNoTr,
+    // Faulting memory op due to failed translation
+    // (non-atomic walk result)
+    MemOpNoTrNA { vbase: usize },
+    // Memory op using a translation from the TLB
+    MemOpTLB { tlb_va: usize },
+    TLBFill { core: Core, vaddr: usize },
+    TLBEvict { core: Core, tlb_va: usize },
     // TSO
     Write,
     Read,
@@ -49,15 +61,15 @@ impl State {
         self.writes.all.contains(addr) ==> self.writes.core == core
     }
 
-    pub open spec fn wf(self, c: Constants) -> bool {
-        true
-    }
-
-    pub open spec fn inv(self, c: Constants) -> bool {
-        self.happy ==> {
-        &&& self.wf(c)
-        }
-    }
+    //pub open spec fn wf(self, c: Constants) -> bool {
+    //    true
+    //}
+    //
+    //pub open spec fn inv(self, c: Constants) -> bool {
+    //    self.happy ==> {
+    //    &&& self.wf(c)
+    //    }
+    //}
 }
 
 // ---- Mixed (relevant to multiple of TSO/Cache/Non-Atomic) ----
@@ -79,32 +91,114 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     }
 }
 
+pub open spec fn step_MemOpNoTr(
+    pre: State,
+    post: State,
+    c: Constants,
+    lbl: Lbl,
+) -> bool {
+    &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
+    &&& pre.happy
+
+    &&& c.valid_core(core)
+    &&& pre.pt_mem.pt_walk(memop_vaddr).result() is Invalid
+    &&& memop.is_pagefault()
+
+    &&& post == pre
+}
+
+pub open spec fn step_MemOpNoTrNA(
+    pre: State,
+    post: State,
+    c: Constants,
+    vbase: usize,
+    lbl: Lbl,
+) -> bool {
+    &&& lbl matches Lbl::MemOp(core, vaddr, memop)
+    &&& pre.happy
+
+    &&& c.valid_core(core)
+    &&& pre.pending_maps.contains_key(vbase)
+    &&& vbase <= vaddr < vbase + pre.pending_maps[vbase].frame.size
+    &&& memop.is_pagefault()
+
+    &&& post == pre
+}
+
+pub open spec fn step_MemOpTLB(
+    pre: State,
+    post: State,
+    c: Constants,
+    tlb_va: usize,
+    lbl: Lbl,
+) -> bool {
+    &&& lbl matches Lbl::MemOp(core, vaddr, memop)
+    &&& pre.happy
+
+    &&& {
+    let pte = pre.tlbs[core][tlb_va];
+    let pmem_idx = word_index_spec(pte.frame.base + (vaddr - tlb_va) as nat);
+    &&& c.valid_core(core)
+    &&& aligned(vaddr as nat, 8)
+    &&& pre.tlbs[core].contains_key(tlb_va)
+    &&& tlb_va <= vaddr < tlb_va + pte.frame.size
+    &&& match memop {
+        HWMemOp::Store { new_value, result } => {
+            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
+                &&& result is Ok
+                &&& post.phys_mem === pre.phys_mem.update(pmem_idx as int, new_value as nat)
+            } else {
+                &&& result is Pagefault
+                &&& post.phys_mem === pre.phys_mem
+            }
+        },
+        HWMemOp::Load { is_exec, result } => {
+            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                &&& result == HWLoadResult::Value(pre.phys_mem[pmem_idx as int])
+                &&& post.phys_mem === pre.phys_mem
+            } else {
+                &&& result is Pagefault
+                &&& post.phys_mem === pre.phys_mem
+            }
+        },
+    }
+    }
+
+    &&& post.happy == pre.happy
+    &&& post.pt_mem == pre.pt_mem
+    &&& post.tlbs == pre.tlbs
+    &&& post.writes == pre.writes
+}
 
 // ---- Non-atomic page table walks ----
 
-/// An atomic page table walk
-pub open spec fn step_Walk(pre: State, post: State, c: Constants, vaddr: usize, lbl: Lbl) -> bool {
-    &&& lbl matches Lbl::Walk(core, walk_res)
-
+/// A TLB fill in response to an atomic page table walk
+pub open spec fn step_TLBFill(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
+    &&& lbl is Tau
     &&& pre.happy
-    &&& c.valid_core(core)
-    &&& walk_res == pre.pt_mem.pt_walk(vaddr).result()
 
-    &&& post == pre
+    &&& c.valid_core(core)
+    &&& pre.pt_mem.pt_walk(vaddr).result() matches WalkResult::Valid { vbase, pte }
+
+    &&& post == State {
+        tlbs: pre.tlbs.insert(core, pre.tlbs[core].insert(vbase, pte)),
+        ..pre
+    }
 }
 
-/// A non-atomic page table walk. This can only be an invalid result and only on specific ranges.
-pub open spec fn step_WalkNA(pre: State, post: State, c: Constants, vb: usize, lbl: Lbl) -> bool {
-    &&& lbl matches Lbl::Walk(core, WalkResult::Invalid { vaddr })
-
+pub open spec fn step_TLBEvict(pre: State, post: State, c: Constants, core: Core, tlb_va: usize, lbl: Lbl) -> bool {
+    &&& lbl is Tau
     &&& pre.happy
-    &&& c.valid_core(core)
-    //&&& aligned(vaddr as nat, 8)
-    &&& pre.pending_maps.contains_key(vb)
-    &&& vb <= vaddr < vb + pre.pending_maps[vb].frame.size
 
-    &&& post == pre
+    &&& c.valid_core(core)
+    &&& pre.tlbs[core].contains_key(tlb_va)
+
+    &&& post == State {
+        tlbs: pre.tlbs.insert(core, pre.tlbs[core].remove(tlb_va)),
+        ..pre
+    }
 }
+
 
 
 // ---- TSO ----
@@ -119,7 +213,9 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& pre.is_this_write_happy(core, addr, value)
 
     &&& post.happy      == pre.happy
+    &&& post.phys_mem   == pre.phys_mem
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
+    &&& post.tlbs       == pre.tlbs
     &&& post.writes.all == pre.writes.all.insert(addr)
     //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
     //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
@@ -181,15 +277,18 @@ pub open spec fn step_Sadness(pre: State, post: State, c: Constants, lbl: Lbl) -
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg         => step_Invlpg(pre, post, c, lbl),
-        Step::Walk { vaddr } => step_Walk(pre, post, c, vaddr, lbl),
-        Step::WalkNA { vb }  => step_WalkNA(pre, post, c, vb, lbl),
-        Step::Write          => step_Write(pre, post, c, lbl),
-        Step::Read           => step_Read(pre, post, c, lbl),
-        Step::Barrier        => step_Barrier(pre, post, c, lbl),
-        Step::SadWrite       => step_SadWrite(pre, post, c, lbl),
-        Step::Sadness        => step_Sadness(pre, post, c, lbl),
-        Step::Stutter        => step_Stutter(pre, post, c, lbl),
+        Step::Invlpg                    => step_Invlpg(pre, post, c, lbl),
+        Step::MemOpNoTr                 => step_MemOpNoTr(pre, post, c, lbl),
+        Step::MemOpNoTrNA { vbase }     => step_MemOpNoTrNA(pre, post, c, vbase, lbl),
+        Step::MemOpTLB { tlb_va }       => step_MemOpTLB(pre, post, c, tlb_va, lbl),
+        Step::TLBFill { core, vaddr }   => step_TLBFill(pre, post, c, core, vaddr, lbl),
+        Step::TLBEvict { core, tlb_va } => step_TLBEvict(pre, post, c, core, tlb_va, lbl),
+        Step::Write                     => step_Write(pre, post, c, lbl),
+        Step::Read                      => step_Read(pre, post, c, lbl),
+        Step::Barrier                   => step_Barrier(pre, post, c, lbl),
+        Step::SadWrite                  => step_SadWrite(pre, post, c, lbl),
+        Step::Sadness                   => step_Sadness(pre, post, c, lbl),
+        Step::Stutter                   => step_Stutter(pre, post, c, lbl),
     }
 }
 
@@ -199,6 +298,7 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
 
 pub open spec fn init(pre: State, c: Constants) -> bool {
     //&&& pre.pt_mem == ..
+    &&& pre.tlbs === Map::new(|core| c.valid_core(core), |core| map![])
     &&& pre.happy == true
     //&&& pre.writes.core == ..
     &&& pre.writes.all === set![]
@@ -210,17 +310,17 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.pt_mem.pml4 <= u64::MAX - 4096
 }
 
-proof fn init_implies_inv(pre: State, c: Constants)
-    requires init(pre, c)
-    ensures pre.inv(c)
-{}
-
-proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
-    requires
-        pre.inv(c),
-        next_step(pre, post, c, step, lbl),
-    ensures post.inv(c)
-{}
+//proof fn init_implies_inv(pre: State, c: Constants)
+//    requires init(pre, c)
+//    ensures pre.inv(c)
+//{}
+//
+//proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+//    requires
+//        pre.inv(c),
+//        next_step(pre, post, c, step, lbl),
+//    ensures post.inv(c)
+//{}
 
 
 } // verus!

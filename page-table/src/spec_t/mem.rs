@@ -7,7 +7,7 @@
 
 use vstd::prelude::*;
 
-use crate::definitions_t::{
+use crate::spec_t::mmu::defs::{
     aligned, new_seq, overlap, MemRegion, MemRegionExec, MAX_PHYADDR, PAGE_SIZE,
     WORD_SIZE,
 };
@@ -20,8 +20,8 @@ pub fn word_index(addr: usize) -> (res: usize)
     ensures
         res as nat === word_index_spec(addr as nat),
         // Prove this equivalence to use the indexing lemmas
-        res as nat === crate::definitions_t::index_from_offset(addr as nat, WORD_SIZE as nat),
-        word_index_spec(addr as nat) === crate::definitions_t::index_from_offset(
+        res as nat === crate::spec_t::mmu::defs::index_from_offset(addr as nat, WORD_SIZE as nat),
+        word_index_spec(addr as nat) === crate::spec_t::mmu::defs::index_from_offset(
             addr as nat,
             WORD_SIZE as nat,
         ),

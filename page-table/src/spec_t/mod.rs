@@ -1,4 +1,3 @@
-pub mod hardware;
 pub mod hlspec;
 pub mod os;
 //#[cfg(feature = "impl")]

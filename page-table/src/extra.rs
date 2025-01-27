@@ -1,5 +1,5 @@
 use vstd::prelude::*;
-use crate::definitions_t::aligned;
+use crate::spec_t::mmu::defs::aligned;
 use vstd::map::*;
 
 

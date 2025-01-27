@@ -1,8 +1,13 @@
+#![verus::trusted]
+// Trusted: This file defines the assumed semantics of the memory translation hardware as a state
+// machine.
+
 use vstd::prelude::*;
+use crate::spec_t::mem::word_index_spec;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::definitions_t::{ aligned, bit, Core };
-use crate::spec_t::hardware::{ MASK_DIRTY_ACCESS };
+use crate::spec_t::mmu::defs::{ aligned, bit, Core, bitmask_inc, HWMemOp, HWLoadResult, PTE };
+use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
 
@@ -10,20 +15,27 @@ verus! {
 // partial walk.
 // (forall walk in pre.walks. exists post. step_WalkStep(pre, post, walk, ..)
 
-// This file contains refinement layer 4 of the MMU. This is the most concrete MMU model, i.e. the
+// This file contains refinement layer 3 of the MMU. This is the most concrete MMU model, i.e. the
 // behavior we assume of the hardware.
+//
+// Most of the definitions in this file are `closed`. We reason about the behavior of this state
+// machine exclusively in terms of the more abstract MMU models it refines.
 
 pub struct State {
+    /// Word-indexed physical (non-page-table) memory
+    pub phys_mem: Seq<nat>,
     /// Page table memory
     pub pt_mem: PTMem,
+    /// Per-node state (TLBs)
+    pub tlbs: Map<Core, Map<usize, PTE>>,
     /// In-progress page table walks
     pub walks: Map<Core, Set<Walk>>,
     /// Translation caches
     pub cache: Map<Core, Set<Walk>>,
     /// Store buffers
     pub sbuf: Map<Core, Seq<(usize, usize)>>,
-    /// History variables. These are not allowed to influence transitions in any way. Neither in
-    /// enabling conditions nor in how the state is updated.
+    /// History variables. These do not influence the transitions in any way. Neither in enabling
+    /// conditions nor in state updates. We only use these during the refinement.
     pub hist: History,
 }
 
@@ -68,75 +80,65 @@ pub struct Writes {
 //    }
 //}
 
+/// Any transition that reads from page table memory takes an arbitrary usize `r`, which is used to
+/// non-deterministically flip the accessed and dirty bits.
+/// A seemingly easier way to specify this would be:
+/// `result & MASK_NEG_DIRTY_ACCESS = read(addr) & MASK_NEG_DIRTY_ACCESS`
+/// But this makes specifying the page table walks very awkward because read is now specified as a
+/// predicate. Instead we explicitly xor with an arbitrary value. At higher refinement layers we do
+/// use the predicate approach because we can prove in the refinement that the value of `r` is
+/// irrelevant for page table walks, so the read predicate only shows up in `step_Read`.
+pub enum Step {
+    Invlpg,
+    // Faulting memory op due to failed translation
+    MemOpNoTr { walk: Walk, r: usize },
+    // Memory op using a translation from the TLB
+    MemOpTLB { tlb_va: usize },
+    // Translation caching
+    CacheFill { core: Core, walk: Walk },
+    CacheUse { core: Core, walk: Walk },
+    CacheEvict { core: Core, walk: Walk },
+    // Non-atomic page table walks
+    WalkInit { core: Core, vaddr: usize },
+    WalkStep { core: Core, walk: Walk, r: usize },
+    TLBFill { core: Core, walk: Walk, r: usize },
+    TLBEvict { core: Core, tlb_va: usize },
+    // TSO, operations on page table memory
+    Write,
+    Writeback { core: Core },
+    Read { r: usize },
+    Barrier,
+    Stutter,
+}
+
+
 impl State {
-    pub open spec fn read_from_mem_tso(self, core: Core, addr: usize, r: usize) -> usize {
+    pub closed spec fn read_from_mem_tso(self, core: Core, addr: usize, r: usize) -> usize {
         self.core_mem(core).read(addr) ^ (r & MASK_DIRTY_ACCESS)
     }
 
     /// The memory as seen by the given core. I.e. taking into consideration the core's store
     /// buffers.
-    pub open spec fn core_mem(self, core: Core) -> PTMem {
+    pub closed spec fn core_mem(self, core: Core) -> PTMem {
         self.pt_mem.write_seq(self.sbuf[core])
     }
 
     /// The view of the memory from the writer core's perspective.
-    pub open spec fn writer_mem(self) -> PTMem {
+    pub closed spec fn writer_mem(self) -> PTMem {
         self.core_mem(self.hist.writes.core)
     }
 
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
+    pub closed spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
         &&& !self.hist.writes.all.is_empty() ==> core == self.hist.writes.core
         &&& self.writer_mem().is_nonneg_write(addr, value)
     }
-
-    pub open spec fn wf(self, c: Constants) -> bool {
-        &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
-        &&& forall|core| #[trigger] c.valid_core(core) <==> self.cache.contains_key(core)
-        &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
-        &&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.walks.contains_key(core)
-        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.writes.neg.contains_key(core)
-        &&& forall|core| #[trigger] c.valid_core(core) ==> self.walks[core].finite()
-        &&& forall|core| #[trigger] c.valid_core(core) ==> self.cache[core].finite()
-        &&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.walks[core].finite()
-        //&&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.writes.neg[core].finite()
-    }
-
-    pub open spec fn inv_inflight_walks(self, c: Constants) -> bool {
-        &&& forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
-            &&& aligned(walk.vaddr as nat, 8)
-            &&& walk.path.len() <= 3
-            &&& !walk.complete
-        }
-        &&& forall|core, walk| c.valid_core(core) && #[trigger] self.cache[core].contains(walk) ==> {
-            &&& aligned(walk.vaddr as nat, 8)
-            &&& walk.path.len() <= 3
-            &&& !walk.complete
-        }
-    }
-
-    pub open spec fn inv_walks_subset_of_hist_walks(self, c: Constants) -> bool {
-        forall|core| #[trigger] c.valid_core(core) ==> self.walks[core].subset_of(self.hist.walks[core])
-    }
-
-    pub open spec fn inv_cache_subset_of_hist_walks(self, c: Constants) -> bool {
-        forall|core, walk|
-            c.valid_core(core) && #[trigger] self.cache[core].contains(walk)
-            ==> self.hist.walks[core].contains(walk)
-    }
-
-    pub open spec fn inv(self, c: Constants) -> bool {
-        self.hist.happy ==> {
-        &&& self.wf(c)
-        &&& self.inv_inflight_walks(c)
-        &&& self.inv_walks_subset_of_hist_walks(c)
-        &&& self.inv_cache_subset_of_hist_walks(c)
-        }
-    }
 }
 
-// ---- Mixed (relevant to multiple of TSO/Cache/Non-Atomic) ----
 
-pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+
+// State machine transitions
+
+pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Invlpg(core, va)
 
     &&& c.valid_core(core)
@@ -165,10 +167,88 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     }
 }
 
+// We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
+// get to concurrency we may have to change that.
+// TODO: Is this a problem now?
+// TODO: Should find a way to extract the read definitions from this and reuse it in the upper
+//       refinement layers.
+pub open spec fn step_MemOpNoTr(
+    pre: State,
+    post: State,
+    c: Constants,
+    walk: Walk,
+    r: usize,
+    lbl: Lbl,
+) -> bool {
+    &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
+
+    &&& {
+    let walk_next = walk_next(pre, core, walk, r);
+    &&& c.valid_core(core)
+    &&& pre.walks[core].contains(walk)
+    &&& walk.vaddr == memop_vaddr
+    &&& walk_next.complete
+    &&& walk_next.result() is Invalid
+    &&& memop.is_pagefault()
+    }
+
+    &&& post == State {
+        walks: pre.walks.insert(core, pre.walks[core].remove(walk)),
+        ..pre
+    }
+}
+
+pub open spec fn step_MemOpTLB(
+    pre: State,
+    post: State,
+    c: Constants,
+    tlb_va: usize,
+    lbl: Lbl,
+) -> bool {
+    &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
+
+    &&& {
+    let pte = pre.tlbs[core][tlb_va];
+    let pmem_idx = word_index_spec(pte.frame.base + (memop_vaddr - tlb_va) as nat);
+    &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, 8)
+    &&& pre.tlbs[core].contains_key(tlb_va)
+    &&& tlb_va <= memop_vaddr < tlb_va + pte.frame.size
+    &&& match memop {
+        HWMemOp::Store { new_value, result } => {
+            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
+                &&& result is Ok
+                &&& post.phys_mem === pre.phys_mem.update(pmem_idx as int, new_value as nat)
+            } else {
+                &&& result is Pagefault
+                &&& post.phys_mem === pre.phys_mem
+            }
+        },
+        HWMemOp::Load { is_exec, result } => {
+            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                &&& result == HWLoadResult::Value(pre.phys_mem[pmem_idx as int])
+                &&& post.phys_mem === pre.phys_mem
+            } else {
+                &&& result is Pagefault
+                &&& post.phys_mem === pre.phys_mem
+            }
+        },
+    }
+    }
+
+    &&& post.pt_mem == pre.pt_mem
+    &&& post.tlbs == pre.tlbs
+    &&& post.walks == pre.walks
+    &&& post.cache == pre.cache
+    &&& post.sbuf == pre.sbuf
+    &&& post.hist == pre.hist
+}
+
+
 
 // ---- Translation caching ----
 
-pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
+pub closed spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -180,7 +260,7 @@ pub open spec fn step_CacheFill(pre: State, post: State, c: Constants, core: Cor
     }
 }
 
-pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
+pub closed spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -192,7 +272,7 @@ pub open spec fn step_CacheUse(pre: State, post: State, c: Constants, core: Core
     }
 }
 
-pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
+pub closed spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Core, walk: Walk, lbl: Lbl) -> bool {
     &&& lbl is Tau
 
     &&& c.valid_core(core)
@@ -208,7 +288,7 @@ pub open spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: Co
 // ---- Non-atomic page table walks ----
 
 // FIXME: this should make sure the alignment of va fits with the PTE
-pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
+pub closed spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
     let walk = Walk { vaddr, path: seq![], complete: false };
     &&& lbl is Tau
 
@@ -228,7 +308,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     }
 }
 
-pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Walk {
+pub closed spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Walk {
     let Walk { vaddr, path, .. } = walk;
     let mem = state.pt_mem;
     let addr = if path.len() == 0 {
@@ -250,13 +330,12 @@ pub open spec fn walk_next(state: State, core: Core, walk: Walk, r: usize) -> Wa
     walk
 }
 
-pub open spec fn step_WalkStep(
+pub closed spec fn step_WalkStep(
     pre: State,
     post: State,
     c: Constants,
     core: Core,
     walk: Walk,
-    value: usize,
     r: usize,
     lbl: Lbl
     ) -> bool
@@ -278,30 +357,34 @@ pub open spec fn step_WalkStep(
     }
 }
 
+/// Completes a (valid) page table walk and caches the resulting translation in the TLB.
+///
 /// Note: A valid walk's result is a region whose base and size depend on the path taken. E.g. a
 /// huge page mapping results in a 2M-sized region. Invalid walks are always for a 4K-sized region.
-pub open spec fn step_WalkDone(
-    pre: State,
-    post: State,
-    c: Constants,
-    walk: Walk,
-    value: usize,
-    r: usize,
-    lbl: Lbl
-    ) -> bool
-{
-    &&& lbl matches Lbl::Walk(core, walk_result)
-
-    &&& {
+pub closed spec fn step_TLBFill(pre: State, post: State, c: Constants, core: Core, walk: Walk, r: usize, lbl: Lbl) -> bool {
     let walk_next = walk_next(pre, core, walk, r);
+    &&& lbl is Tau
+
     &&& c.valid_core(core)
     &&& pre.walks[core].contains(walk)
-    &&& walk_next.result() == walk_result
     &&& walk_next.complete
-    }
+    &&& walk_next.result() matches WalkResult::Valid { vbase, pte }
 
     &&& post == State {
         walks: pre.walks.insert(core, pre.walks[core].remove(walk)),
+        tlbs: pre.tlbs.insert(core, pre.tlbs[core].insert(vbase, pte)),
+        ..pre
+    }
+}
+
+pub closed spec fn step_TLBEvict(pre: State, post: State, c: Constants, core: Core, tlb_va: usize, lbl: Lbl) -> bool {
+    &&& lbl is Tau
+
+    &&& c.valid_core(core)
+    &&& pre.tlbs[core].contains_key(tlb_va)
+
+    &&& post == State {
+        tlbs: pre.tlbs.insert(core, pre.tlbs[core].remove(tlb_va)),
         ..pre
     }
 }
@@ -313,13 +396,15 @@ pub open spec fn step_WalkDone(
 // TODO: we don't model atomics, so technically the user-space threads cannot synchronize
 // TODO: max physical size?
 /// Write to core's local store buffer.
-pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+pub closed spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
 
+    &&& post.phys_mem == pre.phys_mem
     &&& post.pt_mem == pre.pt_mem
+    &&& post.tlbs == pre.tlbs
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
@@ -342,7 +427,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     //&&& post.hist.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
 }
 
-pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
+pub closed spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
     let (addr, value) = pre.sbuf[core][0];
     &&& lbl is Tau
 
@@ -356,7 +441,7 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     }
 }
 
-pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl: Lbl) -> bool {
+pub closed spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Read(core, addr, value)
 
     &&& c.valid_core(core)
@@ -368,7 +453,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lbl:
 
 /// The `step_Barrier` transition corresponds to any serializing instruction. This includes
 /// `mfence` and `iret`.
-pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+pub closed spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
     &&& c.valid_core(core)
@@ -387,44 +472,37 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
     }
 }
 
-/// Any transition that reads from memory takes an arbitrary usize `r`, which is used to
-/// non-deterministically flip the accessed and dirty bits.
-pub enum Step {
-    // Mixed
-    Invlpg,
-    // Translation caching
-    CacheFill { core: Core, walk: Walk },
-    CacheUse { core: Core, walk: Walk },
-    CacheEvict { core: Core, walk: Walk },
-    // Non-atomic page table walks
-    WalkInit { core: Core, vaddr: usize },
-    WalkStep { core: Core, walk: Walk, value: usize, r: usize },
-    WalkDone { walk: Walk, value: usize, r: usize },
-    // TSO
-    Write,
-    Writeback { core: Core },
-    Read { r: usize },
-    Barrier,
+pub closed spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl is Tau
+    &&& post == pre
 }
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::Invlpg                            => step_Invlpg(pre, post, c, lbl),
-        Step::CacheFill { core, walk }          => step_CacheFill(pre, post, c, core, walk, lbl),
-        Step::CacheUse { core, walk }           => step_CacheUse(pre, post, c, core, walk, lbl),
-        Step::CacheEvict { core, walk }         => step_CacheEvict(pre, post, c, core, walk, lbl),
-        Step::WalkInit { core, vaddr }          => step_WalkInit(pre, post, c, core, vaddr, lbl),
-        Step::WalkStep { core, walk, value, r } => step_WalkStep(pre, post, c, core, walk, value, r, lbl),
-        Step::WalkDone { walk, value, r }       => step_WalkDone(pre, post, c, walk, value, r, lbl),
-        Step::Write                             => step_Write(pre, post, c, lbl),
-        Step::Writeback { core }                => step_Writeback(pre, post, c, core, lbl),
-        Step::Read { r }                        => step_Read(pre, post, c, r, lbl),
-        Step::Barrier                           => step_Barrier(pre, post, c, lbl),
+        //Step::ReadWrite { paddr, wr }    => step_ReadWrite(pre, post, c, paddr, wr, lbl),
+        Step::Invlpg                       => step_Invlpg(pre, post, c, lbl),
+        Step::MemOpNoTr { walk, r }        => step_MemOpNoTr(pre, post, c, walk, r, lbl),
+        Step::MemOpTLB { tlb_va }          => step_MemOpTLB(pre, post, c, tlb_va, lbl),
+        Step::CacheFill { core, walk }     => step_CacheFill(pre, post, c, core, walk, lbl),
+        Step::CacheUse { core, walk }      => step_CacheUse(pre, post, c, core, walk, lbl),
+        Step::CacheEvict { core, walk }    => step_CacheEvict(pre, post, c, core, walk, lbl),
+        Step::WalkInit { core, vaddr }     => step_WalkInit(pre, post, c, core, vaddr, lbl),
+        Step::WalkStep { core, walk, r }   => step_WalkStep(pre, post, c, core, walk, r, lbl),
+        Step::TLBFill { core, walk, r }    => step_TLBFill(pre, post, c, core, walk, r, lbl),
+        Step::TLBEvict { core, tlb_va }     => step_TLBEvict(pre, post, c, core, tlb_va, lbl),
+        //Step::WalkDone { core, walk, r } => step_WalkDone(pre, post, c, core, walk, r, lbl),
+        Step::Write                        => step_Write(pre, post, c, lbl),
+        Step::Writeback { core }           => step_Writeback(pre, post, c, core, lbl),
+        Step::Read { r }                   => step_Read(pre, post, c, r, lbl),
+        Step::Barrier                      => step_Barrier(pre, post, c, lbl),
+        Step::Stutter                      => step_Stutter(pre, post, c, lbl),
     }
 }
 
-pub open spec fn init(pre: State, c: Constants) -> bool {
+pub closed spec fn init(pre: State, c: Constants) -> bool {
+    // TODO: init conditions for the two memories. Can we require here that they are disjoint?
     //&&& pre.pt_mem == ..
+    &&& pre.tlbs  === Map::new(|core| c.valid_core(core), |core| Map::empty())
     &&& pre.walks === Map::new(|core| c.valid_core(core), |core| set![])
     &&& pre.cache === Map::new(|core| c.valid_core(core), |core| set![])
     &&& pre.sbuf  === Map::new(|core| c.valid_core(core), |core| seq![])
@@ -444,33 +522,89 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     exists|step| next_step(pre, post, c, step, lbl)
 }
 
-proof fn init_implies_inv(pre: State, c: Constants)
+
+
+
+
+// Invariants for this state machine
+
+impl State {
+    pub closed spec fn wf(self, c: Constants) -> bool {
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.cache.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.walks.contains_key(core)
+        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.writes.neg.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) ==> self.walks[core].finite()
+        &&& forall|core| #[trigger] c.valid_core(core) ==> self.cache[core].finite()
+        &&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.walks[core].finite()
+        //&&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.writes.neg[core].finite()
+    }
+
+    pub closed spec fn inv_inflight_walks(self, c: Constants) -> bool {
+        &&& forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
+            &&& aligned(walk.vaddr as nat, 8)
+            &&& walk.path.len() <= 3
+            &&& !walk.complete
+        }
+        &&& forall|core, walk| c.valid_core(core) && #[trigger] self.cache[core].contains(walk) ==> {
+            &&& aligned(walk.vaddr as nat, 8)
+            &&& walk.path.len() <= 3
+            &&& !walk.complete
+        }
+    }
+
+    pub closed spec fn inv_walks_subset_of_hist_walks(self, c: Constants) -> bool {
+        forall|core| #[trigger] c.valid_core(core) ==> self.walks[core].subset_of(self.hist.walks[core])
+    }
+
+    pub closed spec fn inv_cache_subset_of_hist_walks(self, c: Constants) -> bool {
+        forall|core, walk|
+            c.valid_core(core) && #[trigger] self.cache[core].contains(walk)
+            ==> self.hist.walks[core].contains(walk)
+    }
+
+    pub closed spec fn inv(self, c: Constants) -> bool {
+        self.hist.happy ==> {
+        &&& self.wf(c)
+        &&& self.inv_inflight_walks(c)
+        &&& self.inv_walks_subset_of_hist_walks(c)
+        &&& self.inv_cache_subset_of_hist_walks(c)
+        }
+    }
+} // impl State
+
+
+pub proof fn init_implies_inv(pre: State, c: Constants)
     requires init(pre, c)
     ensures pre.inv(c)
-{
-}
+{}
 
-proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
     requires
         pre.inv(c),
-        next_step(pre, post, c, step, lbl),
+        next(pre, post, c, lbl),
     ensures post.inv(c)
 {}
 
 
 
-mod refinement {
+
+
+pub mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl2;
     use crate::spec_t::mmu::rl3;
     use crate::spec_t::mmu::rl3::bit;
-    use crate::spec_t::hardware::{ MASK_DIRTY_ACCESS, MASK_NEG_DIRTY_ACCESS };
+    use crate::spec_t::mmu::translation::{ MASK_DIRTY_ACCESS, MASK_NEG_DIRTY_ACCESS };
 
     impl rl3::State {
-        pub open spec fn interp(self) -> rl2::State {
+        pub closed spec fn interp(self) -> rl2::State {
             rl2::State {
                 happy: self.hist.happy,
+                phys_mem: self.phys_mem,
                 pt_mem: self.pt_mem,
+                tlbs: self.tlbs,
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
                 writes: self.hist.writes,
@@ -481,17 +615,20 @@ mod refinement {
     }
 
     impl rl3::Step {
-        pub open spec fn interp(self, pre: rl3::State, post: rl3::State, lbl: Lbl) -> rl2::Step {
+        pub closed spec fn interp(self, pre: rl3::State, lbl: Lbl) -> rl2::Step {
             if pre.hist.happy {
                 match self {
-                    rl3::Step::Invlpg                            => rl2::Step::Invlpg,
-                    rl3::Step::CacheFill { core, walk }          => rl2::Step::Stutter,
-                    rl3::Step::CacheUse { core, walk }           => rl2::Step::Stutter,
-                    rl3::Step::CacheEvict { core, walk }         => rl2::Step::Stutter,
-                    rl3::Step::WalkInit { core, vaddr }          => rl2::Step::WalkInit { core, vaddr },
-                    rl3::Step::WalkStep { core, walk, value, r } => rl2::Step::WalkStep { core, walk },
-                    rl3::Step::WalkDone { walk, value, r }       => rl2::Step::WalkDone { walk },
-                    rl3::Step::Write                             => {
+                    rl3::Step::Invlpg                     => rl2::Step::Invlpg,
+                    rl3::Step::MemOpNoTr { walk, r }      => rl2::Step::MemOpNoTr { walk },
+                    rl3::Step::MemOpTLB { tlb_va }        => rl2::Step::MemOpTLB { tlb_va },
+                    rl3::Step::CacheFill { core, walk }   => rl2::Step::Stutter,
+                    rl3::Step::CacheUse { core, walk }    => rl2::Step::Stutter,
+                    rl3::Step::CacheEvict { core, walk }  => rl2::Step::Stutter,
+                    rl3::Step::WalkInit { core, vaddr }   => rl2::Step::WalkInit { core, vaddr },
+                    rl3::Step::WalkStep { core, walk, r } => rl2::Step::WalkStep { core, walk },
+                    rl3::Step::TLBFill { core, walk, r }  => rl2::Step::TLBFill { core, walk },
+                    rl3::Step::TLBEvict { core, tlb_va }   => rl2::Step::TLBEvict { core, tlb_va },
+                    rl3::Step::Write                      => {
                         let (core, addr, value) =
                             if let Lbl::Write(core, addr, value) = lbl {
                                 (core, addr, value)
@@ -502,9 +639,10 @@ mod refinement {
                             rl2::Step::SadWrite
                         }
                     },
-                    rl3::Step::Writeback { core }                => rl2::Step::Writeback { core },
-                    rl3::Step::Read { r }                        => rl2::Step::Read,
-                    rl3::Step::Barrier                           => rl2::Step::Barrier,
+                    rl3::Step::Writeback { core } => rl2::Step::Writeback { core },
+                    rl3::Step::Read { r }         => rl2::Step::Read,
+                    rl3::Step::Barrier            => rl2::Step::Barrier,
+                    rl3::Step::Stutter            => rl2::Step::Stutter,
                 }
             } else {
                 rl2::Step::Sadness
@@ -539,33 +677,43 @@ mod refinement {
         requires
             pre.inv(c),
             rl3::next_step(pre, post, c, step, lbl),
-        ensures rl2::next_step(pre.interp(), post.interp(), c, step.interp(pre, post, lbl), lbl)
+        ensures rl2::next_step(pre.interp(), post.interp(), c, step.interp(pre, lbl), lbl)
     {
         if pre.hist.happy {
             match step {
                 rl3::Step::Invlpg => {
                     assert(rl2::step_Invlpg(pre.interp(), post.interp(), c, lbl));
                 },
-                rl3::Step::CacheFill { core, walk }  => {
+                rl3::Step::MemOpNoTr { walk, r } => {
+                    let core = lbl->MemOp_0;
+                    rl3_walk_next_is_rl2_walk_next(pre, core, walk, r);
+                    assert(rl2::step_MemOpNoTr(pre.interp(), post.interp(), c, walk, lbl));
+                },
+                rl3::Step::MemOpTLB { tlb_va } => {
+                    assert(rl2::step_MemOpTLB(pre.interp(), post.interp(), c, tlb_va, lbl));
+                },
+                rl3::Step::CacheFill { core, walk } => {
                     assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
                 },
-                rl3::Step::CacheUse { core, walk }      => {
+                rl3::Step::CacheUse { core, walk } => {
                     assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
                 },
-                rl3::Step::CacheEvict { core, walk }    => {
+                rl3::Step::CacheEvict { core, walk } => {
                     assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
                 },
                 rl3::Step::WalkInit { core, vaddr } => {
                     assert(rl2::step_WalkInit(pre.interp(), post.interp(), c, core, vaddr, lbl))
                 },
-                rl3::Step::WalkStep { core, walk, value, r } => {
+                rl3::Step::WalkStep { core, walk, r } => {
                     rl3_walk_next_is_rl2_walk_next(pre, core, walk, r);
                     assert(rl2::step_WalkStep(pre.interp(), post.interp(), c, core, walk, lbl));
                 },
-                rl3::Step::WalkDone { walk, value, r } => {
-                    let core = lbl->Walk_0;
+                rl3::Step::TLBFill { core, walk, r } => {
                     rl3_walk_next_is_rl2_walk_next(pre, core, walk, r);
-                    assert(rl2::step_WalkDone(pre.interp(), post.interp(), c, walk, lbl));
+                    assert(rl2::step_TLBFill(pre.interp(), post.interp(), c, core, walk, lbl));
+                },
+                rl3::Step::TLBEvict { core, tlb_va } => {
+                    assert(rl2::step_TLBEvict(pre.interp(), post.interp(), c, core, tlb_va, lbl));
                 },
                 rl3::Step::Write => {
                     let (core, addr, value) =
@@ -578,15 +726,18 @@ mod refinement {
                         assert(rl2::step_SadWrite(pre.interp(), post.interp(), c, lbl));
                     }
                 },
-                rl3::Step::Writeback { core }        => {
+                rl3::Step::Writeback { core } => {
                     assert(rl2::step_Writeback(pre.interp(), post.interp(), c, core, lbl));
                 },
-                rl3::Step::Read { r }                => {
+                rl3::Step::Read { r } => {
                     broadcast use lemma_mask_dirty_access_after_xor;
                     assert(rl2::step_Read(pre.interp(), post.interp(), c, lbl));
                 },
-                rl3::Step::Barrier                   => {
+                rl3::Step::Barrier => {
                     assert(rl2::step_Barrier(pre.interp(), post.interp(), c, lbl));
+                },
+                rl3::Step::Stutter => {
+                    assert(rl2::step_Stutter(pre.interp(), post.interp(), c, lbl));
                 },
             }
         } else {
@@ -594,14 +745,10 @@ mod refinement {
         }
     }
 
-    proof fn init_refines(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
-        requires
-            //pre.inv(c),
-            rl3::init(pre, c),
-        ensures
-            rl2::init(pre.interp(), c),
-    {
-    }
+    proof fn init_refines(pre: rl3::State, c: Constants)
+        requires rl3::init(pre, c),
+        ensures rl2::init(pre.interp(), c),
+    {}
 
     proof fn next_refines(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
         requires
@@ -613,7 +760,61 @@ mod refinement {
         let step = choose|step: rl3::Step| rl3::next_step(pre, post, c, step, lbl);
         next_step_refines(pre, post, c, step, lbl);
     }
+
+    pub mod to_rl1 {
+        //! Machinery to lift rl3 semantics to rl1 (interp twice and corresponding lemmas), which we use for
+        //! reasoning about the OS state machine.
+
+        use crate::spec_t::mmu::*;
+        use crate::spec_t::mmu::rl3;
+        use crate::spec_t::mmu::rl1;
+
+        impl rl3::State {
+            pub open spec fn view(self) -> rl1::State {
+                self.interp().interp()
+            }
+        }
+
+        pub proof fn init_implies_inv(pre: rl3::State, c: Constants)
+            requires rl3::init(pre, c),
+            ensures
+                pre.inv(c),
+                pre.interp().inv(c),
+        {}
+
+        pub broadcast proof fn next_preserves_inv(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
+            requires
+                pre.inv(c),
+                pre.interp().inv(c),
+                #[trigger] rl3::next(pre, post, c, lbl),
+            ensures
+                post.inv(c),
+                post.interp().inv(c),
+        {
+            rl3::next_preserves_inv(pre, post, c, lbl);
+            rl3::refinement::next_refines(pre, post, c, lbl);
+            rl2::next_preserves_inv(pre.interp(), post.interp(), c, lbl);
+        }
+
+        pub proof fn init_refines(pre: rl3::State, c: Constants)
+            requires rl3::init(pre, c),
+            ensures rl1::init(pre@, c),
+        {}
+
+        pub broadcast proof fn next_refines(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
+            requires
+                pre.inv(c),
+                pre.interp().inv(c),
+                #[trigger] rl3::next(pre, post, c, lbl),
+            ensures
+                rl1::next(pre@, post@, c, lbl),
+        {
+            rl3::refinement::next_refines(pre, post, c, lbl);
+            rl2::refinement::next_refines(pre.interp(), post.interp(), c, lbl);
+        }
+    }
 }
+
 
 
 } // verus!
