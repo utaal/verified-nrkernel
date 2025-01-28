@@ -1,15 +1,13 @@
 use vstd::prelude::*;
 use crate::spec_t::hlspec;
 use crate::spec_t::os;
-use crate::spec_t::mmu::{ DummyAtomicMMU };
-//use crate::spec_t::mmu::{ self, DummyAtomicMMU };
 
 verus!{
 
 // Lemma 1: OS state machine with the atomic MMU refines the high-level spec
 // TODO: proper labels
 
-proof fn lemma1_init(c: os::Constants, pre: os::State<DummyAtomicMMU>)
+proof fn lemma1_init(c: os::Constants, pre: os::State)
     requires os::init(c, pre)
     ensures hlspec::init(c.interp(), pre.interp(c))
 {
@@ -18,8 +16,8 @@ proof fn lemma1_init(c: os::Constants, pre: os::State<DummyAtomicMMU>)
 
 proof fn lemma1_next(
     c: os::Constants,
-    pre: os::State<DummyAtomicMMU>,
-    post: os::State<DummyAtomicMMU>,
+    pre: os::State,
+    post: os::State,
 )
     requires os::next(c, pre, post)
     ensures hlspec::next(c.interp(), pre.interp(c), post.interp(c))

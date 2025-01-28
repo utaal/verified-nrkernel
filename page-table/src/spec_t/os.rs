@@ -54,6 +54,29 @@ pub enum CoreState {
     UnmapShootdownWaiting { ult_id: nat, vaddr: nat, result: Result<PTE, ()> },
 }
 
+#[allow(inconsistent_fields)]
+pub enum Step {
+    MMU,
+    MemOp { ult_id: nat, vaddr: usize, op: HWMemOp },
+    ReadPTMem { core: Core, paddr: usize, value: usize },
+    Barrier { core: Core },
+    Invlpg { core: Core, vaddr: usize },
+    // Map
+    MapStart { ult_id: nat, vaddr: nat, pte: PTE },
+    MapOpStart { core: Core },
+    MapOpStutter { core: Core, paddr: usize, value: usize },
+    MapEnd { core: Core, paddr: usize, value: usize, result: Result<(), ()> },
+    // Unmap
+    UnmapStart { ult_id: nat, vaddr: nat },
+    UnmapOpStart { core: Core },
+    UnmapOpChange { core: Core, paddr: usize, value: usize, result: Result<PTE, ()> },
+    UnmapOpStutter { core: Core, paddr: usize, value: usize },
+    UnmapOpEnd { core: Core },
+    UnmapInitiateShootdown { core: Core },
+    AckShootdownIPI { core: Core },
+    UnmapEnd { core: Core },
+}
+
 impl CoreState {
     pub open spec fn holds_lock(self) -> bool {
         match self {
@@ -64,53 +87,15 @@ impl CoreState {
         }
     }
 
+    #[verifier(inline)]
     pub open spec fn is_idle(self) -> bool {
         self is Idle
-    }
-
-    pub open spec fn vmem_pte_size(self, pt: Map<nat, PTE>) -> nat
-        recommends !self.is_idle(),
-    {
-        match self {
-            CoreState::MapWaiting { pte, .. }
-            | CoreState::MapExecuting { pte, .. } => {
-                pte.frame.size
-            },
-            CoreState::UnmapWaiting { vaddr, .. }
-            | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
-                if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 }
-            },
-            CoreState::UnmapOpExecuting { result: Some(result), .. }
-            | CoreState::UnmapOpDone { result, .. }
-            | CoreState::UnmapShootdownWaiting { result, .. } => {
-                if result is Ok { result.get_Ok_0().frame.size } else { 0 }
-            },
-            CoreState::Idle => arbitrary(),
-        }
-    }
-
-    pub open spec fn vaddr(self) -> nat
-        recommends !self.is_idle(),
-    {
-        match self {
-            CoreState::MapWaiting { vaddr, .. }
-            | CoreState::MapExecuting { vaddr, .. }
-            | CoreState::UnmapWaiting { vaddr, .. }
-            | CoreState::UnmapOpExecuting { vaddr, .. }
-            | CoreState::UnmapOpDone { vaddr, .. }
-            | CoreState::UnmapShootdownWaiting { vaddr, .. } => { vaddr },
-            CoreState::Idle => arbitrary(),
-        }
     }
 }
 
 impl Constants {
     pub open spec fn valid_ult(self, ult_id: nat) -> bool {
         ult_id < self.ult_no
-    }
-
-    pub open spec fn interp(self) -> hlspec::Constants {
-        hlspec::Constants { thread_no: self.ult_no, phys_mem_size: self.mmu.phys_mem_size }
     }
 
     pub open spec fn valid_core(self, core: Core) -> bool {
@@ -125,292 +110,6 @@ impl State {
         } else {
             None
         }
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Invariant and WF
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn valid_ids(self, c: Constants) -> bool {
-        forall|core: Core|
-            c.valid_core(core) ==> match self.core_states[core] {
-                CoreState::MapWaiting { ult_id, .. }
-                | CoreState::MapExecuting { ult_id, .. }
-                | CoreState::UnmapWaiting { ult_id, .. }
-                | CoreState::UnmapOpExecuting { ult_id, .. }
-                | CoreState::UnmapOpDone { ult_id, .. }
-                | CoreState::UnmapShootdownWaiting { ult_id, .. } => {
-                    &&& c.valid_ult(ult_id)
-                    &&& c.ult2core[ult_id] === core
-                },
-                CoreState::Idle => true,
-            }
-    }
-
-    pub open spec fn inflight_pte_above_zero_pte_result_consistent(self, c: Constants) -> bool {
-        forall|core: Core| c.valid_core(core) ==>
-            match self.core_states[core] {
-                CoreState::MapWaiting { vaddr, pte, .. }
-                | CoreState::MapExecuting { vaddr, pte, .. }
-                    => pte.frame.size > 0,
-                CoreState::UnmapWaiting { vaddr, .. }
-                | CoreState::UnmapOpExecuting { vaddr, result: None, .. }
-                    => self.interp_pt_mem().contains_key(vaddr)
-                        ==> self.interp_pt_mem()[vaddr].frame.size > 0,
-                CoreState::UnmapOpExecuting { result: Some(result), .. }
-                | CoreState::UnmapOpDone { result, .. }
-                | CoreState::UnmapShootdownWaiting { result, .. }
-                    => result is Ok ==> result.get_Ok_0().frame.size > 0,
-                CoreState::Idle => true,
-            }
-    }
-
-    pub open spec fn successful_unmaps(self, c: Constants) -> bool {
-        forall|core: Core| c.valid_core(core) ==>
-            match self.core_states[core] {
-                CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
-                | CoreState::UnmapOpDone { vaddr, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, .. }
-                    => !self.interp_pt_mem().contains_key(vaddr),
-                _ => true,
-            }
-    }
-
-    pub open spec fn wf(self, c: Constants) -> bool {
-        &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
-        &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])
-        &&& forall|core: Core| c.valid_core(core) <==> #[trigger] self.core_states.contains_key(core)
-        &&& forall|core1: Core, core2: Core| {
-            &&& #[trigger] c.valid_core(core1)
-            &&& #[trigger] c.valid_core(core2)
-            &&& self.core_states[core1].holds_lock()
-            &&& self.core_states[core2].holds_lock()
-        } ==> core1 == core2
-    }
-
-    pub open spec fn inv_basic(self, c: Constants) -> bool {
-        &&& self.wf(c)
-        &&& self.inv_mmu(c)
-        &&& self.valid_ids(c)
-        &&& self.inflight_pte_above_zero_pte_result_consistent(c)
-        &&& self.successful_unmaps(c)
-    }
-
-    pub open spec fn inv_mmu(self, c: Constants) -> bool {
-        &&& self.mmu.inv(c.mmu)
-        &&& self.mmu.interp().inv(c.mmu)
-        &&& self.mmu@.happy
-    }
-
-    pub open spec fn inv(self, c: Constants) -> bool {
-        &&& self.inv_basic(c)
-        //&&& self.tlb_inv(c)
-        &&& self.overlapping_vmem_inv(c)
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Invariants about the TLB
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {
-        forall|core| #[trigger]
-            self.TLB_Shootdown.open_requests.contains(core) ==> c.valid_core(core)
-    }
-
-    pub open spec fn successful_IPI(self, c: Constants) -> bool {
-        forall|dispatcher: Core| {
-                c.valid_core(dispatcher) ==> match self.core_states[dispatcher] {
-                    CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        forall|handler: Core|
-                            !(#[trigger] self.TLB_Shootdown.open_requests.contains(handler))
-                                ==> !self.mmu@.tlbs[handler].contains_key(vaddr as usize)
-                    },
-                    _ => true,
-                }
-            }
-    }
-
-    //returns set with the vaddr that is currently unmapped.
-    pub open spec fn Unmap_vaddr(self) -> Set<nat> {
-        Set::new(|v_address: nat| exists|core: Core|
-            self.core_states.contains_key(core) && match self.core_states[core] {
-                CoreState::UnmapOpDone { vaddr, result, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
-                    (result is Ok) && (vaddr === v_address)
-                },
-                _ => false,
-            }
-
-        )
-    }
-
-    pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: Constants) -> bool {
-        forall|core: Core| {
-                #[trigger] c.valid_core(core)
-                        // FIXME(MB): I added the map here. Not yet sure if this will cause
-                        // problems. If so, might have to switch the MMU models over to using nat
-                        // instead of usize.
-                    ==> self.mmu@.tlbs[core].dom().map(|v| v as nat).subset_of(
-                        self.interp_pt_mem().dom().union(self.Unmap_vaddr())
-                )
-            }
-    }
-
-    pub open spec fn shootdown_exists(self, c: Constants) -> bool {
-        !(self.TLB_Shootdown.open_requests === Set::<Core>::empty())
-            ==> exists|core| c.valid_core(core)
-                && self.core_states[core] matches (CoreState::UnmapShootdownWaiting { vaddr, .. })
-    }
-
-    pub open spec fn tlb_inv(self, c: Constants) -> bool {
-        &&& self.shootdown_cores_valid(c)
-        &&& self.successful_IPI(c)
-        &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Invariants about overlapping
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn set_core_idle(self, c: Constants, core: Core) -> State
-        recommends c.valid_core(core),
-    {
-        State {
-            core_states: self.core_states.insert(core, CoreState::Idle),
-            ..self
-        }
-    }
-
-    pub open spec fn inflight_map_no_overlap_inflight_vmem(self, c: Constants) -> bool {
-        forall|core1: Core, core2: Core|
-            (c.valid_core(core1) && c.valid_core(core2)
-                && !self.core_states[core1].is_idle() && !self.core_states[core2].is_idle()
-                && overlap(
-                MemRegion {
-                    base: self.core_states[core1].vaddr(),
-                    size: self.core_states[core1].vmem_pte_size(self.interp_pt_mem()),
-                },
-                MemRegion {
-                    base: self.core_states[core2].vaddr(),
-                    size: self.core_states[core2].vmem_pte_size(self.interp_pt_mem()),
-                },
-            )) ==> core1 === core2
-    }
-
-    pub open spec fn existing_map_no_overlap_existing_vmem(self, c: Constants) -> bool {
-        forall|vaddr| #[trigger] self.interp_pt_mem().contains_key(vaddr)
-                ==> !candidate_mapping_overlaps_existing_vmem(
-                        self.interp_pt_mem().remove(vaddr),
-                        vaddr,
-                        self.interp_pt_mem()[vaddr],
-            )
-    }
-
-    pub open spec fn overlapping_vmem_inv(self, c: Constants) -> bool {
-        self.sound ==> {
-            &&& self.inflight_map_no_overlap_inflight_vmem(c)
-            &&& self.existing_map_no_overlap_existing_vmem(c)
-        }
-    }
-
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-    // Interpretation functions
-    ///////////////////////////////////////////////////////////////////////////////////////////////
-
-    pub open spec fn interp_pt_mem(self) -> Map<nat, PTE> {
-        let pt = self.mmu@.pt_mem@;
-        Map::new(
-            |k:nat| k <= usize::MAX && pt.contains_key(k as usize),
-            |k:nat| pt[k as usize]
-        )
-    }
-
-    pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {
-        Set::new(|v_address: nat| {
-            &&& self.interp_pt_mem().contains_key(v_address)
-            &&& exists|core: Core|
-                self.core_states.contains_key(core) && match self.core_states[core] {
-                    CoreState::UnmapWaiting { ult_id, vaddr }
-                    | CoreState::UnmapOpExecuting { ult_id, vaddr, .. }
-                    | CoreState::UnmapOpDone { ult_id, vaddr, .. }
-                    | CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. } => {
-                        vaddr === v_address
-                    },
-                    _ => false,
-                }
-        })
-    }
-
-    pub open spec fn effective_mappings(self) -> Map<nat, PTE> {
-        self.interp_pt_mem().remove_keys(self.inflight_unmap_vaddr())
-    }
-
-    pub open spec fn interp_vmem(self, c: Constants) -> Map<nat, nat> {
-        let phys_mem_size = c.interp().phys_mem_size;
-        let mappings: Map<nat, PTE> = self.effective_mappings();
-        Map::new(
-            |vmem_idx: nat| hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
-            |vmem_idx: nat| {
-                let vaddr = vmem_idx * WORD_SIZE as nat;
-                let (base, pte) = choose|base: nat, pte: PTE| #![auto]
-                    mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
-                let paddr = (pte.frame.base + (vaddr - base)) as nat;
-                let pmem_idx = mem::word_index_spec(paddr);
-                self.mmu@.phys_mem[pmem_idx as int]
-            },
-        )
-    }
-
-    pub open spec fn interp_thread_state(self, c: Constants) -> Map<nat, hlspec::ThreadState> {
-        Map::new(
-            |ult_id: nat| c.valid_ult(ult_id),
-            |ult_id: nat|
-                {
-                    match self.core_states[c.ult2core[ult_id]] {
-                        CoreState::MapWaiting { ult_id: ult_id2, vaddr, pte }
-                        | CoreState::MapExecuting { ult_id: ult_id2, vaddr, pte } => {
-                            if ult_id2 == ult_id {
-                                hlspec::ThreadState::Map { vaddr, pte }
-                            } else {
-                                hlspec::ThreadState::Idle
-                            }
-                        },
-                        CoreState::UnmapWaiting { ult_id: ult_id2, vaddr }
-                        | CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: None } => {
-                            let pte = if self.interp_pt_mem().contains_key(vaddr) {
-                                Some(self.interp_pt_mem()[vaddr])
-                            } else {
-                                None
-                            };
-                            if ult_id2 == ult_id {
-                                hlspec::ThreadState::Unmap { vaddr, pte }
-                            } else {
-                                hlspec::ThreadState::Idle
-                            }
-                        },
-                        CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: Some(result) }
-                        | CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result }
-                        | CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result } => {
-                            if ult_id2 == ult_id {
-                                hlspec::ThreadState::Unmap { vaddr, pte:
-                                    match result {
-                                        Ok(pte) => Some(pte),
-                                        Err(_) => None,
-                                    }
-                                }
-                            } else {
-                                hlspec::ThreadState::Idle
-                            }
-                        },
-                        CoreState::Idle => hlspec::ThreadState::Idle,
-                    }
-                },
-        )
-    }
-
-    pub open spec fn interp(self, c: Constants) -> hlspec::State {
-        let mappings: Map<nat, PTE> = self.effective_mappings();
-        let mem: Map<nat, nat> = self.interp_vmem(c);
-        let thread_state: Map<nat, hlspec::ThreadState> = self.interp_thread_state(c);
-        let sound: bool = self.sound;
-        hlspec::State { mem, mappings, thread_state, sound }
     }
 }
 
@@ -483,9 +182,6 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     }
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-// MMU state machine, internal steps
-///////////////////////////////////////////////////////////////////////////////////////////////
 pub open spec fn step_MMU(c: Constants, s1: State, s2: State) -> bool {
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Tau)
@@ -517,7 +213,8 @@ pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, 
 }
 
 /// Cores can execute a barrier at any point. This transition has to be used after a map.
-/// XXX: What mechanism enforces that?
+/// XXX: We need to add a MapOpEnd transition or something like that and then require in the final
+/// mapend transition that sbuf is empty.
 pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core) -> bool {
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Barrier(core))
@@ -847,33 +544,377 @@ pub open spec fn step_Unmap_End(
     &&& s1.sound == s2.sound
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-// Statemachine functions
-///////////////////////////////////////////////////////////////////////////////////////////////
-#[allow(inconsistent_fields)]
-pub enum Step {
-    MMU,
-    MemOp { ult_id: nat, vaddr: usize, op: HWMemOp },
-    ReadPTMem { core: Core, paddr: usize, value: usize },
-    Barrier { core: Core },
-    Invlpg { core: Core, vaddr: usize },
-    // Map
-    MapStart { ult_id: nat, vaddr: nat, pte: PTE },
-    MapOpStart { core: Core },
-    MapOpStutter { core: Core, paddr: usize, value: usize },
-    MapEnd { core: Core, paddr: usize, value: usize, result: Result<(), ()> },
-    // Unmap
-    UnmapStart { ult_id: nat, vaddr: nat },
-    UnmapOpStart { core: Core },
-    UnmapOpChange { core: Core, paddr: usize, value: usize, result: Result<PTE, ()> },
-    UnmapOpStutter { core: Core, paddr: usize, value: usize },
-    UnmapOpEnd { core: Core },
-    UnmapInitiateShootdown { core: Core },
-    AckShootdownIPI { core: Core },
-    UnmapEnd { core: Core },
+pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step) -> bool {
+    match step {
+        Step::MMU                                          => step_MMU(c, s1, s2),
+        Step::MemOp { ult_id, vaddr, op }                  => step_MemOp(c, s1, s2, ult_id, vaddr, op),
+        Step::ReadPTMem { core, paddr, value }             => step_ReadPTMem(c, s1, s2, core, paddr, value),
+        Step::Barrier { core }                             => step_Barrier(c, s1, s2, core),
+        Step::Invlpg { core, vaddr }                       => step_Invlpg(c, s1, s2, core, vaddr),
+        //Map steps
+        Step::MapStart { ult_id, vaddr, pte }              => step_Map_Start(c, s1, s2, ult_id, vaddr, pte),
+        Step::MapOpStart { core }                          => step_Map_op_Start(c, s1, s2, core),
+        Step::MapOpStutter { core, paddr, value }          => step_Map_op_Stutter(c, s1, s2, core, paddr, value),
+        Step::MapEnd { core, paddr, value, result }        => step_Map_End(c, s1, s2, core, paddr, value, result),
+        //Unmap steps
+        Step::UnmapStart { ult_id, vaddr }                 => step_Unmap_Start(c, s1, s2, ult_id, vaddr),
+        Step::UnmapOpStart { core }                        => step_Unmap_Op_Start(c, s1, s2, core),
+        Step::UnmapOpChange { core, paddr, value, result } => step_Unmap_Op_Change(c, s1, s2, core, paddr, value, result),
+        Step::UnmapOpStutter { core, paddr, value }        => step_Unmap_Op_Stutter(c, s1, s2, core, paddr, value),
+        Step::UnmapOpEnd { core }                          => step_Unmap_Op_End(c, s1, s2, core),
+        Step::UnmapInitiateShootdown { core }              => step_Unmap_Initiate_Shootdown(c, s1, s2, core),
+        Step::AckShootdownIPI { core }                     => step_Ack_Shootdown_IPI(c, s1, s2, core),
+        Step::UnmapEnd { core }                            => step_Unmap_End(c, s1, s2, core),
+    }
 }
 
-//TODO simplify this
+pub open spec fn next(c: Constants, s1: State, s2: State) -> bool {
+    exists|step: Step| next_step(c, s1, s2, step)
+}
+
+pub open spec fn init(c: Constants, s: State) -> bool {
+    // hardware stuff
+    &&& s.interp_pt_mem() === Map::empty()
+    &&& rl3::init(s.mmu, c.mmu)
+    //wf of ult2core mapping
+    &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
+    &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])
+    //core_state
+    &&& forall|core: Core| c.valid_core(core) <==> #[trigger] s.core_states.contains_key(core)
+    &&& forall|core: Core| #[trigger] c.valid_core(core) ==> s.core_states[core] === CoreState::Idle
+    //shootdown
+    &&& s.TLB_Shootdown.open_requests === Set::empty()
+    //sound
+    &&& s.sound
+}
+
+
+
+
+
+
+
+// Invariants and definitions for refinement
+
+impl Constants {
+    pub open spec fn interp(self) -> hlspec::Constants {
+        hlspec::Constants { thread_no: self.ult_no, phys_mem_size: self.mmu.phys_mem_size }
+    }
+}
+
+impl CoreState {
+    pub open spec fn vmem_pte_size(self, pt: Map<nat, PTE>) -> nat
+        recommends !self.is_idle(),
+    {
+        match self {
+            CoreState::MapWaiting { pte, .. }
+            | CoreState::MapExecuting { pte, .. } => {
+                pte.frame.size
+            },
+            CoreState::UnmapWaiting { vaddr, .. }
+            | CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+                if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 }
+            },
+            CoreState::UnmapOpExecuting { result: Some(result), .. }
+            | CoreState::UnmapOpDone { result, .. }
+            | CoreState::UnmapShootdownWaiting { result, .. } => {
+                if result is Ok { result.get_Ok_0().frame.size } else { 0 }
+            },
+            CoreState::Idle => arbitrary(),
+        }
+    }
+
+    pub open spec fn vaddr(self) -> nat
+        recommends !self.is_idle(),
+    {
+        match self {
+            CoreState::MapWaiting { vaddr, .. }
+            | CoreState::MapExecuting { vaddr, .. }
+            | CoreState::UnmapWaiting { vaddr, .. }
+            | CoreState::UnmapOpExecuting { vaddr, .. }
+            | CoreState::UnmapOpDone { vaddr, .. }
+            | CoreState::UnmapShootdownWaiting { vaddr, .. } => { vaddr },
+            CoreState::Idle => arbitrary(),
+        }
+    }
+}
+
+impl State {
+    pub open spec fn interp_pt_mem(self) -> Map<nat, PTE> {
+        let pt = self.mmu@.pt_mem@;
+        Map::new(
+            |k:nat| k <= usize::MAX && pt.contains_key(k as usize),
+            |k:nat| pt[k as usize]
+        )
+    }
+
+    pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {
+        Set::new(|v_address: nat| {
+            &&& self.interp_pt_mem().contains_key(v_address)
+            &&& exists|core: Core|
+                self.core_states.contains_key(core) && match self.core_states[core] {
+                    CoreState::UnmapWaiting { ult_id, vaddr }
+                    | CoreState::UnmapOpExecuting { ult_id, vaddr, .. }
+                    | CoreState::UnmapOpDone { ult_id, vaddr, .. }
+                    | CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. } => {
+                        vaddr === v_address
+                    },
+                    _ => false,
+                }
+        })
+    }
+
+    pub open spec fn effective_mappings(self) -> Map<nat, PTE> {
+        self.interp_pt_mem().remove_keys(self.inflight_unmap_vaddr())
+    }
+
+    pub open spec fn interp_vmem(self, c: Constants) -> Map<nat, nat> {
+        let phys_mem_size = c.interp().phys_mem_size;
+        let mappings: Map<nat, PTE> = self.effective_mappings();
+        Map::new(
+            |vmem_idx: nat| hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
+            |vmem_idx: nat| {
+                let vaddr = vmem_idx * WORD_SIZE as nat;
+                let (base, pte) = choose|base: nat, pte: PTE| #![auto]
+                    mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
+                let paddr = (pte.frame.base + (vaddr - base)) as nat;
+                let pmem_idx = mem::word_index_spec(paddr);
+                self.mmu@.phys_mem[pmem_idx as int]
+            },
+        )
+    }
+
+    pub open spec fn interp_thread_state(self, c: Constants) -> Map<nat, hlspec::ThreadState> {
+        Map::new(
+            |ult_id: nat| c.valid_ult(ult_id),
+            |ult_id: nat|
+                {
+                    match self.core_states[c.ult2core[ult_id]] {
+                        CoreState::MapWaiting { ult_id: ult_id2, vaddr, pte }
+                        | CoreState::MapExecuting { ult_id: ult_id2, vaddr, pte } => {
+                            if ult_id2 == ult_id {
+                                hlspec::ThreadState::Map { vaddr, pte }
+                            } else {
+                                hlspec::ThreadState::Idle
+                            }
+                        },
+                        CoreState::UnmapWaiting { ult_id: ult_id2, vaddr }
+                        | CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: None } => {
+                            let pte = if self.interp_pt_mem().contains_key(vaddr) {
+                                Some(self.interp_pt_mem()[vaddr])
+                            } else {
+                                None
+                            };
+                            if ult_id2 == ult_id {
+                                hlspec::ThreadState::Unmap { vaddr, pte }
+                            } else {
+                                hlspec::ThreadState::Idle
+                            }
+                        },
+                        CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: Some(result) }
+                        | CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result }
+                        | CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result } => {
+                            if ult_id2 == ult_id {
+                                hlspec::ThreadState::Unmap { vaddr, pte:
+                                    match result {
+                                        Ok(pte) => Some(pte),
+                                        Err(_) => None,
+                                    }
+                                }
+                            } else {
+                                hlspec::ThreadState::Idle
+                            }
+                        },
+                        CoreState::Idle => hlspec::ThreadState::Idle,
+                    }
+                },
+        )
+    }
+
+    pub open spec fn interp(self, c: Constants) -> hlspec::State {
+        let mappings: Map<nat, PTE> = self.effective_mappings();
+        let mem: Map<nat, nat> = self.interp_vmem(c);
+        let thread_state: Map<nat, hlspec::ThreadState> = self.interp_thread_state(c);
+        let sound: bool = self.sound;
+        hlspec::State { mem, mappings, thread_state, sound }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Invariant and WF
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    pub open spec fn valid_ids(self, c: Constants) -> bool {
+        forall|core: Core|
+            c.valid_core(core) ==> match self.core_states[core] {
+                CoreState::MapWaiting { ult_id, .. }
+                | CoreState::MapExecuting { ult_id, .. }
+                | CoreState::UnmapWaiting { ult_id, .. }
+                | CoreState::UnmapOpExecuting { ult_id, .. }
+                | CoreState::UnmapOpDone { ult_id, .. }
+                | CoreState::UnmapShootdownWaiting { ult_id, .. } => {
+                    &&& c.valid_ult(ult_id)
+                    &&& c.ult2core[ult_id] === core
+                },
+                CoreState::Idle => true,
+            }
+    }
+
+    pub open spec fn inflight_pte_above_zero_pte_result_consistent(self, c: Constants) -> bool {
+        forall|core: Core| c.valid_core(core) ==>
+            match self.core_states[core] {
+                CoreState::MapWaiting { vaddr, pte, .. }
+                | CoreState::MapExecuting { vaddr, pte, .. }
+                    => pte.frame.size > 0,
+                CoreState::UnmapWaiting { vaddr, .. }
+                | CoreState::UnmapOpExecuting { vaddr, result: None, .. }
+                    => self.interp_pt_mem().contains_key(vaddr)
+                        ==> self.interp_pt_mem()[vaddr].frame.size > 0,
+                CoreState::UnmapOpExecuting { result: Some(result), .. }
+                | CoreState::UnmapOpDone { result, .. }
+                | CoreState::UnmapShootdownWaiting { result, .. }
+                    => result is Ok ==> result.get_Ok_0().frame.size > 0,
+                CoreState::Idle => true,
+            }
+    }
+
+    pub open spec fn successful_unmaps(self, c: Constants) -> bool {
+        forall|core: Core| c.valid_core(core) ==>
+            match self.core_states[core] {
+                CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
+                | CoreState::UnmapOpDone { vaddr, .. }
+                | CoreState::UnmapShootdownWaiting { vaddr, .. }
+                    => !self.interp_pt_mem().contains_key(vaddr),
+                _ => true,
+            }
+    }
+
+    pub open spec fn wf(self, c: Constants) -> bool {
+        &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
+        &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])
+        &&& forall|core: Core| c.valid_core(core) <==> #[trigger] self.core_states.contains_key(core)
+        &&& forall|core1: Core, core2: Core| {
+            &&& #[trigger] c.valid_core(core1)
+            &&& #[trigger] c.valid_core(core2)
+            &&& self.core_states[core1].holds_lock()
+            &&& self.core_states[core2].holds_lock()
+        } ==> core1 == core2
+    }
+
+    pub open spec fn inv_basic(self, c: Constants) -> bool {
+        &&& self.wf(c)
+        &&& self.inv_mmu(c)
+        &&& self.valid_ids(c)
+        &&& self.inflight_pte_above_zero_pte_result_consistent(c)
+        &&& self.successful_unmaps(c)
+    }
+
+    pub open spec fn inv_mmu(self, c: Constants) -> bool {
+        &&& self.mmu.inv(c.mmu)
+        &&& self.mmu.interp().inv(c.mmu)
+        &&& self.mmu@.happy
+    }
+
+    pub open spec fn inv(self, c: Constants) -> bool {
+        &&& self.inv_basic(c)
+        //&&& self.tlb_inv(c)
+        &&& self.overlapping_vmem_inv(c)
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Invariants about the TLB
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {
+        forall|core| #[trigger]
+            self.TLB_Shootdown.open_requests.contains(core) ==> c.valid_core(core)
+    }
+
+    pub open spec fn successful_IPI(self, c: Constants) -> bool {
+        forall|dispatcher: Core| {
+                c.valid_core(dispatcher) ==> match self.core_states[dispatcher] {
+                    CoreState::UnmapShootdownWaiting { vaddr, .. } => {
+                        forall|handler: Core|
+                            !(#[trigger] self.TLB_Shootdown.open_requests.contains(handler))
+                                ==> !self.mmu@.tlbs[handler].contains_key(vaddr as usize)
+                    },
+                    _ => true,
+                }
+            }
+    }
+
+    //returns set with the vaddr that is currently unmapped.
+    pub open spec fn unmap_vaddr(self) -> Set<nat> {
+        Set::new(|v_address: nat| exists|core: Core|
+            self.core_states.contains_key(core) && match self.core_states[core] {
+                CoreState::UnmapOpDone { vaddr, result, .. }
+                | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
+                    (result is Ok) && (vaddr === v_address)
+                },
+                _ => false,
+            }
+
+        )
+    }
+
+    pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: Constants) -> bool {
+        forall|core: Core| {
+                #[trigger] c.valid_core(core)
+                        // FIXME(MB): I added the map here. Not yet sure if this will cause
+                        // problems. If so, might have to switch the MMU models over to using nat
+                        // instead of usize.
+                    ==> self.mmu@.tlbs[core].dom().map(|v| v as nat).subset_of(
+                        self.interp_pt_mem().dom().union(self.unmap_vaddr())
+                )
+            }
+    }
+
+    //pub open spec fn shootdown_exists(self, c: Constants) -> bool {
+    //    !(self.TLB_Shootdown.open_requests === Set::<Core>::empty())
+    //        ==> exists|core| c.valid_core(core)
+    //            && self.core_states[core] matches (CoreState::UnmapShootdownWaiting { vaddr, .. })
+    //}
+
+    pub open spec fn tlb_inv(self, c: Constants) -> bool {
+        &&& self.shootdown_cores_valid(c)
+        &&& self.successful_IPI(c)
+        &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
+    }
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    // Invariants about overlapping
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    pub open spec fn inflight_map_no_overlap_inflight_vmem(self, c: Constants) -> bool {
+        forall|core1: Core, core2: Core|
+            (c.valid_core(core1) && c.valid_core(core2)
+                && !self.core_states[core1].is_idle() && !self.core_states[core2].is_idle()
+                && overlap(
+                MemRegion {
+                    base: self.core_states[core1].vaddr(),
+                    size: self.core_states[core1].vmem_pte_size(self.interp_pt_mem()),
+                },
+                MemRegion {
+                    base: self.core_states[core2].vaddr(),
+                    size: self.core_states[core2].vmem_pte_size(self.interp_pt_mem()),
+                },
+            )) ==> core1 === core2
+    }
+
+    pub open spec fn existing_map_no_overlap_existing_vmem(self, c: Constants) -> bool {
+        forall|vaddr| #[trigger] self.interp_pt_mem().contains_key(vaddr)
+                ==> !candidate_mapping_overlaps_existing_vmem(
+                        self.interp_pt_mem().remove(vaddr),
+                        vaddr,
+                        self.interp_pt_mem()[vaddr],
+            )
+    }
+
+    pub open spec fn overlapping_vmem_inv(self, c: Constants) -> bool {
+        self.sound ==> {
+            &&& self.inflight_map_no_overlap_inflight_vmem(c)
+            &&& self.existing_map_no_overlap_existing_vmem(c)
+        }
+    }
+
+}
+
 impl Step {
     pub open spec fn interp(self, pre: State, post: State, c: Constants) -> hlspec::Step {
         match self {
@@ -891,7 +932,7 @@ impl Step {
                         Some((tlb_va as nat, pre.effective_mappings()[tlb_va as nat])),
                     _ => arbitrary(),
                 };
-                // TODO(MB): This looks like it could be simpler
+                // TODO(MB): This looks like it could be simplified
                 let rwop = match (op, hl_pte) {
                     (HWMemOp::Store { new_value, result: HWStoreResult::Ok }, Some(_))
                         => RWOp::Store { new_value: new_value as nat, result: StoreResult::Ok },
@@ -944,50 +985,6 @@ impl Step {
             },
         }
     }
-}
-
-pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step) -> bool {
-    match step {
-        Step::MMU                                          => step_MMU(c, s1, s2),
-        Step::MemOp { ult_id, vaddr, op }                  => step_MemOp(c, s1, s2, ult_id, vaddr, op),
-        Step::ReadPTMem { core, paddr, value }             => step_ReadPTMem(c, s1, s2, core, paddr, value),
-        Step::Barrier { core }                             => step_Barrier(c, s1, s2, core),
-        Step::Invlpg { core, vaddr }                       => step_Invlpg(c, s1, s2, core, vaddr),
-        //Map steps
-        Step::MapStart { ult_id, vaddr, pte }              => step_Map_Start(c, s1, s2, ult_id, vaddr, pte),
-        Step::MapOpStart { core }                          => step_Map_op_Start(c, s1, s2, core),
-        Step::MapOpStutter { core, paddr, value }          => step_Map_op_Stutter(c, s1, s2, core, paddr, value),
-        Step::MapEnd { core, paddr, value, result }        => step_Map_End(c, s1, s2, core, paddr, value, result),
-        //Unmap steps
-        Step::UnmapStart { ult_id, vaddr }                 => step_Unmap_Start(c, s1, s2, ult_id, vaddr),
-        Step::UnmapOpStart { core }                        => step_Unmap_Op_Start(c, s1, s2, core),
-        Step::UnmapOpChange { core, paddr, value, result } => step_Unmap_Op_Change(c, s1, s2, core, paddr, value, result),
-        Step::UnmapOpStutter { core, paddr, value }        => step_Unmap_Op_Stutter(c, s1, s2, core, paddr, value),
-        Step::UnmapOpEnd { core }                          => step_Unmap_Op_End(c, s1, s2, core),
-        Step::UnmapInitiateShootdown { core }              => step_Unmap_Initiate_Shootdown(c, s1, s2, core),
-        Step::AckShootdownIPI { core }                     => step_Ack_Shootdown_IPI(c, s1, s2, core),
-        Step::UnmapEnd { core }                            => step_Unmap_End(c, s1, s2, core),
-    }
-}
-
-pub open spec fn next(c: Constants, s1: State, s2: State) -> bool {
-    exists|step: Step| next_step(c, s1, s2, step)
-}
-
-pub open spec fn init(c: Constants, s: State) -> bool {
-    // hardware stuff
-    &&& s.interp_pt_mem() === Map::empty()
-    &&& rl3::init(s.mmu, c.mmu)
-    //wf of ult2core mapping
-    &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
-    &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])
-    //core_state
-    &&& forall|core: Core| c.valid_core(core) <==> #[trigger] s.core_states.contains_key(core)
-    &&& forall|core: Core| #[trigger] c.valid_core(core) ==> s.core_states[core] === CoreState::Idle
-    //shootdown
-    &&& s.TLB_Shootdown.open_requests === Set::empty()
-    //sound
-    &&& s.sound
 }
 
 } // verus!

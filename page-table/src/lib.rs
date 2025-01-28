@@ -5,7 +5,7 @@ pub mod impl_u;
 pub mod definitions_u;
 pub mod spec_t;
 pub mod extra;
-//pub mod theorem;
+pub mod theorem;
 
 use vstd::prelude::verus;
 

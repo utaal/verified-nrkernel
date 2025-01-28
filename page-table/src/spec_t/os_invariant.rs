@@ -1097,8 +1097,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
             s.interp(c).thread_state.values(),
             candidate,
         )) {
-            let thread_state = choose|b|
-                {
+            let thread_state = choose|b| {
                     &&& s.interp(c).thread_state.values().contains(b)
                     &&& match b {
                         hlspec::ThreadState::Map { vaddr, pte } => {
