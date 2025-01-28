@@ -138,12 +138,7 @@ impl PTMem {
     }
 
     pub broadcast proof fn lemma_write_seq_idle(self, writes: Seq<(usize, usize)>, addr: usize)
-        requires
-            // TODO: the first precondition is unnecessary with the stronger axiom. But it makes
-            // another lemma timeout where it's broadcast.
-            // (But the thing that times out doesn't even use this..)
-            self.mem.contains_key(addr),
-            forall|i| 0 <= i < writes.len() ==> (#[trigger] writes[i]).0 != addr
+        requires forall|i| 0 <= i < writes.len() ==> (#[trigger] writes[i]).0 != addr
         ensures #[trigger] self.write_seq(writes).read(addr) == self.read(addr)
         decreases writes.len()
     {
