@@ -170,8 +170,6 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
 // TODO: Is this a problem now?
-// TODO: Should find a way to extract the read definitions from this and reuse it in the upper
-//       refinement layers.
 pub open spec fn step_MemOpNoTr(
     pre: State,
     post: State,
