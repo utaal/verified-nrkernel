@@ -23,20 +23,20 @@ verus! {
 
 pub struct State {
     /// Word-indexed physical (non-page-table) memory
-    pub phys_mem: Seq<nat>,
+    phys_mem: Seq<nat>,
     /// Page table memory
-    pub pt_mem: PTMem,
+    pt_mem: PTMem,
     /// Per-node state (TLBs)
-    pub tlbs: Map<Core, Map<usize, PTE>>,
+    tlbs: Map<Core, Map<usize, PTE>>,
     /// In-progress page table walks
-    pub walks: Map<Core, Set<Walk>>,
+    walks: Map<Core, Set<Walk>>,
     /// Translation caches
-    pub cache: Map<Core, Set<Walk>>,
+    cache: Map<Core, Set<Walk>>,
     /// Store buffers
-    pub sbuf: Map<Core, Seq<(usize, usize)>>,
+    sbuf: Map<Core, Seq<(usize, usize)>>,
     /// History variables. These do not influence the transitions in any way. Neither in enabling
     /// conditions nor in state updates. We only use these during the refinement.
-    pub hist: History,
+    hist: History,
 }
 
 pub struct History {
@@ -170,7 +170,7 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
 // We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
 // get to concurrency we may have to change that.
 // TODO: Is this a problem now?
-pub open spec fn step_MemOpNoTr(
+pub closed spec fn step_MemOpNoTr(
     pre: State,
     post: State,
     c: Constants,
@@ -196,7 +196,7 @@ pub open spec fn step_MemOpNoTr(
     }
 }
 
-pub open spec fn step_MemOpTLB(
+pub closed spec fn step_MemOpTLB(
     pre: State,
     post: State,
     c: Constants,
