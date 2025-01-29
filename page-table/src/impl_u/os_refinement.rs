@@ -316,7 +316,7 @@ proof fn next_step_refines_hl_next_step(
         os::Step::MemOp { .. } => admit(),
         //Map steps
         os::Step::MapStart { ult_id, vaddr, pte } => {
-            step_Map_Start_refines(c, s1, s2, ult_id, vaddr, pte);
+            step_MapStart_refines(c, s1, s2, ult_id, vaddr, pte);
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c)));
         },
         os::Step::MapOpStart { core } => {
@@ -326,14 +326,14 @@ proof fn next_step_refines_hl_next_step(
         },
         os::Step::MapEnd { core, paddr, value, result } => {
             if s1.sound {
-                step_Map_End_refines(c, s1, s2, core, paddr, value, result);
+                step_MapEnd_refines(c, s1, s2, core, paddr, value, result);
             }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c)));
         },
         //Unmap steps
         os::Step::UnmapStart { ult_id, vaddr } => {
             if s1.sound {
-                step_Unmap_Start_refines(c, s1, s2, ult_id, vaddr);
+                step_UnmapStart_refines(c, s1, s2, ult_id, vaddr);
             }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c)));
         },
@@ -344,7 +344,7 @@ proof fn next_step_refines_hl_next_step(
         },
         os::Step::UnmapOpChange { core, paddr, value, result } => {
             if s1.sound {
-                step_Unmap_Op_Change_refines(c, s1, s2, core, paddr, value, result);
+                step_UnmapOpChange_refines(c, s1, s2, core, paddr, value, result);
             }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c)));
         }
@@ -359,7 +359,7 @@ proof fn next_step_refines_hl_next_step(
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c)));
         },
         os::Step::UnmapEnd { core } => {
-            step_Unmap_End_refines(c, s1, s2, core);
+            step_UnmapEnd_refines(c, s1, s2, core);
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c)));
         },
         _ => assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c))),
@@ -561,7 +561,7 @@ proof fn next_step_refines_hl_next_step(
 //    }
 //}
 
-proof fn step_Map_Start_refines(
+proof fn step_MapStart_refines(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -572,9 +572,9 @@ proof fn step_Map_Start_refines(
     requires
         s1.inv_basic(c),
         s2.inv_basic(c),
-        os::step_Map_Start(c, s1, s2, ult_id, vaddr, pte),
+        os::step_MapStart(c, s1, s2, ult_id, vaddr, pte),
     ensures
-        hlspec::step_Map_start(c.interp(), s1.interp(c), s2.interp(c), ult_id, vaddr, pte),
+        hlspec::step_MapStart(c.interp(), s1.interp(c), s2.interp(c), ult_id, vaddr, pte),
 {
     let hl_c = c.interp();
     let hl_s1 = s1.interp(c);
@@ -638,7 +638,7 @@ proof fn step_Map_Start_refines(
     };
 }
 
-proof fn step_Map_End_refines(
+proof fn step_MapEnd_refines(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -650,11 +650,11 @@ proof fn step_Map_End_refines(
     requires
         s1.inv(c),
         s2.inv(c),
-        os::step_Map_End(c, s1, s2, core, paddr, value, result),
+        os::step_MapEnd(c, s1, s2, core, paddr, value, result),
         s1.sound,
     ensures ({
         &&& s1.core_states[core] matches os::CoreState::MapExecuting { ult_id, .. }
-        &&& hlspec::step_Map_end(c.interp(), s1.interp(c), s2.interp(c), ult_id, result)
+        &&& hlspec::step_MapEnd(c.interp(), s1.interp(c), s2.interp(c), ult_id, result)
     }),
 {
     broadcast use to_rl1::next_refines;
@@ -1026,7 +1026,7 @@ proof fn step_Map_End_refines(
     }
 }
 
-proof fn step_Unmap_Start_refines(
+proof fn step_UnmapStart_refines(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -1037,9 +1037,9 @@ proof fn step_Unmap_Start_refines(
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_Unmap_Start(c, s1, s2, ult_id, vaddr),
+        os::step_UnmapStart(c, s1, s2, ult_id, vaddr),
     ensures
-        hlspec::step_Unmap_start(c.interp(), s1.interp(c), s2.interp(c), ult_id, vaddr),
+        hlspec::step_UnmapStart(c.interp(), s1.interp(c), s2.interp(c), ult_id, vaddr),
 {
     let hl_c = c.interp();
     let hl_s1 = s1.interp(c);
@@ -1265,7 +1265,7 @@ proof fn step_Unmap_Start_refines(
     }
 }
 
-proof fn step_Unmap_Op_Change_refines(
+proof fn step_UnmapOpChange_refines(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -1278,7 +1278,7 @@ proof fn step_Unmap_Op_Change_refines(
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_Unmap_Op_Change(c, s1, s2, core, paddr, value, result),
+        os::step_UnmapOpChange(c, s1, s2, core, paddr, value, result),
     ensures
         hlspec::step_Stutter(c.interp(), s1.interp(c), s2.interp(c)),
 {
@@ -1388,7 +1388,7 @@ proof fn step_Unmap_Op_Change_refines(
     assert(s1.effective_mappings() =~= s2.effective_mappings())
 }
 
-proof fn step_Unmap_End_refines(
+proof fn step_UnmapEnd_refines(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -1397,18 +1397,18 @@ proof fn step_Unmap_End_refines(
     requires
         s1.inv(c),
         s2.inv(c),
-        os::step_Unmap_End(c, s1, s2, core),
+        os::step_UnmapEnd(c, s1, s2, core),
     ensures
         ({
             &&& s1.core_states[core] matches os::CoreState::UnmapOpDone { result, ult_id, .. }
-            &&& hlspec::step_Unmap_end(c.interp(), s1.interp(c), s2.interp(c), ult_id, result_map_ok(result, |r| ()))
+            &&& hlspec::step_UnmapEnd(c.interp(), s1.interp(c), s2.interp(c), ult_id, result_map_ok(result, |r| ()))
         } || {
             &&& s1.core_states[core] matches os::CoreState::UnmapShootdownWaiting {
                 ult_id,
                 result,
                 ..
             }
-            &&& hlspec::step_Unmap_end(c.interp(), s1.interp(c), s2.interp(c), ult_id, result_map_ok(result, |r| ()))
+            &&& hlspec::step_UnmapEnd(c.interp(), s1.interp(c), s2.interp(c), ult_id, result_map_ok(result, |r| ()))
         }),
 {
     let hl_c = c.interp();

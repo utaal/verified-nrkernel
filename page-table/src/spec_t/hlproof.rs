@@ -8,12 +8,7 @@ use vstd::prelude::*;
 
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
 
-use crate::spec_t::hlspec::{
-    candidate_mapping_overlaps_inflight_pmem, if_map_then_unique, inflight_maps_unique, inv, mem_domain_from_entry,
-    mem_domain_from_entry_contains, mem_domain_from_mappings, mem_domain_from_mappings_contains,
-    pmem_no_overlap, step_Map_end, step_Map_start, step_Unmap_start, ThreadState,
-    Constants, State,
-};
+use crate::spec_t::hlspec::*;
 
 verus! {
 
@@ -123,7 +118,7 @@ pub proof fn lemma_mem_domain_from_mapping_finite(
         mem_domain_from_mappings(phys_mem_size, mappings).finite(),
     decreases mappings.dom().len(),
 {
-    if (exists|bs: nat| mappings.dom().contains(bs)) {
+    if exists|bs: nat| mappings.dom().contains(bs) {
         let base = choose|bs: nat| mappings.dom().contains(bs);
         let pte = mappings[base];
         let mappings_reduc = mappings.remove(base);
@@ -166,7 +161,7 @@ pub proof fn lemma_mem_domain_from_new_mappings_subset(
             &&& #[trigger] mappings_ext.contains_pair(base, pte)
             &&& mem_domain_from_entry_contains(phys_mem_size, vaddr, base, pte)
         };
-    if (base === bs && pte === pt) {
+    if base === bs && pte === pt {
         assert(mem_domain_from_entry(phys_mem_size, bs, pt).contains(word_idx));
     } else {
         assert(mappings.contains_pair(base, pte));
@@ -209,11 +204,11 @@ pub proof fn insert_non_map_preserves_unique(
         args,
         id,
     ) by {
-            if (id != base) {
-                if let ThreadState::Map { vaddr, pte } = thread_state.index(id) {
-                    assert(args.remove(id) == thread_state.remove(id).insert(base, arg));
-                } 
-            }
+        if id != base {
+            if let ThreadState::Map { vaddr, pte } = thread_state.index(id) {
+                assert(args.remove(id) == thread_state.remove(id).insert(base, arg));
+            } 
+        }
     }
 }
 
@@ -234,7 +229,7 @@ pub proof fn insert_map_preserves_unique(
     let p = pte;
     assert forall|id: nat| #[trigger] args.dom().contains(id) implies if_map_then_unique(args, id)
     by {
-        if (id == thread_id) {
+        if id == thread_id {
             assert forall|other_id: nat| #[trigger]
                 thread_state.dom().contains(other_id) implies arg != thread_state.index(
                 other_id,
@@ -276,19 +271,19 @@ pub proof fn unmap_start_preserves_inv(
     vaddr: nat,
 )
     requires
-        step_Unmap_start(c, s1, s2, thread_id, vaddr),
+        step_UnmapStart(c, s1, s2, thread_id, vaddr),
         s1.sound ==> inv(c, s1),
         s1.sound,
         s1.thread_state.dom().contains(thread_id),
     ensures
         s2.sound ==> inv(c, s2),
 {
-    if (s2.sound) {
+    if s2.sound {
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
         assert(forall|id: nat|
             #![auto]
             s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
-        let pte = if (s1.mappings.dom().contains(vaddr)) {
+        let pte = if s1.mappings.dom().contains(vaddr) {
             Some(s1.mappings.index(vaddr))
         } else {
             Option::None
@@ -313,14 +308,14 @@ pub proof fn map_start_preserves_inv(
     pte: PTE,
 )
     requires
-        step_Map_start(c, s1, s2, thread_id, vaddr, pte),
+        step_MapStart(c, s1, s2, thread_id, vaddr, pte),
         s1.sound ==> inv(c, s1),
         s1.sound,
         s1.thread_state.dom().contains(thread_id),
     ensures
         s2.sound ==> inv(c, s2),
 {
-    if (s2.sound) {
+    if s2.sound {
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
         assert(forall|id: nat|
             #![auto]
@@ -340,7 +335,7 @@ pub proof fn map_end_preserves_inv(
     result: Result<(), ()>,
 )
     requires
-        step_Map_end(c, s1, s2, thread_id, result),
+        step_MapEnd(c, s1, s2, thread_id, result),
         s1.sound ==> inv(c, s1),
         s1.sound,
         s1.thread_state.dom().contains(thread_id),
@@ -353,7 +348,7 @@ pub proof fn map_end_preserves_inv(
             s1.thread_state.values().insert(ThreadState::Idle),
         ));
         insert_non_map_preserves_unique(s1.thread_state, thread_id, ThreadState::Idle);
-        if (result is Ok) {
+        if result is Ok {
             assert(s1.thread_state.values().contains(ThreadState::Map { vaddr, pte }));
             assert(s2.thread_state == s1.thread_state.remove(thread_id).insert(
                 thread_id,

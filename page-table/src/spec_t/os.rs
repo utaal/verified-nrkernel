@@ -26,7 +26,6 @@ pub struct Constants {
 
 pub struct State {
     pub mmu: rl3::State,
-    // maps numa node to ult operation spinning/operating on it
     pub core_states: Map<Core, CoreState>,
     pub TLB_Shootdown: ShootdownVector,
     // history variables: writes, neg_writes
@@ -261,7 +260,7 @@ pub open spec fn step_Map_enabled(vaddr: nat, pte: PTE) -> bool {
     //&&& pt_mem.alloc_available_pages() >= 3
 }
 
-pub open spec fn step_Map_Start(
+pub open spec fn step_MapStart(
     c: Constants,
     s1: State,
     s2: State,
@@ -283,7 +282,7 @@ pub open spec fn step_Map_Start(
     &&& s2.sound == s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte)
 }
 
-pub open spec fn step_Map_op_Start(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::MapWaiting { ult_id, vaddr, pte }
@@ -298,7 +297,7 @@ pub open spec fn step_Map_op_Start(c: Constants, s1: State, s2: State, core: Cor
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Map_op_Stutter(
+pub open spec fn step_MapOpStutter(
     c: Constants,
     s1: State,
     s2: State,
@@ -321,7 +320,7 @@ pub open spec fn step_Map_op_Stutter(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Map_End(
+pub open spec fn step_MapEnd(
     c: Constants,
     s1: State,
     s2: State,
@@ -370,7 +369,7 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     }
 }
 
-pub open spec fn step_Unmap_Start(
+pub open spec fn step_UnmapStart(
     c: Constants,
     s1: State,
     s2: State,
@@ -392,7 +391,7 @@ pub open spec fn step_Unmap_Start(
     &&& s2.sound == s1.sound && step_Unmap_sound(pt, s1.core_states.values(), vaddr, pte_size)
 }
 
-pub open spec fn step_Unmap_Op_Start(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_UnmapOpStart(c: Constants, s1: State, s2: State, core: Core) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapWaiting { ult_id, vaddr }
@@ -405,7 +404,7 @@ pub open spec fn step_Unmap_Op_Start(c: Constants, s1: State, s2: State, core: C
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Unmap_Op_Change(
+pub open spec fn step_UnmapOpChange(
     c: Constants,
     s1: State,
     s2: State,
@@ -439,7 +438,7 @@ pub open spec fn step_Unmap_Op_Change(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Unmap_Op_Stutter(
+pub open spec fn step_UnmapOpStutter(
     c: Constants,
     s1: State,
     s2: State,
@@ -460,7 +459,7 @@ pub open spec fn step_Unmap_Op_Stutter(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Unmap_Op_End(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_UnmapOpEnd(c: Constants, s1: State, s2: State, core: Core) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(res) }
@@ -475,7 +474,7 @@ pub open spec fn step_Unmap_Op_End(c: Constants, s1: State, s2: State, core: Cor
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Unmap_Initiate_Shootdown(
+pub open spec fn step_UnmapInitiateShootdown(
     c: Constants,
     s1: State,
     s2: State,
@@ -501,7 +500,7 @@ pub open spec fn step_Unmap_Initiate_Shootdown(
 
 // Acknowledge TLB eviction to other core (in response to shootdown IPI)
 // check if tlb shootdown/unmap has happend and send ACK
-pub open spec fn step_Ack_Shootdown_IPI(
+pub open spec fn step_AckShootdownIPI(
     c: Constants,
     s1: State,
     s2: State,
@@ -509,7 +508,7 @@ pub open spec fn step_Ack_Shootdown_IPI(
 ) -> bool {
     //enabling conditions
     &&& s1.TLB_Shootdown.open_requests.contains(core)
-    &&& !s1.mmu.tlbs[core].contains_key(s1.TLB_Shootdown.vaddr as usize)
+    &&& !s1.mmu@.tlbs[core].contains_key(s1.TLB_Shootdown.vaddr as usize)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     //new state
@@ -521,7 +520,7 @@ pub open spec fn step_Ack_Shootdown_IPI(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_Unmap_End(
+pub open spec fn step_UnmapEnd(
     c: Constants,
     s1: State,
     s2: State,
@@ -552,19 +551,19 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step) -> bo
         Step::Barrier { core }                             => step_Barrier(c, s1, s2, core),
         Step::Invlpg { core, vaddr }                       => step_Invlpg(c, s1, s2, core, vaddr),
         //Map steps
-        Step::MapStart { ult_id, vaddr, pte }              => step_Map_Start(c, s1, s2, ult_id, vaddr, pte),
-        Step::MapOpStart { core }                          => step_Map_op_Start(c, s1, s2, core),
-        Step::MapOpStutter { core, paddr, value }          => step_Map_op_Stutter(c, s1, s2, core, paddr, value),
-        Step::MapEnd { core, paddr, value, result }        => step_Map_End(c, s1, s2, core, paddr, value, result),
+        Step::MapStart { ult_id, vaddr, pte }              => step_MapStart(c, s1, s2, ult_id, vaddr, pte),
+        Step::MapOpStart { core }                          => step_MapOpStart(c, s1, s2, core),
+        Step::MapOpStutter { core, paddr, value }          => step_MapOpStutter(c, s1, s2, core, paddr, value),
+        Step::MapEnd { core, paddr, value, result }        => step_MapEnd(c, s1, s2, core, paddr, value, result),
         //Unmap steps
-        Step::UnmapStart { ult_id, vaddr }                 => step_Unmap_Start(c, s1, s2, ult_id, vaddr),
-        Step::UnmapOpStart { core }                        => step_Unmap_Op_Start(c, s1, s2, core),
-        Step::UnmapOpChange { core, paddr, value, result } => step_Unmap_Op_Change(c, s1, s2, core, paddr, value, result),
-        Step::UnmapOpStutter { core, paddr, value }        => step_Unmap_Op_Stutter(c, s1, s2, core, paddr, value),
-        Step::UnmapOpEnd { core }                          => step_Unmap_Op_End(c, s1, s2, core),
-        Step::UnmapInitiateShootdown { core }              => step_Unmap_Initiate_Shootdown(c, s1, s2, core),
-        Step::AckShootdownIPI { core }                     => step_Ack_Shootdown_IPI(c, s1, s2, core),
-        Step::UnmapEnd { core }                            => step_Unmap_End(c, s1, s2, core),
+        Step::UnmapStart { ult_id, vaddr }                 => step_UnmapStart(c, s1, s2, ult_id, vaddr),
+        Step::UnmapOpStart { core }                        => step_UnmapOpStart(c, s1, s2, core),
+        Step::UnmapOpChange { core, paddr, value, result } => step_UnmapOpChange(c, s1, s2, core, paddr, value, result),
+        Step::UnmapOpStutter { core, paddr, value }        => step_UnmapOpStutter(c, s1, s2, core, paddr, value),
+        Step::UnmapOpEnd { core }                          => step_UnmapOpEnd(c, s1, s2, core),
+        Step::UnmapInitiateShootdown { core }              => step_UnmapInitiateShootdown(c, s1, s2, core),
+        Step::AckShootdownIPI { core }                     => step_AckShootdownIPI(c, s1, s2, core),
+        Step::UnmapEnd { core }                            => step_UnmapEnd(c, s1, s2, core),
     }
 }
 

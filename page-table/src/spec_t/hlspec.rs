@@ -279,8 +279,8 @@ pub open spec fn step_Map_enabled(
     }
 }
 
-//think about weather or not map start is valid if it overlaps with existing vmem
-pub open spec fn step_Map_start(
+// TODO: think about whether or not map start is valid if it overlaps with existing vmem
+pub open spec fn step_MapStart(
     c: Constants,
     s1: State,
     s2: State,
@@ -303,7 +303,7 @@ pub open spec fn step_Map_start(
     }
 }
 
-pub open spec fn step_Map_end(
+pub open spec fn step_MapEnd(
     c: Constants,
     s1: State,
     s2: State,
@@ -316,7 +316,7 @@ pub open spec fn step_Map_end(
     &&& match s1.thread_state[thread_id] {
         ThreadState::Map { vaddr, pte } => {
             //&&& !candidate_mapping_overlaps_existing_pmem(s1.mappings, pte)
-            &&& if (candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte)) {
+            &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
                 &&& result is Err
                 &&& s2.mappings === s1.mappings
                 &&& s2.mem === s1.mem
@@ -353,26 +353,23 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     }
 }
 
-//shouldnt need to check for overlapping pmem bc:
-// if its being mapped rn then itll cause Err anyways
-// if its being unmapped rn then vmem is the way to go.
-pub open spec fn step_Unmap_start(
+// TODO:
+// shouldnt need to check for overlapping pmem because:
+// - if currently being mapped it will cause Err anyways
+// - if currently being unmapped then vmem is the way to go (?)
+pub open spec fn step_UnmapStart(
     c: Constants,
     s1: State,
     s2: State,
     thread_id: nat,
     vaddr: nat,
 ) -> bool {
-    let pte = if (s1.mappings.dom().contains(vaddr)) {
+    let pte = if s1.mappings.dom().contains(vaddr) {
         Some(s1.mappings.index(vaddr))
     } else {
         Option::None
     };
-    let pte_size = if (pte is Some) {
-        pte.unwrap().frame.size
-    } else {
-        0
-    };
+    let pte_size = if pte is Some { pte.unwrap().frame.size } else { 0 };
     &&& step_Unmap_enabled(vaddr)
     &&& valid_thread(c, thread_id)
     &&& s1.thread_state[thread_id] === ThreadState::Idle
@@ -381,7 +378,7 @@ pub open spec fn step_Unmap_start(
             thread_id,
             ThreadState::Unmap { vaddr, pte },
         )
-        &&& if (pte is None) {
+        &&& if pte is None {
             &&& s2.mappings === s1.mappings
             &&& s2.mem === s1.mem
         } else {
@@ -398,7 +395,7 @@ pub open spec fn step_Unmap_start(
     }
 }
 
-pub open spec fn step_Unmap_end(
+pub open spec fn step_UnmapEnd(
     c: Constants,
     s1: State,
     s2: State,
@@ -437,46 +434,13 @@ pub open spec fn next_step(
     s2: State,
     step: Step,
 ) -> bool {
-    if (s1.sound) {
+    if s1.sound {
         match step {
-            Step::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(
-                c,
-                s1,
-                s2,
-                thread_id,
-                vaddr,
-                op,
-                pte,
-            ),
-            Step::MapStart { thread_id, vaddr, pte } => step_Map_start(
-                c,
-                s1,
-                s2,
-                thread_id,
-                vaddr,
-                pte,
-            ),
-            Step::MapEnd { thread_id, result } => step_Map_end(
-                c,
-                s1,
-                s2,
-                thread_id,
-                result,
-            ),
-            Step::UnmapStart { thread_id, vaddr } => step_Unmap_start(
-                c,
-                s1,
-                s2,
-                thread_id,
-                vaddr,
-            ),
-            Step::UnmapEnd { thread_id, result } => step_Unmap_end(
-                c,
-                s1,
-                s2,
-                thread_id,
-                result,
-            ),
+            Step::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(c, s1, s2, thread_id, vaddr, op, pte),
+            Step::MapStart { thread_id, vaddr, pte } => step_MapStart(c, s1, s2, thread_id, vaddr, pte),
+            Step::MapEnd { thread_id, result } => step_MapEnd(c, s1, s2, thread_id, result),
+            Step::UnmapStart { thread_id, vaddr } => step_UnmapStart(c, s1, s2, thread_id, vaddr),
+            Step::UnmapEnd { thread_id, result } => step_UnmapEnd(c, s1, s2, thread_id, result),
             Step::Stutter => step_Stutter(c, s1, s2),
         }
     } else {
@@ -572,7 +536,7 @@ pub proof fn next_step_preserves_inv(
     ensures
         s2.sound ==> inv(c, s2),
 {
-    if (s1.sound) {
+    if s1.sound {
         let p = choose|step: Step| next_step(c, s1, s2, step);
         match p {
             Step::UnmapStart { thread_id, vaddr } => {
