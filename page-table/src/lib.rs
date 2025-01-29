@@ -15,5 +15,5 @@ global size_of usize == 8;
 
 }
 
-pub mod hlspec_user;
+//pub mod hlspec_user;
 //pub mod os_trace;

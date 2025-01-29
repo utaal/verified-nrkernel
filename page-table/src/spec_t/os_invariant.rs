@@ -6,6 +6,7 @@ use crate::spec_t::mmu::defs::{
 };
 use crate::spec_t::{hlspec, os};
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
+use crate::theorem::RLbl;
 
 verus! {
 
@@ -22,21 +23,21 @@ pub proof fn init_implies_inv(c: os::Constants, s: os::State)
     init_implies_tlb_inv(c, s);
 }
 
-pub proof fn next_preserves_inv(c: os::Constants, s1: os::State, s2: os::State)
+pub proof fn next_preserves_inv(c: os::Constants, s1: os::State, s2: os::State, lbl: RLbl)
     requires
         s1.inv(c),
-        os::next(c, s1, s2),
+        os::next(c, s1, s2, lbl),
     ensures
         s2.inv(c),
 {
-    let step = choose|step| os::next_step(c, s1, s2, step);
-    next_step_preserves_inv(c, s1, s2, step);
+    let step = choose|step| os::next_step(c, s1, s2, step, lbl);
+    next_step_preserves_inv(c, s1, s2, step, lbl);
 }
 
-pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::State, step: os::Step)
+pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
     requires
         s1.inv(c),
-        os::next_step(c, s1, s2, step),
+        os::next_step(c, s1, s2, step, lbl),
     ensures
         s2.inv(c),
 {
@@ -105,7 +106,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
 
     assert(s2.inv_basic(c));
     //next_step_preserves_tlb_inv(c, s1, s2, step);
-    next_step_preserves_overlap_vmem_inv(c, s1, s2, step);
+    next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -129,12 +130,13 @@ pub proof fn next_step_preserves_tlb_inv(
     s1: os::State,
     s2: os::State,
     step: os::Step,
+    lbl: RLbl,
 )
     requires
         s1.tlb_inv(c),
         s1.inv_basic(c),
         s2.inv_basic(c),
-        os::next_step(c, s1, s2, step),
+        os::next_step(c, s1, s2, step, lbl),
     ensures
         s2.tlb_inv(c),
 {
@@ -230,11 +232,12 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
     s1: os::State,
     s2: os::State,
     step: os::Step,
+    lbl: RLbl,
 )
     requires
         s1.inv(c),
         s2.inv_basic(c),
-        os::next_step(c, s1, s2, step),
+        os::next_step(c, s1, s2, step, lbl),
     ensures
         s2.overlapping_vmem_inv(c),
 {

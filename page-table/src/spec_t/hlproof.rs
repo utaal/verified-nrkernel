@@ -1,13 +1,12 @@
 #![verus::trusted]
+use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
     between, candidate_mapping_overlaps_existing_pmem, overlap,
     PTE, WORD_SIZE,
 };
 use crate::spec_t::mem;
-use vstd::prelude::*;
-
 use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
-
+use crate::theorem::RLbl;
 use crate::spec_t::hlspec::*;
 
 verus! {
@@ -263,15 +262,9 @@ pub proof fn insert_map_preserves_unique(
 //                                        Step preserves inv proofs                                              //
 //                                                                                                               //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn unmap_start_preserves_inv(
-    c: Constants,
-    s1: State,
-    s2: State,
-    thread_id: nat,
-    vaddr: nat,
-)
+pub proof fn unmap_start_preserves_inv(c: Constants, s1: State, s2: State, thread_id: nat, vaddr: nat, lbl: RLbl)
     requires
-        step_UnmapStart(c, s1, s2, thread_id, vaddr),
+        step_UnmapStart(c, s1, s2, thread_id, vaddr, lbl),
         s1.sound ==> inv(c, s1),
         s1.sound,
         s1.thread_state.dom().contains(thread_id),
@@ -306,9 +299,10 @@ pub proof fn map_start_preserves_inv(
     thread_id: nat,
     vaddr: nat,
     pte: PTE,
+    lbl: RLbl,
 )
     requires
-        step_MapStart(c, s1, s2, thread_id, vaddr, pte),
+        step_MapStart(c, s1, s2, thread_id, vaddr, pte, lbl),
         s1.sound ==> inv(c, s1),
         s1.sound,
         s1.thread_state.dom().contains(thread_id),
@@ -333,9 +327,10 @@ pub proof fn map_end_preserves_inv(
     s2: State,
     thread_id: nat,
     result: Result<(), ()>,
+    lbl: RLbl,
 )
     requires
-        step_MapEnd(c, s1, s2, thread_id, result),
+        step_MapEnd(c, s1, s2, thread_id, result, lbl),
         s1.sound ==> inv(c, s1),
         s1.sound,
         s1.thread_state.dom().contains(thread_id),

@@ -151,44 +151,26 @@ pub struct Core {
     pub core_id: nat,
 }
 
-//for Highlevel read write operations
 pub enum LoadResult {
-    Undefined,
-    Value(nat),  // word-sized load
+    Pagefault,
+    Value(nat), // word-sized load
 }
 
 pub enum StoreResult {
-    Undefined,
+    Pagefault,
     Ok,
 }
 
 #[allow(inconsistent_fields)]
-pub enum RWOp {
-    Store { new_value: nat, result: StoreResult },
+pub enum MemOp {
     Load { is_exec: bool, result: LoadResult },
+    Store { new_value: usize, result: StoreResult },
 }
 
-//for Hardware read write operations
-pub enum HWLoadResult {
-    Pagefault,
-    Value(nat),  // word-sized load
-}
-
-pub enum HWStoreResult {
-    Pagefault,
-    Ok,
-}
-
-#[allow(inconsistent_fields)]
-pub enum HWMemOp {
-    Load { is_exec: bool, result: HWLoadResult },
-    Store { new_value: usize, result: HWStoreResult },
-}
-
-impl HWMemOp {
+impl MemOp {
     pub open spec fn is_pagefault(self) -> bool {
-        ||| self matches HWMemOp::Load { result: HWLoadResult::Pagefault, .. }
-        ||| self matches HWMemOp::Store { result: HWStoreResult::Pagefault, .. }
+        ||| self matches MemOp::Load { result: LoadResult::Pagefault, .. }
+        ||| self matches MemOp::Store { result: StoreResult::Pagefault, .. }
     }
 }
 

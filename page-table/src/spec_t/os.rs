@@ -7,12 +7,12 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::{rl3, rl1};
 use crate::spec_t::{ hlspec, mem, mmu };
 use crate::spec_t::mmu::defs::{
-    aligned, between, candidate_mapping_in_bounds,
-    candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
-    x86_arch_spec, HWLoadResult, HWMemOp, HWStoreResult, LoadResult, MemRegion, PTE,
-    RWOp, StoreResult, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core,
+    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
+    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, MemOp, MemRegion, PTE,
+    L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core,
 };
 use crate::extra::result_map_ok;
+use crate::theorem::RLbl;
 
 verus! {
 
@@ -57,7 +57,7 @@ pub enum CoreState {
 #[allow(inconsistent_fields)]
 pub enum Step {
     MMU,
-    MemOp { ult_id: nat, vaddr: usize, op: HWMemOp },
+    MemOp { ult_id: nat, vaddr: usize, op: MemOp },
     ReadPTMem { core: Core, paddr: usize, value: usize },
     Barrier { core: Core },
     Invlpg { core: Core, vaddr: usize },
@@ -185,7 +185,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     }
 }
 
-pub open spec fn step_MMU(c: Constants, s1: State, s2: State) -> bool {
+pub open spec fn step_MMU(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Tau)
     //new state
@@ -194,7 +194,7 @@ pub open spec fn step_MMU(c: Constants, s1: State, s2: State) -> bool {
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, ult_id: nat, vaddr: usize, op: HWMemOp) -> bool {
+pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, ult_id: nat, vaddr: usize, op: MemOp, lbl: RLbl) -> bool {
     let core = c.ult2core[ult_id];
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::MemOp(core, vaddr, op))
@@ -206,7 +206,7 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, ult_id: nat, vad
 
 /// Cores can read from page table memory at any point. This transition is used by the
 /// implementations of unmap and map to traverse the page table.
-pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, paddr: usize, value: usize) -> bool {
+pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, paddr: usize, value: usize, lbl: RLbl) -> bool {
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Read(core, paddr, value))
     //new state
@@ -218,7 +218,7 @@ pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, 
 /// Cores can execute a barrier at any point. This transition has to be used after a map.
 /// XXX: We need to add a MapOpEnd transition or something like that and then require in the final
 /// mapend transition that sbuf is empty.
-pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Barrier(core))
     //new state
@@ -228,7 +228,7 @@ pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core) ->
 }
 
 /// Cores can execute an invlpg at any point. This transition has to be used after an unmap.
-pub open spec fn step_Invlpg(c: Constants, s1: State, s2: State, core: Core, vaddr: usize) -> bool {
+pub open spec fn step_Invlpg(c: Constants, s1: State, s2: State, core: Core, vaddr: usize, lbl: RLbl) -> bool {
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Invlpg(core, vaddr))
     //new state
@@ -271,6 +271,7 @@ pub open spec fn step_MapStart(
     ult_id: nat,
     vaddr: nat,
     pte: PTE,
+    lbl: RLbl,
 ) -> bool {
     let core = c.ult2core[ult_id];
     //enabling conditions
@@ -286,7 +287,7 @@ pub open spec fn step_MapStart(
     &&& s2.sound == s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte)
 }
 
-pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::MapWaiting { ult_id, vaddr, pte }
@@ -308,6 +309,7 @@ pub open spec fn step_MapOpStutter(
     core: Core,
     paddr: usize,
     value: usize,
+    lbl: RLbl,
 ) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
@@ -332,6 +334,7 @@ pub open spec fn step_MapOpEnd(
     paddr: usize,
     value: usize,
     result: Result<(), ()>,
+    lbl: RLbl,
 ) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
@@ -352,12 +355,7 @@ pub open spec fn step_MapOpEnd(
     &&& s1.sound == s2.sound
 }
 
-pub open spec fn step_MapEnd(
-    c: Constants,
-    s1: State,
-    s2: State,
-    core: Core,
-) -> bool {
+pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     // enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::MapDone { ult_id, vaddr, pte, result }
@@ -394,13 +392,7 @@ pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     }
 }
 
-pub open spec fn step_UnmapStart(
-    c: Constants,
-    s1: State,
-    s2: State,
-    ult_id: nat,
-    vaddr: nat,
-) -> bool {
+pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, ult_id: nat, vaddr: nat, lbl: RLbl) -> bool {
     let pt = s1.interp_pt_mem();
     let core = c.ult2core[ult_id];
     let pte_size = if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 };
@@ -416,7 +408,7 @@ pub open spec fn step_UnmapStart(
     &&& s2.sound == s1.sound && step_Unmap_sound(pt, s1.core_states.values(), vaddr, pte_size)
 }
 
-pub open spec fn step_UnmapOpStart(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_UnmapOpStart(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapWaiting { ult_id, vaddr }
@@ -437,6 +429,7 @@ pub open spec fn step_UnmapOpChange(
     paddr: usize,
     value: usize,
     result: Result<PTE, ()>,
+    lbl: RLbl,
 ) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
@@ -470,6 +463,7 @@ pub open spec fn step_UnmapOpStutter(
     core: Core,
     paddr: usize,
     value: usize,
+    lbl: RLbl,
 ) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
@@ -484,7 +478,7 @@ pub open spec fn step_UnmapOpStutter(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_UnmapOpEnd(c: Constants, s1: State, s2: State, core: Core) -> bool {
+pub open spec fn step_UnmapOpEnd(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(res) }
@@ -504,6 +498,7 @@ pub open spec fn step_UnmapInitiateShootdown(
     s1: State,
     s2: State,
     core: Core,
+    lbl: RLbl,
 ) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
@@ -525,12 +520,7 @@ pub open spec fn step_UnmapInitiateShootdown(
 
 // Acknowledge TLB eviction to other core (in response to shootdown IPI)
 // check if tlb shootdown/unmap has happend and send ACK
-pub open spec fn step_AckShootdownIPI(
-    c: Constants,
-    s1: State,
-    s2: State,
-    core: Core,
-) -> bool {
+pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     //enabling conditions
     &&& s1.TLB_Shootdown.open_requests.contains(core)
     &&& !s1.mmu@.tlbs[core].contains_key(s1.TLB_Shootdown.vaddr as usize)
@@ -545,12 +535,7 @@ pub open spec fn step_AckShootdownIPI(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_UnmapEnd(
-    c: Constants,
-    s1: State,
-    s2: State,
-    core: Core,
-) -> bool {
+pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     //enabling conditions
     &&& c.valid_core(core)
     &&& match s1.core_states[core] {
@@ -568,33 +553,33 @@ pub open spec fn step_UnmapEnd(
     &&& s1.sound == s2.sound
 }
 
-pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step) -> bool {
+pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: RLbl) -> bool {
     match step {
-        Step::MMU                                          => step_MMU(c, s1, s2),
-        Step::MemOp { ult_id, vaddr, op }                  => step_MemOp(c, s1, s2, ult_id, vaddr, op),
-        Step::ReadPTMem { core, paddr, value }             => step_ReadPTMem(c, s1, s2, core, paddr, value),
-        Step::Barrier { core }                             => step_Barrier(c, s1, s2, core),
-        Step::Invlpg { core, vaddr }                       => step_Invlpg(c, s1, s2, core, vaddr),
+        Step::MMU                                          => step_MMU(c, s1, s2, lbl),
+        Step::MemOp { ult_id, vaddr, op }                  => step_MemOp(c, s1, s2, ult_id, vaddr, op, lbl),
+        Step::ReadPTMem { core, paddr, value }             => step_ReadPTMem(c, s1, s2, core, paddr, value, lbl),
+        Step::Barrier { core }                             => step_Barrier(c, s1, s2, core, lbl),
+        Step::Invlpg { core, vaddr }                       => step_Invlpg(c, s1, s2, core, vaddr, lbl),
         //Map steps
-        Step::MapStart { ult_id, vaddr, pte }              => step_MapStart(c, s1, s2, ult_id, vaddr, pte),
-        Step::MapOpStart { core }                          => step_MapOpStart(c, s1, s2, core),
-        Step::MapOpStutter { core, paddr, value }          => step_MapOpStutter(c, s1, s2, core, paddr, value),
-        Step::MapOpEnd { core, paddr, value, result }      => step_MapOpEnd(c, s1, s2, core, paddr, value, result),
-        Step::MapEnd { core }                              => step_MapEnd(c, s1, s2, core),
+        Step::MapStart { ult_id, vaddr, pte }              => step_MapStart(c, s1, s2, ult_id, vaddr, pte, lbl),
+        Step::MapOpStart { core }                          => step_MapOpStart(c, s1, s2, core, lbl),
+        Step::MapOpStutter { core, paddr, value }          => step_MapOpStutter(c, s1, s2, core, paddr, value, lbl),
+        Step::MapOpEnd { core, paddr, value, result }      => step_MapOpEnd(c, s1, s2, core, paddr, value, result, lbl),
+        Step::MapEnd { core }                              => step_MapEnd(c, s1, s2, core, lbl),
         //Unmap steps
-        Step::UnmapStart { ult_id, vaddr }                 => step_UnmapStart(c, s1, s2, ult_id, vaddr),
-        Step::UnmapOpStart { core }                        => step_UnmapOpStart(c, s1, s2, core),
-        Step::UnmapOpChange { core, paddr, value, result } => step_UnmapOpChange(c, s1, s2, core, paddr, value, result),
-        Step::UnmapOpStutter { core, paddr, value }        => step_UnmapOpStutter(c, s1, s2, core, paddr, value),
-        Step::UnmapOpEnd { core }                          => step_UnmapOpEnd(c, s1, s2, core),
-        Step::UnmapInitiateShootdown { core }              => step_UnmapInitiateShootdown(c, s1, s2, core),
-        Step::AckShootdownIPI { core }                     => step_AckShootdownIPI(c, s1, s2, core),
-        Step::UnmapEnd { core }                            => step_UnmapEnd(c, s1, s2, core),
+        Step::UnmapStart { ult_id, vaddr }                 => step_UnmapStart(c, s1, s2, ult_id, vaddr, lbl),
+        Step::UnmapOpStart { core }                        => step_UnmapOpStart(c, s1, s2, core, lbl),
+        Step::UnmapOpChange { core, paddr, value, result } => step_UnmapOpChange(c, s1, s2, core, paddr, value, result, lbl),
+        Step::UnmapOpStutter { core, paddr, value }        => step_UnmapOpStutter(c, s1, s2, core, paddr, value, lbl),
+        Step::UnmapOpEnd { core }                          => step_UnmapOpEnd(c, s1, s2, core, lbl),
+        Step::UnmapInitiateShootdown { core }              => step_UnmapInitiateShootdown(c, s1, s2, core, lbl),
+        Step::AckShootdownIPI { core }                     => step_AckShootdownIPI(c, s1, s2, core, lbl),
+        Step::UnmapEnd { core }                            => step_UnmapEnd(c, s1, s2, core, lbl),
     }
 }
 
-pub open spec fn next(c: Constants, s1: State, s2: State) -> bool {
-    exists|step: Step| next_step(c, s1, s2, step)
+pub open spec fn next(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
+    exists|step: Step| next_step(c, s1, s2, step, lbl)
 }
 
 pub open spec fn init(c: Constants, s: State) -> bool {
@@ -971,22 +956,7 @@ impl Step {
                         Some((tlb_va as nat, pre.effective_mappings()[tlb_va as nat])),
                     _ => arbitrary(),
                 };
-                // TODO(MB): This looks like it could be simplified
-                let rwop = match (op, hl_pte) {
-                    (HWMemOp::Store { new_value, result: HWStoreResult::Ok }, Some(_))
-                        => RWOp::Store { new_value: new_value as nat, result: StoreResult::Ok },
-                    (HWMemOp::Store { new_value, result: HWStoreResult::Ok }, None)
-                        => RWOp::Store { new_value: new_value as nat, result: StoreResult::Undefined },
-                    (HWMemOp::Store { new_value, result: HWStoreResult::Pagefault }, _)
-                        => RWOp::Store { new_value: new_value as nat, result: StoreResult::Undefined },
-                    (HWMemOp::Load { is_exec, result: HWLoadResult::Value(v) }, Some(_))
-                        => RWOp::Load { is_exec, result: LoadResult::Value(v) },
-                    (HWMemOp::Load { is_exec, result: HWLoadResult::Value(v) }, None)
-                        => RWOp::Load { is_exec, result: LoadResult::Undefined },
-                    (HWMemOp::Load { is_exec, result: HWLoadResult::Pagefault }, _)
-                        => RWOp::Load { is_exec, result: LoadResult::Undefined },
-                };
-                hlspec::Step::ReadWrite { thread_id: ult_id, vaddr: vaddr as nat, op: rwop, pte: hl_pte }
+                hlspec::Step::ReadWrite { thread_id: ult_id, vaddr: vaddr as nat, op, pte: hl_pte }
             },
             Step::ReadPTMem { .. } => hlspec::Step::Stutter,
             Step::Barrier { .. } => hlspec::Step::Stutter,

@@ -2,14 +2,15 @@
 // trusted:
 // this is the process-level specification of the kernel's behaviour
 
+use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
-    x86_arch_spec, MemRegion, PTE, RWOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
+    x86_arch_spec, MemRegion, PTE, MemOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
     MAX_PHYADDR, WORD_SIZE,
 };
 use crate::spec_t::mem;
-use vstd::prelude::*;
+use crate::theorem::RLbl;
 
 use crate::spec_t::hlproof::{
     insert_non_map_preserves_unique, lemma_mem_domain_from_mapping_finite, map_end_preserves_inv,
@@ -19,7 +20,6 @@ use crate::spec_t::hlproof::{
 verus! {
 
 pub struct Constants {
-    //so far const
     pub thread_no: nat,
     pub phys_mem_size: nat,
 }
@@ -37,7 +37,7 @@ pub struct State {
 
 #[allow(inconsistent_fields)]
 pub enum Step {
-    ReadWrite { thread_id: nat, vaddr: nat, op: RWOp, pte: Option<(nat, PTE)> },
+    ReadWrite { thread_id: nat, vaddr: nat, op: MemOp, pte: Option<(nat, PTE)> },
     MapStart { thread_id: nat, vaddr: nat, pte: PTE },
     MapEnd { thread_id: nat, result: Result<(), ()> },
     UnmapStart { thread_id: nat, vaddr: nat },
@@ -195,8 +195,9 @@ pub open spec fn step_ReadWrite(
     s2: State,
     thread_id: nat,
     vaddr: nat,
-    op: RWOp,
+    op: MemOp,
     pte: Option<(nat, PTE)>,
+    lbl: RLbl,
 ) -> bool {
     let vmem_idx = mem::word_index_spec(vaddr);
     &&& s2.sound == s1.sound
@@ -214,23 +215,24 @@ pub open spec fn step_ReadWrite(
             &&& between(vaddr, base, base + pte.frame.size)
             // .. and the result depends on the flags.
             &&& match op {
-                RWOp::Store { new_value, result } => {
+                MemOp::Store { new_value, result } => {
                     if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor
                         && pte.flags.is_writable {
                         &&& result is Ok
-                        &&& s2.mem === s1.mem.insert(vmem_idx, new_value)
+                        &&& s2.mem === s1.mem.insert(vmem_idx, new_value as nat)
                     } else {
-                        &&& result is Undefined
+                        //&&& result is Undefined
                         &&& s2.mem === s1.mem
                     }
                 },
-                RWOp::Load { is_exec, result } => {
+                MemOp::Load { is_exec, result } => {
                     &&& s2.mem === s1.mem
                     &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
                         &&& result is Value
                         &&& result->0 == s1.mem.index(vmem_idx)
                     } else {
-                        &&& result is Undefined
+                        true
+                        //&&& result is Undefined
                     }
                 },
             }
@@ -240,10 +242,10 @@ pub open spec fn step_ReadWrite(
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
             // .. and the result is always a Undefined and an unchanged memory.
             &&& s2.mem === s1.mem
-            &&& match op {
-                RWOp::Store { new_value, result } => result is Undefined,
-                RWOp::Load { is_exec, result } => result is Undefined,
-            }
+            //&&& match op {
+            //    MemOp::Store { new_value, result } => result is Undefined,
+            //    MemOp::Load { is_exec, result } => result is Undefined,
+            //}
         },
     }
 }
@@ -287,6 +289,7 @@ pub open spec fn step_MapStart(
     thread_id: nat,
     vaddr: nat,
     pte: PTE,
+    lbl: RLbl,
 ) -> bool {
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
     &&& valid_thread(c, thread_id)
@@ -309,6 +312,7 @@ pub open spec fn step_MapEnd(
     s2: State,
     thread_id: nat,
     result: Result<(), ()>,
+    lbl: RLbl,
 ) -> bool {
     &&& s2.sound == s1.sound
     &&& valid_thread(c, thread_id)
@@ -363,6 +367,7 @@ pub open spec fn step_UnmapStart(
     s2: State,
     thread_id: nat,
     vaddr: nat,
+    lbl: RLbl,
 ) -> bool {
     let pte = if s1.mappings.dom().contains(vaddr) {
         Some(s1.mappings.index(vaddr))
@@ -401,6 +406,7 @@ pub open spec fn step_UnmapEnd(
     s2: State,
     thread_id: nat,
     result: Result<(), ()>,
+    lbl: RLbl,
 ) -> bool {
     &&& valid_thread(c, thread_id)
     &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Idle)
@@ -423,6 +429,7 @@ pub open spec fn step_Stutter(
     c: Constants,
     s1: State,
     s2: State,
+    lbl: RLbl,
 ) -> bool {
     s1 === s2
 }
@@ -433,23 +440,24 @@ pub open spec fn next_step(
     s1: State,
     s2: State,
     step: Step,
+    lbl: RLbl,
 ) -> bool {
     if s1.sound {
         match step {
-            Step::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(c, s1, s2, thread_id, vaddr, op, pte),
-            Step::MapStart { thread_id, vaddr, pte } => step_MapStart(c, s1, s2, thread_id, vaddr, pte),
-            Step::MapEnd { thread_id, result } => step_MapEnd(c, s1, s2, thread_id, result),
-            Step::UnmapStart { thread_id, vaddr } => step_UnmapStart(c, s1, s2, thread_id, vaddr),
-            Step::UnmapEnd { thread_id, result } => step_UnmapEnd(c, s1, s2, thread_id, result),
-            Step::Stutter => step_Stutter(c, s1, s2),
+            Step::ReadWrite { thread_id, vaddr, op, pte } => step_ReadWrite(c, s1, s2, thread_id, vaddr, op, pte, lbl),
+            Step::MapStart { thread_id, vaddr, pte }      => step_MapStart(c, s1, s2, thread_id, vaddr, pte, lbl),
+            Step::MapEnd { thread_id, result }            => step_MapEnd(c, s1, s2, thread_id, result, lbl),
+            Step::UnmapStart { thread_id, vaddr }         => step_UnmapStart(c, s1, s2, thread_id, vaddr, lbl),
+            Step::UnmapEnd { thread_id, result }          => step_UnmapEnd(c, s1, s2, thread_id, result, lbl),
+            Step::Stutter                                 => step_Stutter(c, s1, s2, lbl),
         }
     } else {
         !s2.sound
     }
 }
 
-pub open spec fn next(c: Constants, s1: State, s2: State) -> bool {
-    exists|step: Step| next_step(c, s1, s2, step)
+pub open spec fn next(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
+    exists|step: Step| next_step(c, s1, s2, step, lbl)
 }
 
 pub open spec fn pmem_no_overlap(mappings: Map<nat, PTE>) -> bool {
@@ -529,18 +537,19 @@ pub proof fn next_step_preserves_inv(
     c: Constants,
     s1: State,
     s2: State,
+    lbl: RLbl,
 )
     requires
-        next(c, s1, s2),
+        next(c, s1, s2, lbl),
         s1.sound ==> inv(c, s1),
     ensures
         s2.sound ==> inv(c, s2),
 {
     if s1.sound {
-        let p = choose|step: Step| next_step(c, s1, s2, step);
+        let p = choose|step: Step| next_step(c, s1, s2, step, lbl);
         match p {
             Step::UnmapStart { thread_id, vaddr } => {
-                unmap_start_preserves_inv(c, s1, s2, thread_id, vaddr);
+                unmap_start_preserves_inv(c, s1, s2, thread_id, vaddr, lbl);
             },
             Step::UnmapEnd { thread_id, result } => {
                 assert(s2.thread_state.values().subset_of(
@@ -554,10 +563,10 @@ pub proof fn next_step_preserves_inv(
                 );
             },
             Step::MapStart { thread_id, vaddr, pte } => {
-                map_start_preserves_inv(c, s1, s2, thread_id, vaddr, pte);
+                map_start_preserves_inv(c, s1, s2, thread_id, vaddr, pte, lbl);
             },
             Step::MapEnd { thread_id, result } => {
-                map_end_preserves_inv(c, s1, s2, thread_id, result);
+                map_end_preserves_inv(c, s1, s2, thread_id, result, lbl);
             },
             _ => {},
         }

@@ -9,7 +9,7 @@ pub mod defs;
 use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
     PTE, Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc, Core,
-    align_to_usize, WORD_SIZE, HWMemOp, PAGE_SIZE,
+    align_to_usize, WORD_SIZE, MemOp, PAGE_SIZE,
 };
 use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
 
@@ -102,7 +102,7 @@ pub enum Lbl {
     Tau,
     /// Memory operation on non-page-table memory
     /// Core, virtual address, memory operation
-    MemOp(Core, usize, HWMemOp),
+    MemOp(Core, usize, MemOp),
     /// Write to page table memory.
     /// Core, physical address, written value
     Write(Core, usize, usize),

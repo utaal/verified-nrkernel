@@ -6,7 +6,7 @@ use vstd::prelude::*;
 use crate::spec_t::mem::word_index_spec;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ aligned, bit, Core, bitmask_inc, HWMemOp, HWLoadResult, PTE };
+use crate::spec_t::mmu::defs::{ aligned, bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
@@ -213,7 +213,7 @@ pub closed spec fn step_MemOpTLB(
     &&& pre.tlbs[core].contains_key(tlb_va)
     &&& tlb_va <= memop_vaddr < tlb_va + pte.frame.size
     &&& match memop {
-        HWMemOp::Store { new_value, result } => {
+        MemOp::Store { new_value, result } => {
             if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
                 &&& result is Ok
                 &&& post.phys_mem === pre.phys_mem.update(pmem_idx as int, new_value as nat)
@@ -222,9 +222,9 @@ pub closed spec fn step_MemOpTLB(
                 &&& post.phys_mem === pre.phys_mem
             }
         },
-        HWMemOp::Load { is_exec, result } => {
+        MemOp::Load { is_exec, result } => {
             if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                &&& result == HWLoadResult::Value(pre.phys_mem[pmem_idx as int])
+                &&& result == LoadResult::Value(pre.phys_mem[pmem_idx as int])
                 &&& post.phys_mem === pre.phys_mem
             } else {
                 &&& result is Pagefault
