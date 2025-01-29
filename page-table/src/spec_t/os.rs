@@ -47,6 +47,7 @@ pub enum CoreState {
     Idle,
     MapWaiting { ult_id: nat, vaddr: nat, pte: PTE },
     MapExecuting { ult_id: nat, vaddr: nat, pte: PTE },
+    MapDone { ult_id: nat, vaddr: nat, pte: PTE, result: Result<(), ()> },
     UnmapWaiting { ult_id: nat, vaddr: nat },
     UnmapOpExecuting { ult_id: nat, vaddr: nat, result: Option<Result<PTE, ()>> },
     UnmapOpDone { ult_id: nat, vaddr: nat, result: Result<PTE, ()> },
@@ -64,7 +65,8 @@ pub enum Step {
     MapStart { ult_id: nat, vaddr: nat, pte: PTE },
     MapOpStart { core: Core },
     MapOpStutter { core: Core, paddr: usize, value: usize },
-    MapEnd { core: Core, paddr: usize, value: usize, result: Result<(), ()> },
+    MapOpEnd { core: Core, paddr: usize, value: usize, result: Result<(), ()> },
+    MapEnd { core: Core },
     // Unmap
     UnmapStart { ult_id: nat, vaddr: nat },
     UnmapOpStart { core: Core },
@@ -124,7 +126,8 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
         &&& inflightargs.contains(b)
         &&& match b {
             CoreState::MapWaiting { vaddr, pte, .. }
-            | CoreState::MapExecuting { vaddr, pte, .. } => {
+            | CoreState::MapExecuting { vaddr, pte, .. }
+            | CoreState::MapDone { vaddr, pte, .. } => {
                 overlap(candidate.frame, pte.frame)
             },
             CoreState::UnmapWaiting { ult_id, vaddr }
@@ -153,7 +156,8 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
         &&& inflightargs.contains(b)
         &&& match b {
             CoreState::MapWaiting { vaddr, pte, .. }
-            | CoreState::MapExecuting { vaddr, pte, .. } => {
+            | CoreState::MapExecuting { vaddr, pte, .. }
+            | CoreState::MapDone { vaddr, pte, .. } => {
                 overlap(
                     MemRegion { base: vaddr, size: pte.frame.size },
                     MemRegion { base: base, size: candidate_size },
@@ -320,7 +324,7 @@ pub open spec fn step_MapOpStutter(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_MapEnd(
+pub open spec fn step_MapOpEnd(
     c: Constants,
     s1: State,
     s2: State,
@@ -343,6 +347,27 @@ pub open spec fn step_MapEnd(
         &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
     }
     //new state
+    &&& s2.core_states == s1.core_states.insert(core, CoreState::MapDone { ult_id, vaddr, pte, result })
+    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s1.sound == s2.sound
+}
+
+pub open spec fn step_MapEnd(
+    c: Constants,
+    s1: State,
+    s2: State,
+    core: Core,
+) -> bool {
+    // enabling conditions
+    &&& c.valid_core(core)
+    &&& s1.core_states[core] matches CoreState::MapDone { ult_id, vaddr, pte, result }
+    &&& s1.mmu@.writes.all === set![]
+    &&& s1.mmu@.pending_maps === map![]
+
+    // mmu statemachine steps
+    &&& s2.mmu == s1.mmu
+
+    // new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
     &&& s1.sound == s2.sound
@@ -362,7 +387,7 @@ pub open spec fn step_Unmap_sound(
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
     &&& vaddr < x86_arch_spec.upper_vaddr(0, 0)
-    &&& {  // The given vaddr must be aligned to some valid page size
+    &&& { // The given vaddr must be aligned to some valid page size
         ||| aligned(vaddr, L3_ENTRY_SIZE as nat)
         ||| aligned(vaddr, L2_ENTRY_SIZE as nat)
         ||| aligned(vaddr, L1_ENTRY_SIZE as nat)
@@ -554,7 +579,8 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step) -> bo
         Step::MapStart { ult_id, vaddr, pte }              => step_MapStart(c, s1, s2, ult_id, vaddr, pte),
         Step::MapOpStart { core }                          => step_MapOpStart(c, s1, s2, core),
         Step::MapOpStutter { core, paddr, value }          => step_MapOpStutter(c, s1, s2, core, paddr, value),
-        Step::MapEnd { core, paddr, value, result }        => step_MapEnd(c, s1, s2, core, paddr, value, result),
+        Step::MapOpEnd { core, paddr, value, result }      => step_MapOpEnd(c, s1, s2, core, paddr, value, result),
+        Step::MapEnd { core }                              => step_MapEnd(c, s1, s2, core),
         //Unmap steps
         Step::UnmapStart { ult_id, vaddr }                 => step_UnmapStart(c, s1, s2, ult_id, vaddr),
         Step::UnmapOpStart { core }                        => step_UnmapOpStart(c, s1, s2, core),
@@ -607,7 +633,8 @@ impl CoreState {
     {
         match self {
             CoreState::MapWaiting { pte, .. }
-            | CoreState::MapExecuting { pte, .. } => {
+            | CoreState::MapExecuting { pte, .. }
+            | CoreState::MapDone { pte, .. } => {
                 pte.frame.size
             },
             CoreState::UnmapWaiting { vaddr, .. }
@@ -629,6 +656,7 @@ impl CoreState {
         match self {
             CoreState::MapWaiting { vaddr, .. }
             | CoreState::MapExecuting { vaddr, .. }
+            | CoreState::MapDone { vaddr, .. }
             | CoreState::UnmapWaiting { vaddr, .. }
             | CoreState::UnmapOpExecuting { vaddr, .. }
             | CoreState::UnmapOpDone { vaddr, .. }
@@ -686,11 +714,11 @@ impl State {
     pub open spec fn interp_thread_state(self, c: Constants) -> Map<nat, hlspec::ThreadState> {
         Map::new(
             |ult_id: nat| c.valid_ult(ult_id),
-            |ult_id: nat|
-                {
+            |ult_id: nat| {
                     match self.core_states[c.ult2core[ult_id]] {
                         CoreState::MapWaiting { ult_id: ult_id2, vaddr, pte }
-                        | CoreState::MapExecuting { ult_id: ult_id2, vaddr, pte } => {
+                        | CoreState::MapExecuting { ult_id: ult_id2, vaddr, pte }
+                        | CoreState::MapDone { ult_id: ult_id2, vaddr, pte, .. } => {
                             if ult_id2 == ult_id {
                                 hlspec::ThreadState::Map { vaddr, pte }
                             } else {
@@ -746,6 +774,7 @@ impl State {
             c.valid_core(core) ==> match self.core_states[core] {
                 CoreState::MapWaiting { ult_id, .. }
                 | CoreState::MapExecuting { ult_id, .. }
+                | CoreState::MapDone { ult_id, .. }
                 | CoreState::UnmapWaiting { ult_id, .. }
                 | CoreState::UnmapOpExecuting { ult_id, .. }
                 | CoreState::UnmapOpDone { ult_id, .. }
@@ -762,6 +791,7 @@ impl State {
             match self.core_states[core] {
                 CoreState::MapWaiting { vaddr, pte, .. }
                 | CoreState::MapExecuting { vaddr, pte, .. }
+                | CoreState::MapDone { vaddr, pte, .. }
                     => pte.frame.size > 0,
                 CoreState::UnmapWaiting { vaddr, .. }
                 | CoreState::UnmapOpExecuting { vaddr, result: None, .. }
@@ -775,7 +805,16 @@ impl State {
             }
     }
 
-    pub open spec fn successful_unmaps(self, c: Constants) -> bool {
+    //pub open spec fn inv_map_done(self, c: Constants) -> bool {
+    //    forall|core: Core| c.valid_core(core) ==>
+    //        match self.core_states[core] {
+    //            CoreState::MapDone { vaddr, pte, result: Result::Ok(_), .. }
+    //                => self.interp_pt_mem().contains_pair(vaddr, pte),
+    //            _ => true,
+    //        }
+    //}
+
+    pub open spec fn inv_successful_unmaps(self, c: Constants) -> bool {
         forall|core: Core| c.valid_core(core) ==>
             match self.core_states[core] {
                 CoreState::UnmapOpExecuting { vaddr, result: Some(_), .. }
@@ -803,7 +842,8 @@ impl State {
         &&& self.inv_mmu(c)
         &&& self.valid_ids(c)
         &&& self.inflight_pte_above_zero_pte_result_consistent(c)
-        &&& self.successful_unmaps(c)
+        &&& self.inv_successful_unmaps(c)
+        //&&& self.inv_map_done(c)
     }
 
     pub open spec fn inv_mmu(self, c: Constants) -> bool {
@@ -956,13 +996,11 @@ impl Step {
                 hlspec::Step::MapStart { thread_id: ult_id, vaddr, pte },
             Step::MapOpStart { .. } => hlspec::Step::Stutter,
             Step::MapOpStutter { .. } => hlspec::Step::Stutter,
-            Step::MapEnd { core, result, paddr, value } => {
-                match pre.core_states[core] {
-                    CoreState::MapExecuting { ult_id, .. } => {
-                        hlspec::Step::MapEnd { thread_id: ult_id, result }
-                    },
-                    _ => { arbitrary() },
-                }
+            Step::MapOpEnd { core, paddr, value, result } => hlspec::Step::Stutter,
+            Step::MapEnd { core } => {
+                let ult_id = pre.core_states[core]->MapDone_ult_id;
+                let result = pre.core_states[core]->MapDone_result;
+                hlspec::Step::MapEnd { thread_id: ult_id, result }
             },
             //Unmap steps
             Step::UnmapStart { ult_id, vaddr } =>

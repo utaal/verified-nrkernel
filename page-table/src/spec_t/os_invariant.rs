@@ -45,7 +45,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         to_rl1::next_refines;
 
     // TODO: unnecessary?
-    //assert(s2.successful_unmaps(c)) by {
+    //assert(s2.inv_successful_unmaps(c)) by {
     //    assert forall|core| c.valid_core(core) implies {
     //        match s2.core_states[core] {
     //            os::CoreState::UnmapOpExecuting { vaddr, result: Some(_),.. }
@@ -61,6 +61,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
             match s2.core_states[core] {
                 os::CoreState::MapWaiting { vaddr, pte, .. }
                 | os::CoreState::MapExecuting { vaddr, pte, .. }
+                | os::CoreState::MapDone { vaddr, pte, .. }
                     => pte.frame.size > 0,
                 os::CoreState::UnmapWaiting { vaddr, .. }
                 | os::CoreState::UnmapOpExecuting { vaddr, result: None, .. }
@@ -74,7 +75,8 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         } by {
             match s2.core_states[core] {
                 os::CoreState::MapWaiting { vaddr, pte, .. }
-                | os::CoreState::MapExecuting { vaddr, pte, .. } => {
+                | os::CoreState::MapExecuting { vaddr, pte, .. }
+                | os::CoreState::MapDone { vaddr, pte, .. } => {
                     assert(pte.frame.size > 0);
                 },
                 os::CoreState::UnmapWaiting { vaddr, .. }
@@ -272,13 +274,12 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::Step::MapEnd { core, result, paddr, value } => {
-                let vaddr = s1.core_states[core]->MapWaiting_vaddr;
+            os::Step::MapOpEnd { core, paddr, value, result } => {
+                let vaddr = s1.core_states[core]->MapExecuting_vaddr;
                 assert(unique_CoreStates(s2.core_states));
                 assert forall|state1: os::CoreState, state2: os::CoreState|
-                    s2.core_states.values().contains(state1) && s2.core_states.values().contains(
-                        state2,
-                    ) && !state1.is_idle() && !state2.is_idle() && overlap(
+                    s2.core_states.values().contains(state1) && s2.core_states.values().contains(state2)
+                    && !state1.is_idle() && !state2.is_idle() && overlap(
                         MemRegion {
                             base: state1.vaddr(),
                             size: state1.vmem_pte_size(s2.interp_pt_mem()),
@@ -291,7 +292,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                     if state1.vaddr() == vaddr || state2.vaddr() == vaddr {
                         admit();
                     } else {
-                        if (s1.interp_pt_mem().dom().contains(state1.vaddr())) {
+                        if s1.interp_pt_mem().dom().contains(state1.vaddr()) {
                             assert(overlap(
                                 MemRegion {
                                     base: state1.vaddr(),
@@ -491,10 +492,10 @@ pub proof fn lemma_unique_and_overlap_values_implies_overlap_vmem(
 //        ).index(a).is_idle() implies !core_states.insert(core, os::CoreState::Idle).remove(
 //        a,
 //    ).values().contains(core_states.insert(core, os::CoreState::Idle).index(a)) by {
-//        if (core_states.insert(core, os::CoreState::Idle).dom().contains(a) && !core_states.insert(
+//        if core_states.insert(core, os::CoreState::Idle).dom().contains(a) && !core_states.insert(
 //            core,
 //            os::CoreState::Idle,
-//        ).index(a).is_idle() && a != core) {
+//        ).index(a).is_idle() && a != core {
 //            assert(core_states.dom().contains(a));
 //            assert(core_states.index(a) == core_states.insert(core, os::CoreState::Idle).index(a));
 //            assert(!core_states.index(a).is_idle());
@@ -600,17 +601,15 @@ pub proof fn lemma_insert_no_overlap_preserves_no_overlap(
         unique_CoreStates(core_states.insert(core, corestate)),
         no_overlap_vmem_values(core_states.insert(core, corestate), pt),
 {
-    assert forall|a|
-        #![auto]
-        core_states.insert(core, corestate).dom().contains(a) && !core_states.insert(
-            core,
-            corestate,
-        ).index(a).is_idle() implies !core_states.insert(core, corestate).remove(
-        a,
-    ).values().contains(core_states.insert(core, corestate).index(a)) by {
-        if (core_states.insert(core, corestate).remove(a).values().contains(
-            core_states.insert(core, corestate).index(a),
-        )) {
+    assert forall|a| #![auto]
+        core_states.insert(core, corestate).dom().contains(a)
+        && !core_states.insert(core, corestate)[a].is_idle()
+        implies !core_states.insert(core, corestate).remove(a).values()
+                            .contains(core_states.insert(core, corestate)[a])
+    by {
+        if core_states.insert(core, corestate).remove(a).values().contains(
+            core_states.insert(core, corestate)[a],
+        ) {
             let some_core = choose|cr|
                 #![auto]
                 cr != a && core_states.insert(core, corestate).dom().contains(cr)
@@ -618,12 +617,8 @@ pub proof fn lemma_insert_no_overlap_preserves_no_overlap(
                     core,
                     corestate,
                 )[a];
-            if (a == core || some_core == core) {
-                let other = if (some_core != core) {
-                    some_core
-                } else {
-                    a
-                };
+            if a == core || some_core == core {
+                let other = if some_core != core { some_core } else { a };
                 assert(core_states.values().contains(core_states[other]));
                 assert(overlap(
                     MemRegion {
@@ -645,13 +640,13 @@ pub proof fn lemma_insert_no_overlap_preserves_no_overlap(
             MemRegion { base: state1.vaddr(), size: state1.vmem_pte_size(pt) },
             MemRegion { base: state2.vaddr(), size: state2.vmem_pte_size(pt) },
         ) implies state1 == state2 by {
-        if (state1 == corestate || state2 == corestate) {
-            let other = if (state1 != corestate) {
+        if state1 == corestate || state2 == corestate {
+            let other = if state1 != corestate {
                 state1
             } else {
                 state2
             };
-            if (other != corestate) {
+            if other != corestate {
                 assert(core_states.values().contains(other));
                 assert(overlap(
                     MemRegion { base: other.vaddr(), size: other.vmem_pte_size(pt) },
@@ -712,7 +707,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
             candidate_size,
         ),
 {
-    assert  (os::candidate_mapping_overlaps_inflight_vmem(
+    assert(os::candidate_mapping_overlaps_inflight_vmem(
         s.interp_pt_mem(),
         s.core_states.values(),
         base,
@@ -722,18 +717,19 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
         base,
         candidate_size,
     )) by {
-        if (os::candidate_mapping_overlaps_inflight_vmem(
+        if os::candidate_mapping_overlaps_inflight_vmem(
             s.interp_pt_mem(),
             s.core_states.values(),
             base,
             candidate_size,
-        )) {
+        ) {
             let corestate = choose|b: os::CoreState| #![auto]
                 {
                     &&& s.core_states.values().contains(b)
                     &&& match b {
                         os::CoreState::MapWaiting { vaddr, pte, .. }
-                        | os::CoreState::MapExecuting { vaddr, pte, .. } => {
+                        | os::CoreState::MapExecuting { vaddr, pte, .. }
+                        | os::CoreState::MapDone { vaddr, pte, .. } => {
                             overlap(
                                 MemRegion { base: vaddr, size: pte.frame.size },
                                 MemRegion { base: base, size: candidate_size },
@@ -770,7 +766,8 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
             let core = choose|core| #[trigger] c.valid_core(core) && s.core_states[core] == corestate;
             match corestate {
                 os::CoreState::MapWaiting { ult_id, vaddr, pte, .. }
-                | os::CoreState::MapExecuting { ult_id, vaddr, pte, .. } => {
+                | os::CoreState::MapExecuting { ult_id, vaddr, pte, .. }
+                | os::CoreState::MapDone { ult_id, vaddr, pte, .. } => {
                     assert(c.valid_ult(ult_id));
                     let thread_state = s.interp_thread_state(c)[ult_id];
                     assert(s.interp(c).thread_state[ult_id] == thread_state);
@@ -829,11 +826,11 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
         base,
         candidate_size,
     )) by {
-        if (hlspec::candidate_mapping_overlaps_inflight_vmem(
+        if hlspec::candidate_mapping_overlaps_inflight_vmem(
             s.interp(c).thread_state.values(),
             base,
             candidate_size,
-        )) {
+        ) {
             let thread_state = choose|b|
                 {
                     &&& s.interp(c).thread_state.values().contains(b)
@@ -983,12 +980,12 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
             s.core_states.values(),
             candidate,
         ) {
-            let corestate = choose|b: os::CoreState| #![auto]
-                {
+            let corestate = choose|b: os::CoreState| #![auto] {
                     &&& s.core_states.values().contains(b)
                     &&& match b {
                         os::CoreState::MapWaiting { vaddr, pte, .. }
-                        | os::CoreState::MapExecuting { vaddr, pte, .. } => {
+                        | os::CoreState::MapExecuting { vaddr, pte, .. }
+                        | os::CoreState::MapDone { vaddr, pte, .. } => {
                             overlap(candidate.frame, pte.frame)
                         },
                         os::CoreState::UnmapWaiting { ult_id, vaddr }
@@ -1009,7 +1006,8 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
             assert(c.valid_core(core));
             match corestate {
                 os::CoreState::MapWaiting { ult_id, vaddr, pte, .. }
-                | os::CoreState::MapExecuting { ult_id, vaddr, pte, .. } => {
+                | os::CoreState::MapExecuting { ult_id, vaddr, pte, .. }
+                | os::CoreState::MapDone { ult_id, vaddr, pte, .. } => {
                     assert(c.valid_ult(ult_id));
                     let thread_state = s.interp_thread_state(c)[ult_id];
                     assert(s.interp(c).thread_state[ult_id] == thread_state);
@@ -1093,10 +1091,10 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
         s.core_states.values(),
         candidate,
     )) by {
-        if (hlspec::candidate_mapping_overlaps_inflight_pmem(
+        if hlspec::candidate_mapping_overlaps_inflight_pmem(
             s.interp(c).thread_state.values(),
             candidate,
-        )) {
+        ) {
             let thread_state = choose|b| {
                     &&& s.interp(c).thread_state.values().contains(b)
                     &&& match b {
@@ -1185,7 +1183,7 @@ pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, valu
             let k = choose|some_key| #[trigger]
                 map.dom().contains(some_key) && (map[some_key] == values);
             assert(map.insert(key, value).dom().contains(k));
-            if (k == key) {
+            if k == key {
                 assert(map.index(key) == values);
             } else {
                 assert(map[k] === map.insert(key, value)[k]);
