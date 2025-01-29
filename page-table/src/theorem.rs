@@ -11,9 +11,9 @@ pub enum RLbl {
     Tau,
     MemOp      { thread_id: nat, vaddr: nat, op: MemOp },
     MapStart   { thread_id: nat, vaddr: nat, pte: PTE },
-    MapEnd     { thread_id: nat, result: Result<(), ()> },
+    MapEnd     { thread_id: nat, vaddr: nat, result: Result<(), ()> },
     UnmapStart { thread_id: nat, vaddr: nat },
-    UnmapEnd   { thread_id: nat, result: Result<(), ()> },
+    UnmapEnd   { thread_id: nat, vaddr: nat, result: Result<(), ()> },
 }
 
 proof fn lemma1_init(c: os::Constants, pre: os::State)

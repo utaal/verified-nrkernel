@@ -262,81 +262,57 @@ pub proof fn insert_map_preserves_unique(
 //                                        Step preserves inv proofs                                              //
 //                                                                                                               //
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-pub proof fn unmap_start_preserves_inv(c: Constants, s1: State, s2: State, thread_id: nat, vaddr: nat, lbl: RLbl)
+pub proof fn unmap_start_preserves_inv(c: Constants, s1: State, s2: State, lbl: RLbl)
     requires
-        step_UnmapStart(c, s1, s2, thread_id, vaddr, lbl),
+        step_UnmapStart(c, s1, s2, lbl),
         s1.sound ==> inv(c, s1),
         s1.sound,
-        s1.thread_state.dom().contains(thread_id),
+        s1.thread_state.dom().contains(lbl->UnmapStart_thread_id),
     ensures
         s2.sound ==> inv(c, s2),
 {
+    let vaddr = lbl->UnmapStart_vaddr;
+    let thread_id = lbl->UnmapStart_thread_id;
     if s2.sound {
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s1.mappings.remove(vaddr));
-        assert(forall|id: nat|
-            #![auto]
-            s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
-        let pte = if s1.mappings.dom().contains(vaddr) {
-            Some(s1.mappings.index(vaddr))
-        } else {
-            Option::None
-        };
-        assert(s2.thread_state.values().subset_of(
-            s1.thread_state.values().insert(ThreadState::Unmap { vaddr, pte }),
-        ));
-        insert_non_map_preserves_unique(
-            s1.thread_state,
-            thread_id,
-            ThreadState::Unmap { vaddr, pte },
-        );
+        assert(forall|id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings[id] == s2.mappings[id]);
+        let pte = if s1.mappings.dom().contains(vaddr) { Some(s1.mappings[vaddr]) } else { Option::None };
+        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(ThreadState::Unmap { vaddr, pte })));
+        insert_non_map_preserves_unique(s1.thread_state, thread_id, ThreadState::Unmap { vaddr, pte });
     } 
 }
 
-pub proof fn map_start_preserves_inv(
-    c: Constants,
-    s1: State,
-    s2: State,
-    thread_id: nat,
-    vaddr: nat,
-    pte: PTE,
-    lbl: RLbl,
-)
+pub proof fn map_start_preserves_inv(c: Constants, s1: State, s2: State, lbl: RLbl)
     requires
-        step_MapStart(c, s1, s2, thread_id, vaddr, pte, lbl),
+        step_MapStart(c, s1, s2, lbl),
         s1.sound ==> inv(c, s1),
         s1.sound,
-        s1.thread_state.dom().contains(thread_id),
+        s1.thread_state.dom().contains(lbl->MapStart_thread_id),
     ensures
         s2.sound ==> inv(c, s2),
 {
+    let thread_id = lbl->MapStart_thread_id;
+    let vaddr = lbl->MapStart_vaddr;
+    let pte = lbl->MapStart_pte;
     if s2.sound {
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
-        assert(forall|id: nat|
-            #![auto]
-            s2.mappings.dom().contains(id) ==> s1.mappings.index(id) == s2.mappings.index(id));
-        assert(s2.thread_state.values().subset_of(
-            s1.thread_state.values().insert(ThreadState::Map { vaddr, pte }),
-        ));
+        assert(forall|id: nat| #![auto] s2.mappings.dom().contains(id) ==> s1.mappings[id] == s2.mappings[id]);
+        assert(s2.thread_state.values().subset_of(s1.thread_state.values().insert(ThreadState::Map { vaddr, pte })));
         insert_map_preserves_unique(s1.thread_state, thread_id, vaddr, pte);
     } 
 }
 
-pub proof fn map_end_preserves_inv(
-    c: Constants,
-    s1: State,
-    s2: State,
-    thread_id: nat,
-    result: Result<(), ()>,
-    lbl: RLbl,
-)
+pub proof fn map_end_preserves_inv(c: Constants, s1: State, s2: State, lbl: RLbl)
     requires
-        step_MapEnd(c, s1, s2, thread_id, result, lbl),
+        step_MapEnd(c, s1, s2, lbl),
         s1.sound ==> inv(c, s1),
         s1.sound,
-        s1.thread_state.dom().contains(thread_id),
+        s1.thread_state.contains_key(lbl->MapEnd_thread_id),
     ensures
         s2.sound ==> inv(c, s2),
 {
+    let thread_id = lbl->MapEnd_thread_id;
+    let result = lbl->MapEnd_result;
     if let ThreadState::Map { vaddr, pte } = s1.thread_state.index(thread_id) {
         lemma_mem_domain_from_mapping_finite(c.phys_mem_size, s2.mappings);
         assert(s2.thread_state.values().subset_of(

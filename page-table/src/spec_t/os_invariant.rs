@@ -83,7 +83,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
                 os::CoreState::UnmapWaiting { vaddr, .. }
                 | os::CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
                     if s2.interp_pt_mem().contains_key(vaddr) {
-                        if step matches os::Step::UnmapStart { ult_id, vaddr } {
+                        if step matches os::Step::UnmapStart { core } {
                             // MB: Not sure how this would be provable here but I think the proof worked at
                             // some point?
                             // May have to split invariant into two:
@@ -248,10 +248,12 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
 
     if s2.sound {
         match step {
-            //Map steps
-            os::Step::MapStart { ult_id, vaddr, pte } => {
-                let core = c.ult2core[ult_id];
-                let corestate = os::CoreState::MapWaiting { ult_id, vaddr, pte };
+            // Map steps
+            os::Step::MapStart { core } => {
+                let thread_id = lbl->MapStart_thread_id;
+                let vaddr = lbl->MapStart_vaddr;
+                let pte = lbl->MapStart_pte;
+                let corestate = os::CoreState::MapWaiting { ult_id: thread_id, vaddr, pte };
                 lemma_insert_no_overlap_preserves_no_overlap(
                     c,
                     s1.core_states,
@@ -322,8 +324,9 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 assume(s2.existing_map_no_overlap_existing_vmem(c));
             },
             //Unmap steps
-            os::Step::UnmapStart { ult_id, vaddr } => {
-                let core = c.ult2core[ult_id];
+            os::Step::UnmapStart { core } => {
+                let ult_id = lbl->UnmapStart_thread_id;
+                let vaddr = lbl->UnmapStart_vaddr;
                 let corestate = os::CoreState::UnmapWaiting { ult_id, vaddr };
                 lemma_insert_no_overlap_preserves_no_overlap(
                     c,

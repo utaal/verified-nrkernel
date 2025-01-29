@@ -15,7 +15,6 @@ use crate::spec_t::os_invariant::{
     lemma_map_insert_values_equality, lemma_map_insert_value,
 };
 use crate::spec_t::{hlspec, os};
-use crate::extra::result_map_ok;
 use crate::theorem::RLbl;
 
 verus! {
@@ -299,80 +298,74 @@ proof fn os_next_refines_hl_next(c: os::Constants, s1: os::State, s2: os::State,
     next_step_refines_hl_next_step(c, s1, s2, step, lbl);
 }
 
-proof fn next_step_refines_hl_next_step(
-    c: os::Constants,
-    s1: os::State,
-    s2: os::State,
-    step: os::Step,
-    lbl: RLbl,
-)
+proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
     requires
         os::next_step(c, s1, s2, step, lbl),
         s1.inv(c),
     ensures
-        hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl),
+        hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl),
 {
     broadcast use to_rl1::next_refines;
     next_step_preserves_inv(c, s1, s2, step, lbl);
     match step {
         os::Step::MemOp { .. } => admit(),
-        //Map steps
-        os::Step::MapStart { ult_id, vaddr, pte } => {
-            step_MapStart_refines(c, s1, s2, ult_id, vaddr, pte, lbl);
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+        // Map steps
+        os::Step::MapStart { core } => {
+            step_MapStart_refines(c, s1, s2, core, lbl);
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::MapOpStart { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::MapOpEnd { core, paddr, value, result } => {
             if s1.sound {
                 admit();
                 //step_MapEnd_refines(c, s1, s2, core, paddr, value, result);
             }
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::MapEnd { core } => {
             if s1.sound {
                 admit();
                 //step_MapEnd_refines(c, s1, s2, core);
             }
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
-        //Unmap steps
-        os::Step::UnmapStart { ult_id, vaddr } => {
+        // Unmap steps
+        os::Step::UnmapStart { core } => {
             if s1.sound {
-                step_UnmapStart_refines(c, s1, s2, ult_id, vaddr, lbl);
+                step_UnmapStart_refines(c, s1, s2, core, lbl);
             }
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapOpStart { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapOpChange { core, paddr, value, result } => {
             if s1.sound {
                 step_UnmapOpChange_refines(c, s1, s2, core, paddr, value, result, lbl);
             }
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         }
         os::Step::UnmapOpEnd { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapInitiateShootdown { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapEnd { core } => {
             step_UnmapEnd_refines(c, s1, s2, core, lbl);
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
-        _ => assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c), lbl)),
+        _ => assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl)),
     }
 }
 
@@ -571,31 +564,22 @@ proof fn next_step_refines_hl_next_step(
 //    }
 //}
 
-proof fn step_MapStart_refines(
-    c: os::Constants,
-    s1: os::State,
-    s2: os::State,
-    ult_id: nat,
-    vaddr: nat,
-    pte: PTE,
-    lbl: RLbl,
-)
+proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
     requires
         s1.inv_basic(c),
         s2.inv_basic(c),
-        os::step_MapStart(c, s1, s2, ult_id, vaddr, pte, lbl),
+        os::step_MapStart(c, s1, s2, core, lbl),
     ensures
-        hlspec::step_MapStart(c.interp(), s1.interp(c), s2.interp(c), ult_id, vaddr, pte, lbl),
+        hlspec::step_MapStart(c.interp(), s1.interp(c), s2.interp(c), lbl),
 {
+    let ult_id = lbl->MapStart_thread_id;
+    let vaddr = lbl->MapStart_vaddr;
+    let pte = lbl->MapStart_pte;
+
     let hl_c = c.interp();
     let hl_s1 = s1.interp(c);
     let hl_s2 = s2.interp(c);
-    assert(hlspec::step_Map_enabled(
-        s1.interp(c).thread_state.values(),
-        s1.interp(c).mappings,
-        vaddr,
-        pte,
-    ));
+    assert(hlspec::step_Map_enabled(s1.interp(c).thread_state.values(), s1.interp(c).mappings, vaddr, pte));
     assert(hlspec::valid_thread(hl_c, ult_id));
     assert(s1.interp(c).thread_state[ult_id] === hlspec::ThreadState::Idle);
     let hl_map_sound = hlspec::step_Map_sound(
@@ -1003,31 +987,21 @@ proof fn step_MapStart_refines(
 //    }
 //}
 
-proof fn step_UnmapStart_refines(
-    c: os::Constants,
-    s1: os::State,
-    s2: os::State,
-    ult_id: nat,
-    vaddr: nat,
-    lbl: RLbl,
-)
+proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
     requires
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_UnmapStart(c, s1, s2, ult_id, vaddr, lbl),
+        os::step_UnmapStart(c, s1, s2, core, lbl),
     ensures
-        hlspec::step_UnmapStart(c.interp(), s1.interp(c), s2.interp(c), ult_id, vaddr, lbl),
+        hlspec::step_UnmapStart(c.interp(), s1.interp(c), s2.interp(c), lbl),
 {
+    let vaddr = lbl->UnmapStart_vaddr;
+    let ult_id = lbl->UnmapStart_thread_id;
     let hl_c = c.interp();
     let hl_s1 = s1.interp(c);
     let hl_s2 = s2.interp(c);
-    let core = c.ult2core[ult_id];
-    let pte = if hl_s1.mappings.dom().contains(vaddr) {
-        Some(hl_s1.mappings[vaddr])
-    } else {
-        Option::None
-    };
+    let pte = if hl_s1.mappings.dom().contains(vaddr) { Some(hl_s1.mappings[vaddr]) } else { Option::None };
     let pte_size = if pte is Some { pte.unwrap().frame.size } else { 0 };
     assert(hlspec::step_Unmap_enabled(vaddr));
     assert(hlspec::valid_thread(hl_c, ult_id));
@@ -1363,24 +1337,13 @@ proof fn step_UnmapOpChange_refines(
     assert(s1.effective_mappings() =~= s2.effective_mappings())
 }
 
-proof fn step_UnmapEnd_refines(
-    c: os::Constants,
-    s1: os::State,
-    s2: os::State,
-    core: Core,
-    lbl: RLbl,
-)
+proof fn step_UnmapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
     requires
         s1.inv(c),
         os::step_UnmapEnd(c, s1, s2, core, lbl),
     ensures
-        ({
-            &&& s1.core_states[core] matches os::CoreState::UnmapOpDone { result, ult_id, .. }
-            &&& hlspec::step_UnmapEnd(c.interp(), s1.interp(c), s2.interp(c), ult_id, result_map_ok(result, |r| ()), lbl)
-        } || {
-            &&& s1.core_states[core] matches os::CoreState::UnmapShootdownWaiting { ult_id, result, .. }
-            &&& hlspec::step_UnmapEnd(c.interp(), s1.interp(c), s2.interp(c), ult_id, result_map_ok(result, |r| ()), lbl)
-        }),
+        s1.core_states[core] is UnmapOpDone || s1.core_states[core] is UnmapShootdownWaiting,
+        hlspec::step_UnmapEnd(c.interp(), s1.interp(c), s2.interp(c), lbl),
 {
     let hl_c = c.interp();
     let hl_s1 = s1.interp(c);
