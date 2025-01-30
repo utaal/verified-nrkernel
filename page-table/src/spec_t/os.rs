@@ -33,7 +33,8 @@ pub struct State {
     //                  (and some aux inv to prove it, where shootdown acked ==> neg_writes empty
     //                  for that core)
     //
-    //Does not affect behaviour of os_specs, just set when operations with overlapping operations are used
+    /// `sound` is a history variable. It doesn't affect the behavior of the state machine but is
+    /// used in the refinement.
     pub sound: bool,
 }
 
@@ -200,6 +201,7 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, core: Core, lbl:
     &&& core == c.ult2core[thread_id]
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::MemOp(core, vaddr as usize, op))
+    // FIXME(MB): This additional enabling condition here is kind of fishy
     &&& vaddr <= usize::MAX
     //new state
     &&& s2.core_states == s1.core_states
