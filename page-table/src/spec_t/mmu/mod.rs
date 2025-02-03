@@ -1,7 +1,6 @@
 pub mod rl1;
 pub mod rl2;
 pub mod rl3;
-pub mod rl3_code;
 pub mod pt_mem;
 pub mod translation;
 pub mod defs;

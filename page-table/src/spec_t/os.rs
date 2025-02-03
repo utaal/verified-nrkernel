@@ -40,11 +40,6 @@ pub struct State {
     pub sound: bool,
 }
 
-//pub struct ShootdownVector {
-//    pub vaddr: nat,
-//    pub open_requests: Set<Core>,
-//}
-
 #[allow(inconsistent_fields)]
 pub enum CoreState {
     Idle,
