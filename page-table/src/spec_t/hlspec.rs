@@ -393,12 +393,8 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, lbl: RLbl) -> b
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn step_Unmap_sound(
-    inflights: Set<ThreadState>,
-    vaddr: nat,
-    pte_size: nat,
-) -> bool {
-    !candidate_mapping_overlaps_inflight_vmem(inflights, vaddr, pte_size)
+pub open spec fn step_Unmap_sound(s1: State, vaddr: nat, pte_size: nat) -> bool {
+    !candidate_mapping_overlaps_inflight_vmem(s1.thread_state.values(), vaddr, pte_size)
 }
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
@@ -422,7 +418,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, lbl: RLbl) 
     &&& step_Unmap_enabled(vaddr)
     &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] === ThreadState::Idle
-    &&& if step_Unmap_sound(s1.thread_state.values(), vaddr, pte_size) {
+    &&& if step_Unmap_sound(s1, vaddr, pte_size) {
             &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Unmap { vaddr, pte })
             &&& if pte is None {
                 &&& s2.mappings === s1.mappings

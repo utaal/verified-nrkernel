@@ -378,13 +378,8 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Unmap
 ///////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn step_Unmap_sound(
-    pt: Map<nat, PTE>,
-    inflightargs: Set<CoreState>,
-    vaddr: nat,
-    pte_size: nat,
-) -> bool {
-    !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte_size)
+pub open spec fn step_Unmap_sound(s1: State, vaddr: nat, pte_size: nat) -> bool {
+    !candidate_mapping_overlaps_inflight_vmem(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte_size)
 }
 
 pub open spec fn step_Unmap_enabled(vaddr: nat) -> bool {
@@ -411,7 +406,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, core: Core,
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ult_id: thread_id, vaddr })
     &&& s2.TLB_Shootdown == s1.TLB_Shootdown
-    &&& s2.sound == s1.sound && step_Unmap_sound(pt, s1.core_states.values(), vaddr, pte_size)
+    &&& s2.sound == s1.sound && step_Unmap_sound(s1, vaddr, pte_size)
     }
 }
 

@@ -190,8 +190,8 @@ proof fn lemma_unmap_soundness_equality(
     requires
         s.inv_basic(c),
     ensures
-        hlspec::step_Unmap_sound(s.interp(c).thread_state.values(), vaddr, pte_size)
-            <==> os::step_Unmap_sound(s.interp_pt_mem(), s.core_states.values(), vaddr, pte_size),
+        hlspec::step_Unmap_sound(s.interp(c), vaddr, pte_size)
+            <==> os::step_Unmap_sound(s, vaddr, pte_size),
 {
     lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(c, s, vaddr, pte_size);
     lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(c, s, vaddr, pte_size);
@@ -870,7 +870,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
     assert(hl_s1.thread_state[ult_id] === hlspec::ThreadState::Idle);
 
     lemma_unmap_soundness_equality(c, s1, vaddr, pte_size);
-    if hlspec::step_Unmap_sound(hl_s1.thread_state.values(), vaddr, pte_size) {
+    if hlspec::step_Unmap_sound(hl_s1, vaddr, pte_size) {
         assert(hl_s1.sound == hl_s2.sound);
         assert forall|key| #[trigger]
             hl_s1.thread_state.dom().contains(key) implies hl_s1.thread_state.insert(
