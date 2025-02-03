@@ -5,7 +5,7 @@ use crate::spec_t::os;
 use crate::spec_t::mmu;
 use crate::spec_t::mmu::defs::{
     PageTableEntryExec,
-    PTE,
+    //PTE,
     //aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
     //candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, MemRegion, PTE,
     Core,
@@ -14,34 +14,29 @@ use crate::theorem::RLbl;
 
 verus! {
 
-pub enum RLblIn {
-    Tau,
-    MapStart   { thread_id: nat, vaddr: nat, pte: PTE },
-    MapEnd     { thread_id: nat, vaddr: nat },
-    UnmapStart { thread_id: nat, vaddr: nat },
-    UnmapEnd   { thread_id: nat, vaddr: nat },
-}
+// TODO: This is from the verus test suite. Can we have it in vstd?
+#[verifier::external_body]
+#[verifier::reject_recursive_types_in_ground_variants(T)]
+pub tracked struct Prophecy<T> { _t: core::marker::PhantomData<T> }
 
-impl RLblIn {
-    /// An input label is compatible with a label if they agree on the variant and input arguments.
-    /// (i.e. all the ones present in the input label)
-    pub open spec fn compatible_with(self, lbl: RLbl) -> bool {
-        match self {
-            RLblIn::Tau => lbl is Tau,
-            RLblIn::MapStart   { thread_id, vaddr, pte } => lbl == RLbl::MapStart { thread_id, vaddr, pte },
-            RLblIn::MapEnd     { thread_id, vaddr } => {
-                &&& lbl matches RLbl::MapEnd { thread_id: t, vaddr: v, result }
-                &&& thread_id == t
-                &&& vaddr == v
-            },
-            RLblIn::UnmapStart { thread_id, vaddr } => lbl == RLbl::UnmapStart { thread_id, vaddr },
-            RLblIn::UnmapEnd   { thread_id, vaddr } => {
-                &&& lbl matches RLbl::UnmapEnd { thread_id: t, vaddr: v, result }
-                &&& thread_id == t
-                &&& vaddr == v
-            },
-        }
-    }
+impl<T> Prophecy<T> {
+    #[verifier::prophetic]
+    pub open spec fn value(&self) -> T;
+
+    pub open spec fn may_resolve(&self) -> bool;
+
+    #[verifier::external_body]
+    pub proof fn new() -> (tracked s: Self)
+        ensures s.may_resolve()
+    { unimplemented!() }
+
+    #[verifier::external_body]
+    pub proof fn resolve(tracked &mut self, value: T)
+        requires old(self).may_resolve(),
+        ensures !self.may_resolve(),
+            self.value() == old(self).value(),
+            self.value() == value,
+    { unimplemented!() }
 }
 
 pub enum Progress {
@@ -146,8 +141,7 @@ impl Token {
     pub spec fn consts(self) -> os::Constants;
     pub spec fn os_st(self) -> OSState;
     pub spec fn mmu_st(self) -> mmu::rl3::State;
-    pub spec fn remaining_steps(self) -> Seq<RLblIn>;
-    pub spec fn taken_steps(self) -> Seq<RLbl>;
+    pub spec fn remaining_steps(self) -> Seq<RLbl>;
     pub spec fn progress(self) -> Progress;
 
     pub open spec fn core(self) -> Core {
@@ -167,7 +161,6 @@ impl Token {
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.remaining_steps() == old(self).remaining_steps(),
-            self.taken_steps() == old(self).taken_steps(),
             concurrent_trs(old(self).st(), self.st(), old(self).consts(), old(self).core(), pidx),
     { unimplemented!() }
 
@@ -182,7 +175,6 @@ impl Token {
             self.os_st() == old(self).os_st(),
             self.mmu_st() == old(self).mmu_st(),
             self.remaining_steps() == old(self).remaining_steps(),
-            self.taken_steps() == old(self).taken_steps(),
             tok.pre() == self.mmu_st(),
     { unimplemented!() }
 
@@ -201,7 +193,6 @@ impl Token {
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.remaining_steps() == old(self).remaining_steps(),
-            self.taken_steps() == old(self).taken_steps(),
             self.os_st() == os_post,
             self.mmu_st() == stub@.post(),
     {}
@@ -215,7 +206,6 @@ impl Token {
         requires
             old(self).remaining_steps().len() > 0,
             old(self).progress() is TokenWithdrawn,
-            old(self).remaining_steps().first().compatible_with(lbl),
             os::next(
                 old(self).consts(),
                 old(self).st(),
@@ -226,14 +216,11 @@ impl Token {
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.remaining_steps() == old(self).remaining_steps().drop_first(),
-            //self.taken_steps() == old(self).taken_steps().push(,
             self.os_st() == os_post,
             self.mmu_st() == stub@.post(),
     {}
 }
 
-// TODO: How do we handle outputs in the labels? Need something like "hole labels" and then connect
-//       the outputs to collected hole expressions?
 trait CodeVC {
     // XXX: One problem here:
     // * `progress()` is `Unready` so we're forced to prove that we're not relying on
@@ -241,19 +228,31 @@ trait CodeVC {
     // * But the step of acquiring the lock on this thread is in fact unstable, since
     //   another core might acquire it first.
     // * .. what to do?
-    exec fn sys_do_map(tok: Tracked<Token>, vaddr: usize, pte: PageTableEntryExec) -> (res: (Tracked<Token>, Result<(),()>))
+    //
+    // We specify the steps to be taken as labels. But the label for `MapEnd` includes the return
+    // value, which we want to be equal to the result returned by the function. But we can't
+    // specify this in the requires clause because we can't refer to the result there. Instead we
+    // use an additional prophetic argument, which carries the return value and to which we can
+    // refer in the requires clause.
+    exec fn sys_do_map(
+        tracked tok: &mut Token,
+        vaddr: usize,
+        pte: PageTableEntryExec,
+        tracked proph_res: Prophecy<Result<(),()>>
+        )
+        -> (res: Result<(),()>)
         requires
-            tok@.os_st().core_states[tok@.core()] is Idle,
-            tok@.remaining_steps() === seq![
-                RLblIn::MapStart { thread_id: tok@.thread(), vaddr: vaddr as nat, pte: pte@ },
-                RLblIn::MapEnd { thread_id: tok@.thread(), vaddr: vaddr as nat }
+            old(tok).os_st().core_states[old(tok).core()] is Idle,
+            old(tok).remaining_steps() === seq![
+                RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
+                RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
-            tok@.progress() is Unready,
+            old(tok).progress() is Unready,
+            proph_res.may_resolve(),
         ensures
-            res.0@.remaining_steps() === seq![],
-            forall|i| 0 <= i < tok@.remaining_steps().len() ==> #[trigger] tok@.remaining_steps()[i].compatible_with(res.0@.taken_steps()[i]),
-            res.1 == res.0@.taken_steps()[1]->MapEnd_result,
-            res.0@.progress() is Ready,
+            res == proph_res.value(),
+            tok.remaining_steps() === seq![],
+            tok.progress() is Ready,
     ;
 }
 
