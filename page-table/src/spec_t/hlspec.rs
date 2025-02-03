@@ -38,6 +38,7 @@ pub struct State {
 #[allow(inconsistent_fields)]
 pub enum Step {
     MemOp { pte: Option<(nat, PTE)> },
+    MemOpNA,
     MapStart,
     MapEnd,
     UnmapStart,
@@ -45,13 +46,48 @@ pub enum Step {
     Stutter,
 }
 
-//To allow two-step transitions that preserve arguments
 #[allow(inconsistent_fields)]
 pub enum ThreadState {
     Map { vaddr: nat, pte: PTE },
     Unmap { vaddr: nat, pte: Option<PTE> },
     Idle,
 }
+
+impl State {
+    pub open spec fn vaddr_mapping_is_being_modified(self, c: Constants, va: nat) -> bool {
+        exists|thread| {
+            &&& c.valid_thread(thread)
+            &&& match self.thread_state[thread] {
+                ThreadState::Map { vaddr, pte } => between(va, vaddr, vaddr + pte.frame.size),
+                ThreadState::Unmap { vaddr, pte: Some(pte) }
+                    => between(va, vaddr, vaddr + pte.frame.size),
+                _ => false,
+            }
+        }
+    }
+
+    pub open spec fn vaddr_mapping_is_being_modified_choose(self, c: Constants, va: nat) -> Option<(nat, PTE)>
+        recommends self.vaddr_mapping_is_being_modified(c, va)
+    {
+        let thread = choose|thread| {
+            &&& c.valid_thread(thread)
+            &&& match self.thread_state[thread] {
+                ThreadState::Map { vaddr, pte } => between(va, vaddr, vaddr + pte.frame.size),
+                ThreadState::Unmap { vaddr, pte: Some(pte) }
+                    => between(va, vaddr, vaddr + pte.frame.size),
+                _ => false,
+            }
+        };
+        match self.thread_state[thread] {
+            // Non-atomic pagefault
+            ThreadState::Map { vaddr, pte }              => None,
+            // Non-atomic successful translation
+            ThreadState::Unmap { vaddr, pte: Some(pte) } => Some((vaddr, pte)),
+            _                                            => arbitrary(),
+        }
+    }
+}
+
 
 pub open spec fn wf(c: Constants, s: State) -> bool {
     &&& forall|id: nat| id < c.thread_no <==> s.thread_state.contains_key(id)
@@ -92,24 +128,20 @@ pub open spec fn mem_domain_from_entry_contains(
     &&& pmem_idx < phys_mem_size
 }
 
-pub open spec fn mem_domain_from_mappings(
-    phys_mem_size: nat,
-    mappings: Map<nat, PTE>,
-) -> Set<nat> {
+pub open spec fn mem_domain_from_mappings(phys_mem_size: nat, mappings: Map<nat, PTE>) -> Set<nat> {
     Set::new(|word_idx: nat| mem_domain_from_mappings_contains(phys_mem_size, word_idx, mappings))
 }
 
-pub open spec fn mem_domain_from_entry(phys_mem_size: nat, base: nat, pte: PTE) -> Set<
-    nat,
-> {
-    Set::new(
-        |word_idx: nat|
+pub open spec fn mem_domain_from_entry(phys_mem_size: nat, base: nat, pte: PTE) -> Set<nat> {
+    Set::new(|word_idx: nat|
             mem_domain_from_entry_contains(phys_mem_size, (word_idx * WORD_SIZE as nat), base, pte),
     )
 }
 
-pub open spec fn valid_thread(c: Constants, thread_id: nat) -> bool {
-    thread_id < c.thread_no
+impl Constants {
+    pub open spec fn valid_thread(self, thread_id: nat) -> bool {
+        thread_id < self.thread_no
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -170,35 +202,29 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
     inflightargs: Set<ThreadState>,
     candidate: PTE,
 ) -> bool {
-    &&& exists|b: ThreadState|
-        #![auto]
-        {
-            &&& inflightargs.contains(b)
-            &&& match b {
-                ThreadState::Map { vaddr, pte } => { overlap(candidate.frame, pte.frame) },
-                ThreadState::Unmap { vaddr, pte } => {
-                    &&& pte.is_some()
-                    &&& overlap(candidate.frame, pte.unwrap().frame)
-                },
-                _ => { false },
-            }
+    exists|b: ThreadState| #![auto] {
+        &&& inflightargs.contains(b)
+        &&& match b {
+            ThreadState::Map { vaddr, pte } => overlap(candidate.frame, pte.frame),
+            ThreadState::Unmap { vaddr, pte } => {
+                &&& pte.is_some()
+                &&& overlap(candidate.frame, pte.unwrap().frame)
+            },
+            _ => { false },
         }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // MMU atomic ReadWrite
 ///////////////////////////////////////////////////////////////////////////////////////////////
-//since unmap deleted pte inflight pte == pagefault
 pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, pte: Option<(nat, PTE)>, lbl: RLbl) -> bool {
     &&& lbl matches RLbl::MemOp { thread_id, vaddr, op }
     &&& {
     let vmem_idx = mem::word_index_spec(vaddr);
-    &&& s2.sound == s1.sound
     &&& aligned(vaddr, 8)
-    &&& s2.mappings === s1.mappings
-    &&& valid_thread(c, thread_id)
-    &&& s1.thread_state[thread_id] === ThreadState::Idle
-    &&& s2.thread_state === s1.thread_state
+    &&& c.valid_thread(thread_id)
+    &&& s1.thread_state[thread_id] is Idle
     &&& match pte {
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
@@ -209,12 +235,11 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, pte: Option<(nat
             // .. and the result depends on the flags.
             &&& match op {
                 MemOp::Store { new_value, result } => {
-                    if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor
-                        && pte.flags.is_writable {
+                    if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
                         &&& result is Ok
                         &&& s2.mem === s1.mem.insert(vmem_idx, new_value as nat)
                     } else {
-                        //&&& result is Undefined
+                        &&& result is Pagefault
                         &&& s2.mem === s1.mem
                     }
                 },
@@ -224,8 +249,7 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, pte: Option<(nat
                         &&& result is Value
                         &&& result->0 == s1.mem.index(vmem_idx)
                     } else {
-                        true
-                        //&&& result is Undefined
+                        &&& result is Pagefault
                     }
                 },
             }
@@ -233,15 +257,74 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, pte: Option<(nat
         None => {
             // If pte is None, no mapping containing vaddr exists..
             &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
-            // .. and the result is always a Undefined and an unchanged memory.
+            // .. and the result is always a pagefault and an unchanged memory.
             &&& s2.mem === s1.mem
-            //&&& match op {
-            //    MemOp::Store { new_value, result } => result is Undefined,
-            //    MemOp::Load { is_exec, result } => result is Undefined,
-            //}
+            &&& op.is_pagefault()
         },
     }
+    &&& s2.mappings === s1.mappings
+    &&& s2.thread_state === s1.thread_state
+    &&& s2.sound == s1.sound
     }
+}
+
+/// If there's an inflight map/unmap for this virtual address, we might still see a stale result.
+/// TODO: This duplicates all of the step_MemOp transition. Ideally we could find a way to combine
+/// these. But we need to be precise enough to state that the only "unexpected" thing we can see is
+/// the old stale result. (Combining is also better for use to reason about implementations but
+/// generally we can easily show that this transition is irrelevant.)
+pub open spec fn step_MemOpNA(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
+    &&& lbl matches RLbl::MemOp { thread_id, vaddr, op }
+
+    &&& s1.vaddr_mapping_is_being_modified(c, vaddr)
+    &&& {
+    let pte = s1.vaddr_mapping_is_being_modified_choose(c, vaddr);
+    let vmem_idx = mem::word_index_spec(vaddr);
+    &&& aligned(vaddr, 8)
+    &&& c.valid_thread(thread_id)
+    &&& s1.thread_state[thread_id] is Idle
+    &&& match pte {
+        Some((base, pte)) => {
+            let paddr = (pte.frame.base + (vaddr - base)) as nat;
+            let pmem_idx = mem::word_index_spec(paddr);
+            // If pte is Some, it's an existing mapping that contains vaddr..
+            &&& s1.mappings.contains_pair(base, pte)
+            &&& between(vaddr, base, base + pte.frame.size)
+            // .. and the result depends on the flags.
+            &&& match op {
+                MemOp::Store { new_value, result } => {
+                    if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
+                        &&& result is Ok
+                        &&& s2.mem === s1.mem.insert(vmem_idx, new_value as nat)
+                    } else {
+                        &&& result is Pagefault
+                        &&& s2.mem === s1.mem
+                    }
+                },
+                MemOp::Load { is_exec, result } => {
+                    &&& s2.mem === s1.mem
+                    &&& if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                        &&& result is Value
+                        &&& result->0 == s1.mem.index(vmem_idx)
+                    } else {
+                        &&& result is Pagefault
+                    }
+                },
+            }
+        },
+        None => {
+            // If pte is None, no mapping containing vaddr exists..
+            &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
+            // .. and the result is always a pagefault and an unchanged memory.
+            &&& s2.mem === s1.mem
+            &&& op.is_pagefault()
+        },
+    }
+    &&& s2.mappings === s1.mappings
+    &&& s2.thread_state === s1.thread_state
+    &&& s2.sound == s1.sound
+    }
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -279,7 +362,7 @@ pub open spec fn step_Map_enabled(
 pub open spec fn step_MapStart(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
     &&& lbl matches RLbl::MapStart { thread_id, vaddr, pte }
     &&& step_Map_enabled(s1.thread_state.values(), s1.mappings, vaddr, pte)
-    &&& valid_thread(c, thread_id)
+    &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] === ThreadState::Idle
     &&& if step_Map_sound(s1.mappings, s1.thread_state.values(), vaddr, pte) {
         state_unchanged_besides_thread_state(s1, s2, thread_id, ThreadState::Map { vaddr, pte })
@@ -291,7 +374,7 @@ pub open spec fn step_MapStart(c: Constants, s1: State, s2: State, lbl: RLbl) ->
 pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
     &&& lbl matches RLbl::MapEnd { thread_id, vaddr, result }
     &&& s2.sound == s1.sound
-    &&& valid_thread(c, thread_id)
+    &&& c.valid_thread(thread_id)
     &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Idle)
     &&& s1.thread_state[thread_id] matches ThreadState::Map { vaddr: vaddr2, pte }
     &&& vaddr == vaddr2
@@ -337,7 +420,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, lbl: RLbl) 
     let pte = if s1.mappings.contains_key(vaddr) { Some(s1.mappings[vaddr]) } else { Option::None };
     let pte_size = if pte is Some { pte.unwrap().frame.size } else { 0 };
     &&& step_Unmap_enabled(vaddr)
-    &&& valid_thread(c, thread_id)
+    &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] === ThreadState::Idle
     &&& if step_Unmap_sound(s1.thread_state.values(), vaddr, pte_size) {
             &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Unmap { vaddr, pte })
@@ -347,9 +430,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, lbl: RLbl) 
             } else {
                 &&& s2.mappings === s1.mappings.remove(vaddr)
                 &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s2.mappings)
-                &&& (forall|idx: nat|
-                    #![auto]
-                    s2.mem.contains_key(idx) ==> s2.mem[idx] === s1.mem[idx])
+                &&& forall|idx: nat| #![auto] s2.mem.contains_key(idx) ==> s2.mem[idx] === s1.mem[idx]
             }
             &&& s2.mem.dom() === mem_domain_from_mappings(c.phys_mem_size, s1.mappings.remove(vaddr))
             &&& s2.sound == s1.sound
@@ -362,7 +443,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, lbl: RLbl) 
 pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
     &&& lbl matches RLbl::UnmapEnd { thread_id, vaddr, result }
 
-    &&& valid_thread(c, thread_id)
+    &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] matches ThreadState::Unmap { vaddr: v2, pte }
     &&& vaddr == v2
     &&& pte is Some <==> result is Ok
@@ -383,6 +464,7 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: 
     if s1.sound {
         match step {
             Step::MemOp { pte } => step_MemOp(c, s1, s2, pte, lbl),
+            Step::MemOpNA       => step_MemOpNA(c, s1, s2, lbl),
             Step::MapStart      => step_MapStart(c, s1, s2, lbl),
             Step::MapEnd        => step_MapEnd(c, s1, s2, lbl),
             Step::UnmapStart    => step_UnmapStart(c, s1, s2, lbl),
@@ -400,10 +482,9 @@ pub open spec fn next(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
 
 pub open spec fn pmem_no_overlap(mappings: Map<nat, PTE>) -> bool {
     forall|bs1: nat, bs2: nat|
-        mappings.contains_key(bs1) && mappings.contains_key(bs2) && overlap(
-            mappings.index(bs1).frame,
-            mappings.index(bs2).frame,
-        ) ==> equal(bs1, bs2)
+        mappings.contains_key(bs1) && mappings.contains_key(bs2)
+        && overlap(mappings.index(bs1).frame, mappings.index(bs2).frame)
+        ==> bs1 == bs2
 }
 
 pub open spec fn inflight_map_no_overlap_pmem(

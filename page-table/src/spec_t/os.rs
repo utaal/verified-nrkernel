@@ -968,13 +968,15 @@ impl Step {
                 // The transition is defined on rl3 but we're doing the case distinction on rl1
                 // because in the OS refinement proofs we're working with the rl1 transitions.
                 let mmu_step = choose|step| rl1::next_step(pre.mmu@, post.mmu@, c.mmu, step, lbl);
-                let hl_pte = match mmu_step {
-                    rl1::Step::MemOpNoTr | rl1::Step::MemOpNoTrNA { .. } => None,
+                match mmu_step {
+                    rl1::Step::MemOpNoTr => hlspec::Step::MemOp { pte: None },
+                    rl1::Step::MemOpNoTrNA { .. } => hlspec::Step::MemOpNA,
                     rl1::Step::MemOpTLB { tlb_va } =>
-                        Some((tlb_va as nat, pre.effective_mappings()[tlb_va as nat])),
+                        hlspec::Step::MemOp {
+                            pte: Some((tlb_va as nat, pre.effective_mappings()[tlb_va as nat]))
+                        },
                     _ => arbitrary(),
-                };
-                hlspec::Step::MemOp { pte: hl_pte }
+                }
             },
             Step::ReadPTMem { .. } => hlspec::Step::Stutter,
             Step::Barrier { .. } => hlspec::Step::Stutter,

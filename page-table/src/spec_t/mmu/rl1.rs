@@ -91,12 +91,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     }
 }
 
-pub open spec fn step_MemOpNoTr(
-    pre: State,
-    post: State,
-    c: Constants,
-    lbl: Lbl,
-) -> bool {
+pub open spec fn step_MemOpNoTr(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
     &&& pre.happy
 
@@ -107,13 +102,7 @@ pub open spec fn step_MemOpNoTr(
     &&& post == pre
 }
 
-pub open spec fn step_MemOpNoTrNA(
-    pre: State,
-    post: State,
-    c: Constants,
-    vbase: usize,
-    lbl: Lbl,
-) -> bool {
+pub open spec fn step_MemOpNoTrNA(pre: State, post: State, c: Constants, vbase: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::MemOp(core, vaddr, memop)
     &&& pre.happy
 
