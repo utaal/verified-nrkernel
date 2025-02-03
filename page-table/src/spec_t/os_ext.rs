@@ -1,5 +1,5 @@
 use vstd::prelude::*;
-use crate::spec_t::mmu::defs::{ Core };
+use crate::spec_t::mmu::defs::{ Core, MemRegion, overlap, aligned };
 
 verus! {
 
@@ -12,14 +12,14 @@ pub enum Lbl {
     ReleaseLock { core: Core },
     InitShootdown { core: Core, vaddr: nat, cores: Set<Core> },
     AckShootdown { core: Core },
-    //Alloc { core: Core, res: MemRegion },
-    //Dealloc { core: Core, reg: MemRegion },
+    Alloc { core: Core, res: MemRegion },
+    Dealloc { core: Core, reg: MemRegion },
 }
 
 pub struct State {
     pub lock: Option<Core>,
     pub shootdown_vec: ShootdownVector,
-    // TODO: allocation stuff
+    pub allocated: Set<MemRegion>,
 }
 
 pub struct ShootdownVector {
@@ -41,11 +41,19 @@ impl Constants {
     }
 }
 
+impl State {
+    pub open spec fn disjoint_from_allocations(self, reg: MemRegion) -> bool {
+        forall|reg2| #[trigger] self.allocated.contains(reg2) ==> !overlap(reg, reg2)
+    }
+}
+
 pub enum Step {
     AcquireLock,
     ReleaseLock,
     InitShootdown,
     AckShootdown,
+    Alloc,
+    Dealloc
 }
 
 // State machine transitions
@@ -102,6 +110,33 @@ pub open spec fn step_AckShootdown(pre: State, post: State, c: Constants, lbl: L
     }
 }
 
+// TODO: Hardcoding 4k allocations for now. Should fix that to support large mappings.
+pub open spec fn step_Alloc(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::Alloc { core, res }
+
+    &&& c.valid_core(core)
+    &&& pre.disjoint_from_allocations(res)
+    &&& aligned(res.base, 4096)
+    &&& res.size == 4096
+
+    &&& post == State {
+        allocated: pre.allocated.insert(res),
+        ..pre
+    }
+}
+
+pub open spec fn step_Dealloc(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::Dealloc { core, reg }
+
+    &&& c.valid_core(core)
+    &&& pre.allocated.contains(reg)
+
+    &&& post == State {
+        allocated: pre.allocated.remove(reg),
+        ..pre
+    }
+}
+
 pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl is Tau
     &&& post == pre
@@ -109,16 +144,19 @@ pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -
 
 pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lbl: Lbl) -> bool {
     match step {
-        Step::AcquireLock => step_AcquireLock(pre, post, c, lbl),
-        Step::ReleaseLock => step_ReleaseLock(pre, post, c, lbl),
+        Step::AcquireLock   => step_AcquireLock(pre, post, c, lbl),
+        Step::ReleaseLock   => step_ReleaseLock(pre, post, c, lbl),
         Step::InitShootdown => step_InitShootdown(pre, post, c, lbl),
-        Step::AckShootdown => step_AckShootdown(pre, post, c, lbl),
+        Step::AckShootdown  => step_AckShootdown(pre, post, c, lbl),
+        Step::Alloc         => step_Alloc(pre, post, c, lbl),
+        Step::Dealloc       => step_Dealloc(pre, post, c, lbl),
     }
 }
 
 pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.lock === None
     &&& pre.shootdown_vec.open_requests === set![]
+    &&& pre.allocated === set![]
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -160,7 +198,7 @@ pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
 pub mod code {
     use vstd::prelude::*;
     use crate::spec_t::os_ext;
-    use crate::spec_t::mmu::defs::{ Core };
+    use crate::spec_t::mmu::defs::{ Core, MemRegionExec };
 
     #[verifier(external_body)]
     pub tracked struct Token {}
@@ -228,6 +266,26 @@ pub mod code {
                     vaddr: vaddr as nat,
                     cores: Set::new(|core| tok.consts().valid_core(core))
                 }),
+    {
+        unimplemented!()
+    }
+
+    #[verifier(external_body)]
+    pub exec fn allocate(Tracked(tok): Tracked<Token>) -> (res: (MemRegionExec, Tracked<Stub>))
+        ensures
+            os_ext::step_Alloc(tok.pre(), res.1@.post(), tok.consts(), res.1@.lbl()),
+            res.1@.lbl() == (os_ext::Lbl::Alloc { core: tok.core(), res: res.0@ }),
+    {
+        unimplemented!()
+    }
+
+    #[verifier(external_body)]
+    pub exec fn deallocate(Tracked(tok): Tracked<Token>, reg: MemRegionExec) -> (stub: Tracked<Stub>)
+        requires
+            tok.pre().allocated.contains(reg@)
+        ensures
+            os_ext::step_Dealloc(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
+            stub@.lbl() == (os_ext::Lbl::Dealloc { core: tok.core(), reg: reg@ }),
     {
         unimplemented!()
     }

@@ -921,6 +921,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
             }
         }
         assert(c.valid_core(c.ult2core[ult_id]));
+        // unstable
         assert(hl_s2.thread_state =~= hl_s1.thread_state.insert(
             ult_id,
             hlspec::ThreadState::Unmap { vaddr, pte },
