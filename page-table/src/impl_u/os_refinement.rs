@@ -618,7 +618,7 @@ proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, c
 //                    if core_of_key === core {
 //                    } else {
 //                        assert(c.valid_core(core_of_key));
-//                        assert(!s1.core_states[core_of_key].holds_lock());
+//                        assert(!s1.core_states[core_of_key].is_in_crit_sect());
 //                        if s1.core_states[core_of_key] is UnmapWaiting {
 //                            assert(s1.core_states[core_of_key] == s2.core_states[core_of_key]);
 //                            assert(s1.core_states[c.ult2core[key]]
@@ -821,7 +821,7 @@ proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, c
 //                        },
 //                        _ => false,
 //                    };
-//                assert(!s1.core_states[unmap_core].holds_lock());
+//                assert(!s1.core_states[unmap_core].is_in_crit_sect());
 //                assert(s1.core_states[unmap_core] is UnmapWaiting);
 //                assert(overlap(
 //                    MemRegion { base: vaddr, size: pte.frame.size },
@@ -1108,13 +1108,13 @@ proof fn step_UnmapOpChange_refines(
         assert(hl_s2.thread_state.dom().contains(key));
         let core_of_key = c.ult2core[key];
         assert(c.valid_core(core));
-        assert(s1.core_states[core].holds_lock());
+        assert(s1.core_states[core].is_in_crit_sect());
         assert(c.valid_core(core_of_key));
-        if s1.core_states[core_of_key].holds_lock() {
+        if s1.core_states[core_of_key].is_in_crit_sect() {
             assert(core_of_key === core);
         } else {
             assert(!(core_of_key === core));
-            assert(!s1.core_states[core_of_key].holds_lock());
+            assert(!s1.core_states[core_of_key].is_in_crit_sect());
             assert(s1.core_states.index(core_of_key) == s2.core_states.index(core_of_key));
             assert(s1.core_states[c.ult2core[key]] === s2.core_states[c.ult2core[key]]);
             if s1.core_states.index(core_of_key) is UnmapWaiting {

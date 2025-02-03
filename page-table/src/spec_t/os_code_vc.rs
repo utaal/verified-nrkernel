@@ -39,6 +39,8 @@ impl<T> Prophecy<T> {
     { unimplemented!() }
 }
 
+/*
+
 pub enum Progress {
     Unready,
     Ready,
@@ -394,5 +396,7 @@ trait CodeVC {
 //        SysM::Interface::lemma_concurrent_trs(pre_concurrent_state.st(), state@.st(), pidx);
 //    }
 //}
+
+*/
 
 } // verus!

@@ -55,7 +55,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     //                => !s2.interp_pt_mem().dom().contains(vaddr),
     //            _ => true,
     //        }
-    //    } by { let _ = s1.core_states[core].holds_lock(); }
+    //    } by { let _ = s1.core_states[core].is_in_crit_sect(); }
     //};
     assert(s2.inflight_pte_above_zero_pte_result_consistent(c)) by {
         assert forall|core: Core| c.valid_core(core) implies
@@ -117,9 +117,9 @@ pub proof fn init_implies_tlb_inv(c: os::Constants, s: os::State)
     ensures s.tlb_inv(c),
 {
     to_rl1::init_refines(s.mmu, c.mmu);
-    assert(s.shootdown_vec.open_requests.is_empty());
-    Set::lemma_len0_is_empty(s.shootdown_vec.open_requests);
-    assert(s.shootdown_vec.open_requests === Set::empty());
+    assert(s.os_ext.shootdown_vec.open_requests.is_empty());
+    Set::lemma_len0_is_empty(s.os_ext.shootdown_vec.open_requests);
+    assert(s.os_ext.shootdown_vec.open_requests === Set::empty());
     assert(s.shootdown_cores_valid(c));
     assert(s.successful_IPI(c));
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
@@ -525,8 +525,8 @@ pub proof fn lemma_insert_preserves_no_overlap(
     new_cs: os::CoreState,
 )
     requires
-        new_cs.holds_lock(),
-        forall|cr| #![auto] core_states.dom().contains(cr) && core_states[cr].holds_lock() ==> cr == core,
+        new_cs.is_in_crit_sect(),
+        forall|cr| #![auto] core_states.dom().contains(cr) && core_states[cr].is_in_crit_sect() ==> cr == core,
         core_states.dom().contains(core),
         unique_CoreStates(core_states),
         no_overlap_vmem_values(core_states, pt),
@@ -544,7 +544,7 @@ pub proof fn lemma_insert_preserves_no_overlap(
         implies !core_states.insert(core, new_cs).remove(a).values().contains(core_states.insert(core, new_cs).index(a))
     by {
         if a != core {
-            assert(!core_states[a].holds_lock());
+            assert(!core_states[a].is_in_crit_sect());
             if core_states.insert(core, new_cs).remove(a).values().contains(core_states.insert(core, new_cs)[a]) {
                 let same_core = choose|cr| #![auto]
                     core_states.insert(core, new_cs).dom().contains(cr) && core_states.insert(

@@ -12,6 +12,8 @@ pub enum Lbl {
     ReleaseLock { core: Core },
     InitShootdown { core: Core, vaddr: nat, cores: Set<Core> },
     AckShootdown { core: Core },
+    //Alloc { core: Core, res: MemRegion },
+    //Dealloc { core: Core, reg: MemRegion },
 }
 
 pub struct State {
@@ -26,11 +28,16 @@ pub struct ShootdownVector {
 }
 
 pub struct Constants {
+    pub node_count: nat,
+    pub core_count: nat,
 }
 
 impl Constants {
+    // FIXME: This is duplicated in mmu constants. Can we somehow get rid of one of these?
+    #[verifier(opaque)]
     pub open spec fn valid_core(self, core: Core) -> bool {
-        arbitrary() // FIXME: ??
+        &&& core.node_id < self.node_count
+        &&& core.core_id < self.core_count
     }
 }
 
@@ -72,6 +79,7 @@ pub open spec fn step_InitShootdown(pre: State, post: State, c: Constants, lbl: 
 
     &&& c.valid_core(core)
     &&& pre.shootdown_vec.open_requests === set![]
+    &&& forall|core| cores.contains(core) ==> c.valid_core(core)
 
     &&& post == State {
         shootdown_vec: ShootdownVector { vaddr, open_requests: cores },
@@ -109,7 +117,8 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
 }
 
 pub open spec fn init(pre: State, c: Constants) -> bool {
-    arbitrary() // FIXME: ??
+    &&& pre.lock === None
+    &&& pre.shootdown_vec.open_requests === set![]
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
