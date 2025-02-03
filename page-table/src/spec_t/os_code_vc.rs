@@ -1,15 +1,9 @@
 use vstd::prelude::*;
 
-//use crate::spec_t::mmu::{rl3_code};
 use crate::spec_t::os;
 use crate::spec_t::mmu;
-use crate::spec_t::mmu::defs::{
-    PageTableEntryExec,
-    //PTE,
-    //aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    //candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, MemRegion, PTE,
-    Core,
-};
+use crate::spec_t::os_ext;
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core };
 use crate::theorem::RLbl;
 
 verus! {
@@ -39,8 +33,6 @@ impl<T> Prophecy<T> {
     { unimplemented!() }
 }
 
-/*
-
 pub enum Progress {
     Unready,
     Ready,
@@ -53,7 +45,7 @@ pub tracked struct Token {}
 impl os::Step {
     pub open spec fn is_actor_step(self, c: Core) -> bool {
         match self {
-            os::Step::MMU => true,
+            os::Step::MMU => false,
             os::Step::MemOp { core, .. } |
             os::Step::ReadPTMem { core, .. } |
             os::Step::Barrier { core, .. } |
@@ -119,30 +111,11 @@ pub open spec fn concurrent_trs(pre: os::State, post: os::State, c: os::Constant
 //    }
 //}
 
-/// The OS part of the OS state machine's state. I.e. everything except for `mmu`.
-pub struct OSState {
-    pub core_states: Map<Core, os::CoreState>,
-    pub shootdown_vec: os::ShootdownVector,
-    pub sound: bool,
-}
-
-impl OSState {
-    pub open spec fn combine(self, mmu: mmu::rl3::State) -> os::State {
-        os::State {
-            core_states: self.core_states,
-            shootdown_vec: self.shootdown_vec,
-            sound: self.sound,
-            mmu: mmu,
-        }
-    }
-}
-
 impl Token {
     // User-space thread
     pub spec fn thread(self) -> nat;
     pub spec fn consts(self) -> os::Constants;
-    pub spec fn os_st(self) -> OSState;
-    pub spec fn mmu_st(self) -> mmu::rl3::State;
+    pub spec fn st(self) -> os::State;
     pub spec fn remaining_steps(self) -> Seq<RLbl>;
     pub spec fn progress(self) -> Progress;
 
@@ -150,9 +123,6 @@ impl Token {
         self.consts().ult2core[self.thread()]
     }
 
-    pub open spec fn st(self) -> os::State {
-        self.os_st().combine(self.mmu_st())
-    }
 
     #[verifier(external_body)]
     pub proof fn do_concurrent_trs(tracked &mut self) -> (pidx: nat)
@@ -166,37 +136,37 @@ impl Token {
             concurrent_trs(old(self).st(), self.st(), old(self).consts(), old(self).core(), pidx),
     { unimplemented!() }
 
+
+
+    // Take MMU steps
+
     #[verifier(external_body)]
-    pub proof fn get_env_token(tracked &mut self) -> (tracked tok: mmu::rl3_code::Token)
+    pub proof fn get_env_token_mmu(tracked &mut self) -> (tracked tok: mmu::rl3::code::Token)
         requires
             old(self).progress() is Ready,
         ensures
             self.progress() is TokenWithdrawn,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.os_st() == old(self).os_st(),
-            self.mmu_st() == old(self).mmu_st(),
+            self.st() == old(self).st(),
             self.remaining_steps() == old(self).remaining_steps(),
-            tok.pre() == self.mmu_st(),
+            tok.pre() == old(self).st().mmu,
     { unimplemented!() }
 
     #[verifier(external_body)]
-    pub proof fn register_internal_step(tracked &mut self, tracked stub: Tracked<mmu::rl3_code::Stub>, os_post: OSState)
+    pub proof fn register_internal_step_mmu(tracked &mut self, tracked stub: Tracked<mmu::rl3::code::Stub>, post: os::State)
         requires
             old(self).remaining_steps().len() > 0, // No more steps allowed if we're already finished
             old(self).progress() is TokenWithdrawn,
-            os::next(
-                old(self).consts(),
-                old(self).st(),
-                os_post.combine(stub@.post()),
-                RLbl::Tau),
+            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            post.os_ext == old(self).st().os_ext,
+            post.mmu == stub@.post(),
         ensures
             self.progress() is Unready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.remaining_steps() == old(self).remaining_steps(),
-            self.os_st() == os_post,
-            self.mmu_st() == stub@.post(),
+            self.st() == post,
     {}
 
     // XXX: Problem with this approach: A non-terminating program could take one invalid
@@ -204,33 +174,76 @@ impl Token {
     // Otherwise we'll have to change this to "pre-register" transitions before taking
     // them.
     #[verifier(external_body)]
-    pub proof fn register_external_step(tracked &mut self, tracked stub: Tracked<mmu::rl3_code::Stub>, os_post: OSState, lbl: RLbl)
+    pub proof fn register_external_step_mmu(tracked &mut self, tracked stub: Tracked<mmu::rl3::code::Stub>, post: os::State)
         requires
             old(self).remaining_steps().len() > 0,
             old(self).progress() is TokenWithdrawn,
-            os::next(
-                old(self).consts(),
-                old(self).st(),
-                os_post.combine(stub@.post()),
-                lbl),
+            os::next(old(self).consts(), old(self).st(), post, old(self).remaining_steps().first()),
+            post.os_ext == old(self).st().os_ext,
+            post.mmu == stub@.post(),
         ensures
             self.progress() is Unready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.remaining_steps() == old(self).remaining_steps().drop_first(),
-            self.os_st() == os_post,
-            self.mmu_st() == stub@.post(),
+            self.st() == post,
+    {}
+
+
+
+    // Take os_ext steps
+
+    #[verifier(external_body)]
+    pub proof fn get_env_token_os_ext(tracked &mut self) -> (tracked tok: os_ext::code::Token)
+        requires
+            old(self).progress() is Ready,
+        ensures
+            self.progress() is TokenWithdrawn,
+            self.consts() == old(self).consts(),
+            self.thread() == old(self).thread(),
+            self.st() == old(self).st(),
+            self.remaining_steps() == old(self).remaining_steps(),
+            tok.pre() == old(self).st().os_ext,
+    { unimplemented!() }
+
+    #[verifier(external_body)]
+    pub proof fn register_internal_step_os_ext(tracked &mut self, tracked stub: Tracked<os_ext::code::Stub>, post: os::State)
+        requires
+            old(self).remaining_steps().len() > 0, // No more steps allowed if we're already finished
+            old(self).progress() is TokenWithdrawn,
+            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            post.mmu == old(self).st().mmu,
+            post.os_ext == stub@.post(),
+        ensures
+            self.progress() is Unready,
+            self.consts() == old(self).consts(),
+            self.thread() == old(self).thread(),
+            self.remaining_steps() == old(self).remaining_steps(),
+            self.st() == post,
+    {}
+
+    // XXX: Problem with this approach: A non-terminating program could take one invalid
+    // step and just not register it. Do we have termination checking for exec now?
+    // Otherwise we'll have to change this to "pre-register" transitions before taking
+    // them.
+    #[verifier(external_body)]
+    pub proof fn register_external_step_os_ext(tracked &mut self, tracked stub: Tracked<os_ext::code::Stub>, post: os::State)
+        requires
+            old(self).remaining_steps().len() > 0,
+            old(self).progress() is TokenWithdrawn,
+            os::next(old(self).consts(), old(self).st(), post, old(self).remaining_steps().first()),
+            post.mmu == old(self).st().mmu,
+            post.os_ext == stub@.post(),
+        ensures
+            self.progress() is Unready,
+            self.consts() == old(self).consts(),
+            self.thread() == old(self).thread(),
+            self.remaining_steps() == old(self).remaining_steps().drop_first(),
+            self.st() == post,
     {}
 }
 
 trait CodeVC {
-    // XXX: One problem here:
-    // * `progress()` is `Unready` so we're forced to prove that we're not relying on
-    //   "unstable" preconditions.
-    // * But the step of acquiring the lock on this thread is in fact unstable, since
-    //   another core might acquire it first.
-    // * .. what to do?
-    //
     // We specify the steps to be taken as labels. But the label for `MapEnd` includes the return
     // value, which we want to be equal to the result returned by the function. But we can't
     // specify this in the requires clause because we can't refer to the result there. Instead we
@@ -244,7 +257,7 @@ trait CodeVC {
         )
         -> (res: Result<(),()>)
         requires
-            old(tok).os_st().core_states[old(tok).core()] is Idle,
+            old(tok).st().core_states[old(tok).core()] is MapWaiting,
             old(tok).remaining_steps() === seq![
                 RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
                 RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
@@ -284,7 +297,7 @@ trait CodeVC {
 //
 //    let tracked env_token = state.borrow_mut().get_env_token();
 //    // MapStart is a stutter step in the environment state machine
-//    let stub = mmu::rl3_code::stutter(Tracked(env_token));
+//    let stub = mmu::rl3::code::stutter(Tracked(env_token));
 //
 //    // We change the thread_state with a MapStart transition
 //    let ghost os_post = OSState {
@@ -323,7 +336,7 @@ trait CodeVC {
 //{
 //    let tracked env_token = state.borrow_mut().get_env_token();
 //    // Do the write
-//    let stub = mmu::rl3_code::remap(Tracked(env_token), i, v);
+//    let stub = mmu::rl3::code::remap(Tracked(env_token), i, v);
 //
 //    proof {
 //        assert(stub@.lbl() == Lbl::Remap(i as nat, v as nat));
@@ -369,7 +382,7 @@ trait CodeVC {
 //{
 //    let tracked env_token = state.borrow_mut().get_env_token();
 //    // Do the write
-//    let stub = mmu::rl3_code::remap(Tracked(env_token), i, v);
+//    let stub = mmu::rl3::code::remap(Tracked(env_token), i, v);
 //
 //    proof {
 //        assert(stub@.lbl() == Lbl::Remap(i as nat, v as nat));
@@ -396,7 +409,5 @@ trait CodeVC {
 //        SysM::Interface::lemma_concurrent_trs(pre_concurrent_state.st(), state@.st(), pidx);
 //    }
 //}
-
-*/
 
 } // verus!
