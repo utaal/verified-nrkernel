@@ -27,7 +27,7 @@ pub struct Constants {
 pub struct State {
     pub mmu: rl3::State,
     pub core_states: Map<Core, CoreState>,
-    pub TLB_Shootdown: ShootdownVector,
+    pub shootdown_vec: ShootdownVector,
     // history variables: writes, neg_writes
     // TODO: invariant: No core holds lock ==> writes is empty && neg_writes is empty for all cores
     //                  (and some aux inv to prove it, where shootdown acked ==> neg_writes empty
@@ -192,7 +192,7 @@ pub open spec fn step_MMU(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Tau)
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -205,7 +205,7 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, core: Core, lbl:
     &&& vaddr <= usize::MAX
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -217,7 +217,7 @@ pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, 
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Read(core, paddr, value))
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -228,7 +228,7 @@ pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core, lb
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Barrier(core))
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -239,7 +239,7 @@ pub open spec fn step_Invlpg(c: Constants, s1: State, s2: State, core: Core, vad
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Invlpg(core, vaddr))
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -282,7 +282,7 @@ pub open spec fn step_MapStart(c: Constants, s1: State, s2: State, core: Core, l
     &&& s2.mmu == s1.mmu
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapWaiting { ult_id: thread_id, vaddr, pte })
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte)
 }
 
@@ -298,7 +298,7 @@ pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core,
 
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapExecuting { ult_id, vaddr, pte })
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -323,7 +323,7 @@ pub open spec fn step_MapOpStutter(
 
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -353,7 +353,7 @@ pub open spec fn step_MapOpEnd(
     }
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapDone { ult_id, vaddr, pte, result })
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s1.sound == s2.sound
 }
 
@@ -371,7 +371,7 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl
 
     // new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s1.sound == s2.sound
 }
 
@@ -405,7 +405,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, core: Core,
     &&& s2.mmu == s1.mmu
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ult_id: thread_id, vaddr })
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound && step_Unmap_sound(s1, vaddr, pte_size)
     }
 }
@@ -420,7 +420,7 @@ pub open spec fn step_UnmapOpStart(c: Constants, s1: State, s2: State, core: Cor
     &&& s2.mmu == s1.mmu
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapOpExecuting { ult_id, vaddr, result: None })
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -456,7 +456,7 @@ pub open spec fn step_UnmapOpChange(
             CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(Err(())) }
         )
     }
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -479,7 +479,7 @@ pub open spec fn step_UnmapOpStutter(
     &&& s2.interp_pt_mem() == s1.interp_pt_mem()
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -495,7 +495,7 @@ pub open spec fn step_UnmapOpEnd(c: Constants, s1: State, s2: State, core: Core,
         core,
         CoreState::UnmapOpDone { ult_id, vaddr, result: res }
     )
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s2.sound == s1.sound
 }
 
@@ -518,7 +518,7 @@ pub open spec fn step_UnmapInitiateShootdown(
         core,
         CoreState::UnmapShootdownWaiting { ult_id, vaddr, result },
     )
-    &&& s2.TLB_Shootdown == ShootdownVector {
+    &&& s2.shootdown_vec == ShootdownVector {
         vaddr: vaddr,
         open_requests: Set::new(|core: Core| c.valid_core(core)),
     }
@@ -530,15 +530,15 @@ pub open spec fn step_UnmapInitiateShootdown(
 pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //enabling conditions
-    &&& s1.TLB_Shootdown.open_requests.contains(core)
-    &&& !s1.mmu@.tlbs[core].contains_key(s1.TLB_Shootdown.vaddr as usize)
+    &&& s1.shootdown_vec.open_requests.contains(core)
+    &&& !s1.mmu@.tlbs[core].contains_key(s1.shootdown_vec.vaddr as usize)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     //new state
     &&& s2.core_states == s1.core_states
-    &&& s2.TLB_Shootdown == ShootdownVector {
-        vaddr: s1.TLB_Shootdown.vaddr,
-        open_requests: s1.TLB_Shootdown.open_requests.remove(core),
+    &&& s2.shootdown_vec == ShootdownVector {
+        vaddr: s1.shootdown_vec.vaddr,
+        open_requests: s1.shootdown_vec.open_requests.remove(core),
     }
     &&& s2.sound == s1.sound
 }
@@ -550,7 +550,7 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
     &&& match s1.core_states[core] {
         CoreState::UnmapShootdownWaiting { result: r2, vaddr: v2, ult_id: id2, .. } => {
             &&& result == result_map_ok(r2, |r| ()) && vaddr == v2 && thread_id == id2
-            &&& s1.TLB_Shootdown.open_requests.is_empty()
+            &&& s1.shootdown_vec.open_requests.is_empty()
         },
         CoreState::UnmapOpDone { result: r2, vaddr: v2, ult_id: id2, .. } => {
             &&& result == result_map_ok(r2, |r| ()) && vaddr == v2 && thread_id == id2
@@ -562,7 +562,7 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
     &&& s2.mmu == s1.mmu
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
-    &&& s2.TLB_Shootdown == s1.TLB_Shootdown
+    &&& s2.shootdown_vec == s1.shootdown_vec
     &&& s1.sound == s2.sound
 }
 
@@ -606,7 +606,7 @@ pub open spec fn init(c: Constants, s: State) -> bool {
     &&& forall|core: Core| c.valid_core(core) <==> #[trigger] s.core_states.contains_key(core)
     &&& forall|core: Core| #[trigger] c.valid_core(core) ==> s.core_states[core] === CoreState::Idle
     //shootdown
-    &&& s.TLB_Shootdown.open_requests === Set::empty()
+    &&& s.shootdown_vec.open_requests === Set::empty()
     //sound
     &&& s.sound
 }
@@ -861,7 +861,7 @@ impl State {
     ///////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {
         forall|core| #[trigger]
-            self.TLB_Shootdown.open_requests.contains(core) ==> c.valid_core(core)
+            self.shootdown_vec.open_requests.contains(core) ==> c.valid_core(core)
     }
 
     pub open spec fn successful_IPI(self, c: Constants) -> bool {
@@ -869,7 +869,7 @@ impl State {
                 c.valid_core(dispatcher) ==> match self.core_states[dispatcher] {
                     CoreState::UnmapShootdownWaiting { vaddr, .. } => {
                         forall|handler: Core|
-                            !(#[trigger] self.TLB_Shootdown.open_requests.contains(handler))
+                            !(#[trigger] self.shootdown_vec.open_requests.contains(handler))
                                 ==> !self.mmu@.tlbs[handler].contains_key(vaddr as usize)
                     },
                     _ => true,
@@ -904,7 +904,7 @@ impl State {
     }
 
     //pub open spec fn shootdown_exists(self, c: Constants) -> bool {
-    //    !(self.TLB_Shootdown.open_requests === Set::<Core>::empty())
+    //    !(self.shootdown_vec.open_requests === Set::<Core>::empty())
     //        ==> exists|core| c.valid_core(core)
     //            && self.core_states[core] matches (CoreState::UnmapShootdownWaiting { vaddr, .. })
     //}

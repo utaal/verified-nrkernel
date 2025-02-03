@@ -120,7 +120,7 @@ pub open spec fn concurrent_trs(pre: os::State, post: os::State, c: os::Constant
 /// The OS part of the OS state machine's state. I.e. everything except for `mmu`.
 pub struct OSState {
     pub core_states: Map<Core, os::CoreState>,
-    pub TLB_Shootdown: os::ShootdownVector,
+    pub shootdown_vec: os::ShootdownVector,
     pub sound: bool,
 }
 
@@ -128,7 +128,7 @@ impl OSState {
     pub open spec fn combine(self, mmu: mmu::rl3::State) -> os::State {
         os::State {
             core_states: self.core_states,
-            TLB_Shootdown: self.TLB_Shootdown,
+            shootdown_vec: self.shootdown_vec,
             sound: self.sound,
             mmu: mmu,
         }

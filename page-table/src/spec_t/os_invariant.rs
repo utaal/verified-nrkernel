@@ -117,9 +117,9 @@ pub proof fn init_implies_tlb_inv(c: os::Constants, s: os::State)
     ensures s.tlb_inv(c),
 {
     to_rl1::init_refines(s.mmu, c.mmu);
-    assert(s.TLB_Shootdown.open_requests.is_empty());
-    Set::lemma_len0_is_empty(s.TLB_Shootdown.open_requests);
-    assert(s.TLB_Shootdown.open_requests === Set::empty());
+    assert(s.shootdown_vec.open_requests.is_empty());
+    Set::lemma_len0_is_empty(s.shootdown_vec.open_requests);
+    assert(s.shootdown_vec.open_requests === Set::empty());
     assert(s.shootdown_cores_valid(c));
     assert(s.successful_IPI(c));
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
