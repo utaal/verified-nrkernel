@@ -673,8 +673,8 @@ pub open spec fn interp_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, pt
 
 pub open spec fn interp_at_entry(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, idx: nat) -> l1::NodeEntry
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - idx, 0nat
+        when inv_at(mem, pt, layer, ptr)
 {
-    decreases_when(inv_at(mem, pt, layer, ptr));
     match view_at(mem, pt, layer, ptr, idx) {
         GPDE::Directory { addr: dir_addr, .. } => {
             let entry_base = x86_arch_spec.entry_base(layer, base_vaddr, idx);
@@ -967,7 +967,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
                 // Invariant preserved
                 &&& inv_at(mem, pt_res, layer as nat, ptr)
                 // We only touch already allocated regions if they're in pt.used_regions
-                &&& (forall|r: MemRegion| !(#[trigger] pt.used_regions.contains(r)) && !(new_regions.contains(r))
+                &&& (forall|r: MemRegion| !(#[trigger] pt.used_regions.contains(r)) && !new_regions.contains(r)
                     ==> mem.region_view(r) === old(mem).region_view(r))
                 &&& pt_res.region === pt.region
             },
@@ -1830,7 +1830,7 @@ fn insert_empty_directory(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir
                 }
             };
         };
-        assume(inv_at(mem, pt_res@, layer as nat, ptr));
+        assert(inv_at(mem, pt_res@, layer as nat, ptr));
 
         lemma_empty_at_interp_at_equal_l1_empty_dir(mem, pt_res@, layer as nat, ptr, base as nat, idx as nat);
         interp@.lemma_new_empty_dir(idx as nat);
@@ -1971,7 +1971,7 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                                 };
                             };
 
-                            assume(inv_at(mem, pt_res@, layer as nat, ptr));
+                            assert(inv_at(mem, pt_res@, layer as nat, ptr));
 
                             // postconditions
                             assert((forall|r: MemRegion| removed_regions@.contains(r) ==> !(#[trigger] mem.regions().contains(r))));
@@ -2027,7 +2027,6 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                             assert(forall|i: nat, r: MemRegion| i < X86_NUM_ENTRIES && i != idx && pt_res@.entries[i as int].is_Some() && pt_res@.entries[i as int].get_Some_0().used_regions.contains(r) ==> !pt.entries[idx as int].get_Some_0().used_regions.contains(r));
 
                             assert(inv_at(mem, pt_res@, layer as nat, ptr)) by {
-                                admit();
                                 assert(directories_obey_invariant_at(mem, pt_res@, layer as nat, ptr)) by {
                                     assert forall|i: nat| i < X86_NUM_ENTRIES implies {
                                         let entry = #[trigger] view_at(mem, pt_res@, layer as nat, ptr, i);

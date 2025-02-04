@@ -930,9 +930,8 @@ impl Directory {
     }
 
     pub open spec fn map_frame(self, base: nat, pte: PTE) -> Result<Directory,Directory>
-        decreases self.arch.layers.len() - self.layer
+        decreases self.arch.layers.len() - self.layer via Self::check_map_frame
     {
-        decreases_by(Self::check_map_frame);
 
         if self.inv() && self.accepted_mapping(base, pte) {
             let entry = self.index_for_vaddr(base);
