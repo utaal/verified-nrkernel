@@ -49,7 +49,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     //assert(s2.inv_successful_unmaps(c)) by {
     //    assert forall|core| c.valid_core(core) implies {
     //        match s2.core_states[core] {
-    //            os::CoreState::UnmapOpExecuting { vaddr, result: Some(_),.. }
+    //            os::CoreState::UnmapExecuting { vaddr, result: Some(_),.. }
     //            | os::CoreState::UnmapOpDone { vaddr, .. }
     //            | os::CoreState::UnmapShootdownWaiting { vaddr, .. }
     //                => !s2.interp_pt_mem().dom().contains(vaddr),
@@ -65,10 +65,10 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
                 | os::CoreState::MapDone { vaddr, pte, .. }
                     => pte.frame.size > 0,
                 os::CoreState::UnmapWaiting { vaddr, .. }
-                | os::CoreState::UnmapOpExecuting { vaddr, result: None, .. }
+                | os::CoreState::UnmapExecuting { vaddr, result: None, .. }
                     => s2.interp_pt_mem().contains_key(vaddr)
                         ==> s2.interp_pt_mem()[vaddr].frame.size > 0,
-                os::CoreState::UnmapOpExecuting { result: Some(result), .. }
+                os::CoreState::UnmapExecuting { result: Some(result), .. }
                 | os::CoreState::UnmapOpDone { result, .. }
                 | os::CoreState::UnmapShootdownWaiting { result, .. }
                     => result is Ok ==> result.get_Ok_0().frame.size > 0,
@@ -81,7 +81,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
                     assert(pte.frame.size > 0);
                 },
                 os::CoreState::UnmapWaiting { vaddr, .. }
-                | os::CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+                | os::CoreState::UnmapExecuting { vaddr, result: None, .. } => {
                     if s2.interp_pt_mem().contains_key(vaddr) {
                         if step matches os::Step::UnmapStart { core } {
                             // MB: Not sure how this would be provable here but I think the proof worked at
@@ -94,7 +94,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
                         assert(s2.interp_pt_mem()[vaddr].frame.size > 0);
                     }
                 },
-                os::CoreState::UnmapOpExecuting { result: Some(result), .. }
+                os::CoreState::UnmapExecuting { result: Some(result), .. }
                 | os::CoreState::UnmapOpDone { result, .. }
                 | os::CoreState::UnmapShootdownWaiting { result, .. } => {
                     assert(result is Ok ==> result.get_Ok_0().frame.size > 0);
@@ -341,7 +341,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
             os::Step::UnmapOpStart { core } => {
                 let vaddr = s1.core_states[core]->UnmapWaiting_vaddr;
                 let ult_id = s1.core_states[core]->UnmapWaiting_ult_id;
-                let corestate = os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: None };
+                let corestate = os::CoreState::UnmapExecuting { ult_id, vaddr, result: None };
                 lemma_insert_preserves_no_overlap(
                     c,
                     s1.core_states,
@@ -353,9 +353,9 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
             os::Step::UnmapOpChange { core, result, .. } => {
-                let vaddr = s1.core_states[core]->UnmapOpExecuting_vaddr;
-                let ult_id = s1.core_states[core]->UnmapOpExecuting_ult_id;
-                let new_cs = os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(result) };
+                let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
+                let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
+                let new_cs = os::CoreState::UnmapExecuting { ult_id, vaddr, result: Some(result) };
                 // FIXME(MB): This broke when I switched to the new `interp_pt_mem` and I'm not yet sure why.
                 admit();
                 lemma_insert_preserves_no_overlap(c, s1.core_states, s1.interp_pt_mem(), core, new_cs);
@@ -398,9 +398,9 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
             os::Step::UnmapOpEnd { core } => {
-                let vaddr = s1.core_states[core]->UnmapOpExecuting_vaddr;
-                let ult_id = s1.core_states[core]->UnmapOpExecuting_ult_id;
-                let result = s1.core_states[core]->UnmapOpExecuting_result->Some_0;
+                let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
+                let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
+                let result = s1.core_states[core]->UnmapExecuting_result->Some_0;
                 let corestate = os::CoreState::UnmapOpDone { ult_id, vaddr, result };
                 lemma_insert_preserves_no_overlap(
                     c,
@@ -742,7 +742,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
                             )
                         },
                         os::CoreState::UnmapWaiting { vaddr, .. }
-                        | os::CoreState::UnmapOpExecuting { vaddr, result: None, .. } => {
+                        | os::CoreState::UnmapExecuting { vaddr, result: None, .. } => {
                             let size = if s.interp_pt_mem().dom().contains(vaddr) {
                                 s.interp_pt_mem().index(vaddr).frame.size
                             } else {
@@ -753,7 +753,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
                                 MemRegion { base: base, size: candidate_size },
                             )
                         },
-                        os::CoreState::UnmapOpExecuting { vaddr, result: Some(result), .. }
+                        os::CoreState::UnmapExecuting { vaddr, result: Some(result), .. }
                         | os::CoreState::UnmapOpDone { vaddr, result, .. }
                         | os::CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
                             let size = if result is Ok {
@@ -781,13 +781,13 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
                     assert(s.interp(c).thread_state.values().contains(thread_state));
                 },
                 os::CoreState::UnmapWaiting { ult_id, vaddr }
-                | os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: None, .. } => {
+                | os::CoreState::UnmapExecuting { ult_id, vaddr, result: None, .. } => {
                     assert(c.valid_ult(ult_id));
                     let thread_state = s.interp_thread_state(c)[ult_id];
                     assert(s.interp(c).thread_state.dom().contains(ult_id));
                     assert(s.interp(c).thread_state.values().contains(thread_state));
                 },
-                os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(result), .. }
+                os::CoreState::UnmapExecuting { ult_id, vaddr, result: Some(result), .. }
                 | os::CoreState::UnmapOpDone { ult_id, vaddr, result, .. }
                 | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, result, .. } => {
                     //assert(c.valid_ult(ult_id));
@@ -886,7 +886,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
                     ));
                 },
                 os::CoreState::UnmapWaiting { ult_id: ult_id2, vaddr }
-                | os::CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: None, .. } => {
+                | os::CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: None, .. } => {
                     assert(ult_id2 == ult_id);
                     if s.interp_pt_mem().dom().contains(vaddr) {
                         let pte = s.interp_pt_mem()[vaddr];
@@ -916,7 +916,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os(
                         ));
                     }
                 },
-                os::CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: Some(result), .. }
+                os::CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: Some(result), .. }
                 | os::CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result, .. }
                 | os::CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result, .. } => {
                     if result is Ok {
@@ -995,11 +995,11 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
                             overlap(candidate.frame, pte.frame)
                         },
                         os::CoreState::UnmapWaiting { ult_id, vaddr }
-                        | os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: None, .. } => {
+                        | os::CoreState::UnmapExecuting { ult_id, vaddr, result: None, .. } => {
                             &&& s.interp_pt_mem().dom().contains(vaddr)
                             &&& overlap(candidate.frame, s.interp_pt_mem().index(vaddr).frame)
                         },
-                        os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(result), .. }
+                        os::CoreState::UnmapExecuting { ult_id, vaddr, result: Some(result), .. }
                         | os::CoreState::UnmapOpDone { ult_id, vaddr, result, .. }
                         | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, result, .. } => {
                             &&& result is Ok
@@ -1030,7 +1030,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
                     });
                 },
                 os::CoreState::UnmapWaiting { ult_id, vaddr }
-                | os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: None, .. } => {
+                | os::CoreState::UnmapExecuting { ult_id, vaddr, result: None, .. } => {
                     assert(c.valid_ult(ult_id));
                     let thread_state = s.interp_thread_state(c)[ult_id];
                     assert(s.interp(c).thread_state.dom().contains(ult_id));
@@ -1045,7 +1045,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
                         &&& overlap(candidate.frame, s.interp_pt_mem().index(vaddr).frame)
                     });
                 },
-                os::CoreState::UnmapOpExecuting { ult_id, vaddr, result: Some(result), .. }
+                os::CoreState::UnmapExecuting { ult_id, vaddr, result: Some(result), .. }
                 | os::CoreState::UnmapOpDone { ult_id, vaddr, result, .. }
                 | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, result, .. } => {
                     assert(c.valid_ult(ult_id));
@@ -1137,7 +1137,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
                     assert(overlap(candidate.frame, pte.frame));
                 },
                 os::CoreState::UnmapWaiting { ult_id: ult_id2, vaddr }
-                | os::CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: None, .. } => {
+                | os::CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: None, .. } => {
                     assert(s.interp_pt_mem().dom().contains(vaddr));
                     assert(ult_id == ult_id);
                     let pte = s.interp_pt_mem()[vaddr];
@@ -1151,7 +1151,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
                     });
                     assert(overlap(candidate.frame, s.interp_pt_mem().index(vaddr).frame));
                 },
-                os::CoreState::UnmapOpExecuting { ult_id: ult_id2, vaddr, result: Some(result), .. }
+                os::CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: Some(result), .. }
                 | os::CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result, .. }
                 | os::CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result, .. } => {
                     assert(ult_id == ult_id);

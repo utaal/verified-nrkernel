@@ -12,8 +12,8 @@ pub enum Lbl {
     ReleaseLock { core: Core },
     InitShootdown { core: Core, vaddr: nat, cores: Set<Core> },
     AckShootdown { core: Core },
-    Alloc { core: Core, res: MemRegion },
-    Dealloc { core: Core, reg: MemRegion },
+    Allocate { core: Core, res: MemRegion },
+    Deallocate { core: Core, reg: MemRegion },
 }
 
 pub struct State {
@@ -52,8 +52,8 @@ pub enum Step {
     ReleaseLock,
     InitShootdown,
     AckShootdown,
-    Alloc,
-    Dealloc
+    Allocate,
+    Deallocate
 }
 
 // State machine transitions
@@ -111,8 +111,8 @@ pub open spec fn step_AckShootdown(pre: State, post: State, c: Constants, lbl: L
 }
 
 // TODO: Hardcoding 4k allocations for now. Should fix that to support large mappings.
-pub open spec fn step_Alloc(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
-    &&& lbl matches Lbl::Alloc { core, res }
+pub open spec fn step_Allocate(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::Allocate { core, res }
 
     &&& c.valid_core(core)
     &&& pre.disjoint_from_allocations(res)
@@ -125,8 +125,8 @@ pub open spec fn step_Alloc(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     }
 }
 
-pub open spec fn step_Dealloc(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
-    &&& lbl matches Lbl::Dealloc { core, reg }
+pub open spec fn step_Deallocate(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::Deallocate { core, reg }
 
     &&& c.valid_core(core)
     &&& pre.allocated.contains(reg)
@@ -148,8 +148,8 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::ReleaseLock   => step_ReleaseLock(pre, post, c, lbl),
         Step::InitShootdown => step_InitShootdown(pre, post, c, lbl),
         Step::AckShootdown  => step_AckShootdown(pre, post, c, lbl),
-        Step::Alloc         => step_Alloc(pre, post, c, lbl),
-        Step::Dealloc       => step_Dealloc(pre, post, c, lbl),
+        Step::Allocate      => step_Allocate(pre, post, c, lbl),
+        Step::Deallocate    => step_Deallocate(pre, post, c, lbl),
     }
 }
 
@@ -167,30 +167,30 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
 
 
 
-// Invariants for this state machine
-
-impl State {
-    pub open spec fn wf(self, c: Constants) -> bool {
-        &&& forall|core| self.shootdown_vec.open_requests.contains(core) ==> #[trigger] c.valid_core(core)
-    }
-
-    pub open spec fn inv(self, c: Constants) -> bool {
-        &&& self.wf(c)
-    }
-} // impl State
-
-
-pub proof fn init_implies_inv(pre: State, c: Constants)
-    requires init(pre, c)
-    ensures pre.inv(c)
-{}
-
-pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
-    requires
-        pre.inv(c),
-        next(pre, post, c, lbl),
-    ensures post.inv(c)
-{}
+//// Invariants for this state machine
+//
+//impl State {
+//    pub open spec fn wf(self, c: Constants) -> bool {
+//        &&& forall|core| self.shootdown_vec.open_requests.contains(core) ==> #[trigger] c.valid_core(core)
+//    }
+//
+//    pub open spec fn inv(self, c: Constants) -> bool {
+//        &&& self.wf(c)
+//    }
+//} // impl State
+//
+//
+//pub proof fn init_implies_inv(pre: State, c: Constants)
+//    requires init(pre, c)
+//    ensures pre.inv(c)
+//{}
+//
+//pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
+//    requires
+//        pre.inv(c),
+//        next(pre, post, c, lbl),
+//    ensures post.inv(c)
+//{}
 
 
 
@@ -218,7 +218,7 @@ pub mod code {
     }
 
     #[verifier(external_body)]
-    pub exec fn acquire_lock(Tracked(tok): Tracked<Token>) -> (stub: Tracked<Stub>)
+    pub exec fn acquire_lock(tracked tok: Token) -> (stub: Tracked<Stub>)
         ensures
             os_ext::step_AcquireLock(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
             stub@.lbl() == (os_ext::Lbl::AcquireLock { core: tok.core() }),
@@ -231,7 +231,7 @@ pub mod code {
     // ones are consequences of executing the function.
     // But it's probably fine? The function just has to be specified in a way that makes sense.
     #[verifier(external_body)]
-    pub exec fn release_lock(Tracked(tok): Tracked<Token>) -> (stub: Tracked<Stub>)
+    pub exec fn release_lock(tracked tok: Token) -> (stub: Tracked<Stub>)
         requires tok.pre().lock == Some(tok.core())
         ensures
             os_ext::step_ReleaseLock(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
@@ -243,7 +243,7 @@ pub mod code {
     // This initiates a shootdown for all other cores in the system, so we don't take the cores as
     // an argument.
     #[verifier(external_body)]
-    pub exec fn init_shootdown(Tracked(tok): Tracked<Token>, vaddr: usize) -> (stub: Tracked<Stub>)
+    pub exec fn init_shootdown(tracked tok: Token, vaddr: usize) -> (stub: Tracked<Stub>)
         ensures
             os_ext::step_InitShootdown(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
             stub@.lbl() ==
@@ -257,7 +257,7 @@ pub mod code {
     }
 
     #[verifier(external_body)]
-    pub exec fn ack_shootdown(Tracked(tok): Tracked<Token>, vaddr: usize) -> (stub: Tracked<Stub>)
+    pub exec fn ack_shootdown(tracked tok: Token, vaddr: usize) -> (stub: Tracked<Stub>)
         ensures
             os_ext::step_InitShootdown(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
             stub@.lbl() ==
@@ -271,21 +271,21 @@ pub mod code {
     }
 
     #[verifier(external_body)]
-    pub exec fn allocate(Tracked(tok): Tracked<Token>) -> (res: (MemRegionExec, Tracked<Stub>))
+    pub exec fn allocate(tracked tok: Token) -> (res: (MemRegionExec, Tracked<Stub>))
         ensures
-            os_ext::step_Alloc(tok.pre(), res.1@.post(), tok.consts(), res.1@.lbl()),
-            res.1@.lbl() == (os_ext::Lbl::Alloc { core: tok.core(), res: res.0@ }),
+            os_ext::step_Allocate(tok.pre(), res.1@.post(), tok.consts(), res.1@.lbl()),
+            res.1@.lbl() == (os_ext::Lbl::Allocate { core: tok.core(), res: res.0@ }),
     {
         unimplemented!()
     }
 
     #[verifier(external_body)]
-    pub exec fn deallocate(Tracked(tok): Tracked<Token>, reg: MemRegionExec) -> (stub: Tracked<Stub>)
+    pub exec fn deallocate(tracked tok: Token, reg: MemRegionExec) -> (stub: Tracked<Stub>)
         requires
             tok.pre().allocated.contains(reg@)
         ensures
-            os_ext::step_Dealloc(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
-            stub@.lbl() == (os_ext::Lbl::Dealloc { core: tok.core(), reg: reg@ }),
+            os_ext::step_Deallocate(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
+            stub@.lbl() == (os_ext::Lbl::Deallocate { core: tok.core(), reg: reg@ }),
     {
         unimplemented!()
     }

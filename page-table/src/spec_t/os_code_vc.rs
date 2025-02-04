@@ -52,11 +52,13 @@ impl os::Step {
             os::Step::Invlpg { core, .. } |
             os::Step::MapStart { core, .. } |
             os::Step::MapOpStart { core, .. } |
+            os::Step::Allocate { core, .. } |
             os::Step::MapOpStutter { core, .. } |
             os::Step::MapOpEnd { core, .. } |
             os::Step::MapEnd { core, .. } |
             os::Step::UnmapStart { core, .. } |
             os::Step::UnmapOpStart { core, .. } |
+            os::Step::Deallocate { core, .. } |
             os::Step::UnmapOpChange { core, .. } |
             os::Step::UnmapOpStutter { core, .. } |
             os::Step::UnmapOpEnd { core, .. } |
@@ -261,6 +263,26 @@ trait CodeVC {
             old(tok).remaining_steps() === seq![
                 RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
                 RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
+            ],
+            old(tok).progress() is Unready,
+            proph_res.may_resolve(),
+        ensures
+            res == proph_res.value(),
+            tok.remaining_steps() === seq![],
+            tok.progress() is Ready,
+    ;
+
+    exec fn sys_do_unmap(
+        tracked tok: &mut Token,
+        vaddr: usize,
+        tracked proph_res: Prophecy<Result<(),()>>
+        )
+        -> (res: Result<(),()>)
+        requires
+            old(tok).st().core_states[old(tok).core()] is UnmapWaiting,
+            old(tok).remaining_steps() === seq![
+                RLbl::UnmapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat },
+                RLbl::UnmapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
             old(tok).progress() is Unready,
             proph_res.may_resolve(),
