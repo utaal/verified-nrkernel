@@ -6,9 +6,62 @@ use crate::impl_u::indexing;
 
 use crate::spec_t::mmu::defs::{ MemRegion, overlap, Arch, between, aligned, PTE, Flags };
 use crate::definitions_u::{ permissive_flags };
-use crate::impl_u::l0::{ self, ambient_lemmas1 };
+use crate::impl_u::l0;
 
 verus! {
+
+// TODO: pr to vstd
+pub broadcast proof fn lemma_union_prefer_right_insert_left<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K, v: V)
+    requires
+        !m2.contains_key(k),
+    ensures
+        #[trigger] m1.insert(k, v).union_prefer_right(m2) == m1.union_prefer_right(m2).insert(k, v),
+{
+    assert(m1.insert(k, v).union_prefer_right(m2) =~= m1.union_prefer_right(m2).insert(k, v));
+}
+
+pub broadcast proof fn lemma_union_prefer_right_insert_right<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K, v: V)
+    ensures
+        #[trigger] m1.union_prefer_right(m2.insert(k, v)) == m1.union_prefer_right(m2).insert(k, v),
+{
+    assert(m1.union_prefer_right(m2.insert(k, v)) =~= m1.union_prefer_right(m2).insert(k, v));
+}
+
+pub broadcast proof fn lemma_union_prefer_right_remove_left<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K)
+    requires
+        m1.contains_key(k),
+        !m2.contains_key(k),
+    ensures
+        #[trigger] m1.union_prefer_right(m2).remove(k) == m1.remove(k).union_prefer_right(m2),
+{
+    assert(m1.remove(k).union_prefer_right(m2) =~= m1.union_prefer_right(m2).remove(k));
+}
+
+pub broadcast proof fn lemma_union_prefer_right_remove_right<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K)
+    requires
+        !m1.contains_key(k),
+        m2.contains_key(k),
+    ensures
+        #[trigger] m1.union_prefer_right(m2).remove(k) == m1.union_prefer_right(m2.remove(k)),
+{
+    assert(m1.union_prefer_right(m2.remove(k)) =~= m1.union_prefer_right(m2).remove(k));
+}
+
+pub broadcast proof fn lemma_union_prefer_right_dom<K,V>(m1: Map<K,V>, m2: Map<K,V>)
+    ensures
+        #[trigger] m1.union_prefer_right(m2).dom() == m1.dom().union(m2.dom())
+{
+    assert(m1.dom().union(m2.dom()) =~= m1.union_prefer_right(m2).dom());
+}
+
+pub broadcast group group_ambient {
+    vstd::arithmetic::mul::lemma_mul_is_commutative,
+    lemma_union_prefer_right_dom,
+    lemma_union_prefer_right_remove_left,
+    lemma_union_prefer_right_remove_right,
+    lemma_union_prefer_right_insert_left,
+    lemma_union_prefer_right_insert_right,
+}
 
 pub proof fn ambient_lemmas2()
     ensures
@@ -50,7 +103,7 @@ pub enum NodeEntry {
 
 pub struct Directory {
     pub entries: Seq<NodeEntry>,
-    pub layer: nat,       // index into layer_sizes
+    pub layer: nat, // index into layer_sizes
     pub base_vaddr: nat,
     pub arch: Arch,
     pub flags: Flags,
@@ -320,7 +373,7 @@ impl Directory {
             i == 0 ==> self.interp_aux(0).lower == self.base_vaddr,
         decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
 
         let interp = self.interp_aux(i);
 
@@ -577,7 +630,7 @@ impl Directory {
     proof fn check_resolve(self, vaddr: nat) {
         assert(self.inv() && self.interp().accepted_resolve(vaddr));
 
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
 
@@ -692,7 +745,7 @@ impl Directory {
             },
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
 
         indexing::lemma_entry_base_from_index(self.base_vaddr, idx, self.entry_size());
@@ -717,7 +770,7 @@ impl Directory {
             equal(self.interp().resolve(vaddr), self.resolve(vaddr)),
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
 
@@ -917,7 +970,7 @@ impl Directory {
 
     #[verifier(decreases_by)]
     proof fn check_map_frame(self, base: nat, pte: PTE) {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2(); // TODO: unnecessary?
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         if self.inv() && self.accepted_mapping(base, pte) {
@@ -938,7 +991,7 @@ impl Directory {
         ensures
             d.accepted_mapping(base, pte),
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
 
@@ -998,7 +1051,7 @@ impl Directory {
         decreases self.arch.layers.len() - self.layer
     {
 
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
         indexing::lemma_index_from_base_and_addr(self.base_vaddr, base, self.entry_size(), self.num_entries());
@@ -1094,7 +1147,7 @@ impl Directory {
             equal(self.interp_aux(i).map.insert(base, pte), self.update(j, n).interp_aux(i).map),
         decreases self.arch.layers.len() - self.layer, self.num_entries() - i
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
 
         self.lemma_inv_implies_interp_aux_inv(i);
@@ -1175,7 +1228,7 @@ impl Directory {
             exists|b: nat| self.interp().map.dom().contains(b)
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
 
         assert(exists|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Empty));
@@ -1225,7 +1278,7 @@ impl Directory {
             }
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
@@ -1278,7 +1331,7 @@ impl Directory {
             result_map(self.map_frame(base, pte), |d: Directory| d.interp()) === self.interp().map_frame(base, pte),
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
         self.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
@@ -1474,7 +1527,7 @@ impl Directory {
             self.unmap(base).get_Ok_0().inv(),
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
 
         let res = self.unmap(base).get_Ok_0();
@@ -1528,7 +1581,7 @@ impl Directory {
             }
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
 
@@ -1562,7 +1615,7 @@ impl Directory {
             equal(result_map(self.unmap(base), |d: Directory| d.interp()), self.interp().unmap(base)),
         decreases self.arch.layers.len() - self.layer
     {
-        ambient_lemmas1();
+        broadcast use group_ambient;
         ambient_lemmas2();
         self.lemma_inv_implies_interp_inv();
 
@@ -1685,7 +1738,7 @@ impl Directory {
     {
 
         assert(j < self.entries.len());
-        ambient_lemmas1();
+        broadcast use group_ambient;
         self.lemma_inv_implies_interp_aux_inv(i);
         self.lemma_inv_implies_interp_aux_inv(i + 1);
         self.lemma_inv_implies_interp_of_entry_inv(i);

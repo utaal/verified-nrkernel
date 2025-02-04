@@ -1,53 +1,7 @@
 use vstd::prelude::*;
-use vstd::map::*;
-use crate::extra;
 use crate::spec_t::mmu::defs::{ MemRegion, overlap, between, Arch, aligned, PTE };
 
 verus! {
-
-#[verifier(nonlinear)]
-pub proof fn ambient_arith()
-    ensures
-        forall|a: nat, b: nat| a == 0 ==> #[trigger] (a * b) == 0,
-        forall|a: nat, b: nat| b == 0 ==> #[trigger] (a * b) == 0,
-        forall|a: nat, b: nat| a > 0 && b > 0 ==> #[trigger] (a * b) > 0,
-        forall|a: int, b: int| #[trigger] (a * b) == (b * a),
-        forall|a:nat| a != 0 ==> aligned(0, a)
-{
-    extra::aligned_zero();
-}
-
-pub proof fn ambient_lemmas1()
-    ensures
-        forall|s1: Map<nat,PTE>, s2: Map<nat,PTE>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
-        forall|a: int, b: int| #[trigger] (a * b) == b * a,
-        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat|
-            (m1.dom().contains(n) && !m2.dom().contains(n))
-            ==> equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat|
-            (m2.dom().contains(n) && !m1.dom().contains(n))
-            ==> equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat, v: PTE|
-            (!m1.dom().contains(n) && !m2.dom().contains(n))
-            ==> equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)),
-        forall|m1: Map<nat, PTE>, m2: Map<nat, PTE>, n: nat, v: PTE|
-            (!m1.dom().contains(n) && !m2.dom().contains(n))
-            ==> equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)),
-        // forall(|d: Directory| d.inv() ==> (#[trigger] d.interp().upper == d.upper_vaddr())),
-        // forall(|d: Directory| d.inv() ==> (#[trigger] d.interp().lower == d.base_vaddr)),
-    {
-    lemma_finite_map_union::<nat,PTE>();
-    // assert_nonlinear_by({ ensures(forall|d: Directory| equal(d.num_entries() * d.entry_size(), d.entry_size() * d.num_entries())); });
-    // assert_forall_by(|d: Directory, i: nat| {
-    //     requires(#[auto_trigger] d.inv() && i < d.num_entries() && d.entries.index(i).is_Directory());
-    //     ensures(#[auto_trigger] d.entries.index(i).get_Directory_0().inv());
-    //     assert(d.directories_obey_invariant());
-    // });
-    lemma_map_union_prefer_right_remove_commute::<nat,PTE>();
-    lemma_map_union_prefer_right_insert_commute::<nat,PTE>();
-    assert(forall|a: int, b: int| #[trigger] (a * b) == b * a) by (nonlinear_arith) { };
-}
-
 
 pub struct PageTableContents {
     pub map: Map<nat /* VAddr */, PTE>,
@@ -69,21 +23,21 @@ impl PageTableContents {
     pub open spec(checked) fn mappings_are_of_valid_size(self) -> bool {
         forall|va: nat|
             #![trigger self.map.index(va).frame.size] #![trigger self.map.index(va).frame.base]
-            self.map.dom().contains(va) ==> self.arch.contains_entry_size(self.map.index(va).frame.size)
+            self.map.contains_key(va) ==> self.arch.contains_entry_size(self.map.index(va).frame.size)
     }
 
     pub open spec(checked) fn mappings_are_aligned(self) -> bool {
         forall|va: nat|
             #![trigger self.map.index(va).frame.size] #![trigger self.map.index(va).frame.base]
-            self.map.dom().contains(va) ==>
+            self.map.contains_key(va) ==>
             aligned(va, self.map.index(va).frame.size) && aligned(self.map.index(va).frame.base, self.map.index(va).frame.size)
     }
 
     pub open spec(checked) fn mappings_dont_overlap(self) -> bool {
         forall|b1: nat, b2: nat|
             #![trigger self.map[b1], self.map[b2]]
-            #![trigger self.map.dom().contains(b1), self.map.dom().contains(b2)]
-            self.map.dom().contains(b1) && self.map.dom().contains(b2) ==>
+            #![trigger self.map.contains_key(b1), self.map.contains_key(b2)]
+            self.map.contains_key(b1) && self.map.contains_key(b2) ==>
             ((b1 == b2) || !overlap(
                     MemRegion { base: b1, size: self.map[b1].frame.size },
                     MemRegion { base: b2, size: self.map[b2].frame.size }))
@@ -95,9 +49,9 @@ impl PageTableContents {
 
     pub open spec(checked) fn mappings_in_bounds(self) -> bool {
         forall|b1: nat|
-            #![trigger self.map[b1]] #![trigger self.map.dom().contains(b1)]
+            #![trigger self.map[b1]] #![trigger self.map.contains_key(b1)]
             #![trigger self.candidate_mapping_in_bounds(b1, self.map[b1])]
-            self.map.dom().contains(b1) ==> self.candidate_mapping_in_bounds(b1, self.map[b1])
+            self.map.contains_key(b1) ==> self.candidate_mapping_in_bounds(b1, self.map[b1])
     }
 
     pub open spec(checked) fn accepted_mapping(self, base: nat, pte: PTE) -> bool {
@@ -109,7 +63,7 @@ impl PageTableContents {
 
     pub open spec(checked) fn valid_mapping(self, base: nat, pte: PTE) -> bool {
         forall|b: nat| #![auto]
-            self.map.dom().contains(b) ==> !overlap(
+            self.map.contains_key(b) ==> !overlap(
                 MemRegion { base: base, size: pte.frame.size },
                 MemRegion { base: b, size: self.map.index(b).frame.size })
     }
@@ -185,7 +139,7 @@ impl PageTableContents {
     pub open spec(checked) fn unmap(self, base: nat) -> Result<PageTableContents,PageTableContents>
         recommends self.accepted_unmap(base)
     {
-        if self.map.dom().contains(base) {
+        if self.map.contains_key(base) {
             Ok(self.remove(base))
         } else {
             Err(self)
@@ -208,8 +162,7 @@ impl PageTableContents {
                 equal(self.unmap(base).get_Ok_0().map.dom(), self.map.dom().remove(base)),
                 self.unmap(base).get_Ok_0().map.dom().len() == self.map.dom().len() - 1
     {
-        assert(self.map.dom().contains(base));
-        lemma_set_contains_IMP_len_greater_zero::<nat>(self.map.dom(), base);
+        assert(self.map.contains_key(base));
     }
 
     pub open spec fn ranges_disjoint(self, other: Self) -> bool {
@@ -222,7 +175,7 @@ impl PageTableContents {
     }
 
     pub open spec fn mappings_disjoint(self, other: Self) -> bool {
-        forall|s: nat, o: nat| self.map.dom().contains(s) && other.map.dom().contains(o) ==>
+        forall|s: nat, o: nat| self.map.contains_key(s) && other.map.contains_key(o) ==>
             !overlap(MemRegion { base: s, size: self.map.index(s).frame.size }, MemRegion { base: o, size: other.map.index(o).frame.size })
     }
 
@@ -238,101 +191,7 @@ impl PageTableContents {
         requires
             self.inv(),
         ensures
-            forall|va: nat| #[trigger] self.map.dom().contains(va) ==> self.map.index(va).frame.size > 0;
+            forall|va: nat| #[trigger] self.map.contains_key(va) ==> self.map.index(va).frame.size > 0;
 }
-
-// TODO: move
-pub proof fn lemma_set_contains_IMP_len_greater_zero<T>(s: Set<T>, a: T)
-    requires
-        s.finite(),
-        s.contains(a),
-    ensures
-        s.len() > 0,
-{
-    if s.len() == 0 {
-        // contradiction
-        assert(s.remove(a).len() + 1 == 0);
-    }
-}
-
-pub proof fn lemma_map_union_prefer_right_insert_commute<S,T>()
-    ensures
-        forall|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
-            !m1.dom().contains(n) && !m2.dom().contains(n)
-            ==> equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)),
-        forall|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T|
-            !m1.dom().contains(n) && !m2.dom().contains(n)
-            ==> equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)),
-{
-    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T| {
-        requires(!m1.dom().contains(n) && !m2.dom().contains(n));
-        ensures(equal(m1.insert(n, v).union_prefer_right(m2), m1.union_prefer_right(m2).insert(n, v)));
-        let union1 = m1.insert(n, v).union_prefer_right(m2);
-        let union2 = m1.union_prefer_right(m2).insert(n, v);
-        assert_maps_equal!(union1, union2);
-        assert(equal(union1, union2));
-    });
-    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S, v: T| {
-        requires(!m1.dom().contains(n) && !m2.dom().contains(n));
-        ensures(equal(m1.union_prefer_right(m2.insert(n, v)), m1.union_prefer_right(m2).insert(n, v)));
-        let union1 = m1.union_prefer_right(m2.insert(n, v));
-        let union2 = m1.union_prefer_right(m2).insert(n, v);
-        assert_maps_equal!(union1, union2);
-        assert(equal(union1, union2));
-    });
-}
-
-pub proof fn lemma_map_union_prefer_right_remove_commute<S,T>()
-    ensures
-        forall|m1: Map<S, T>, m2: Map<S, T>, n: S|
-            m1.dom().contains(n) && !m2.dom().contains(n)
-            ==> equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)),
-        forall|m1: Map<S, T>, m2: Map<S, T>, n: S|
-            m2.dom().contains(n) && !m1.dom().contains(n)
-            ==> equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)),
-{
-    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S| {
-        requires(m1.dom().contains(n) && !m2.dom().contains(n));
-        ensures(equal(m1.remove(n).union_prefer_right(m2), m1.union_prefer_right(m2).remove(n)));
-        let union1 = m1.remove(n).union_prefer_right(m2);
-        let union2 = m1.union_prefer_right(m2).remove(n);
-        assert_maps_equal!(union1, union2);
-        assert(equal(union1, union2));
-        // TODO: verus bug? (uncomment assertions below)
-        // substituting union1 and/or union2's definition makes the assertion fail:
-        // assert(equal(m1.remove(n).union_prefer_right(m2), union2));
-        // assert(equal(union1, m1.union_prefer_right(m2).remove(n)));
-    });
-    assert_forall_by(|m1: Map<S, T>, m2: Map<S, T>, n: S| {
-        requires(m2.dom().contains(n) && !m1.dom().contains(n));
-        ensures(equal(m1.union_prefer_right(m2.remove(n)), m1.union_prefer_right(m2).remove(n)));
-        let union1 = m1.union_prefer_right(m2.remove(n));
-        let union2 = m1.union_prefer_right(m2).remove(n);
-        assert_maps_equal!(union1, union2);
-        assert(equal(union1, union2));
-    });
-}
-
-// TODO: should go somewhere else
-pub proof fn lemma_finite_map_union<S,T>()
-    ensures
-        forall|s1: Map<S,T>, s2: Map<S,T>| s1.dom().finite() && s2.dom().finite() ==> #[trigger] s1.union_prefer_right(s2).dom().finite(),
-{
-    assert_forall_by(|s1: Map<S,T>, s2: Map<S,T>| {
-        requires(s1.dom().finite() && s2.dom().finite());
-        ensures((#[trigger] s1.union_prefer_right(s2)).dom().finite());
-
-        assert(s1.dom().union(s2.dom()).finite());
-
-        let union_dom = s1.union_prefer_right(s2).dom();
-        let dom_union = s1.dom().union(s2.dom());
-
-        assert(forall|s: S| union_dom.contains(s) ==> dom_union.contains(s));
-        assert(forall|s: S| dom_union.contains(s) ==> union_dom.contains(s));
-
-        assert(union_dom =~= dom_union);
-    });
-}
-
 
 }

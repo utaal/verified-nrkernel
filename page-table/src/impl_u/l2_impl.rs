@@ -7,7 +7,6 @@ WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SI
 X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 use crate::definitions_u::{ lemma_new_seq, aligned_exec, permissive_flags};
 use crate::impl_u::l1;
-use crate::impl_u::l0::{ambient_arith};
 use crate::impl_u::indexing;
 use crate::spec_t::mem;
 use crate::spec_t::mmu::translation::{PDE,GPDE, MASK_FLAG_P,
@@ -935,7 +934,6 @@ pub fn resolve(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, vaddr: usize
         // Refinement of l0
         result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).interp().resolve(vaddr as nat),
 {
-    proof { ambient_arith(); }
     let res = resolve_aux(mem, Ghost(pt), 0, mem.cr3().base, 0, vaddr);
     res
 }
