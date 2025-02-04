@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 use vstd::map::*;
 use crate::extra;
-use crate::definitions_t::{ MemRegion, overlap, between, Arch, aligned, PTE };
+use crate::spec_t::mmu::defs::{ MemRegion, overlap, between, Arch, aligned, PTE };
 
 verus! {
 

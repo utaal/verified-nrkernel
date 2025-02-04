@@ -70,8 +70,7 @@ pub const L1_ENTRY_SIZE: usize = 512 * L2_ENTRY_SIZE;
 pub const L0_ENTRY_SIZE: usize = 512 * L1_ENTRY_SIZE;
 
 pub open spec fn index_from_offset(offset: nat, entry_size: nat) -> (res: nat)
-    recommends
-        entry_size > 0,
+    recommends entry_size > 0,
 {
     offset / entry_size
 }
@@ -101,9 +100,7 @@ pub open spec fn candidate_mapping_overlaps_existing_vmem(
     base: nat,
     pte: PTE,
 ) -> bool {
-    exists|b: nat|
-        #![auto]
-        {
+    exists|b: nat| #![auto] {
             &&& mappings.dom().contains(b)
             &&& overlap(
                 MemRegion { base: base, size: pte.frame.size },
@@ -112,13 +109,8 @@ pub open spec fn candidate_mapping_overlaps_existing_vmem(
         }
 }
 
-pub open spec fn candidate_mapping_overlaps_existing_pmem(
-    mappings: Map<nat, PTE>,
-    pte: PTE,
-) -> bool {
-    exists|b: nat|
-        #![auto]
-        {
+pub open spec fn candidate_mapping_overlaps_existing_pmem(mappings: Map<nat, PTE>, pte: PTE) -> bool {
+    exists|b: nat| #![auto] {
             &&& mappings.dom().contains(b)
             &&& overlap(pte.frame, mappings.index(b).frame)
         }

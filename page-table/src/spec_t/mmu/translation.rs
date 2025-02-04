@@ -12,9 +12,6 @@ use crate::spec_t::mmu::defs::{
 
 verus!{
 
-// FIXME: Including is_variant conditionally to avoid the warning when not building impl. But this
-// should disappear completely when I find the time to migrate to the new syntax.
-#[cfg_attr(feature = "impl", is_variant)]
 pub ghost enum GPDE {
     Directory {
         addr: usize,

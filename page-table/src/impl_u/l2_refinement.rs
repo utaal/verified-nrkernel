@@ -1,8 +1,11 @@
 use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
-use crate::definitions_t::{ Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_BASE, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, aligned, new_seq, bitmask_inc };
-use crate::definitions_t::{ PTE, PageTableEntryExec, MemRegion};
+use crate::spec_t::mmu::defs::{
+    Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_BASE,
+    L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, aligned, new_seq, bitmask_inc, PTE,
+    PageTableEntryExec, MemRegion
+};
 use crate::spec_t::impl_spec;
 use crate::spec_t::mem;
 use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GPDE, nat_to_u64 };
