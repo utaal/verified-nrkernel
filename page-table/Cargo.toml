@@ -8,11 +8,20 @@ builtin_macros = { git = "https://github.com/verus-lang/verus.git", rev="097ac7e
 builtin = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
 vstd = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
 
+[lib]
+path = "src/lib.rs"
+crate-type = [ "staticlib" ]
+
 [features]
 impl = []
 noreclaim = []
 linuxmodule = []
 default = ["impl"]
 
-# [profile.release]
-# debug = true
+[profile.dev]
+panic = "abort"
+overflow-checks = false
+
+[profile.release]
+panic = "abort"
+overflow-checks = false
