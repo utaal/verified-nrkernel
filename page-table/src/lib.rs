@@ -44,6 +44,28 @@ pub extern "C" fn v_x8664pml4_map(
     sz: u64,
     flags: u64) -> i64
 {
-    assert!(sz == 4096);
-    0
+    0 // return 0 to indicate success
+}
+
+
+
+
+#[no_mangle]
+pub extern "C" fn v_x8664pml4_unmap(
+    pt_ptr: *mut core::ffi::c_void,
+    vaddr: u64,
+    sz: u64) -> i64
+{
+    0 // return 0 to indicate success
+}
+
+
+#[no_mangle]
+pub extern "C" fn v_x8664pml4_protect(
+    pt_ptr: *mut core::ffi::c_void,
+    vaddr: u64,
+    sz: u64,
+    flags: u64) -> i64
+{
+    0 // return 0 to indicate success
 }
