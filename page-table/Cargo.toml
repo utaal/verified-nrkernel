@@ -10,11 +10,17 @@ vstd = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae6037
 
 [lib]
 path = "lib.rs"
+crate-type = [ "staticlib" ]
 
 [features]
 impl = []
 noreclaim = []
 default = ["impl"]
 
-# [profile.release]
-# debug = true
+[profile.dev]
+panic = "abort"
+overflow-checks = false
+
+[profile.release]
+panic = "abort"
+overflow-checks = false
