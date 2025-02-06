@@ -613,8 +613,7 @@ pub open spec(checked) fn inv_at(mem: &mem::PageTableMemory, pt: PTDir, layer: n
 
 pub open spec fn directories_have_flags(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| i < X86_NUM_ENTRIES ==> {
-        let entry = #[trigger] view_at(mem, pt, layer, ptr, i);
-        entry is Directory ==> entry->Directory_RW && entry->Directory_US && !entry->Directory_XD
+        (#[trigger] view_at(mem, pt, layer, ptr, i)) matches GPDE::Directory { RW, US, XD, .. } ==> RW && US && !XD
     }
 }
 
@@ -658,8 +657,8 @@ pub open spec fn ghost_pt_used_regions_rtrancl(mem: &mem::PageTableMemory, pt: P
 
 pub open spec fn interp_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat) -> l1::Directory
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES, 2nat
+        when inv_at(mem, pt, layer, ptr)
 {
-    decreases_when(inv_at(mem, pt, layer, ptr));
     l1::Directory {
         entries: interp_at_aux(mem, pt, layer, ptr, base_vaddr, seq![]),
         layer: layer,

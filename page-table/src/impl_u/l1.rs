@@ -10,57 +10,9 @@ use crate::impl_u::l0;
 
 verus! {
 
-// TODO: pr to vstd
-pub broadcast proof fn lemma_union_prefer_right_insert_left<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K, v: V)
-    requires
-        !m2.contains_key(k),
-    ensures
-        #[trigger] m1.insert(k, v).union_prefer_right(m2) == m1.union_prefer_right(m2).insert(k, v),
-{
-    assert(m1.insert(k, v).union_prefer_right(m2) =~= m1.union_prefer_right(m2).insert(k, v));
-}
-
-pub broadcast proof fn lemma_union_prefer_right_insert_right<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K, v: V)
-    ensures
-        #[trigger] m1.union_prefer_right(m2.insert(k, v)) == m1.union_prefer_right(m2).insert(k, v),
-{
-    assert(m1.union_prefer_right(m2.insert(k, v)) =~= m1.union_prefer_right(m2).insert(k, v));
-}
-
-pub broadcast proof fn lemma_union_prefer_right_remove_left<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K)
-    requires
-        m1.contains_key(k),
-        !m2.contains_key(k),
-    ensures
-        #[trigger] m1.union_prefer_right(m2).remove(k) == m1.remove(k).union_prefer_right(m2),
-{
-    assert(m1.remove(k).union_prefer_right(m2) =~= m1.union_prefer_right(m2).remove(k));
-}
-
-pub broadcast proof fn lemma_union_prefer_right_remove_right<K,V>(m1: Map<K, V>, m2: Map<K, V>, k: K)
-    requires
-        !m1.contains_key(k),
-        m2.contains_key(k),
-    ensures
-        #[trigger] m1.union_prefer_right(m2).remove(k) == m1.union_prefer_right(m2.remove(k)),
-{
-    assert(m1.union_prefer_right(m2.remove(k)) =~= m1.union_prefer_right(m2).remove(k));
-}
-
-pub broadcast proof fn lemma_union_prefer_right_dom<K,V>(m1: Map<K,V>, m2: Map<K,V>)
-    ensures
-        #[trigger] m1.union_prefer_right(m2).dom() == m1.dom().union(m2.dom())
-{
-    assert(m1.dom().union(m2.dom()) =~= m1.union_prefer_right(m2).dom());
-}
-
 pub broadcast group group_ambient {
     vstd::arithmetic::mul::lemma_mul_is_commutative,
-    lemma_union_prefer_right_dom,
-    lemma_union_prefer_right_remove_left,
-    lemma_union_prefer_right_remove_right,
-    lemma_union_prefer_right_insert_left,
-    lemma_union_prefer_right_insert_right,
+    vstd::map_lib::group_map_union,
 }
 
 pub proof fn ambient_lemmas2()
