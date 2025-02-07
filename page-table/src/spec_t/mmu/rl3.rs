@@ -828,53 +828,107 @@ pub mod code {
 
     impl Token {
         pub spec fn consts(self) -> mmu::Constants;
-        pub spec fn pre(self) -> rl3::State;
         pub spec fn core(self) -> Core;
-    }
-
-    impl Stub {
+        pub spec fn pre(self) -> rl3::State;
         pub spec fn post(self) -> rl3::State;
         pub spec fn lbl(self) -> mmu::Lbl;
+        pub spec fn validated(self) -> bool;
+
+        pub open spec fn set_valid(self, new: Token) -> bool {
+            &&& new.consts() == self.consts()
+            &&& new.core() == self.core()
+            &&& new.pre() == self.pre()
+            &&& new.post() == self.post()
+            &&& new.lbl() == self.lbl()
+            &&& new.validated()
+        }
+
+        pub open spec fn prophesied_step(self, new: Token) -> bool {
+            &&& new.consts() == self.consts()
+            &&& new.core() == self.core()
+            &&& new.pre() == self.pre()
+            &&& new.validated() == self.validated()
+            &&& rl3::next(new.pre(), new.post(), new.consts(), new.lbl())
+        }
+
+        pub proof fn prophesy_read(tracked &mut self, addr: usize)
+            requires
+                !old(self).validated(),
+            ensures
+                self.lbl()->Read_0 == self.core(),
+                self.lbl()->Read_1 == addr,
+                old(self).prophesied_step(*self),
+        {
+            admit();
+        }
+
+        pub proof fn prophesy_write(tracked &mut self, addr: usize, value: usize)
+            requires
+                !old(self).validated(),
+            ensures
+                self.lbl() == mmu::Lbl::Write(self.core(), addr, value),
+                old(self).prophesied_step(*self),
+        { 
+            admit();
+        }
+
+        pub proof fn prophesy_barrier(tracked &mut self)
+            requires
+                !old(self).validated(),
+            ensures
+                self.lbl() == mmu::Lbl::Barrier(self.core()),
+                old(self).prophesied_step(*self),
+        { 
+            admit();
+        }
+
+        pub proof fn prophesy_invlpg(tracked &mut self, addr: usize)
+            requires
+                !old(self).validated(),
+            ensures
+                self.lbl() == mmu::Lbl::Invlpg(self.core(), addr),
+                old(self).prophesied_step(*self),
+        { 
+            admit();
+        }
     }
 
     #[verifier(external_body)]
-    pub exec fn read(Tracked(tok): Tracked<Token>, addr: usize)
-       -> (res:
-           (Tracked<Stub>, // stub
-            Ghost<usize>,  // r
-            usize))        // value
+    pub exec fn read(Tracked(tok): Tracked<Token>, addr: usize) -> (res: (Tracked<Stub>, usize))
+        requires
+            tok.validated(),
+            tok.lbl() matches mmu::Lbl::Read(lbl_core, lbl_addr, _) && lbl_core == tok.core() && lbl_addr == addr,
         ensures
-            rl3::step_Read(tok.pre(), res.0@.post(), tok.consts(), res.1@, res.0@.lbl()),
-            res.0@.lbl() == mmu::Lbl::Read(tok.core(), addr, res.2),
+            tok.lbl()->Read_2 == res.1
     {
-        unimplemented!()
+        unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
-    pub exec fn write(Tracked(tok): Tracked<Token>, addr: usize, value: usize) -> (stub: Tracked<Stub>)
-        ensures
-            rl3::step_Write(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
-            stub@.lbl() == mmu::Lbl::Write(tok.core(), addr, value),
+    pub exec fn write(Tracked(tok): Tracked<Token>, addr: usize, value: usize) -> Tracked<Stub>
+        requires
+            tok.validated(),
+            tok.lbl() == mmu::Lbl::Write(tok.core(), addr, value),
     {
-        unimplemented!()
+        unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
-    pub exec fn barrier(Tracked(tok): Tracked<Token>) -> (stub: Tracked<Stub>)
-        ensures
-            rl3::step_Barrier(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
-            stub@.lbl() == mmu::Lbl::Barrier(tok.core()),
+    pub exec fn barrier(Tracked(tok): Tracked<Token>) -> Tracked<Stub>
+        requires
+            tok.validated(),
+            tok.lbl() == mmu::Lbl::Barrier(tok.core()),
     {
-        unimplemented!()
+        unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
     pub exec fn invlpg(Tracked(tok): Tracked<Token>, vaddr: usize) -> (stub: Tracked<Stub>)
-        ensures
-            rl3::step_Invlpg(tok.pre(), stub@.post(), tok.consts(), stub@.lbl()),
-            stub@.lbl() == mmu::Lbl::Invlpg(tok.core(), vaddr),
+        requires
+            tok.validated(),
+            tok.lbl() == mmu::Lbl::Invlpg(tok.core(), vaddr),
     {
-        unimplemented!()
+        unimplemented!() // TODO:
     }
 
     // TODO: need transitions to allocate/deallocate pages i guess

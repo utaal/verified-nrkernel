@@ -6,9 +6,21 @@ mod EnvM {
     use super::*;
 
     pub enum Lbl {
+        PTRead(nat, nat),
         PTWrite(nat, nat),
         ProcessWrite(nat, nat),
         Tau,
+    }
+
+    impl Lbl {
+        pub open spec fn agree_with_inputs(self, other: Lbl) -> bool {
+            match self {
+                Lbl::PTRead(i, v) => other matches Lbl::PTRead(i2, v2) && i2 == i && v2 == v,
+                Lbl::PTWrite(i, v) => other matches Lbl::PTWrite(i2, v2) && i2 == i && v2 == v,
+                Lbl::ProcessWrite(i, v) => arbitrary(), // not actor step
+                Lbl::Tau => true,
+            }
+        }
     }
 
     pub struct PTMem {
@@ -32,6 +44,12 @@ mod EnvM {
         pub pmem: Map<nat, nat>,
     }
 
+    pub open spec fn step_PTRead(pre: State, post: State, lbl: Lbl) -> bool {
+        &&& lbl matches Lbl::PTRead(i, v)
+
+        &&& post == pre
+    }
+
     pub open spec fn step_PTWrite(pre: State, post: State, lbl: Lbl) -> bool {
         &&& lbl matches Lbl::PTWrite(i, v)
 
@@ -46,14 +64,13 @@ mod EnvM {
         &&& post.pmem == pre.pmem.insert(pre.ptmem@[i], v)
     }
 
-    /// TODO: I think "stutter" here also covers other internal behaviors that don't cause any
-    /// state changes in the abstracted environment model.
     pub open spec fn step_Stutter(pre: State, post: State, lbl: Lbl) -> bool {
         &&& lbl is Tau
         &&& post == pre
     }
 
     pub enum Step {
+        PTRead,
         PTWrite,
         ProcessWrite,
         Stutter,
@@ -61,6 +78,7 @@ mod EnvM {
 
     pub open spec fn next_step(pre: State, post: State, step: Step, lbl: Lbl) -> bool {
         match step {
+            Step::PTRead       => step_PTRead(pre, post, lbl),
             Step::PTWrite      => step_PTWrite(pre, post, lbl),
             Step::ProcessWrite => step_ProcessWrite(pre, post, lbl),
             Step::Stutter      => step_Stutter(pre, post, lbl),
@@ -81,40 +99,69 @@ mod EnvM {
         use super::{EnvM, Lbl};
 
         #[verifier(external_body)]
-        pub tracked struct Token {}
+        pub tracked struct Token {
+        }
 
         #[verifier(external_body)]
         pub tracked struct Stub {}
 
         impl Token {
-            pub spec fn st(self) -> EnvM::State;
+            pub spec fn pre(self) -> EnvM::State;
+            // Prophecy
+            pub spec fn post(self) -> EnvM::State;
+            // Outputs are prophesied
             pub spec fn lbl(self) -> EnvM::Lbl;
-        }
+            pub spec fn validated(self) -> bool;
 
-        impl Stub {
-            pub spec fn st(self) -> EnvM::State;
-            pub spec fn lbl(self) -> EnvM::Lbl;
+            pub proof fn prophesy_ptwrite(tracked &self, i: usize, v: usize)
+                ensures
+                    self.lbl() == Lbl::PTWrite(i as nat, v as nat),
+                    EnvM::next(self.pre(), self.post(), self.lbl()),
+            { 
+                admit();
+            }
+
+            pub proof fn prophesy_ptread(tracked &self, i: usize)
+                ensures
+                    self.lbl()->PTRead_0 == i as nat,
+                    EnvM::next(self.pre(), self.post(), self.lbl()),
+            {
+                admit();
+            }
+
         }
 
         #[verifier(external_body)]
-        pub exec fn ptwrite(Tracked(tok): Tracked<Token>, i: usize, v: usize) -> (stub: Tracked<Stub>)
+        pub exec fn ptwrite(Tracked(tok): Tracked<Token>, i: usize, v: usize) -> Tracked<Stub>
             requires
-                tok.lbl() == Lbl::PTWrite(i as nat, v as nat),
-            ensures
-                EnvM::step_PTWrite(tok.st(), stub@.st(), tok.lbl()),
-                stub@.lbl() == tok.lbl()
+                tok.validated(),
+                tok.lbl() == Lbl::PTWrite(i, v),
         {
             unimplemented!()
         }
 
         #[verifier(external_body)]
-        pub exec fn stutter(Tracked(tok): Tracked<Token>) -> (stub: Tracked<Stub>)
+        pub exec fn ptread(Tracked(tok): Tracked<Token>, i: usize) -> (res: (Tracked<Stub>, usize))
+            requires
+                tok.validated(),
+                tok.lbl() matches Lbl::PTRead(lbl_i, _) && lbl_i == i,
             ensures
-                EnvM::step_Stutter(tok.st(), stub@.st(), stub@.lbl()),
-                stub@.lbl() == Lbl::Tau,
+                // Resolve prophecy
+                tok.lbl()->PTRead_1 == res.1,
+                //EnvM::step_PTWrite(tok.st(), res.0@.st(), tok.lbl()),
+                //res.0@.lbl() == tok.lbl()
         {
             unimplemented!()
         }
+
+        //#[verifier(external_body)]
+        //pub exec fn stutter(Tracked(tok): Tracked<Token>) -> (stub: Tracked<Stub>)
+        //    ensures
+        //        EnvM::step_Stutter(tok.st(), stub@.st(), stub@.lbl()),
+        //        stub@.lbl() == Lbl::Tau,
+        //{
+        //    unimplemented!()
+        //}
 
     }
 }
@@ -219,7 +266,7 @@ mod SysM {
         pub enum Progress {
             Unready,
             Ready,
-            TokenWithdrawn
+            TokenWithdrawn,
         }
 
         #[verifier(external_body)]
@@ -307,66 +354,80 @@ mod SysM {
                 ||| SysM::next(self.st(), post, self.remaining_steps().first())
             }
 
-            /// To get permission for calling an interface function we have to prove that no
-            /// matter what result it returns and how it changes the state, we can take a valid
-            /// step. At this point we don't need to decide whether the step will be internal or
-            /// external, just that it's valid according to SysM and if it is external, that it
-            /// matches `remaining_steps`.
+            /// Returns a token for the env state machine which has the current env state and is
+            /// not validated. The fields `post` and `lbl` must be fully unspecified as the
+            /// EnvM's prophecy functions will predict their values based on the transition we want
+            /// to take.
             #[verifier(external_body)]
-            pub proof fn preregister_step(
-                tracked &mut self,
-                elbl: EnvM::Lbl,
-            ) -> (tracked tok: EnvM::Interface::Token)
+            pub proof fn get_env_token(tracked &mut self) -> (tracked tok: EnvM::Interface::Token)
                 requires
                     old(self).remaining_steps().len() > 0, // No more steps allowed if we're already finished
                     old(self).progress() is Ready,
-                    forall|epost| EnvM::next(old(self).st().env, epost, elbl)
-                        ==> exists|sys_post| #![auto]
-                                old(self).can_step_to(SysM::State { sys: sys_post, env: epost }),
                 ensures
                     self.progress() is TokenWithdrawn,
                     self.sys_st() == old(self).sys_st(),
                     self.env_st() == old(self).env_st(),
                     self.remaining_steps() == old(self).remaining_steps(),
-                    tok.st() == self.env_st(),
-                    tok.lbl() == elbl,
+                    tok.pre() == self.env_st(),
+                    !tok.validated(),
             { unimplemented!() }
 
-            /// Depending on the actual result of the operation, we can decide which post state we
-            /// want to step to.
-            #[verifier(external_body)]
-            pub proof fn finalize_internal_step(
+            /// Validates the token by showing which SysM transition we will take by executing the
+            /// call on EnvM.
+            /// Already applies the effects of the transition on the SysM token. We could split
+            /// this into two but it doesn't really matter.
+            /// Either it's possible that we apply the effects of a transition that never happens
+            /// or we never apply the effects of a transition that did happen. But in both cases we
+            /// know that no further transitions are possible and that the potential transition is
+            /// valid.
+            pub proof fn register_internal_transition(
                 tracked &mut self,
-                stub: Tracked<EnvM::Interface::Stub>,
-                sys_post: SysM::SysState,
+                tracked tok: &mut EnvM::Interface::Token,
+                sys_post: SysM::SysState
             )
                 requires
-                    old(self).progress() is TokenWithdrawn,
-                    SysM::next(old(self).st(), SysM::State { sys: sys_post, env: stub@.st() }, SysM::Lbl::Tau),
+                    !tok.validated(),
+                    SysM::next(old(self).st(), SysM::State { sys: sys_post, env: old(tok).post() }, SysM::Lbl::Tau),
                 ensures
-                    self.progress() is Unready,
                     self.sys_st() == sys_post,
-                    self.env_st() == stub@.st(),
+                    self.env_st() == old(tok).post(),
                     self.remaining_steps() == old(self).remaining_steps(),
-            { unimplemented!() }
+                    self.progress() == old(self).progress(),
+                    tok.pre() == old(tok).pre(),
+                    tok.post() == old(tok).post(),
+                    tok.lbl() == old(tok).lbl(),
+                    tok.validated(),
+            { admit(); }
 
-            /// Depending on the actual result of the operation, we can decide which post state we
-            /// want to step to.
-            #[verifier(external_body)]
-            pub proof fn finalize_external_step(
+            pub proof fn register_external_transition(
                 tracked &mut self,
-                tracked stub: EnvM::Interface::Stub,
-                sys_post: SysM::SysState,
+                tracked tok: &mut EnvM::Interface::Token,
+                sys_post: SysM::SysState
             )
                 requires
-                    old(self).progress() is TokenWithdrawn,
-                    SysM::next(old(self).st(), SysM::State { sys: sys_post, env: stub.st() }, old(self).remaining_steps().first()),
+                    old(self).remaining_steps().len() > 0,
+                    SysM::next(
+                        old(self).st(),
+                        SysM::State { sys: sys_post, env: old(tok).post() },
+                        old(self).remaining_steps().first()),
                 ensures
-                    self.progress() is Unready,
                     self.sys_st() == sys_post,
-                    self.env_st() == stub.st(),
+                    self.env_st() == old(tok).post(),
                     self.remaining_steps() == old(self).remaining_steps().drop_first(),
-            { unimplemented!() }
+                    self.progress() == old(self).progress(),
+                    tok.pre() == old(tok).pre(),
+                    tok.post() == old(tok).post(),
+                    tok.lbl() == old(tok).lbl(),
+                    tok.validated(),
+            { admit(); }
+
+            pub proof fn return_stub(tracked &mut self, tracked stub: EnvM::Interface::Stub)
+                ensures
+                    self.sys_st() == old(self).sys_st(),
+                    self.env_st() == old(self).env_st(),
+                    self.remaining_steps() == old(self).remaining_steps(),
+                    self.progress() is Unready,
+            { admit(); }
         }
 
         //pub exec fn do_mapstart(state: &mut Tracked<SysM::Interface::Token>, va: usize, pa: usize)
@@ -432,33 +493,28 @@ mod SysM {
                 state@.progress() is Ready,
         {
             let elbl = Ghost(EnvM::Lbl::PTWrite(i as nat, v as nat));
+            let tracked env_token = state.borrow_mut().get_env_token();
             proof {
-                let post = SysM::State {
-                    sys: state@.sys_st(),
-                    env: EnvM::State {
-                        ptmem: state@.env_st().ptmem.write(i as nat, v as nat),
-                        ..state@.env_st()
-                    },
-                };
-                assert forall|epost| EnvM::next(state@.st().env, epost, elbl@) implies state@.can_step_to(post) by {
-                    assert(SysM::next_step(state@.st(), post, SysM::Step::MapStutter(i as nat, v as nat), SysM::Lbl::Tau));
-                };
-            }
-            let tracked env_token = state.borrow_mut().preregister_step(elbl@);
-            // Do the write
-            let stub = EnvM::Interface::ptwrite(Tracked(env_token), i, v);
+                // Prophesy result of the write
+                env_token.prophesy_ptwrite(i, v);
 
-            proof {
-                assert(stub@.lbl() == EnvM::Lbl::PTWrite(i as nat, v as nat));
-                assert(EnvM::next_step(state@.env_st(), stub@.st(), EnvM::Step::PTWrite, stub@.lbl()));
+                // and prove that this is a valid SysM transition
                 assert(SysM::next_step(
                         state@.st(),
-                        SysM::State { sys: state@.sys_st(), env: stub@.st() },
+                        SysM::State { sys: state@.sys_st(), env: env_token.post() },
                         SysM::Step::MapStutter(i as nat, v as nat),
                         SysM::Lbl::Tau)
-                );
-                state.borrow_mut().finalize_internal_step(stub, state@.sys_st());
+                    );
+
+                // to validate the token
+                state.borrow_mut().register_internal_transition(&mut env_token, state@.sys_st());
             }
+            // then execute the write
+            let stub = EnvM::Interface::ptwrite(Tracked(env_token), i, v);
+
+            // and return the stub to the SysM token
+            proof { state.borrow_mut().return_stub(stub.get()); }
+
 
             // And then we'll allow for concurrent transitions to set `progress()` to `Ready` again
             proof {

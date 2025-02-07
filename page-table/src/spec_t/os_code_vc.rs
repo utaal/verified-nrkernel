@@ -118,11 +118,19 @@ impl Token {
     pub spec fn thread(self) -> nat;
     pub spec fn consts(self) -> os::Constants;
     pub spec fn st(self) -> os::State;
-    pub spec fn remaining_steps(self) -> Seq<RLbl>;
+    pub spec fn steps(self) -> Seq<RLbl>;
     pub spec fn progress(self) -> Progress;
 
     pub open spec fn core(self) -> Core {
         self.consts().ult2core[self.thread()]
+    }
+
+    pub open spec fn withdraw_token(self, new: Token) -> bool {
+        &&& new.consts() == self.consts()
+        &&& new.thread() == self.thread()
+        &&& new.st() == self.st()
+        &&& new.steps() == self.steps()
+        &&& new.progress() is TokenWithdrawn
     }
 
 
@@ -134,7 +142,7 @@ impl Token {
             self.progress() is Ready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.remaining_steps() == old(self).remaining_steps(),
+            self.steps() == old(self).steps(),
             concurrent_trs(old(self).st(), self.st(), old(self).consts(), old(self).core(), pidx),
     { unimplemented!() }
 
@@ -143,53 +151,53 @@ impl Token {
     // Take MMU steps
 
     #[verifier(external_body)]
-    pub proof fn get_env_token_mmu(tracked &mut self) -> (tracked tok: mmu::rl3::code::Token)
+    pub proof fn get_mmu_token(tracked &mut self) -> (tracked tok: mmu::rl3::code::Token)
         requires
+            old(self).steps().len() > 0,
             old(self).progress() is Ready,
         ensures
-            self.progress() is TokenWithdrawn,
-            self.consts() == old(self).consts(),
-            self.thread() == old(self).thread(),
-            self.st() == old(self).st(),
-            self.remaining_steps() == old(self).remaining_steps(),
+            old(self).withdraw_token(*self),
             tok.pre() == old(self).st().mmu,
+            !tok.validated(),
     { unimplemented!() }
 
-    #[verifier(external_body)]
-    pub proof fn register_internal_step_mmu(tracked &mut self, tracked stub: Tracked<mmu::rl3::code::Stub>, post: os::State)
+    pub proof fn register_internal_step_mmu(
+        tracked &mut self,
+        tracked tok: &mut mmu::rl3::code::Token,
+        post: os::State
+    )
         requires
-            old(self).remaining_steps().len() > 0, // No more steps allowed if we're already finished
-            old(self).progress() is TokenWithdrawn,
+            !old(tok).validated(),
             os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
             post.os_ext == old(self).st().os_ext,
-            post.mmu == stub@.post(),
+            post.mmu == old(tok).post(),
         ensures
-            self.progress() is Unready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.remaining_steps() == old(self).remaining_steps(),
             self.st() == post,
-    {}
+            self.steps() == old(self).steps(),
+            self.progress() == old(self).progress(),
+            old(tok).set_valid(*tok),
+    { admit(); }
 
-    // XXX: Problem with this approach: A non-terminating program could take one invalid
-    // step and just not register it. Do we have termination checking for exec now?
-    // Otherwise we'll have to change this to "pre-register" transitions before taking
-    // them.
-    #[verifier(external_body)]
-    pub proof fn register_external_step_mmu(tracked &mut self, tracked stub: Tracked<mmu::rl3::code::Stub>, post: os::State)
+    pub proof fn register_external_step_mmu(
+        tracked &mut self,
+        tracked tok: &mut mmu::rl3::code::Token,
+        post: os::State
+    )
         requires
-            old(self).remaining_steps().len() > 0,
-            old(self).progress() is TokenWithdrawn,
-            os::next(old(self).consts(), old(self).st(), post, old(self).remaining_steps().first()),
+            !old(tok).validated(),
+            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
             post.os_ext == old(self).st().os_ext,
-            post.mmu == stub@.post(),
+            post.mmu == old(tok).post(),
         ensures
-            self.progress() is Unready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.remaining_steps() == old(self).remaining_steps().drop_first(),
             self.st() == post,
-    {}
+            self.steps() == old(self).steps().drop_first(),
+            self.progress() == old(self).progress(),
+            old(tok).set_valid(*tok),
+    { admit(); }
 
 
 
@@ -204,14 +212,14 @@ impl Token {
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.st() == old(self).st(),
-            self.remaining_steps() == old(self).remaining_steps(),
+            self.steps() == old(self).steps(),
             tok.pre() == old(self).st().os_ext,
     { unimplemented!() }
 
     #[verifier(external_body)]
     pub proof fn register_internal_step_os_ext(tracked &mut self, tracked stub: Tracked<os_ext::code::Stub>, post: os::State)
         requires
-            old(self).remaining_steps().len() > 0, // No more steps allowed if we're already finished
+            old(self).steps().len() > 0, // No more steps allowed if we're already finished
             old(self).progress() is TokenWithdrawn,
             os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
             post.mmu == old(self).st().mmu,
@@ -220,7 +228,7 @@ impl Token {
             self.progress() is Unready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.remaining_steps() == old(self).remaining_steps(),
+            self.steps() == old(self).steps(),
             self.st() == post,
     {}
 
@@ -231,16 +239,16 @@ impl Token {
     #[verifier(external_body)]
     pub proof fn register_external_step_os_ext(tracked &mut self, tracked stub: Tracked<os_ext::code::Stub>, post: os::State)
         requires
-            old(self).remaining_steps().len() > 0,
+            old(self).steps().len() > 0,
             old(self).progress() is TokenWithdrawn,
-            os::next(old(self).consts(), old(self).st(), post, old(self).remaining_steps().first()),
+            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
             post.mmu == old(self).st().mmu,
             post.os_ext == stub@.post(),
         ensures
             self.progress() is Unready,
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.remaining_steps() == old(self).remaining_steps().drop_first(),
+            self.steps() == old(self).steps().drop_first(),
             self.st() == post,
     {}
 }
@@ -260,7 +268,7 @@ trait CodeVC {
         -> (res: Result<(),()>)
         requires
             old(tok).st().core_states[old(tok).core()] is MapWaiting,
-            old(tok).remaining_steps() === seq![
+            old(tok).steps() === seq![
                 RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
                 RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
@@ -268,7 +276,7 @@ trait CodeVC {
             proph_res.may_resolve(),
         ensures
             res == proph_res.value(),
-            tok.remaining_steps() === seq![],
+            tok.steps() === seq![],
             tok.progress() is Ready,
     ;
 
@@ -280,7 +288,7 @@ trait CodeVC {
         -> (res: Result<(),()>)
         requires
             old(tok).st().core_states[old(tok).core()] is UnmapWaiting,
-            old(tok).remaining_steps() === seq![
+            old(tok).steps() === seq![
                 RLbl::UnmapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat },
                 RLbl::UnmapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
@@ -288,7 +296,7 @@ trait CodeVC {
             proph_res.may_resolve(),
         ensures
             res == proph_res.value(),
-            tok.remaining_steps() === seq![],
+            tok.steps() === seq![],
             tok.progress() is Ready,
     ;
 }
@@ -296,8 +304,8 @@ trait CodeVC {
 //pub exec fn do_mapstart(state: &mut Tracked<SysM::Interface::Token>, va: usize, pa: usize)
 //    requires
 //        old(state)@.os_st().thread_state is Idle,
-//        old(state)@.remaining_steps().len() > 0,
-//        old(state)@.remaining_steps().first() == SysM::RLbl::MapStart(va as nat, pa as nat),
+//        old(state)@.steps().len() > 0,
+//        old(state)@.steps().first() == SysM::RLbl::MapStart(va as nat, pa as nat),
 //        old(state)@.progress() is Unready,
 //    ensures
 //        // XXX: can't directly use the transition definition because of the additional
@@ -307,7 +315,7 @@ trait CodeVC {
 //        //SysM::step_MapStart(old(state)@.st(), state@.st(), SysM::RLbl::MapStart(va as nat, pa as nat)),
 //        state@.mmu_st().interp().ptmem == old(state)@.mmu_st().interp().ptmem,
 //        state@.os_st().thread_state == SysM::TState::Mapping(va as nat, pa as nat),
-//        state@.remaining_steps() == old(state)@.remaining_steps().drop_first(),
+//        state@.steps() == old(state)@.steps().drop_first(),
 //        state@.progress() is Ready,
 //{
 //    // Allow concurrent transitions to get `progress()` to `Ready`
@@ -347,13 +355,13 @@ trait CodeVC {
 //pub exec fn do_mapstutter(state: &mut Tracked<SysM::Interface::Token>, i: usize, v: usize)
 //    requires
 //        old(state)@.os_st().thread_state is Mapping,
-//        old(state)@.remaining_steps().len() > 0,
+//        old(state)@.steps().len() > 0,
 //        old(state)@.progress() is Ready,
 //        old(state)@.mmu_st().interp().ptmem.write(i as nat, v as nat)@ == old(state)@.mmu_st().interp().ptmem@,
 //    ensures
 //        state@.mmu_st().interp().ptmem@ == old(state)@.mmu_st().interp().ptmem@,
 //        state@.os_st().thread_state    == old(state)@.os_st().thread_state,
-//        state@.remaining_steps()        == old(state)@.remaining_steps(),
+//        state@.steps()        == old(state)@.steps(),
 //        state@.progress() is Ready,
 //{
 //    let tracked env_token = state.borrow_mut().get_env_token();
@@ -384,7 +392,7 @@ trait CodeVC {
 //pub exec fn do_mapend(state: &mut Tracked<SysM::Interface::Token>, i: usize, v: usize)
 //    requires
 //        old(state)@.os_st().thread_state is Mapping,
-//        old(state)@.remaining_steps() =~= seq![SysM::RLbl::MapEnd],
+//        old(state)@.steps() =~= seq![SysM::RLbl::MapEnd],
 //        old(state)@.progress() is Ready,
 //        ({
 //            // https://github.com/verus-lang/verus/issues/1393
@@ -399,7 +407,7 @@ trait CodeVC {
 //            state@.mmu_st().ptmem@ == old(state)@.mmu_st().ptmem@.insert(va, pa)
 //        }),
 //        state@.os_st().thread_state == SysM::TState::Idle,
-//        state@.remaining_steps()     =~= seq![],
+//        state@.steps()     =~= seq![],
 //        state@.progress() is Ready,
 //{
 //    let tracked env_token = state.borrow_mut().get_env_token();
