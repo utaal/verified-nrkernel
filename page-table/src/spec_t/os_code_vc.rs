@@ -204,53 +204,53 @@ impl Token {
     // Take os_ext steps
 
     #[verifier(external_body)]
-    pub proof fn get_env_token_os_ext(tracked &mut self) -> (tracked tok: os_ext::code::Token)
-        requires
-            old(self).progress() is Ready,
-        ensures
-            self.progress() is TokenWithdrawn,
-            self.consts() == old(self).consts(),
-            self.thread() == old(self).thread(),
-            self.st() == old(self).st(),
-            self.steps() == old(self).steps(),
-            tok.pre() == old(self).st().os_ext,
-    { unimplemented!() }
-
-    #[verifier(external_body)]
-    pub proof fn register_internal_step_os_ext(tracked &mut self, tracked stub: Tracked<os_ext::code::Stub>, post: os::State)
-        requires
-            old(self).steps().len() > 0, // No more steps allowed if we're already finished
-            old(self).progress() is TokenWithdrawn,
-            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
-            post.mmu == old(self).st().mmu,
-            post.os_ext == stub@.post(),
-        ensures
-            self.progress() is Unready,
-            self.consts() == old(self).consts(),
-            self.thread() == old(self).thread(),
-            self.steps() == old(self).steps(),
-            self.st() == post,
-    {}
-
-    // XXX: Problem with this approach: A non-terminating program could take one invalid
-    // step and just not register it. Do we have termination checking for exec now?
-    // Otherwise we'll have to change this to "pre-register" transitions before taking
-    // them.
-    #[verifier(external_body)]
-    pub proof fn register_external_step_os_ext(tracked &mut self, tracked stub: Tracked<os_ext::code::Stub>, post: os::State)
+    pub proof fn get_osext_token(tracked &mut self) -> (tracked tok: os_ext::code::Token)
         requires
             old(self).steps().len() > 0,
-            old(self).progress() is TokenWithdrawn,
-            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
-            post.mmu == old(self).st().mmu,
-            post.os_ext == stub@.post(),
+            old(self).progress() is Ready,
         ensures
-            self.progress() is Unready,
+            old(self).withdraw_token(*self),
+            tok.pre() == old(self).st().os_ext,
+            !tok.validated(),
+    { unimplemented!() }
+
+    pub proof fn register_internal_step_osext(
+        tracked &mut self,
+        tracked tok: &mut os_ext::code::Token,
+        post: os::State
+    )
+        requires
+            !old(tok).validated(),
+            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            post.mmu == old(self).st().mmu,
+            post.os_ext == old(tok).post(),
+        ensures
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
-            self.steps() == old(self).steps().drop_first(),
             self.st() == post,
-    {}
+            self.steps() == old(self).steps(),
+            self.progress() == old(self).progress(),
+            old(tok).set_valid(*tok),
+    { admit(); }
+
+    pub proof fn register_external_step_osext(
+        tracked &mut self,
+        tracked tok: &mut os_ext::code::Token,
+        post: os::State
+    )
+        requires
+            !old(tok).validated(),
+            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
+            post.mmu == old(self).st().mmu,
+            post.os_ext == old(tok).post(),
+        ensures
+            self.consts() == old(self).consts(),
+            self.thread() == old(self).thread(),
+            self.st() == post,
+            self.steps() == old(self).steps().drop_first(),
+            self.progress() == old(self).progress(),
+            old(tok).set_valid(*tok),
+    { admit(); }
 }
 
 trait CodeVC {

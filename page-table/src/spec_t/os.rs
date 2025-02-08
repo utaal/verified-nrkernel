@@ -531,7 +531,7 @@ pub open spec fn step_UnmapInitiateShootdown(
     &&& result is Ok
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::InitShootdown { core, vaddr, cores: Set::new(|core: Core| c.valid_core(core)) })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::InitShootdown { core, vaddr })
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
