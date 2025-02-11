@@ -7,6 +7,13 @@ verus!{
 
 // Lemma 1: OS state machine with the atomic MMU refines the high-level spec
 
+pub enum TokState {
+    Init,
+    ProphecyMade,
+    Validated,
+    Spent,
+}
+
 pub enum RLbl {
     Tau,
     MemOp      { thread_id: nat, vaddr: nat, op: MemOp },

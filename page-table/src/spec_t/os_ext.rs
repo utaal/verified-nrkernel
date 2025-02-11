@@ -203,12 +203,10 @@ pub mod code {
     use vstd::prelude::*;
     use crate::spec_t::os_ext;
     use crate::spec_t::mmu::defs::{ Core, MemRegionExec };
+    use crate::theorem::TokState;
 
     #[verifier(external_body)]
     pub tracked struct Token {}
-
-    #[verifier(external_body)]
-    pub tracked struct Stub {}
 
     impl Token {
         pub spec fn consts(self) -> os_ext::Constants;
@@ -216,7 +214,7 @@ pub mod code {
         pub spec fn pre(self) -> os_ext::State;
         pub spec fn post(self) -> os_ext::State;
         pub spec fn lbl(self) -> os_ext::Lbl;
-        pub spec fn validated(self) -> bool;
+        pub spec fn tstate(self) -> TokState;
 
         pub open spec fn set_valid(self, new: Token) -> bool {
             &&& new.consts() == self.consts()
@@ -224,14 +222,14 @@ pub mod code {
             &&& new.pre() == self.pre()
             &&& new.post() == self.post()
             &&& new.lbl() == self.lbl()
-            &&& new.validated()
+            &&& new.tstate() is Validated
         }
 
         pub open spec fn prophesied_step(self, new: Token) -> bool {
             &&& new.consts() == self.consts()
             &&& new.core() == self.core()
             &&& new.pre() == self.pre()
-            &&& new.validated() == self.validated()
+            &&& new.tstate() is ProphecyMade
             &&& os_ext::next(new.pre(), new.post(), new.consts(), new.lbl())
         }
 
@@ -240,7 +238,7 @@ pub mod code {
         pub proof fn prophesy_acquire_lock(tracked &mut self)
             requires
                 //old(self).consts().valid_core(old(self).core()), TODO: ??
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() == (os_ext::Lbl::AcquireLock { core: self.core() }),
                 old(self).prophesied_step(*self),
@@ -263,7 +261,7 @@ pub mod code {
         // TODO: is it still fine if it's on the prophesy call?
         pub proof fn prophesy_release_lock(tracked &mut self)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
                 old(self).pre().lock == Some(old(self).core())
             ensures
                 self.lbl() == (os_ext::Lbl::ReleaseLock { core: self.core() }),
@@ -274,7 +272,7 @@ pub mod code {
 
         pub proof fn prophesy_init_shootdown(tracked &mut self, vaddr: usize)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() == (os_ext::Lbl::InitShootdown { core: self.core(), vaddr: vaddr as nat }),
                 old(self).prophesied_step(*self),
@@ -284,7 +282,7 @@ pub mod code {
 
         pub proof fn prophesy_ack_shootdown(tracked &mut self)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() == (os_ext::Lbl::AckShootdown { core: self.core() }),
                 old(self).prophesied_step(*self),
@@ -294,7 +292,7 @@ pub mod code {
 
         pub proof fn prophesy_allocate(tracked &mut self)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() is Allocate,
                 self.lbl()->Allocate_core == self.core(),
@@ -305,7 +303,7 @@ pub mod code {
 
         pub proof fn prophesy_deallocate(tracked &mut self, reg: MemRegionExec)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
                 old(self).pre().allocated.contains(reg@),
             ensures
                 self.lbl() == (os_ext::Lbl::Deallocate { core: self.core(), reg: reg@ }),
@@ -316,57 +314,68 @@ pub mod code {
     }
 
     #[verifier(external_body)]
-    pub exec fn acquire_lock(Tracked(tok): Tracked<Token>) -> Tracked<Stub>
+    pub exec fn acquire_lock(Tracked(tok): Tracked<&mut Token>)
         requires
-            tok.validated(),
-            tok.lbl() == (os_ext::Lbl::AcquireLock { core: tok.core() }),
-    {
-        unimplemented!() // TODO:
-    }
-
-    #[verifier(external_body)]
-    pub exec fn release_lock(tracked tok: Token) -> Tracked<Stub>
-        requires
-            tok.validated(),
-            tok.lbl() == (os_ext::Lbl::ReleaseLock { core: tok.core() }),
-    {
-        unimplemented!() // TODO:
-    }
-
-    #[verifier(external_body)]
-    pub exec fn init_shootdown(tracked tok: Token, vaddr: usize) -> Tracked<Stub>
-        requires
-            tok.validated(),
-            tok.lbl() == (os_ext::Lbl::InitShootdown { core: tok.core(), vaddr: vaddr as nat }),
-    {
-        unimplemented!() // TODO:
-    }
-
-    #[verifier(external_body)]
-    pub exec fn ack_shootdown(tracked tok: Token) -> Tracked<Stub>
-        requires
-            tok.validated(),
-            tok.lbl() == (os_ext::Lbl::AckShootdown { core: tok.core() }),
-    {
-        unimplemented!() // TODO:
-    }
-
-    #[verifier(external_body)]
-    pub exec fn allocate(tracked tok: Token) -> (res: (Tracked<Stub>, MemRegionExec))
-        requires
-            tok.validated(),
-            tok.lbl() matches os_ext::Lbl::Deallocate { core: lbl_core, .. } && lbl_core == tok.core(),
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == (os_ext::Lbl::AcquireLock { core: old(tok).core() }),
         ensures
-            tok.lbl()->Deallocate_reg == res.1@
+            tok.tstate() is Spent,
     {
         unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
-    pub exec fn deallocate(tracked tok: Token, reg: MemRegionExec) -> Tracked<Stub>
+    pub exec fn release_lock(Tracked(tok): Tracked<&mut Token>)
         requires
-            tok.validated(),
-            tok.lbl() == (os_ext::Lbl::Deallocate { core: tok.core(), reg: reg@ }),
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == (os_ext::Lbl::ReleaseLock { core: old(tok).core() }),
+        ensures
+            tok.tstate() is Spent,
+    {
+        unimplemented!() // TODO:
+    }
+
+    #[verifier(external_body)]
+    pub exec fn init_shootdown(Tracked(tok): Tracked<&mut Token>, vaddr: usize)
+        requires
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == (os_ext::Lbl::InitShootdown { core: old(tok).core(), vaddr: vaddr as nat }),
+        ensures
+            tok.tstate() is Spent,
+    {
+        unimplemented!() // TODO:
+    }
+
+    #[verifier(external_body)]
+    pub exec fn ack_shootdown(Tracked(tok): Tracked<&mut Token>)
+        requires
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == (os_ext::Lbl::AckShootdown { core: old(tok).core() }),
+        ensures
+            tok.tstate() is Spent,
+    {
+        unimplemented!() // TODO:
+    }
+
+    #[verifier(external_body)]
+    pub exec fn allocate(Tracked(tok): Tracked<&mut Token>) -> (res: MemRegionExec)
+        requires
+            old(tok).tstate() is Validated,
+            old(tok).lbl() matches os_ext::Lbl::Deallocate { core: lbl_core, .. } && lbl_core == old(tok).core(),
+        ensures
+            tok.tstate() is Spent,
+            res@ == old(tok).lbl()->Deallocate_reg,
+    {
+        unimplemented!() // TODO:
+    }
+
+    #[verifier(external_body)]
+    pub exec fn deallocate(Tracked(tok): Tracked<&mut Token>, reg: MemRegionExec)
+        requires
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == (os_ext::Lbl::Deallocate { core: old(tok).core(), reg: reg@ }),
+        ensures
+            tok.tstate() is Spent,
     {
         unimplemented!() // TODO:
     }

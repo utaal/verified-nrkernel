@@ -819,12 +819,10 @@ pub mod code {
     use vstd::prelude::*;
     use crate::spec_t::mmu::rl3;
     use crate::spec_t::mmu::{ self, Core };
+    use crate::theorem::TokState;
 
     #[verifier(external_body)]
     pub tracked struct Token {}
-
-    #[verifier(external_body)]
-    pub tracked struct Stub {}
 
     impl Token {
         pub spec fn consts(self) -> mmu::Constants;
@@ -832,28 +830,28 @@ pub mod code {
         pub spec fn pre(self) -> rl3::State;
         pub spec fn post(self) -> rl3::State;
         pub spec fn lbl(self) -> mmu::Lbl;
-        pub spec fn validated(self) -> bool;
+        pub spec fn tstate(self) -> TokState;
 
-        pub open spec fn set_valid(self, new: Token) -> bool {
+        pub open spec fn set_validated(self, new: Token) -> bool {
             &&& new.consts() == self.consts()
             &&& new.core() == self.core()
             &&& new.pre() == self.pre()
             &&& new.post() == self.post()
             &&& new.lbl() == self.lbl()
-            &&& new.validated()
+            &&& new.tstate() is Validated
         }
 
         pub open spec fn prophesied_step(self, new: Token) -> bool {
             &&& new.consts() == self.consts()
             &&& new.core() == self.core()
             &&& new.pre() == self.pre()
-            &&& new.validated() == self.validated()
+            &&& new.tstate() is ProphecyMade
             &&& rl3::next(new.pre(), new.post(), new.consts(), new.lbl())
         }
 
         pub proof fn prophesy_read(tracked &mut self, addr: usize)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl()->Read_0 == self.core(),
                 self.lbl()->Read_1 == addr,
@@ -864,7 +862,7 @@ pub mod code {
 
         pub proof fn prophesy_write(tracked &mut self, addr: usize, value: usize)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() == mmu::Lbl::Write(self.core(), addr, value),
                 old(self).prophesied_step(*self),
@@ -874,7 +872,7 @@ pub mod code {
 
         pub proof fn prophesy_barrier(tracked &mut self)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() == mmu::Lbl::Barrier(self.core()),
                 old(self).prophesied_step(*self),
@@ -884,7 +882,7 @@ pub mod code {
 
         pub proof fn prophesy_invlpg(tracked &mut self, addr: usize)
             requires
-                !old(self).validated(),
+                old(self).tstate() is Init,
             ensures
                 self.lbl() == mmu::Lbl::Invlpg(self.core(), addr),
                 old(self).prophesied_step(*self),
@@ -894,39 +892,47 @@ pub mod code {
     }
 
     #[verifier(external_body)]
-    pub exec fn read(Tracked(tok): Tracked<Token>, addr: usize) -> (res: (Tracked<Stub>, usize))
+    pub exec fn read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res: usize)
         requires
-            tok.validated(),
-            tok.lbl() matches mmu::Lbl::Read(lbl_core, lbl_addr, _) && lbl_core == tok.core() && lbl_addr == addr,
+            old(tok).tstate() is Validated,
+            old(tok).lbl() matches mmu::Lbl::Read(lbl_core, lbl_addr, _)
+               && lbl_core == old(tok).core() && lbl_addr == addr,
         ensures
-            tok.lbl()->Read_2 == res.1
+            tok.tstate() is Spent,
+            res == old(tok).lbl()->Read_2,
     {
         unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
-    pub exec fn write(Tracked(tok): Tracked<Token>, addr: usize, value: usize) -> Tracked<Stub>
+    pub exec fn write(Tracked(tok): Tracked<&mut Token>, addr: usize, value: usize)
         requires
-            tok.validated(),
-            tok.lbl() == mmu::Lbl::Write(tok.core(), addr, value),
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == mmu::Lbl::Write(old(tok).core(), addr, value),
+        ensures
+            tok.tstate() is Spent,
     {
         unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
-    pub exec fn barrier(Tracked(tok): Tracked<Token>) -> Tracked<Stub>
+    pub exec fn barrier(Tracked(tok): Tracked<&mut Token>)
         requires
-            tok.validated(),
-            tok.lbl() == mmu::Lbl::Barrier(tok.core()),
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == mmu::Lbl::Barrier(old(tok).core()),
+        ensures
+            tok.tstate() is Spent,
     {
         unimplemented!() // TODO:
     }
 
     #[verifier(external_body)]
-    pub exec fn invlpg(Tracked(tok): Tracked<Token>, vaddr: usize) -> (stub: Tracked<Stub>)
+    pub exec fn invlpg(Tracked(tok): Tracked<&mut Token>, vaddr: usize)
         requires
-            tok.validated(),
-            tok.lbl() == mmu::Lbl::Invlpg(tok.core(), vaddr),
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == mmu::Lbl::Invlpg(old(tok).core(), vaddr),
+        ensures
+            tok.tstate() is Spent,
     {
         unimplemented!() // TODO:
     }

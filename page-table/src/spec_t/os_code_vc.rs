@@ -243,7 +243,7 @@ impl Token {
             tok.pre() == old(self).st().mmu,
             tok.consts() == old(self).consts().mmu,
             tok.core() == old(self).core(),
-            !tok.validated(),
+            tok.tstate() is Init,
     { unimplemented!() }
 
     pub proof fn register_internal_step_mmu(
@@ -252,7 +252,7 @@ impl Token {
         post: os::State
     )
         requires
-            !old(tok).validated(),
+            old(tok).tstate() is ProphecyMade,
             os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(tok).post(),
@@ -262,7 +262,7 @@ impl Token {
             self.st() == post,
             self.steps() == old(self).steps(),
             self.progress() == old(self).progress(),
-            old(tok).set_valid(*tok),
+            old(tok).set_validated(*tok),
     { admit(); } // axiom
 
     pub proof fn register_external_step_mmu(
@@ -271,7 +271,7 @@ impl Token {
         post: os::State
     )
         requires
-            !old(tok).validated(),
+            old(tok).tstate() is ProphecyMade,
             os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(tok).post(),
@@ -281,10 +281,11 @@ impl Token {
             self.st() == post,
             self.steps() == old(self).steps().drop_first(),
             self.progress() == old(self).progress(),
-            old(tok).set_valid(*tok),
+            old(tok).set_validated(*tok),
     { admit(); } // axiom
 
-    pub proof fn return_mmu_stub(tracked &mut self, tracked stub: mmu::rl3::code::Stub)
+    pub proof fn return_mmu_token(tracked &mut self, tracked tok: mmu::rl3::code::Token)
+        requires tok.tstate() is Spent,
         ensures
             self.thread() == old(self).thread(),
             self.consts() == old(self).consts(),
@@ -307,7 +308,7 @@ impl Token {
             tok.consts() == old(self).consts().os_ext(),
             tok.pre() == old(self).st().os_ext,
             tok.core() == old(self).core(),
-            !tok.validated(),
+            tok.tstate() is Init,
     { unimplemented!() } // axiom
 
     pub proof fn register_internal_step_osext(
@@ -316,7 +317,7 @@ impl Token {
         post: os::State
     )
         requires
-            !old(tok).validated(),
+            old(tok).tstate() is ProphecyMade,
             os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
@@ -335,7 +336,7 @@ impl Token {
         post: os::State
     )
         requires
-            !old(tok).validated(),
+            old(tok).tstate() is ProphecyMade,
             os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
@@ -348,7 +349,8 @@ impl Token {
             old(tok).set_valid(*tok),
     { admit(); } // axiom
 
-    pub proof fn return_osext_stub(tracked &mut self, tracked stub: os_ext::code::Stub)
+    pub proof fn return_osext_token(tracked &mut self, tracked tok: os_ext::code::Token)
+        requires tok.tstate() is Spent,
         ensures
             self.thread() == old(self).thread(),
             self.consts() == old(self).consts(),
@@ -537,11 +539,11 @@ pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>, core: Core)
         os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
     }
 
-    let stub = os_ext::code::acquire_lock(Tracked(osext_tok));
+    os_ext::code::acquire_lock(Tracked(&mut osext_tok));
     let state2 = Ghost(tok.st());
 
     proof {
-        tok.return_osext_stub(stub.get());
+        tok.return_osext_token(osext_tok);
         let pidx = tok.do_concurrent_trs();
         let state3 = Ghost(tok.st());
         lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
