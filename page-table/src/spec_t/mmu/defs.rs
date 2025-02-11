@@ -138,6 +138,7 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Core {
     pub node_id: nat,
     pub core_id: nat,

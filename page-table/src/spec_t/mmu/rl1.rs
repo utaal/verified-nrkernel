@@ -157,6 +157,7 @@ pub open spec fn step_MemOpTLB(
     &&& post.pt_mem == pre.pt_mem
     &&& post.tlbs == pre.tlbs
     &&& post.writes == pre.writes
+    &&& post.pending_maps == pre.pending_maps
 }
 
 // ---- Non-atomic page table walks ----

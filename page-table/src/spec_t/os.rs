@@ -19,7 +19,6 @@ verus! {
 
 pub struct Constants {
     pub mmu: mmu::Constants,
-    pub os_ext: os_ext::Constants,
     //maps User Level Thread to its assigned core
     pub ult2core: Map<nat, Core>,
     //highest thread_id
@@ -101,6 +100,13 @@ impl Constants {
 
     pub open spec fn valid_core(self, core: Core) -> bool {
         self.mmu.valid_core(core)
+    }
+
+    pub open spec fn os_ext(self) -> os_ext::Constants {
+        os_ext::Constants {
+            node_count: self.mmu.node_count,
+            core_count: self.mmu.core_count,
+        }
     }
 }
 
@@ -272,7 +278,7 @@ pub open spec fn step_MapStart(c: Constants, s1: State, s2: State, core: Core, l
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapWaiting { ult_id: thread_id, vaddr, pte })
-    &&& s2.sound == s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte)
+    &&& s2.sound == (s1.sound && step_Map_sound(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte))
 }
 
 pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
@@ -283,7 +289,7 @@ pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core,
 
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::AcquireLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AcquireLock { core })
 
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapExecuting { ult_id, vaddr, pte })
@@ -325,7 +331,7 @@ pub open spec fn step_Allocate(c: Constants, s1: State, s2: State, core: Core, r
 
     //mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::Allocate { core, res })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::Allocate { core, res })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -373,7 +379,7 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl
 
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::ReleaseLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::ReleaseLock { core })
 
     // new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
@@ -411,7 +417,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, core: Core,
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapWaiting { ult_id: thread_id, vaddr })
-    &&& s2.sound == s1.sound && step_Unmap_sound(s1, vaddr, pte_size)
+    &&& s2.sound == (s1.sound && step_Unmap_sound(s1, vaddr, pte_size))
     }
 }
 
@@ -422,7 +428,7 @@ pub open spec fn step_UnmapOpStart(c: Constants, s1: State, s2: State, core: Cor
     &&& s1.core_states[core] matches CoreState::UnmapWaiting { ult_id, vaddr }
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::AcquireLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AcquireLock { core })
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapExecuting { ult_id, vaddr, result: None })
     &&& s2.sound == s1.sound
@@ -436,7 +442,7 @@ pub open spec fn step_Deallocate(c: Constants, s1: State, s2: State, core: Core,
 
     //mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::Deallocate { core, reg })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::Deallocate { core, reg })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -531,7 +537,7 @@ pub open spec fn step_UnmapInitiateShootdown(
     &&& result is Ok
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::InitShootdown { core, vaddr })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::InitShootdown { core, vaddr })
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
@@ -548,7 +554,7 @@ pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: 
     &&& !s1.mmu@.tlbs[core].contains_key(s1.os_ext.shootdown_vec.vaddr as usize)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::AckShootdown { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AckShootdown { core })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -571,7 +577,7 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
     }
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext, os_ext::Lbl::ReleaseLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::ReleaseLock { core })
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
     &&& s1.sound == s2.sound
@@ -612,7 +618,7 @@ pub open spec fn init(c: Constants, s: State) -> bool {
     // hardware stuff
     &&& s.interp_pt_mem() === Map::empty()
     &&& rl3::init(s.mmu, c.mmu)
-    &&& os_ext::init(s.os_ext, c.os_ext)
+    &&& os_ext::init(s.os_ext, c.os_ext())
     //wf of ult2core mapping
     &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
     &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])

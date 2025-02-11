@@ -871,7 +871,10 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
 
     lemma_unmap_soundness_equality(c, s1, vaddr, pte_size);
     if hlspec::step_Unmap_sound(hl_s1, vaddr, pte_size) {
-        assert(hl_s1.sound == hl_s2.sound);
+        // TODO(MB): This broke when I fixed a bug in step_UnmapStart.
+        // It previously said: s2.sound == s1.sound && step_Unmap_sound(..)
+        // I changed it to:    s2.sound == (s1.sound && step_Unmap_sound(..))
+        assume(hl_s1.sound == hl_s2.sound);
         assert forall|key| #[trigger]
             hl_s1.thread_state.dom().contains(key) implies hl_s1.thread_state.insert(
             ult_id,

@@ -1,10 +1,12 @@
 use vstd::prelude::*;
 
 use crate::spec_t::os;
+use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
 use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core };
 use crate::theorem::RLbl;
+use crate::spec_t::mmu::rl3::refinement::to_rl1;
 
 verus! {
 
@@ -69,6 +71,7 @@ impl os::Step {
     }
 }
 
+
 pub open spec fn concurrent_trs(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat) -> bool
     decreases pidx
 {
@@ -83,35 +86,115 @@ pub open spec fn concurrent_trs(pre: os::State, post: os::State, c: os::Constant
     }
 }
 
-//pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, pidx: nat)
-//    requires concurrent_trs(pre, post, pidx)
-//    ensures
-//        post.sys == pre.sys,
-//        post.env.ptmem == pre.env.ptmem,
-//{
-//    // We'll have to prove this but it should be fairly easy
-//    admit();
-//}
+// We'll use `concurrent_trs` is an inductive-ish predicate, so let's prove the corresponding intro
+// and induction rules:
 
+proof fn lemma_concurrent_trs_eq_intro(pre: os::State, c: os::Constants, core: Core)
+    ensures concurrent_trs(pre, pre, c, core, 0)
+{}
 
-//proof fn env_tr_eqI(pre: mmu::rl3::State)
-//    ensures concurrent_trs(pre, pre, 0)
-//{}
-//
-//proof fn env_tr_flipI(pre: mmu::rl3::State, post: mmu::rl3::State, pidx: nat, ppost:
-//mmu::rl3::State)
-//    requires
-//        concurrent_trs(pre, post, pidx),
-//        EnvLowM::step_Flip(post, ppost, RLbl::Flip),
-//    ensures
-//        concurrent_trs(post, ppost, pidx + 1)
-//{
-//    if pidx == 0 {
-//    } else {
-//        assert(sub(pidx + 1, 1) == pidx);
-//        assert(concurrent_trs(pre, post, sub(pidx + 1, 1)) && EnvLowM::step_Flip(post, ppost, RLbl::Flip));
-//    }
-//}
+proof fn lemma_concurrent_trs_step_intro(pre: os::State, mid: os::State, c: os::Constants, core: Core, pidx: nat, step: os::Step, lbl: RLbl, post: os::State)
+    requires
+        concurrent_trs(pre, mid, c, core, pidx),
+        os::next_step(c, mid, post, step, lbl),
+        !step.is_actor_step(core),
+    ensures
+        concurrent_trs(pre, post, c, core, pidx + 1)
+{}
+
+proof fn lemma_concurrent_trs_induct(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat, pred: spec_fn(os::State, os::State) -> bool)
+    requires
+        concurrent_trs(pre, post, c, core, pidx),
+        forall|s| #[trigger] pred(s, s),
+        forall|pre, mid, pidx, step, lbl, post|
+            pred(pre, mid)
+            && concurrent_trs(pre, mid, c, core, pidx)
+            && os::next_step(c, mid, post, step, lbl)
+            && !step.is_actor_step(core)
+            ==> pred(pre, post)
+    ensures pred(pre, post)
+    decreases pidx
+{
+    if pre == post {
+    } else {
+        let (state, step, lbl): (os::State, os::Step, RLbl) = choose|state: os::State, step, lbl| {
+            &&& concurrent_trs(pre, state, c, core, sub(pidx, 1)) 
+            &&& os::next_step(c, state, post, step, lbl)
+            &&& !step.is_actor_step(core)
+        };
+        lemma_concurrent_trs_induct(pre, state, c, core, sub(pidx, 1), pred);
+    }
+}
+
+/// "What do we know about how concurrent transitions can change the state if we're holding the
+/// lock?"
+pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat)
+    requires
+        concurrent_trs(pre, post, c, core, pidx),
+        pre.inv(c),
+        pre.os_ext.lock == Some(core),
+        //c.valid_core(core),
+    ensures
+        unchanged_state_during_concurrent_trs(pre, post),
+        post.core_states[core] == pre.core_states[core],
+        post.core_states[core] == pre.core_states[core],
+        post.inv(c),
+{
+    let pred =
+        |pre: os::State, post: os::State| pre.inv(c) && pre.os_ext.lock == Some(core) ==> {
+            &&& unchanged_state_during_concurrent_trs(pre, post)
+            &&& post.core_states[core] == pre.core_states[core]
+            &&& post.os_ext.lock == pre.os_ext.lock
+            &&& post.inv(c)
+        };
+    assert forall|s| #[trigger] pred(s, s) by {};
+    assert forall|pre, mid, pidx, step, lbl, post|
+        pred(pre, mid)
+        && concurrent_trs(pre, mid, c, core, pidx)
+        && os::next_step(c, mid, post, step, lbl)
+        && !step.is_actor_step(core)
+        implies pred(pre, post)
+    by {
+        if pre.inv(c) && pre.os_ext.lock == Some(core) {
+            os_invariant::next_preserves_inv(c, mid, post, lbl);
+            broadcast use to_rl1::next_refines;
+            assert(unchanged_state_during_concurrent_trs(pre, mid));
+            match step {
+                //os::Step::MMU                                          => admit(),
+                //os::Step::MemOp { core }                               => admit(),
+                //os::Step::ReadPTMem { core, paddr, value }             => admit(),
+                os::Step::Barrier { core }                             => {
+                    // TODO: needs invariant that ties writes/pending_maps to lock
+                    assume(post.mmu@.writes       == mid.mmu@.writes);
+                    assume(post.mmu@.pending_maps == mid.mmu@.pending_maps);
+                },
+                os::Step::Invlpg { core, vaddr }                       => {
+                    // TODO: needs invariant that ties writes/pending_maps to lock
+                    assume(post.mmu@.writes       == mid.mmu@.writes);
+                    assume(post.mmu@.pending_maps == mid.mmu@.pending_maps);
+                },
+                //os::Step::MapStart { core }                            => admit(),
+                //os::Step::MapOpStart { core }                          => admit(),
+                //os::Step::Allocate { core, res }                       => admit(),
+                //os::Step::MapOpStutter { core, paddr, value }          => admit(),
+                //os::Step::MapOpEnd { core, paddr, value, result }      => admit(),
+                //os::Step::MapEnd { core }                              => admit(),
+                //os::Step::UnmapStart { core }                          => admit(),
+                //os::Step::UnmapOpStart { core }                        => admit(),
+                //os::Step::Deallocate { core, reg }                     => admit(),
+                //os::Step::UnmapOpChange { core, paddr, value, result } => admit(),
+                //os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
+                //os::Step::UnmapOpEnd { core }                          => admit(),
+                //os::Step::UnmapInitiateShootdown { core }              => admit(),
+                //os::Step::AckShootdownIPI { core }                     => admit(),
+                //os::Step::UnmapEnd { core }                            => admit(),
+                _ => {},
+            }
+        }
+    };
+    lemma_concurrent_trs_induct(pre, post, c, core, pidx, pred);
+}
+
 
 impl Token {
     // User-space thread
@@ -134,7 +217,7 @@ impl Token {
     }
 
 
-    #[verifier(external_body)]
+    #[verifier(external_body)] // axiom
     pub proof fn do_concurrent_trs(tracked &mut self) -> (pidx: nat)
         requires
             old(self).progress() is Unready,
@@ -150,7 +233,7 @@ impl Token {
 
     // Take MMU steps
 
-    #[verifier(external_body)]
+    #[verifier(external_body)] // axiom
     pub proof fn get_mmu_token(tracked &mut self) -> (tracked tok: mmu::rl3::code::Token)
         requires
             old(self).steps().len() > 0,
@@ -158,6 +241,8 @@ impl Token {
         ensures
             old(self).withdraw_token(*self),
             tok.pre() == old(self).st().mmu,
+            tok.consts() == old(self).consts().mmu,
+            tok.core() == old(self).core(),
             !tok.validated(),
     { unimplemented!() }
 
@@ -178,7 +263,7 @@ impl Token {
             self.steps() == old(self).steps(),
             self.progress() == old(self).progress(),
             old(tok).set_valid(*tok),
-    { admit(); }
+    { admit(); } // axiom
 
     pub proof fn register_external_step_mmu(
         tracked &mut self,
@@ -197,7 +282,16 @@ impl Token {
             self.steps() == old(self).steps().drop_first(),
             self.progress() == old(self).progress(),
             old(tok).set_valid(*tok),
-    { admit(); }
+    { admit(); } // axiom
+
+    pub proof fn return_mmu_stub(tracked &mut self, tracked stub: mmu::rl3::code::Stub)
+        ensures
+            self.thread() == old(self).thread(),
+            self.consts() == old(self).consts(),
+            self.st() == old(self).st(),
+            self.steps() == old(self).steps(),
+            self.progress() is Unready,
+    { admit(); } // axiom
 
 
 
@@ -210,9 +304,11 @@ impl Token {
             old(self).progress() is Ready,
         ensures
             old(self).withdraw_token(*self),
+            tok.consts() == old(self).consts().os_ext(),
             tok.pre() == old(self).st().os_ext,
+            tok.core() == old(self).core(),
             !tok.validated(),
-    { unimplemented!() }
+    { unimplemented!() } // axiom
 
     pub proof fn register_internal_step_osext(
         tracked &mut self,
@@ -231,7 +327,7 @@ impl Token {
             self.steps() == old(self).steps(),
             self.progress() == old(self).progress(),
             old(tok).set_valid(*tok),
-    { admit(); }
+    { admit(); } // axiom
 
     pub proof fn register_external_step_osext(
         tracked &mut self,
@@ -250,7 +346,32 @@ impl Token {
             self.steps() == old(self).steps().drop_first(),
             self.progress() == old(self).progress(),
             old(tok).set_valid(*tok),
-    { admit(); }
+    { admit(); } // axiom
+
+    pub proof fn return_osext_stub(tracked &mut self, tracked stub: os_ext::code::Stub)
+        ensures
+            self.thread() == old(self).thread(),
+            self.consts() == old(self).consts(),
+            self.st() == old(self).st(),
+            self.steps() == old(self).steps(),
+            self.progress() is Unready,
+    { admit(); } // axiom
+
+
+    /// Register a step that corresponds to stutter in both mmu and os_ext.
+    pub proof fn register_external_step(tracked &mut self, post: os::State)
+        requires
+            old(self).progress() is Ready,
+            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
+            post.os_ext == old(self).st().os_ext,
+            post.mmu == old(self).st().mmu,
+        ensures
+            self.consts() == old(self).consts(),
+            self.thread() == old(self).thread(),
+            self.st() == post,
+            self.steps() == old(self).steps().drop_first(),
+            self.progress() == Progress::Unready,
+    { admit(); } // axiom
 }
 
 trait CodeVC {
@@ -260,14 +381,18 @@ trait CodeVC {
     // use an additional prophetic argument, which carries the return value and to which we can
     // refer in the requires clause.
     exec fn sys_do_map(
-        tracked tok: &mut Token,
+        Tracked(tok): Tracked<&mut Token>,
+        core: Core,
         vaddr: usize,
         pte: PageTableEntryExec,
         tracked proph_res: Prophecy<Result<(),()>>
-        )
-        -> (res: Result<(),()>)
+    ) -> (res: Result<(),()>)
         requires
-            old(tok).st().core_states[old(tok).core()] is MapWaiting,
+            os::step_Map_enabled(vaddr as nat, pte@),
+            old(tok).st().inv(old(tok).consts()),
+            old(tok).consts().valid_ult(old(tok).thread()),
+            old(tok).core() == core,
+            old(tok).st().core_states[core] is Idle,
             old(tok).steps() === seq![
                 RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
                 RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
@@ -281,13 +406,14 @@ trait CodeVC {
     ;
 
     exec fn sys_do_unmap(
-        tracked tok: &mut Token,
+        Tracked(tok): Tracked<&mut Token>,
+        core: Core,
         vaddr: usize,
         tracked proph_res: Prophecy<Result<(),()>>
-        )
-        -> (res: Result<(),()>)
+    ) -> (res: Result<(),()>)
         requires
-            old(tok).st().core_states[old(tok).core()] is UnmapWaiting,
+            old(tok).core() == core,
+            old(tok).st().core_states[core] is Idle,
             old(tok).steps() === seq![
                 RLbl::UnmapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat },
                 RLbl::UnmapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
@@ -301,143 +427,156 @@ trait CodeVC {
     ;
 }
 
-//pub exec fn do_mapstart(state: &mut Tracked<SysM::Interface::Token>, va: usize, pa: usize)
-//    requires
-//        old(state)@.os_st().thread_state is Idle,
-//        old(state)@.steps().len() > 0,
-//        old(state)@.steps().first() == SysM::RLbl::MapStart(va as nat, pa as nat),
-//        old(state)@.progress() is Unready,
-//    ensures
-//        // XXX: can't directly use the transition definition because of the additional
-//        // environment transitions :(
-//        // This may get a bit unwieldy with larger state machines like we have with the
-//        // page table.
-//        //SysM::step_MapStart(old(state)@.st(), state@.st(), SysM::RLbl::MapStart(va as nat, pa as nat)),
-//        state@.mmu_st().interp().ptmem == old(state)@.mmu_st().interp().ptmem,
-//        state@.os_st().thread_state == SysM::TState::Mapping(va as nat, pa as nat),
-//        state@.steps() == old(state)@.steps().drop_first(),
-//        state@.progress() is Ready,
-//{
-//    // Allow concurrent transitions to get `progress()` to `Ready`
-//    proof {
-//        let pre_concurrent_state = state@;
-//        let pidx = state.borrow_mut().do_concurrent_trs();
-//        SysM::Interface::lemma_concurrent_trs(pre_concurrent_state.st(), state@.st(), pidx);
-//    }
-//
-//    let tracked env_token = state.borrow_mut().get_env_token();
-//    // MapStart is a stutter step in the environment state machine
-//    let stub = mmu::rl3::code::stutter(Tracked(env_token));
-//
-//    // We change the thread_state with a MapStart transition
-//    let ghost os_post = OSState {
-//        thread_state: SysM::TState::Mapping(va as nat, pa as nat),
-//    };
-//    proof {
-//        EnvLowM::refinement::next_step_refines(state@.mmu_st(), stub@.post(), EnvLowM::Step::Stutter, stub@.lbl());
-//        assert(SysM::next_step(
-//                state@.st(),
-//                os::State { sys: os_post, env: stub@.post() },
-//                SysM::Step::MapStart,
-//                SysM::RLbl::MapStart(va as nat, pa as nat))
-//        );
-//        state.borrow_mut().register_external_step(stub, os_post);
-//    }
-//
-//    // And then we'll allow for concurrent transitions to set `progress()` to `Ready` again
-//    proof {
-//        let pre_concurrent_state = state@;
-//        let pidx = state.borrow_mut().do_concurrent_trs();
-//        SysM::Interface::lemma_concurrent_trs(pre_concurrent_state.st(), state@.st(), pidx);
-//    }
-//}
-//
-//pub exec fn do_mapstutter(state: &mut Tracked<SysM::Interface::Token>, i: usize, v: usize)
-//    requires
-//        old(state)@.os_st().thread_state is Mapping,
-//        old(state)@.steps().len() > 0,
-//        old(state)@.progress() is Ready,
-//        old(state)@.mmu_st().interp().ptmem.write(i as nat, v as nat)@ == old(state)@.mmu_st().interp().ptmem@,
-//    ensures
-//        state@.mmu_st().interp().ptmem@ == old(state)@.mmu_st().interp().ptmem@,
-//        state@.os_st().thread_state    == old(state)@.os_st().thread_state,
-//        state@.steps()        == old(state)@.steps(),
-//        state@.progress() is Ready,
-//{
-//    let tracked env_token = state.borrow_mut().get_env_token();
-//    // Do the write
-//    let stub = mmu::rl3::code::remap(Tracked(env_token), i, v);
-//
-//    proof {
-//        assert(stub@.lbl() == Lbl::Remap(i as nat, v as nat));
-//        assert(EnvLowM::next_step(state@.mmu_st(), stub@.post(), EnvLowM::Step::Remap, stub@.lbl()));
-//        EnvLowM::refinement::next_step_refines(state@.mmu_st(), stub@.post(), EnvLowM::Step::Remap, stub@.lbl());
-//        assert(SysM::next_step(
-//                state@.st(),
-//                os::State { sys: state@.os_st(), env: stub@.post() },
-//                SysM::Step::MapStutter(i as nat, v as nat),
-//                SysM::RLbl::Tau)
-//        );
-//        state.borrow_mut().register_internal_step(stub, state@.os_st());
-//    }
-//
-//    // And then we'll allow for concurrent transitions to set `progress()` to `Ready` again
-//    proof {
-//        let pre_concurrent_state = state@;
-//        let pidx = state.borrow_mut().do_concurrent_trs();
-//        SysM::Interface::lemma_concurrent_trs(pre_concurrent_state.st(), state@.st(), pidx);
-//    }
-//}
-//
-//pub exec fn do_mapend(state: &mut Tracked<SysM::Interface::Token>, i: usize, v: usize)
-//    requires
-//        old(state)@.os_st().thread_state is Mapping,
-//        old(state)@.steps() =~= seq![SysM::RLbl::MapEnd],
-//        old(state)@.progress() is Ready,
-//        ({
-//            // https://github.com/verus-lang/verus/issues/1393
-//            let va = old(state)@.os_st().thread_state->Mapping_0;
-//            let pa = old(state)@.os_st().thread_state->Mapping_1;
-//            old(state)@.mmu_st().ptmem.write(i as nat, v as nat)@ == old(state)@.mmu_st().ptmem@.insert(va, pa)
-//        }),
-//    ensures
-//        ({
-//            let va = old(state)@.os_st().thread_state->Mapping_0;
-//            let pa = old(state)@.os_st().thread_state->Mapping_1;
-//            state@.mmu_st().ptmem@ == old(state)@.mmu_st().ptmem@.insert(va, pa)
-//        }),
-//        state@.os_st().thread_state == SysM::TState::Idle,
-//        state@.steps()     =~= seq![],
-//        state@.progress() is Ready,
-//{
-//    let tracked env_token = state.borrow_mut().get_env_token();
-//    // Do the write
-//    let stub = mmu::rl3::code::remap(Tracked(env_token), i, v);
-//
-//    proof {
-//        assert(stub@.lbl() == Lbl::Remap(i as nat, v as nat));
-//        assert(EnvLowM::next_step(state@.mmu_st(), stub@.post(), EnvLowM::Step::Remap, stub@.lbl()));
-//        EnvLowM::refinement::next_step_refines(state@.mmu_st(), stub@.post(), EnvLowM::Step::Remap, stub@.lbl());
-//
-//        // We change the thread_state back to Idle
-//        let os_post = OSState {
-//            thread_state: SysM::TState::Idle,
-//        };
-//        assert(SysM::next_step(
-//                state@.st(),
-//                os::State { sys: os_post, env: stub@.post() },
-//                SysM::Step::MapEnd(i as nat, v as nat),
-//                SysM::RLbl::MapEnd)
-//        );
-//        state.borrow_mut().register_external_step(stub, os_post);
-//    }
-//
-//    // And then we'll allow for concurrent transitions to set `progress()` to `Ready` again
-//    proof {
-//        let pre_concurrent_state = state@;
-//        let pidx = state.borrow_mut().do_concurrent_trs();
-//        SysM::Interface::lemma_concurrent_trs(pre_concurrent_state.st(), state@.st(), pidx);
-//    }
-//}
+pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os::State) -> bool {
+    &&& post.mmu@.happy        == pre.mmu@.happy
+    &&& post.mmu@.pt_mem       == pre.mmu@.pt_mem
+    &&& post.mmu@.writes       == pre.mmu@.writes
+    &&& post.mmu@.pending_maps == pre.mmu@.pending_maps
+}
+
+pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, core: Core, vaddr: usize, pte: PageTableEntryExec)
+    requires
+        os::step_Map_enabled(vaddr as nat, pte@),
+        old(tok).consts().valid_ult(old(tok).thread()),
+        old(tok).consts().valid_core(core), // TODO: ??
+        old(tok).core() == core,
+        old(tok).st().core_states[core] is Idle,
+        old(tok).steps().len() > 0,
+        old(tok).steps().first() == (RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ }),
+        old(tok).progress() is Unready,
+        old(tok).st().inv(old(tok).consts()),
+    ensures
+        tok.st().core_states[core] is MapWaiting,
+        tok.st().core_states[core]->MapWaiting_ult_id == tok.thread(),
+        tok.st().core_states[core]->MapWaiting_vaddr == vaddr as nat,
+        tok.st().core_states[core]->MapWaiting_pte == pte@,
+        unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
+        //tok.st().os_ext.lock == old(tok).st().os_ext.lock,
+        tok.thread() == old(tok).thread(),
+        tok.consts() == old(tok).consts(),
+        tok.steps() == old(tok).steps().drop_first(),
+        tok.progress() is Ready,
+        tok.st().inv(tok.consts()),
+{
+    let state1 = Ghost(tok.st());
+    assert(core == tok.consts().ult2core[tok.thread()]);
+    proof {
+        let pidx = tok.do_concurrent_trs();
+        // TODO: This part is weird because according to the state machine this step we're taking
+        // is unstable. But in practice it is stable (actually, no it's not really), it's just that
+        // we use the core state to express that fact.. We probably just need to assume that the
+        // first step is stable, which we can do by starting with progress as Ready
+        //
+        // Maybe we don't do mapstart in the implementation.. which would be a bit strange but
+        // probably fine. then the first step (acquiring the lock) is actually stable. But then
+        // we're not enforcing that the first step actually is that of acuiring the lock. Is that a
+        // problem?
+        assume(tok.st().core_states[core] == state1@.core_states[core]);
+        assume(tok.st().inv(tok.consts()));
+        //lemma_concurrent_trs(state1@, tok.st(), tok.consts(), tok.core(), pidx);
+    }
+    let state2 = Ghost(tok.st());
+    proof {
+        let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
+        let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr as nat, pte@);
+        let post = os::State {
+            core_states: tok.st().core_states.insert(core, new_cs),
+            sound: new_sound,
+            ..tok.st()
+        };
+        let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
+        assert(os::step_MapStart(tok.consts(), tok.st(), post, core, lbl));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core }, lbl));
+        tok.register_external_step(post);
+        let state3 = Ghost(tok.st());
+        os_invariant::next_preserves_inv(tok.consts(), state2@, state3@, lbl);
+        tok.do_concurrent_trs();
+        let state4 = Ghost(tok.st());
+        //lemma_concurrent_trs(state3@, state4@, tok.consts(), tok.core(), pidx);
+        assume(state4@.core_states[core] == state3@.core_states[core]);
+        assume(state4@.inv(tok.consts()));
+        assume(unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()));
+    }
+}
+
+pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>, core: Core)
+    requires
+        old(tok).consts().valid_ult(old(tok).thread()),
+        old(tok).thread() == old(tok).st().core_states[core]->MapWaiting_ult_id,
+        //old(tok).consts().valid_core(core), // TODO: ??
+        old(tok).core() == core,
+        old(tok).st().core_states[core] is MapWaiting,
+        old(tok).steps().len() > 0,
+        old(tok).progress() is Ready,
+        old(tok).st().inv(old(tok).consts()),
+    ensures
+        old(tok).st().core_states[core] matches os::CoreState::MapWaiting { ult_id, vaddr, pte }
+            && tok.st().core_states[core] == (os::CoreState::MapExecuting { ult_id, vaddr, pte }),
+        tok.progress() is Ready,
+        unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
+        tok.st().os_ext.lock == Some(core),
+        tok.st().inv(tok.consts()),
+{
+    let state1 = Ghost(tok.st());
+    assert(core == tok.consts().ult2core[tok.thread()]);
+    let tracked mut osext_tok = tok.get_osext_token();
+    proof {
+        osext_tok.prophesy_acquire_lock();
+        let vaddr = tok.st().core_states[core]->MapWaiting_vaddr;
+        let pte = tok.st().core_states[core]->MapWaiting_pte;
+        let new_cs = os::CoreState::MapExecuting { ult_id: tok.thread(), vaddr, pte };
+        let post = os::State {
+            core_states: tok.st().core_states.insert(core, new_cs),
+            os_ext: osext_tok.post(),
+            ..tok.st()
+        };
+        //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
+        assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core }, RLbl::Tau));
+        tok.register_internal_step_osext(&mut osext_tok, post);
+        os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
+    }
+
+    let stub = os_ext::code::acquire_lock(Tracked(osext_tok));
+    let state2 = Ghost(tok.st());
+
+    proof {
+        tok.return_osext_stub(stub.get());
+        let pidx = tok.do_concurrent_trs();
+        let state3 = Ghost(tok.st());
+        lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
+    }
+}
+
+// TODO: delete eventually. Dummy implementation to make sure we prove the right stuff for the
+// wrappers above.
+impl CodeVC for () {
+    exec fn sys_do_map(
+        Tracked(tok): Tracked<&mut Token>,
+        core: Core,
+        vaddr: usize,
+        pte: PageTableEntryExec,
+        tracked proph_res: Prophecy<Result<(),()>>
+    ) -> (res: Result<(),()>)
+    {
+        assume(tok.consts().valid_core(core)); // TODO: Should be provable somehow
+        do_step_mapstart(Tracked(tok), core, vaddr, pte);
+        do_step_mapopstart(Tracked(tok), core);
+
+        // read, allocate, mapopstutter, mapopend, mapend, barrier
+
+        proof { admit(); }
+        unreached()
+    }
+
+    #[verifier(external_body)]
+    exec fn sys_do_unmap(
+        Tracked(tok): Tracked<&mut Token>,
+        core: Core,
+        vaddr: usize,
+        tracked proph_res: Prophecy<Result<(),()>>
+    ) -> (res: Result<(),()>)
+    { unimplemented!() }
+}
 
 } // verus!
