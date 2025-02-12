@@ -37,6 +37,12 @@ pub const DEVICEMEM: u64 = 1 << 3;
 pub const USERMODE: u64 = 1 << 4;
 pub const BAR: u64 = 1 << 5;
 
+
+pub extern "C" fn v_x8664pml4_init(pt_ptr: *mut core::ffi::c_void) -> i64 {
+    0 // return the PML4 state representation of the verified implementation.
+}
+
+
 #[no_mangle]
 pub extern "C" fn v_x8664pml4_map(
     pt_ptr: *mut core::ffi::c_void,
