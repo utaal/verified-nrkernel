@@ -137,7 +137,6 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
     ensures
         unchanged_state_during_concurrent_trs(pre, post),
         post.core_states[core] == pre.core_states[core],
-        post.core_states[core] == pre.core_states[core],
         post.inv(c),
 {
     let pred =

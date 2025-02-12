@@ -50,7 +50,7 @@ pub proof fn ambient_lemmas2()
 pub enum NodeEntry {
     Directory(Directory),
     Page(PTE),
-    Empty(),
+    Invalid,
 }
 
 pub struct Directory {
@@ -96,7 +96,7 @@ impl Directory {
     pub open spec(checked) fn empty(&self) -> bool
         recommends self.well_formed()
     {
-        forall|i: nat| i < self.num_entries() ==> self.entries.index(i as int) is Empty
+        forall|i: nat| i < self.num_entries() ==> self.entries.index(i as int) is Invalid
     }
 
     pub open spec(checked) fn pages_match_entry_size(&self) -> bool
@@ -205,7 +205,7 @@ impl Directory {
                 map: match self.entries.index(entry as int) {
                     NodeEntry::Page(p)      => map![self.entry_base(entry) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
-                    NodeEntry::Empty()      => map![],
+                    NodeEntry::Invalid      => map![],
                 },
                 arch: self.arch,
                 lower,
@@ -346,7 +346,7 @@ impl Directory {
                 NodeEntry::Directory(d) => {
                     d.lemma_inv_implies_interp_aux_inv(0);
                 }
-                NodeEntry::Empty() => { }
+                NodeEntry::Invalid => { }
             }
 
             assert(interp.mappings_are_of_valid_size());
@@ -389,7 +389,7 @@ impl Directory {
                         assert(entry_i.upper >= d.interp_aux(0).upper); // proof stability
                     });
                 }
-                NodeEntry::Empty() => {}
+                NodeEntry::Invalid => {}
             }
             assert(entry_i.mappings_in_bounds());
 
@@ -572,7 +572,7 @@ impl Directory {
             NodeEntry::Directory(d) => {
                 d.resolve(vaddr)
             },
-            NodeEntry::Empty() => {
+            NodeEntry::Invalid => {
                 Err(())
             },
         }
@@ -599,7 +599,7 @@ impl Directory {
                 d.lemma_inv_implies_interp_inv();
                 assert(d.inv());
             },
-            NodeEntry::Empty() => {
+            NodeEntry::Invalid => {
             },
         }
     }
@@ -709,7 +709,7 @@ impl Directory {
                 d.lemma_inv_implies_interp_inv();
                 assert(d.interp().accepted_resolve(vaddr));
             },
-            NodeEntry::Empty() => { },
+            NodeEntry::Invalid => { },
         }
     }
 
@@ -788,7 +788,7 @@ impl Directory {
                 }
                 assert(equal(d.interp().resolve(vaddr), self.interp().resolve(vaddr)));
             },
-            NodeEntry::Empty() => {
+            NodeEntry::Invalid => {
                 assert(self.resolve(vaddr).is_Err());
                 self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(vaddr, entry);
                 assert(self.interp().resolve(vaddr).is_Err());
@@ -852,7 +852,7 @@ impl Directory {
             self.layer + 1 < self.arch.layers.len(),
     {
         Directory {
-            entries:    new_seq(self.arch.num_entries((self.layer + 1) as nat), NodeEntry::Empty()),
+            entries:    new_seq(self.arch.num_entries((self.layer + 1) as nat), NodeEntry::Invalid),
             layer:      self.layer + 1,
             base_vaddr: self.entry_base(entry),
             arch:       self.arch,
@@ -868,13 +868,13 @@ impl Directory {
         ensures
             self.new_empty_dir(entry).inv(),
             self.new_empty_dir(entry).entries.len() == self.arch.num_entries((self.layer + 1) as nat),
-            forall|j: nat| j < self.new_empty_dir(entry).num_entries() ==> equal(self.new_empty_dir(entry).entries.index(j as int), NodeEntry::Empty()),
+            forall|j: nat| j < self.new_empty_dir(entry).num_entries() ==> equal(self.new_empty_dir(entry).entries.index(j as int), NodeEntry::Invalid),
     {
         let new_dir = self.new_empty_dir(entry);
         let num_entries = self.arch.num_entries((self.layer + 1) as nat);
         indexing::lemma_entry_base_from_index(self.base_vaddr, entry, self.entry_size());
         indexing::lemma_entry_base_from_index_support(self.base_vaddr, entry, self.entry_size());
-        lemma_new_seq::<NodeEntry>(num_entries, NodeEntry::Empty());
+        lemma_new_seq::<NodeEntry>(num_entries, NodeEntry::Invalid);
 
         assert(new_dir.directories_obey_invariant());
         assert(new_dir.well_formed());
@@ -901,7 +901,7 @@ impl Directory {
                         }
                     }
                 },
-                NodeEntry::Empty() => {
+                NodeEntry::Invalid => {
                     if self.entry_size() == pte.frame.size {
                         Ok(self.update(entry, NodeEntry::Page(pte)))
                     } else {
@@ -978,7 +978,7 @@ impl Directory {
         requires
             self.inv(),
             self.accepted_mapping(base, pte),
-            self.entries.index(self.index_for_vaddr(base) as int) is Empty,
+            self.entries.index(self.index_for_vaddr(base) as int) is Invalid,
         ensures
             self.map_frame(base, pte).is_Ok(),
             // self.new_empty_dir(self.index_for_vaddr(base)).map_frame(base, pte).is_Ok()
@@ -1045,7 +1045,7 @@ impl Directory {
                     self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(base, entry);
                 }
             },
-            NodeEntry::Empty() => {
+            NodeEntry::Invalid => {
                 self.lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(base, entry);
                 if self.entry_size() == pte.frame.size {
                     assert(equal(res.layer, self.layer));
@@ -1092,7 +1092,7 @@ impl Directory {
                 match n {
                     NodeEntry::Page(p)      => map![self.entry_base(j) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
-                    NodeEntry::Empty()      => map![],
+                    NodeEntry::Invalid      => map![],
                 }),
         ensures
             equal(self.interp_aux(i).map.insert(base, pte), self.update(j, n).interp_aux(i).map),
@@ -1161,7 +1161,7 @@ impl Directory {
                 match n {
                     NodeEntry::Page(p)      => map![self.entry_base(j) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
-                    NodeEntry::Empty()      => map![],
+                    NodeEntry::Invalid      => map![],
                 }),
         ensures
             equal(self.interp().map.insert(base, pte), self.update(j, n).interp().map),
@@ -1182,10 +1182,10 @@ impl Directory {
         broadcast use group_ambient;
         ambient_lemmas2();
 
-        assert(exists|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Empty));
-        let i = choose|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Empty);
+        assert(exists|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Invalid));
+        let i = choose|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Invalid);
         assert(i < self.num_entries());
-        assert(!(self.entries.index(i as int) is Empty));
+        assert(!(self.entries.index(i as int) is Invalid));
         self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(i);
         match self.entries.index(i as int) {
             NodeEntry::Page(p)      => {
@@ -1196,7 +1196,7 @@ impl Directory {
                 let b = choose|b: nat| d.interp().map.dom().contains(b);
                 assert(self.interp().map.dom().contains(b));
             },
-            NodeEntry::Empty()      => (),
+            NodeEntry::Invalid      => (),
         }
     }
 
@@ -1216,7 +1216,7 @@ impl Directory {
                         d.accepted_mapping(base, pte)
                     }
                 },
-                NodeEntry::Empty()      => {
+                NodeEntry::Invalid      => {
                     if self.entry_size() == pte.frame.size {
                         true
                     } else {
@@ -1253,7 +1253,7 @@ impl Directory {
                     assert(d.accepted_mapping(base, pte));
                 }
             },
-            NodeEntry::Empty() => {
+            NodeEntry::Invalid => {
                 if self.entry_size() == pte.frame.size {
                 } else {
                     assert(((self.layer + 1) as nat) < self.arch.layers.len());
@@ -1376,7 +1376,7 @@ impl Directory {
                     // d.lemma_map_frame_preserves_inv(base, pte);
                 }
             },
-            NodeEntry::Empty() => {
+            NodeEntry::Invalid => {
                 if self.entry_size() == pte.frame.size {
                     self.lemma_insert_interp_of_entry_implies_insert_interp(entry, base, NodeEntry::Page(pte), pte);
                     assert(equal(result_map(self.map_frame(base, pte), |d: Directory| d.interp()), self.interp().map_frame(base, pte)));
@@ -1436,7 +1436,7 @@ impl Directory {
                         // base == self.base_vaddr + entry * self.entry_size()
                         // (i.e. no remainder on division)
                         // (proved in lemma_index_for_vaddr_bounds)
-                        Ok(self.update(entry, NodeEntry::Empty()))
+                        Ok(self.update(entry, NodeEntry::Invalid))
                     } else {
                         Err(self)
                     }
@@ -1445,14 +1445,14 @@ impl Directory {
                     match d.unmap(base) {
                         Ok(new_d) =>
                             Ok(self.update(entry, if new_d.empty() {
-                                NodeEntry::Empty()
+                                NodeEntry::Invalid
                             } else {
                                 NodeEntry::Directory(new_d)
                             })),
                         Err(new_d) => Err(self.update(entry, NodeEntry::Directory(new_d)))
                     }
                 },
-                NodeEntry::Empty() => Err(self),
+                NodeEntry::Invalid => Err(self),
             }
         } else {
             arbitrary()
@@ -1506,7 +1506,7 @@ impl Directory {
                     Err(_) => { }
                 }
             },
-            NodeEntry::Empty() => { },
+            NodeEntry::Invalid => { },
         }
     }
 
@@ -1528,7 +1528,7 @@ impl Directory {
                     &&& d.inv()
                     &&& d.accepted_unmap(base)
                 },
-                NodeEntry::Empty()      => true,
+                NodeEntry::Invalid      => true,
             }
         decreases self.arch.layers.len() - self.layer
     {
@@ -1553,7 +1553,7 @@ impl Directory {
                 assert(d.accepted_unmap(base));
                 d.lemma_unmap_refines_unmap(base);
             },
-            NodeEntry::Empty() => { },
+            NodeEntry::Invalid => { },
         }
    }
 
@@ -1593,8 +1593,8 @@ impl Directory {
             NodeEntry::Page(p) => {
                 if aligned(base, self.entry_size()) {
                     assert(self.interp_of_entry(entry).map.remove(base) =~= map![]);
-                    assert(self.update(entry, NodeEntry::Empty()).inv());
-                    self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
+                    assert(self.update(entry, NodeEntry::Invalid).inv());
+                    self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Invalid);
                 } else {
                     indexing::lemma_entry_base_from_index(self.base_vaddr, entry, self.entry_size());
                     assert(!self.interp().map.dom().contains(base));
@@ -1624,8 +1624,8 @@ impl Directory {
                             assert(equal(self.interp_of_entry(entry).map, d.interp().map));
                             assert(equal(d.interp().unmap(base).get_Ok_0().map, d.interp().map.remove(base)));
                             assert(self.interp_of_entry(entry).map.remove(base) =~= map![]);
-                            assert(self.update(entry, NodeEntry::Empty()).inv());
-                            self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Empty());
+                            assert(self.update(entry, NodeEntry::Invalid).inv());
+                            self.lemma_remove_from_interp_of_entry_implies_remove_from_interp(entry, base, NodeEntry::Invalid);
                             assert(equal(nself.interp(), i_nself));
                         } else {
                             assert(self.update(entry, NodeEntry::Directory(new_d)).inv());
@@ -1641,7 +1641,7 @@ impl Directory {
                     }
                 }
             },
-            NodeEntry::Empty() => { },
+            NodeEntry::Invalid => { },
         }
     }
 
@@ -1681,7 +1681,7 @@ impl Directory {
                 match n {
                     NodeEntry::Page(p)      => map![self.entry_base(j) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
-                    NodeEntry::Empty()      => map![],
+                    NodeEntry::Invalid      => map![],
                 }),
         ensures
             equal(self.interp_aux(i).map.remove(vaddr), self.update(j, n).interp_aux(i).map),
@@ -1748,7 +1748,7 @@ impl Directory {
                 match n {
                     NodeEntry::Page(p)      => map![self.entry_base(j) => p],
                     NodeEntry::Directory(d) => d.interp_aux(0).map,
-                    NodeEntry::Empty()      => map![],
+                    NodeEntry::Invalid      => map![],
                 })
         ensures
             equal(self.interp().map.remove(vaddr), self.update(j, n).interp().map),

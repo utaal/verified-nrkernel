@@ -853,6 +853,7 @@ pub mod code {
             requires
                 old(self).tstate() is Init,
             ensures
+                self.lbl() is Read,
                 self.lbl()->Read_0 == self.core(),
                 self.lbl()->Read_1 == addr,
                 old(self).prophesied_step(*self),

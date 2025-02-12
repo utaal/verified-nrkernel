@@ -53,7 +53,7 @@ impl Walk {
                     flags: self.flags(),
                 }
             }
-        } else if path.last().1 is Empty {
+        } else if path.last().1 is Invalid {
             // The result holds for one page
             WalkResult::Invalid { vaddr: align_to_usize(self.vaddr, PAGE_SIZE) }
         } else {

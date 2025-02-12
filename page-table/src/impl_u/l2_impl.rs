@@ -13,7 +13,7 @@ use crate::spec_t::mmu::translation::{PDE,GPDE, MASK_FLAG_P,
 MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR,
 MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS, MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR,
 MASK_L3_PG_ADDR};
-use crate::extra::{ self, result_map_ok };
+use crate::extra;
 
 
 verus! {
@@ -137,7 +137,7 @@ impl PDE {
             self.entry == 0,
             self.layer@ <= 3,
         ensures
-            self@ is Empty,
+            self@ is Invalid,
             self.all_mb0_bits_are_zero(),
     {
         assert(forall|a: usize| 0 & a == 0) by (bit_vector);
@@ -441,37 +441,37 @@ impl PDE {
             self@ is Page ==> 0 < self.layer(),
             self.hp_pat_is_zero(),
             self.all_mb0_bits_are_zero(),
-            !(self@ is Empty),
+            !(self@ is Invalid),
         ensures
             res == match self@ {
                 GPDE::Page { addr, .. }      => addr,
                 GPDE::Directory { addr, .. } => addr,
-                GPDE::Empty                  => arbitrary(),
+                GPDE::Invalid                  => arbitrary(),
             }
     {
         proof {
             match self@ {
                 GPDE::Page { addr, .. }      => self.lemma_addr_mask_when_hp_pat_is_zero(),
                 GPDE::Directory { addr, .. } => { },
-                GPDE::Empty                  => { },
+                GPDE::Invalid                  => { },
             }
         }
         self.entry & MASK_ADDR
     }
 
-    pub fn is_mapping(&self) -> (r: bool)
+    pub fn is_present(&self) -> (r: bool)
         requires
             self.all_mb0_bits_are_zero(),
             self.layer() <= 3
         ensures
-            r == !(self@ is Empty),
+            r == !(self@ is Invalid),
     {
         (self.entry & MASK_FLAG_P) == MASK_FLAG_P
     }
 
     pub fn is_page(&self, layer: usize) -> (r: bool)
         requires
-            !(self@ is Empty),
+            !(self@ is Invalid),
             layer as nat == self.layer@,
             layer <= 3,
         ensures
@@ -488,7 +488,7 @@ impl PDE {
 
     pub fn is_dir(&self, layer: usize) -> (r: bool)
         requires
-            !(self@ is Empty),
+            !(self@ is Invalid),
             layer as nat == self.layer@,
             layer <= 3,
         ensures
@@ -582,7 +582,7 @@ pub open spec fn directories_obey_invariant_at(mem: &mem::PageTableMemory, pt: P
 }
 
 pub open spec fn empty_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize) -> bool {
-    forall|i: nat| i < X86_NUM_ENTRIES ==> view_at(mem, pt, layer, ptr, i) is Empty
+    forall|i: nat| i < X86_NUM_ENTRIES ==> view_at(mem, pt, layer, ptr, i) is Invalid
 }
 
 pub open spec(checked) fn layer_in_range(layer: nat) -> bool {
@@ -689,7 +689,7 @@ pub open spec fn interp_at_entry(mem: &mem::PageTableMemory, pt: PTDir, layer: n
                         disable_execute: XD,
                     },
                 }),
-        GPDE::Empty => l1::NodeEntry::Empty(),
+        GPDE::Invalid => l1::NodeEntry::Invalid,
     }
 }
 
@@ -815,7 +815,7 @@ pub proof fn lemma_interp_at_facts_entries(mem: &mem::PageTableMemory, pt: PTDir
                     &&& res.entries[i as int]->Directory_0 == interp_at(mem, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, i))
                 },
                 GPDE::Page { addr, .. } => res.entries[i as int] is Page && res.entries[i as int]->Page_0.frame.base == addr,
-                GPDE::Empty             => res.entries[i as int] is Empty,
+                GPDE::Invalid             => res.entries[i as int] is Invalid,
             } })
 { lemma_interp_at_aux_facts(mem, pt, layer, ptr, base_vaddr, seq![]); }
 
@@ -834,7 +834,7 @@ proof fn lemma_interp_at_aux_facts(mem: &mem::PageTableMemory, pt: PTDir, layer:
                         &&& res[j as int]->Directory_0 == interp_at(mem, pt.entries[j as int].get_Some_0(), (layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, j))
                     },
                     GPDE::Page { addr, .. } => res[j as int] is Page && res[j as int]->Page_0.frame.base == addr,
-                    GPDE::Empty             => res[j as int] is Empty,
+                    GPDE::Invalid             => res[j as int] is Invalid,
                 })
             &&& (forall|j: nat| init.len() <= j && j < res.len() ==> res[j as int] == #[trigger] interp_at_entry(mem, pt, layer, ptr, base_vaddr, j))
         }),
@@ -848,94 +848,94 @@ proof fn lemma_interp_at_aux_facts(mem: &mem::PageTableMemory, pt: PTDir, layer:
     }
 }
 
-fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, base: usize, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec), ()>)
-    requires
-        inv_at(mem, pt, layer as nat, ptr),
-        interp_at(mem, pt, layer as nat, ptr, base as nat).inv(),
-        interp_at(mem, pt, layer as nat, ptr, base as nat).interp().accepted_resolve(vaddr as nat),
-        base <= vaddr < MAX_BASE,
-    ensures
-        // Refinement of l1
-        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).resolve(vaddr as nat),
-        // Refinement of l0
-        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).interp().resolve(vaddr as nat),
-    // decreases X86_NUM_LAYERS - layer
-{
-    proof { lemma_interp_at_facts(mem, pt, layer as nat, ptr, base as nat); }
-    let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
-    proof { indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat); }
-    let entry      = entry_at(mem, Ghost(pt), layer, ptr, idx);
-    let interp: Ghost<l1::Directory> = Ghost(interp_at(mem, pt, layer as nat, ptr, base as nat));
-    proof {
-        interp@.lemma_resolve_structure_assertions(vaddr as nat, idx as nat);
-        interp@.lemma_resolve_refines(vaddr as nat);
-    }
-    if entry.is_mapping() {
-        let entry_base: usize = x86_arch_exec().entry_base(layer, base, idx);
-        proof {
-            indexing::lemma_entry_base_from_index(base as nat, idx as nat, x86_arch_spec.entry_size(layer as nat));
-            assert(entry_base <= vaddr);
-        }
-        if entry.is_dir(layer) {
-            assert(entry@ is Directory);
-            let dir_addr = entry.address();
-            assert(pt.entries[idx as int].is_Some());
-            let dir_pt: Ghost<PTDir> = Ghost(pt.entries.index(idx as int).get_Some_0());
-            assert(directories_obey_invariant_at(mem, pt, layer as nat, ptr));
-            proof {
-                assert(interp@.inv());
-                assert(interp@.directories_obey_invariant());
-                assert(interp@.entries[idx as int] is Directory);
-                assert(interp@.entries[idx as int]->Directory_0.inv());
-                assert(l1::NodeEntry::Directory(interp_at(mem, dir_pt@, (layer + 1) as nat, dir_addr, entry_base as nat)) === interp@.entries[idx as int]);
-                assert(inv_at(mem, dir_pt@, (layer + 1) as nat, dir_addr));
-            }
-            let res = resolve_aux(mem, dir_pt, layer + 1, dir_addr, entry_base, vaddr);
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
-            res
-        } else {
-            assert(entry@ is Page);
-            assert(interp@.entries[idx as int] is Page);
-            let pte = PageTableEntryExec {
-                frame: MemRegionExec { base: entry.address(), size: x86_arch_exec().entry_size(layer) },
-                flags: entry.flags()
-            };
-            let res = Ok((entry_base, pte));
-            proof {
-            if interp@.resolve(vaddr as nat).is_Ok() {
-                assert(interp@.entries[idx as int]->Page_0 === interp@.resolve(vaddr as nat).get_Ok_0().1);
-                assert(interp@.entries[idx as int] === interp_at_entry(mem, pt, layer as nat, ptr, base as nat, idx as nat));
-            }
-            }
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.0));
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.1.frame));
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.1.flags));
-            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
-            res
-        }
-    } else {
-        assert(entry@ is Empty);
-        assert(interp@.entries[idx as int] is Empty);
-        assert(result_map_ok(Err(()), |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
-        Err(())
-    }
-}
+//fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, base: usize, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec), ()>)
+//    requires
+//        inv_at(mem, pt, layer as nat, ptr),
+//        interp_at(mem, pt, layer as nat, ptr, base as nat).inv(),
+//        interp_at(mem, pt, layer as nat, ptr, base as nat).interp().accepted_resolve(vaddr as nat),
+//        base <= vaddr < MAX_BASE,
+//    ensures
+//        // Refinement of l1
+//        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).resolve(vaddr as nat),
+//        // Refinement of l0
+//        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp_at(mem, pt, layer as nat, ptr, base as nat).interp().resolve(vaddr as nat),
+//    // decreases X86_NUM_LAYERS - layer
+//{
+//    proof { lemma_interp_at_facts(mem, pt, layer as nat, ptr, base as nat); }
+//    let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
+//    proof { indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat); }
+//    let entry      = entry_at(mem, Ghost(pt), layer, ptr, idx);
+//    let interp: Ghost<l1::Directory> = Ghost(interp_at(mem, pt, layer as nat, ptr, base as nat));
+//    proof {
+//        interp@.lemma_resolve_structure_assertions(vaddr as nat, idx as nat);
+//        interp@.lemma_resolve_refines(vaddr as nat);
+//    }
+//    if entry.is_present() {
+//        let entry_base: usize = x86_arch_exec().entry_base(layer, base, idx);
+//        proof {
+//            indexing::lemma_entry_base_from_index(base as nat, idx as nat, x86_arch_spec.entry_size(layer as nat));
+//            assert(entry_base <= vaddr);
+//        }
+//        if entry.is_dir(layer) {
+//            assert(entry@ is Directory);
+//            let dir_addr = entry.address();
+//            assert(pt.entries[idx as int].is_Some());
+//            let dir_pt: Ghost<PTDir> = Ghost(pt.entries.index(idx as int).get_Some_0());
+//            assert(directories_obey_invariant_at(mem, pt, layer as nat, ptr));
+//            proof {
+//                assert(interp@.inv());
+//                assert(interp@.directories_obey_invariant());
+//                assert(interp@.entries[idx as int] is Directory);
+//                assert(interp@.entries[idx as int]->Directory_0.inv());
+//                assert(l1::NodeEntry::Directory(interp_at(mem, dir_pt@, (layer + 1) as nat, dir_addr, entry_base as nat)) === interp@.entries[idx as int]);
+//                assert(inv_at(mem, dir_pt@, (layer + 1) as nat, dir_addr));
+//            }
+//            let res = resolve_aux(mem, dir_pt, layer + 1, dir_addr, entry_base, vaddr);
+//            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
+//            res
+//        } else {
+//            assert(entry@ is Page);
+//            assert(interp@.entries[idx as int] is Page);
+//            let pte = PageTableEntryExec {
+//                frame: MemRegionExec { base: entry.address(), size: x86_arch_exec().entry_size(layer) },
+//                flags: entry.flags()
+//            };
+//            let res = Ok((entry_base, pte));
+//            proof {
+//            if interp@.resolve(vaddr as nat).is_Ok() {
+//                assert(interp@.entries[idx as int]->Page_0 === interp@.resolve(vaddr as nat).get_Ok_0().1);
+//                assert(interp@.entries[idx as int] === interp_at_entry(mem, pt, layer as nat, ptr, base as nat, idx as nat));
+//            }
+//            }
+//            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).0) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.0));
+//            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.frame) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.1.frame));
+//            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@).1.flags) === result_map_ok(interp@.resolve(vaddr as nat), |v: (nat, PTE)| v.1.flags));
+//            assert(result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
+//            res
+//        }
+//    } else {
+//        assert(entry@ is Invalid);
+//        assert(interp@.entries[idx as int] is Invalid);
+//        assert(result_map_ok(Err(()), |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp@.resolve(vaddr as nat));
+//        Err(())
+//    }
+//}
 
-pub fn resolve(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec),()>)
-    requires
-        inv(mem, pt),
-        interp(mem, pt).inv(),
-        interp(mem, pt).interp().accepted_resolve(vaddr as nat),
-        vaddr < MAX_BASE,
-    ensures
-        // Refinement of l1
-        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).resolve(vaddr as nat),
-        // Refinement of l0
-        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).interp().resolve(vaddr as nat),
-{
-    let res = resolve_aux(mem, Ghost(pt), 0, mem.cr3().base, 0, vaddr);
-    res
-}
+//pub fn resolve(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec),()>)
+//    requires
+//        inv(mem, pt),
+//        interp(mem, pt).inv(),
+//        interp(mem, pt).interp().accepted_resolve(vaddr as nat),
+//        vaddr < MAX_BASE,
+//    ensures
+//        // Refinement of l1
+//        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).resolve(vaddr as nat),
+//        // Refinement of l0
+//        result_map_ok(res, |v: (usize, PageTableEntryExec)| (v.0 as nat, v.1@)) === interp(mem, pt).interp().resolve(vaddr as nat),
+//{
+//    let res = resolve_aux(mem, Ghost(pt), 0, mem.cr3().base, 0, vaddr);
+//    res
+//}
 
 pub open spec fn accepted_mapping(vaddr: nat, pte: PTE) -> bool {
     // Can't map pages in PML4, i.e. layer 0
@@ -1014,7 +1014,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
         indexing::lemma_entry_base_from_index(base as nat, idx as nat, x86_arch_spec.entry_size(layer as nat));
         assert(entry_base <= vaddr);
     }
-    if entry.is_mapping() {
+    if entry.is_present() {
         if entry.is_dir(layer) {
             if x86_arch_exec().entry_size(layer) == pte.frame.size {
                 assert(Err(interp_at(mem, pt, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
@@ -1580,7 +1580,7 @@ pub proof fn lemma_zeroed_page_implies_empty_at(mem: &mem::PageTableMemory, pt: 
         inv_at(mem, pt, layer, ptr),
 {
     assert forall|i: nat| #![auto] i < X86_NUM_ENTRIES implies
-        entry_at_spec(mem, pt, layer, ptr, i)@ is Empty
+        entry_at_spec(mem, pt, layer, ptr, i)@ is Invalid
         && entry_at_spec(mem, pt, layer, ptr, i).all_mb0_bits_are_zero()
     by { entry_at_spec(mem, pt, layer, ptr, i).lemma_zero_entry_facts(); };
     assert(forall|i: nat| #![auto] entry_at_spec(mem, pt, layer, ptr, i)@ == view_at(mem, pt, layer, ptr, i));
@@ -1589,7 +1589,7 @@ pub proof fn lemma_zeroed_page_implies_empty_at(mem: &mem::PageTableMemory, pt: 
 proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, idx: nat)
     requires
         inv_at(mem, pt, layer, ptr),
-        forall|i: nat| i < init.len() ==> init[i as int] === l1::NodeEntry::Empty(),
+        forall|i: nat| i < init.len() ==> init[i as int] === l1::NodeEntry::Invalid,
         init.len() <= X86_NUM_ENTRIES,
         idx < X86_NUM_ENTRIES,
         view_at(mem, pt, layer, ptr, idx) is Directory,
@@ -1604,7 +1604,7 @@ proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(mem: &mem::PageTableMem
                 x86_arch_spec.entry_base(layer, base, idx),
                 init);
         &&& res.len() === X86_NUM_ENTRIES as nat
-        &&& forall|i: nat| i < res.len() ==> res[i as int] === l1::NodeEntry::Empty()
+        &&& forall|i: nat| i < res.len() ==> res[i as int] === l1::NodeEntry::Invalid
         })
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
 {
@@ -1635,7 +1635,7 @@ proof fn lemma_empty_at_interp_at_equal_l1_empty_dir(mem: &mem::PageTableMemory,
                 view_at(mem, pt, layer, ptr, idx)->Directory_addr,
                 x86_arch_spec.entry_base(layer, base, idx));
         &&& res.entries.len() === X86_NUM_ENTRIES as nat
-        &&& forall|i: nat| i < res.entries.len() ==> res.entries[i as int] === l1::NodeEntry::Empty()
+        &&& forall|i: nat| i < res.entries.len() ==> res.entries[i as int] === l1::NodeEntry::Invalid
         })
 {
     lemma_empty_at_interp_at_aux_equal_l1_empty_dir(mem, pt, layer, ptr, base, seq![], idx);
@@ -1645,10 +1645,10 @@ proof fn lemma_not_empty_at_implies_interp_at_aux_not_empty(mem: &mem::PageTable
     requires
         inv_at(mem, pt, layer, ptr),
         nonempty_idx < X86_NUM_ENTRIES,
-        !(view_at(mem, pt, layer, ptr, nonempty_idx) is Empty),
-        nonempty_idx < init.len() ==> !(init[nonempty_idx as int] is Empty)
+        !(view_at(mem, pt, layer, ptr, nonempty_idx) is Invalid),
+        nonempty_idx < init.len() ==> !(init[nonempty_idx as int] is Invalid)
     ensures
-        !(interp_at_aux(mem, pt, layer, ptr, base, init)[nonempty_idx as int] is Empty)
+        !(interp_at_aux(mem, pt, layer, ptr, base, init)[nonempty_idx as int] is Invalid)
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
 {
     if init.len() >= X86_NUM_ENTRIES as nat {
@@ -1675,7 +1675,7 @@ proof fn lemma_not_empty_at_implies_interp_at_not_empty(mem: &mem::PageTableMemo
     ensures
         !interp_at(mem, pt, layer, ptr, base).empty()
 {
-    let i = choose|i: nat| i < X86_NUM_ENTRIES && !(view_at(mem, pt, layer, ptr, i) is Empty);
+    let i = choose|i: nat| i < X86_NUM_ENTRIES && !(view_at(mem, pt, layer, ptr, i) is Invalid);
     lemma_not_empty_at_implies_interp_at_aux_not_empty(mem, pt, layer, ptr, base, seq![], i);
 }
 
@@ -1719,11 +1719,11 @@ fn is_directory_empty(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer
         invariant
             num_entries == X86_NUM_ENTRIES,
             inv_at(mem, pt, layer as nat, ptr),
-            forall|i: nat| i < idx ==> view_at(mem, pt, layer as nat, ptr, i) is Empty,
+            forall|i: nat| i < idx ==> view_at(mem, pt, layer as nat, ptr, i) is Invalid,
     {
         let entry = entry_at(mem, Ghost(pt), layer, ptr, idx);
-        if entry.is_mapping() {
-            assert(!(view_at(mem, pt, layer as nat, ptr, idx as nat) is Empty));
+        if entry.is_present() {
+            assert(!(view_at(mem, pt, layer as nat, ptr, idx as nat) is Invalid));
             assert(!empty_at(mem, pt, layer as nat, ptr));
             return false;
         }
@@ -1741,7 +1741,7 @@ fn insert_empty_directory(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir
         old(mem).alloc_available_pages() > 0,
         layer < 3,
         idx < 512,
-        view_at(&*old(mem), pt, layer as nat, ptr, idx as nat) is Empty,
+        view_at(&*old(mem), pt, layer as nat, ptr, idx as nat) is Invalid,
     ensures
         inv_at(mem, res.0@, layer as nat, ptr),
         !old(mem).regions().contains(res.1@),
@@ -1903,7 +1903,7 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
     }
     assert(interp_at_entry(mem, pt, layer as nat, ptr, base as nat, idx as nat)
            == interp_at(mem, pt, layer as nat, ptr, base as nat).entries[idx as int]);
-    if entry.is_mapping() {
+    if entry.is_present() {
         if entry.is_dir(layer) {
             let dir_addr = entry.address();
             assert(pt.entries[idx as int].is_Some());

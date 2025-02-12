@@ -58,10 +58,10 @@ pub ghost enum GPDE {
         /// the page controlled by this entry); otherwise, reserved (must be 0)
         XD: bool,
     },
-    /// An `Empty` entry is an entry that does not contain a valid mapping. I.e. the entry is
+    /// An `Invalid` entry is an entry that does not contain a valid mapping. I.e. the entry is
     /// either empty or has a bit set that the intel manual designates as must-be-zero. Both empty
     /// and invalid entries cause a page fault if used during translation.
-    Empty,
+    Invalid,
 }
 
 // layer:
@@ -281,7 +281,7 @@ impl PDE {
                 arbitrary()
             }
         } else {
-            GPDE::Empty
+            GPDE::Invalid
         }
     }
 
@@ -334,7 +334,7 @@ impl Flags {
     //pub open spec fn from_GPDEs(pdes: Seq<GPDE>) -> Flags
     //    recommends
     //        pdes.len() > 0,
-    //        forall|i| 0 <= i < pdes.len() ==> !(pdes[i] is Empty)
+    //        forall|i| 0 <= i < pdes.len() ==> !(pdes[i] is Invalid)
     //    decreases pdes.len()
     //{
     //    if pdes.len() <= 1 {
@@ -345,7 +345,7 @@ impl Flags {
     //}
 
     pub open spec fn from_GPDE(pde: GPDE) -> Flags
-        recommends !(pde is Empty)
+        recommends !(pde is Invalid)
     {
         match pde {
             GPDE::Directory { RW, US, XD, .. } =>
