@@ -4,8 +4,7 @@ use crate::definitions_u::{lemma_new_seq};
 use crate::extra::{ self, result_map };
 use crate::impl_u::indexing;
 
-use crate::spec_t::mmu::defs::{ MemRegion, overlap, Arch, between, aligned, PTE, Flags };
-use crate::definitions_u::{ permissive_flags };
+use crate::spec_t::mmu::defs::{ MemRegion, overlap, Arch, between, aligned, PTE };
 use crate::impl_u::l0;
 
 verus! {
@@ -32,21 +31,6 @@ pub proof fn ambient_lemmas2()
     };
 }
 
-// Simply uncommenting this thing slows down verification of this file by 2.5x
-// #[proof]
-// fn ambient_lemmas3() {
-//     ensures([
-//             forall(|d: Directory, base: nat, pte: PTE|
-//                    d.inv() && #[trigger] d.accepted_mapping(base, pte) ==>
-//                    d.interp().accepted_mapping(base, pte)),
-//     ]);
-//     assert_forall_by(|d: Directory, base: nat, pte: PTE| {
-//         requires(d.inv() && #[trigger] d.accepted_mapping(base, pte));
-//         ensures(d.interp().accepted_mapping(base, pte));
-//         d.lemma_accepted_mapping_implies_interp_accepted_mapping_auto();
-//     });
-// }
-
 pub enum NodeEntry {
     Directory(Directory),
     Page(PTE),
@@ -58,7 +42,6 @@ pub struct Directory {
     pub layer: nat, // index into layer_sizes
     pub base_vaddr: nat,
     pub arch: Arch,
-    pub flags: Flags,
 }
 
 // Layer 0: 425 Directory ->
@@ -78,7 +61,6 @@ impl Directory {
         &&& self.layer < self.arch.layers.len()
         &&& aligned(self.base_vaddr, self.entry_size() * self.num_entries())
         &&& self.entries.len() == self.num_entries()
-        &&& self.flags == permissive_flags
     }
 
     pub open spec(checked) fn entry_size(&self) -> nat
@@ -856,7 +838,6 @@ impl Directory {
             layer:      self.layer + 1,
             base_vaddr: self.entry_base(entry),
             arch:       self.arch,
-            flags:      permissive_flags,
         }
     }
 

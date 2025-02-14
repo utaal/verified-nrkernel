@@ -5,7 +5,7 @@ use crate::spec_t::mmu::defs::{ MemRegion, MemRegionExec, PTE, PageTableEntryExe
 between, aligned, new_seq, x86_arch_exec, x86_arch_spec, axiom_max_phyaddr_width_facts, MAX_BASE,
 WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
 X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
-use crate::definitions_u::{ lemma_new_seq, aligned_exec, permissive_flags};
+use crate::definitions_u::{ lemma_new_seq, aligned_exec };
 use crate::impl_u::l1;
 use crate::impl_u::indexing;
 use crate::spec_t::mem;
@@ -19,7 +19,7 @@ use crate::extra;
 verus! {
 
 proof fn lemma_page_aligned_implies_mask_dir_addr_is_identity()
-    ensures forall|addr: usize| addr <= MAX_PHYADDR ==> #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
+    ensures forall|addr: usize| addr <= MAX_PHYADDR && #[trigger] aligned(addr as nat, PAGE_SIZE as nat) ==> addr & MASK_DIR_ADDR == addr,
 {
     assert forall|addr: usize|
         addr <= MAX_PHYADDR &&
@@ -508,6 +508,7 @@ pub struct PTDir {
     pub used_regions: Set<MemRegion>,
 }
 
+
 // Page table methods are in a separate module for namespacing, since we can't use a struct + impl
 // (To use a struct we'd have to keep a &mut reference to the memory in the struct, which Verus
 // doesn't support. Or we keep an owned copy but then can't have an external interface that mutably
@@ -664,9 +665,6 @@ pub open spec fn interp_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, pt
         layer: layer,
         base_vaddr,
         arch: x86_arch_spec,
-        // We don't have to check the flags because we know (from the invariant) that all
-        // directories have these flags set.
-        flags: permissive_flags,
     }
 }
 
