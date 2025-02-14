@@ -820,6 +820,7 @@ pub mod code {
     use crate::spec_t::mmu::rl3;
     use crate::spec_t::mmu::{ self, Core };
     use crate::theorem::TokState;
+    use crate::spec_t::mmu::defs::{ aligned };
 
     #[verifier(external_body)]
     pub tracked struct Token {}
@@ -852,6 +853,7 @@ pub mod code {
         pub proof fn prophesy_read(tracked &mut self, addr: usize)
             requires
                 old(self).tstate() is Init,
+                aligned(addr as nat, 8),
             ensures
                 self.lbl() is Read,
                 self.lbl()->Read_0 == self.core(),

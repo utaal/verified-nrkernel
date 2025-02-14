@@ -508,7 +508,6 @@ pub struct PTDir {
     pub used_regions: Set<MemRegion>,
 }
 
-
 // Page table methods are in a separate module for namespacing, since we can't use a struct + impl
 // (To use a struct we'd have to keep a &mut reference to the memory in the struct, which Verus
 // doesn't support. Or we keep an owned copy but then can't have an external interface that mutably
@@ -631,12 +630,10 @@ pub open spec fn hp_pat_is_zero(mem: &mem::PageTableMemory, pt: PTDir, layer: na
 
 // TODO: should I move some of these ghost_pt things in a invariant defined on PTDir?
 pub open spec fn ghost_pt_used_regions_pairwise_disjoint(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize) -> bool {
-    forall|i: nat, j: nat, r: MemRegion|
-        i != j &&
-        i < pt.entries.len() && pt.entries[i as int].is_Some() &&
-        #[trigger] pt.entries[i as int].get_Some_0().used_regions.contains(r) &&
-        j < pt.entries.len() && pt.entries[j as int].is_Some()
-        ==> !(#[trigger] pt.entries[j as int].get_Some_0().used_regions.contains(r))
+    forall|i: nat, j: nat|
+        i != j && i < pt.entries.len() && j < pt.entries.len()
+        && #[trigger] pt.entries[j as int] is Some && #[trigger] pt.entries[i as int] is Some
+        ==> pt.entries[i as int]->Some_0.used_regions.disjoint(pt.entries[j as int]->Some_0.used_regions)
 }
 
 // TODO: this may be implied by the other ones

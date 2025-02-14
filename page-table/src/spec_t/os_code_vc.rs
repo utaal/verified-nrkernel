@@ -4,7 +4,8 @@ use crate::spec_t::os;
 use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, aligned };
+use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 
@@ -86,7 +87,7 @@ pub open spec fn concurrent_trs(pre: os::State, post: os::State, c: os::Constant
     }
 }
 
-// We'll use `concurrent_trs` is an inductive-ish predicate, so let's prove the corresponding intro
+// We'll use `concurrent_trs` as an inductive-ish predicate, so let's prove the corresponding intro
 // and induction rules:
 
 proof fn lemma_concurrent_trs_eq_intro(pre: os::State, c: os::Constants, core: Core)
@@ -383,7 +384,6 @@ trait CodeVC {
     // refer in the requires clause.
     exec fn sys_do_map(
         Tracked(tok): Tracked<&mut Token>,
-        core: Core,
         vaddr: usize,
         pte: PageTableEntryExec,
         tracked proph_res: Prophecy<Result<(),()>>
@@ -392,8 +392,7 @@ trait CodeVC {
             os::step_Map_enabled(vaddr as nat, pte@),
             old(tok).st().inv(old(tok).consts()),
             old(tok).consts().valid_ult(old(tok).thread()),
-            old(tok).core() == core,
-            old(tok).st().core_states[core] is Idle,
+            old(tok).st().core_states[old(tok).core()] is Idle,
             old(tok).steps() === seq![
                 RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
                 RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
@@ -435,22 +434,22 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
     &&& post.mmu@.pending_maps == pre.mmu@.pending_maps
 }
 
-pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, core: Core, vaddr: usize, pte: PageTableEntryExec)
+pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, vaddr: usize, pte: PageTableEntryExec)
     requires
         os::step_Map_enabled(vaddr as nat, pte@),
         old(tok).consts().valid_ult(old(tok).thread()),
-        old(tok).consts().valid_core(core), // TODO: ??
-        old(tok).core() == core,
-        old(tok).st().core_states[core] is Idle,
+        old(tok).consts().valid_core(old(tok).core()), // TODO: ??
+        old(tok).st().core_states[old(tok).core()] is Idle,
         old(tok).steps().len() > 0,
         old(tok).steps().first() == (RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ }),
         old(tok).progress() is Unready,
         old(tok).st().inv(old(tok).consts()),
     ensures
-        tok.st().core_states[core] is MapWaiting,
-        tok.st().core_states[core]->MapWaiting_ult_id == tok.thread(),
-        tok.st().core_states[core]->MapWaiting_vaddr == vaddr as nat,
-        tok.st().core_states[core]->MapWaiting_pte == pte@,
+        tok.core() == old(tok).core(),
+        tok.st().core_states[tok.core()] is MapWaiting,
+        tok.st().core_states[tok.core()]->MapWaiting_ult_id == tok.thread(),
+        tok.st().core_states[tok.core()]->MapWaiting_vaddr == vaddr as nat,
+        tok.st().core_states[tok.core()]->MapWaiting_pte == pte@,
         unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
         //tok.st().os_ext.lock == old(tok).st().os_ext.lock,
         tok.thread() == old(tok).thread(),
@@ -460,7 +459,8 @@ pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, core: Core, vadd
         tok.st().inv(tok.consts()),
 {
     let state1 = Ghost(tok.st());
-    assert(core == tok.consts().ult2core[tok.thread()]);
+    let core = Ghost(tok.core());
+    assert(core@ == tok.consts().ult2core[tok.thread()]);
     proof {
         let pidx = tok.do_concurrent_trs();
         // TODO: This part is weird because according to the state machine this step we're taking
@@ -472,7 +472,7 @@ pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, core: Core, vadd
         // probably fine. then the first step (acquiring the lock) is actually stable. But then
         // we're not enforcing that the first step actually is that of acuiring the lock. Is that a
         // problem?
-        assume(tok.st().core_states[core] == state1@.core_states[core]);
+        assume(tok.st().core_states[core@] == state1@.core_states[core@]);
         assume(tok.st().inv(tok.consts()));
         //lemma_concurrent_trs(state1@, tok.st(), tok.consts(), tok.core(), pidx);
     }
@@ -481,59 +481,62 @@ pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, core: Core, vadd
         let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
         let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr as nat, pte@);
         let post = os::State {
-            core_states: tok.st().core_states.insert(core, new_cs),
+            core_states: tok.st().core_states.insert(core@, new_cs),
             sound: new_sound,
             ..tok.st()
         };
         let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
-        assert(os::step_MapStart(tok.consts(), tok.st(), post, core, lbl));
-        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core }, lbl));
+        assert(os::step_MapStart(tok.consts(), tok.st(), post, core@, lbl));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core: core@ }, lbl));
         tok.register_external_step(post);
         let state3 = Ghost(tok.st());
         os_invariant::next_preserves_inv(tok.consts(), state2@, state3@, lbl);
         tok.do_concurrent_trs();
         let state4 = Ghost(tok.st());
         //lemma_concurrent_trs(state3@, state4@, tok.consts(), tok.core(), pidx);
-        assume(state4@.core_states[core] == state3@.core_states[core]);
+        assume(state4@.core_states[core@] == state3@.core_states[core@]);
         assume(state4@.inv(tok.consts()));
         assume(unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()));
     }
 }
 
-pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>, core: Core)
+pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>)
     requires
         old(tok).consts().valid_ult(old(tok).thread()),
-        old(tok).thread() == old(tok).st().core_states[core]->MapWaiting_ult_id,
-        //old(tok).consts().valid_core(core), // TODO: ??
-        old(tok).core() == core,
-        old(tok).st().core_states[core] is MapWaiting,
+        old(tok).thread() == old(tok).st().core_states[old(tok).core()]->MapWaiting_ult_id,
+        old(tok).st().core_states[old(tok).core()] is MapWaiting,
         old(tok).steps().len() > 0,
         old(tok).progress() is Ready,
         old(tok).st().inv(old(tok).consts()),
     ensures
-        old(tok).st().core_states[core] matches os::CoreState::MapWaiting { ult_id, vaddr, pte }
-            && tok.st().core_states[core] == (os::CoreState::MapExecuting { ult_id, vaddr, pte }),
+        tok.core() == old(tok).core(),
+        tok.thread() == old(tok).thread(),
+        old(tok).st().core_states[tok.core()] matches os::CoreState::MapWaiting { ult_id, vaddr, pte }
+            && tok.st().core_states[tok.core()] == (os::CoreState::MapExecuting { ult_id, vaddr, pte }),
         tok.progress() is Ready,
         unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
-        tok.st().os_ext.lock == Some(core),
+        tok.st().os_ext.lock == Some(tok.core()),
         tok.st().inv(tok.consts()),
+        tok.consts() == old(tok).consts(),
+        tok.steps() == old(tok).steps(),
 {
     let state1 = Ghost(tok.st());
-    assert(core == tok.consts().ult2core[tok.thread()]);
+    let core = Ghost(tok.core());
+    assert(core@ == tok.consts().ult2core[tok.thread()]);
     let tracked mut osext_tok = tok.get_osext_token();
     proof {
         osext_tok.prophesy_acquire_lock();
-        let vaddr = tok.st().core_states[core]->MapWaiting_vaddr;
-        let pte = tok.st().core_states[core]->MapWaiting_pte;
+        let vaddr = tok.st().core_states[core@]->MapWaiting_vaddr;
+        let pte = tok.st().core_states[core@]->MapWaiting_pte;
         let new_cs = os::CoreState::MapExecuting { ult_id: tok.thread(), vaddr, pte };
         let post = os::State {
-            core_states: tok.st().core_states.insert(core, new_cs),
+            core_states: tok.st().core_states.insert(core@, new_cs),
             os_ext: osext_tok.post(),
             ..tok.st()
         };
         //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
-        assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
-        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core }, RLbl::Tau));
+        assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core@, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core: core@ }, RLbl::Tau));
         tok.register_internal_step_osext(&mut osext_tok, post);
         os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
     }
@@ -549,20 +552,78 @@ pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>, core: Core)
     }
 }
 
+pub exec fn do_step_read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res: usize)
+    requires
+        aligned(addr as nat, 8),
+        old(tok).consts().valid_ult(old(tok).thread()),
+        old(tok).thread() == old(tok).st().core_states[old(tok).core()]->MapExecuting_ult_id,
+        old(tok).st().core_states[old(tok).core()] is MapExecuting,
+        old(tok).steps().len() > 0,
+        old(tok).progress() is Ready,
+        old(tok).st().inv(old(tok).consts()),
+    ensures
+        tok.thread() == old(tok).thread(),
+        tok.core() == old(tok).core(),
+        tok.st().core_states[tok.core()] == old(tok).st().core_states[tok.core()],
+        tok.progress() is Ready,
+        unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
+        tok.st().inv(tok.consts()),
+        tok.consts() == old(tok).consts(),
+        tok.steps() == old(tok).steps(),
+        res & MASK_NEG_DIRTY_ACCESS == tok.st().mmu@.pt_mem.read(addr) & MASK_NEG_DIRTY_ACCESS,
+{
+    let state1 = Ghost(tok.st());
+    let core = Ghost(tok.core());
+    assert(core@ == tok.consts().ult2core[tok.thread()]);
+    assert(tok.consts().valid_core(core@));
+    let tracked mut mmu_tok = tok.get_mmu_token();
+    proof {
+        mmu_tok.prophesy_read(addr);
+        let vaddr = tok.st().core_states[core@]->MapExecuting_vaddr;
+        let pte = tok.st().core_states[core@]->MapExecuting_pte;
+        let post = os::State {
+            mmu: mmu_tok.post(),
+            ..tok.st()
+        };
+        let read_result = mmu_tok.lbl()->Read_2;
+        assert(mmu::rl3::next(tok.st().mmu, post.mmu, tok.consts().mmu, mmu_tok.lbl()));
+        assert(os::step_ReadPTMem(tok.consts(), tok.st(), post, core@, addr, read_result, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::ReadPTMem { core: core@, paddr: addr, value: read_result }, RLbl::Tau));
+        tok.register_internal_step_mmu(&mut mmu_tok, post);
+        os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
+    }
+
+    let res = mmu::rl3::code::read(Tracked(&mut mmu_tok), addr);
+    let state2 = Ghost(tok.st());
+
+    proof {
+        broadcast use to_rl1::next_refines;
+        // TODO: This probably needs an additional invariant on the os state machine
+        assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
+        assert(state1@.os_ext.lock == Some(core@));
+        tok.return_mmu_token(mmu_tok);
+        let pidx = tok.do_concurrent_trs();
+        let state3 = Ghost(tok.st());
+        lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
+    }
+    res
+}
+
 // TODO: delete eventually. Dummy implementation to make sure we prove the right stuff for the
 // wrappers above.
 impl CodeVC for () {
     exec fn sys_do_map(
         Tracked(tok): Tracked<&mut Token>,
-        core: Core,
         vaddr: usize,
         pte: PageTableEntryExec,
         tracked proph_res: Prophecy<Result<(),()>>
     ) -> (res: Result<(),()>)
     {
-        assume(tok.consts().valid_core(core)); // TODO: Should be provable somehow
-        do_step_mapstart(Tracked(tok), core, vaddr, pte);
-        do_step_mapopstart(Tracked(tok), core);
+        assume(tok.consts().valid_core(tok.core())); // TODO: Should be provable somehow
+        do_step_mapstart(Tracked(tok), vaddr, pte);
+        do_step_mapopstart(Tracked(tok));
+        let dummy_addr: usize = 48;
+        do_step_read(Tracked(tok), dummy_addr);
 
         // read, allocate, mapopstutter, mapopend, mapend, barrier
 
