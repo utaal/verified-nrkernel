@@ -599,6 +599,7 @@ pub exec fn do_step_read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res
     proof {
         broadcast use to_rl1::next_refines;
         // TODO: This probably needs an additional invariant on the os state machine
+        // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
         assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
         assert(state1@.os_ext.lock == Some(core@));
         tok.return_mmu_token(mmu_tok);
@@ -607,6 +608,81 @@ pub exec fn do_step_read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res
         lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
     }
     res
+}
+
+pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize, value: usize)
+    requires
+        aligned(addr as nat, 8),
+        old(tok).consts().valid_ult(old(tok).thread()),
+        old(tok).thread() == old(tok).st().core_states[old(tok).core()]->MapExecuting_ult_id,
+        old(tok).st().core_states[old(tok).core()] is MapExecuting,
+        old(tok).steps().len() > 0,
+        old(tok).progress() is Ready,
+        old(tok).st().inv(old(tok).consts()),
+        old(tok).st().mmu@.pt_mem.is_nonneg_write(addr, value),
+        old(tok).st().mmu@.pt_mem.write(addr, value)@ == old(tok).st().mmu@.pt_mem@,
+    ensures
+        tok.thread() == old(tok).thread(),
+        tok.core() == old(tok).core(),
+        tok.st().core_states[tok.core()] == old(tok).st().core_states[tok.core()],
+        tok.st().mmu@.happy == old(tok).st().mmu@.happy,
+        tok.st().mmu@.writes ==
+            (mmu::rl3::Writes {
+                all: old(tok).st().mmu@.writes.all.insert(addr),
+                core: tok.core(),
+            }),
+        tok.st().mmu@.pending_maps == old(tok).st().mmu@.pending_maps,
+        tok.st().inv(tok.consts()),
+        tok.progress() is Ready,
+        tok.consts() == old(tok).consts(),
+        tok.steps() == old(tok).steps(),
+{
+
+    let state1 = Ghost(tok.st());
+    let core = Ghost(tok.core());
+    let tracked mut mmu_tok = tok.get_mmu_token();
+    proof {
+        broadcast use to_rl1::next_refines;
+
+        // TODO: This should follow from the same invariant we need in do_step_read
+        assume(!state1@.mmu@.writes.all.is_empty() ==> core == state1@.mmu@.writes.core);
+
+        mmu_tok.prophesy_write(addr, value);
+        let vaddr = tok.st().core_states[core@]->MapExecuting_vaddr;
+        let pte = tok.st().core_states[core@]->MapExecuting_pte;
+        let post = os::State { mmu: mmu_tok.post(), ..tok.st() };
+        // TODO: Need to think about how to resolve this. Hopefully can use the pt_mem view everywhere.
+        assume(state1@.interp_pt_mem() == nat_keys(old(tok).st().mmu@.pt_mem@));
+        assume(post.interp_pt_mem() == nat_keys(old(tok).st().mmu@.pt_mem.write(addr, value)@));
+        //assert(post.interp_pt_mem() == state1@.interp_pt_mem());
+        //assert(post.mmu@.pt_mem@ == state1@.mmu@.pt_mem@);
+
+        //assert(Map::new(
+        //    |vbase| post.mmu@.pt_mem@.contains_key(vbase) && !state1@.mmu@.pt_mem@.contains_key(vbase),
+        //    |vbase| post.mmu@.pt_mem@[vbase]
+        //) === map![]);
+        //assert(tok.st().mmu@.pending_maps == old(tok).st().mmu@.pending_maps);
+        assert(mmu::rl3::next(tok.st().mmu, post.mmu, tok.consts().mmu, mmu_tok.lbl()));
+        assert(os::step_MapOpStutter(tok.consts(), tok.st(), post, core@, addr, value, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStutter { core: core@, paddr: addr, value }, RLbl::Tau));
+        tok.register_internal_step_mmu(&mut mmu_tok, post);
+        os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
+    }
+
+    let res = mmu::rl3::code::write(Tracked(&mut mmu_tok), addr, value);
+    let state2 = Ghost(tok.st());
+
+    proof {
+        // TODO: This probably needs an additional invariant on the os state machine
+        // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
+        //assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
+        assert(state1@.os_ext.lock == Some(core@));
+        tok.return_mmu_token(mmu_tok);
+        let pidx = tok.do_concurrent_trs();
+        let state3 = Ghost(tok.st());
+        lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
+        assert(state3@.mmu@.pending_maps === state1@.mmu@.pending_maps);
+    }
 }
 
 // TODO: delete eventually. Dummy implementation to make sure we prove the right stuff for the
@@ -624,6 +700,9 @@ impl CodeVC for () {
         do_step_mapopstart(Tracked(tok));
         let dummy_addr: usize = 48;
         do_step_read(Tracked(tok), dummy_addr);
+        assume(tok.st().mmu@.is_this_write_happy(tok.core(), dummy_addr, 42));
+        assume(tok.st().mmu@.pt_mem.write(dummy_addr, 42)@ == tok.st().mmu@.pt_mem@);
+        do_step_write_stutter(Tracked(tok), dummy_addr, 42);
 
         // read, allocate, mapopstutter, mapopend, mapend, barrier
 
@@ -639,6 +718,10 @@ impl CodeVC for () {
         tracked proph_res: Prophecy<Result<(),()>>
     ) -> (res: Result<(),()>)
     { unimplemented!() }
+}
+
+pub open spec fn nat_keys<V>(m: Map<usize, V>) -> Map<nat, V> {
+    Map::new(|k: nat| k <= usize::MAX && m.contains_key(k as usize), |k: nat| m[k as usize])
 }
 
 } // verus!

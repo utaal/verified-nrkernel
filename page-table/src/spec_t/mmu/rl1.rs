@@ -207,6 +207,7 @@ pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> 
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
     &&& post.tlbs       == pre.tlbs
     &&& post.writes.all == pre.writes.all.insert(addr)
+    &&& post.writes.core == core
     //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
     //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
     //    } else { pre.writes.neg }
