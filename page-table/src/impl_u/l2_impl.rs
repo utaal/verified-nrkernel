@@ -1,18 +1,22 @@
 use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
+
 use crate::spec_t::mmu::defs::{ MemRegion, MemRegionExec, PTE, PageTableEntryExec, Flags,
-between, aligned, new_seq, x86_arch_exec, x86_arch_spec, axiom_max_phyaddr_width_facts, MAX_BASE,
-WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
-X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
-use crate::definitions_u::{ lemma_new_seq, aligned_exec };
+x86_arch_exec, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
+L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ between, aligned, new_seq, x86_arch_spec, axiom_max_phyaddr_width_facts, MAX_BASE };
+use crate::definitions_u::{ aligned_exec };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_u::{ lemma_new_seq };
 use crate::impl_u::l1;
 use crate::impl_u::indexing;
 use crate::spec_t::mem;
-use crate::spec_t::mmu::translation::{PDE,GPDE, MASK_FLAG_P,
-MASK_FLAG_RW, MASK_FLAG_US, MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR,
-MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS, MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR,
-MASK_L3_PG_ADDR};
+use crate::spec_t::mmu::translation::{PDE,GPDE, MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US,
+MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS,
+MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR, MASK_L3_PG_ADDR};
+#[cfg(verus_keep_ghost)]
 use crate::extra;
 
 
@@ -124,6 +128,9 @@ impl PDE {
         axiom_max_phyaddr_width_facts();
         reveal(PDE::all_mb0_bits_are_zero);
         if self.layer() == 1 {
+            assert(e & bit!(12usize) == 0);
+            assert(e & bitmask_inc!(13usize,29usize) == 0);
+            assert(32 <= mw <= 52);
             assert(e & bitmask_inc!(12usize, mw - 1) == e & bitmask_inc!(30usize, mw - 1)) by (bit_vector)
                 requires e & bit!(12usize) == 0, e & bitmask_inc!(13usize,29usize) == 0, 32 <= mw <= 52;
         } else if self.layer() == 2 {
@@ -983,7 +990,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
     // decreases X86_NUM_LAYERS - layer
 {
     proof { lemma_interp_at_facts(mem, pt, layer as nat, ptr, base as nat); }
-    let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
+    let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
     proof {
         assert({
             &&& between(vaddr as nat, x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat), x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat))
@@ -1004,14 +1011,14 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
         interp@.lemma_map_frame_structure_assertions(vaddr as nat, pte@, idx as nat);
         interp@.lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
     }
-    let entry_base: usize = x86_arch_exec().entry_base(layer, base, idx);
+    let entry_base: usize = x86_arch_exec.entry_base(layer, base, idx);
     proof {
         indexing::lemma_entry_base_from_index(base as nat, idx as nat, x86_arch_spec.entry_size(layer as nat));
         assert(entry_base <= vaddr);
     }
     if entry.is_present() {
         if entry.is_dir(layer) {
-            if x86_arch_exec().entry_size(layer) == pte.frame.size {
+            if x86_arch_exec.entry_size(layer) == pte.frame.size {
                 assert(Err(interp_at(mem, pt, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
                 Err(())
             } else {
@@ -1222,7 +1229,7 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
             Err(())
         }
     } else {
-        if x86_arch_exec().entry_size(layer) == pte.frame.size {
+        if x86_arch_exec.entry_size(layer) == pte.frame.size {
             proof {
                 assert_by_contradiction!(layer > 0, {
                     let iprime = choose|i: nat| 0 < i && i < X86_NUM_LAYERS && #[trigger] x86_arch_spec.entry_size(i) == pte.frame.size;
@@ -1709,7 +1716,7 @@ fn is_directory_empty(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer
 {
     assert(directories_obey_invariant_at(mem, pt, layer as nat, ptr));
     let mut idx = 0;
-    let num_entries = x86_arch_exec().num_entries(layer);
+    let num_entries = x86_arch_exec.num_entries(layer);
     while idx < num_entries
         invariant
             num_entries == X86_NUM_ENTRIES,
@@ -1834,7 +1841,6 @@ fn insert_empty_directory(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir
         assert(new_dir_interp.entries =~= interp@.new_empty_dir(idx as nat).entries);
         assert(new_dir_interp == interp@.new_empty_dir(idx as nat));
     }
-
     (pt_res, new_dir_region, new_dir_entry)
 }
 
@@ -1883,7 +1889,7 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
     // decreases X86_NUM_LAYERS - layer
 {
     proof { lemma_interp_at_facts(mem, pt, layer as nat, ptr, base as nat); }
-    let idx: usize = x86_arch_exec().index_for_vaddr(layer, base, vaddr);
+    let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
     proof { indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat); }
     let entry = entry_at(mem, Ghost(pt), layer, ptr, idx);
     let interp: Ghost<l1::Directory> = Ghost(interp_at(mem, pt, layer as nat, ptr, base as nat));
@@ -1891,7 +1897,7 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
         interp@.lemma_unmap_structure_assertions(vaddr as nat, idx as nat);
         interp@.lemma_unmap_refines_unmap(vaddr as nat);
     }
-    let entry_base: usize = x86_arch_exec().entry_base(layer, base, idx);
+    let entry_base: usize = x86_arch_exec.entry_base(layer, base, idx);
     proof {
         indexing::lemma_entry_base_from_index(base as nat, idx as nat, x86_arch_spec.entry_size(layer as nat));
         assert(entry_base <= vaddr);
@@ -2089,7 +2095,7 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                 },
             }
         } else {
-            if aligned_exec(vaddr, x86_arch_exec().entry_size(layer)) {
+            if aligned_exec(vaddr, x86_arch_exec.entry_size(layer)) {
                 mem.write(ptr, idx, Ghost(pt.region), 0usize);
 
                 let removed_regions: Ghost<Set<MemRegion>> = Ghost(Set::empty());
@@ -2151,7 +2157,6 @@ fn unmap_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usi
                     };
                 }
                 Ok(res)
-
             } else {
                 assert(mem === old(mem));
                 assert(Err(interp_at(mem, pt, layer as nat, ptr, base as nat)) === interp_at(&*old(mem), pt, layer as nat, ptr, base as nat).unmap(vaddr as nat));
@@ -2191,6 +2196,42 @@ pub fn unmap(mem: &mut mem::PageTableMemory, pt: &mut Ghost<PTDir>, vaddr: usize
         Err(e) => Err(()),
     }
 }
+
+#[cfg(feature = "noreclaim")]
+#[verus::line_count::ignore]
+#[verifier(external_body)]
+fn unmap_noreclaim_aux(mem: &mut mem::PageTableMemory, layer: usize, ptr: usize, base: usize, vaddr: usize)
+    -> (res: Result<(),()>)
+{
+    let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
+    let entry = entry_at(mem, Ghost(pt), layer, ptr, idx);
+    let entry_base: usize = x86_arch_exec.entry_base(layer, base, idx);
+    if entry.is_mapping() {
+        if entry.is_dir(layer) {
+            let dir_addr = entry.address() as usize;
+            unmap_noreclaim_aux(mem, layer + 1, dir_addr, entry_base, vaddr)
+        } else {
+            if aligned_exec(vaddr, x86_arch_exec.entry_size(layer)) {
+                mem.write(ptr, idx, Ghost(pt.region), 0u64);
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+    } else {
+        Err(())
+    }
+}
+
+/// An unverified version of the unmap function that doesn't reclaim empty directories. For
+/// benchmarking purposes.
+#[cfg(feature = "noreclaim")]
+#[verus::line_count::ignore]
+#[verifier(external_body)]
+pub fn unmap_noreclaim(mem: &mut mem::PageTableMemory, vaddr: usize) -> Result<(),()> {
+    unmap_noreclaim_aux(mem, 0, mem.cr3().base, 0, vaddr)
+}
+
 
 }
 

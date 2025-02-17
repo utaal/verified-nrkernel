@@ -1,11 +1,12 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
-    between, candidate_mapping_overlaps_existing_pmem, overlap,
-    PTE, WORD_SIZE,
+    between, candidate_mapping_overlaps_existing_pmem, overlap, PTE, WORD_SIZE,
 };
 use crate::spec_t::mem;
-use crate::extra::{lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite};
+#[cfg(verus_keep_ghost)]
+use crate::extra::{ lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite };
 use crate::theorem::RLbl;
 use crate::spec_t::hlspec::*;
 

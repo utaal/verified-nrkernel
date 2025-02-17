@@ -1,6 +1,7 @@
 use vstd::prelude::*;
 
 //use crate::impl_u::spec_pt;
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core
 };

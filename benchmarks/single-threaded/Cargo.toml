@@ -1,5 +1,5 @@
 [package]
-name = "page-table"
+name = "benchmark"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,10 +8,5 @@ builtin_macros = { git = "https://github.com/verus-lang/verus.git", rev="097ac7e
 builtin = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
 vstd = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
 
-[features]
-impl = []
-noreclaim = []
-default = ["impl"]
-
-# [profile.release]
-# debug = true
+x86 = "*"
+verif_pt = { path = "../../page-table", features = ["impl", "noreclaim"] }

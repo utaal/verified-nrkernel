@@ -1,5 +1,6 @@
 use vstd::prelude::*;
 
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     between, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap,
@@ -7,7 +8,9 @@ use crate::spec_t::mmu::defs::{
 };
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::mmu::{ self, rl1 };
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::hlproof::lemma_mem_domain_from_mappings;
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::os_invariant::{
     lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os,
     lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl,

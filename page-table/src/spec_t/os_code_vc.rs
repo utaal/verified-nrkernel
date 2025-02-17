@@ -1,10 +1,13 @@
 use vstd::prelude::*;
+use vstd::pervasive::unreached;
 
 use crate::spec_t::os;
 use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, aligned };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ aligned };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;

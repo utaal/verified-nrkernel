@@ -1,5 +1,7 @@
 use vstd::prelude::*;
-use crate::spec_t::mmu::defs::{ MemRegion, overlap, between, Arch, aligned, PTE };
+use crate::spec_t::mmu::defs::{ MemRegion, Arch, PTE };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ overlap, between, aligned };
 
 verus! {
 

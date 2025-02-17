@@ -1,8 +1,11 @@
 use vstd::prelude::*;
 
 use crate::spec_t::mmu::defs::{
-    MAX_PHYADDR, axiom_max_phyaddr_width_facts, aligned, new_seq, Flags, ArchExec, ArchLayerExec,
-    Arch, ArchLayer, MAX_BASE, X86_MAX_ENTRY_SIZE, X86_NUM_ENTRIES, x86_arch_spec, X86_NUM_LAYERS
+    MAX_PHYADDR, Flags, ArchExec, ArchLayerExec, Arch, ArchLayer, X86_NUM_ENTRIES, X86_NUM_LAYERS
+};
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{
+    axiom_max_phyaddr_width_facts, aligned, new_seq, MAX_BASE, X86_MAX_ENTRY_SIZE, x86_arch_spec,
 };
 
 verus! {

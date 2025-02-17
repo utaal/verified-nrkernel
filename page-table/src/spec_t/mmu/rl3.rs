@@ -1,12 +1,15 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // Trusted: This file defines the assumed semantics of the memory translation hardware as a state
 // machine.
 
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mem::word_index_spec;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ aligned, bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
+use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ aligned };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
@@ -593,6 +596,7 @@ pub mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl2;
     use crate::spec_t::mmu::rl3;
+    #[cfg(verus_keep_ghost)]
     use crate::spec_t::mmu::rl3::bit;
     use crate::spec_t::mmu::translation::{ MASK_DIRTY_ACCESS, MASK_NEG_DIRTY_ACCESS };
 
@@ -818,8 +822,10 @@ pub mod refinement {
 pub mod code {
     use vstd::prelude::*;
     use crate::spec_t::mmu::rl3;
+    #[cfg(verus_keep_ghost)]
     use crate::spec_t::mmu::{ self, Core };
     use crate::theorem::TokState;
+    #[cfg(verus_keep_ghost)]
     use crate::spec_t::mmu::defs::{ aligned };
 
     #[verifier(external_body)]

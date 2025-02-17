@@ -1,17 +1,20 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // trusted:
 // this is the process-level specification of the kernel's behaviour
 
 use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
-    aligned, between, candidate_mapping_in_bounds,
-    candidate_mapping_overlaps_existing_pmem, candidate_mapping_overlaps_existing_vmem, overlap,
-    x86_arch_spec, MemRegion, PTE, MemOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
-    MAX_PHYADDR, WORD_SIZE,
+    MemRegion, PTE, MemOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE,
+};
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{
+    aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
+    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec,
 };
 use crate::spec_t::mem;
 use crate::theorem::RLbl;
 
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::hlproof::{
     insert_non_map_preserves_unique, lemma_mem_domain_from_mapping_finite, map_end_preserves_inv,
     map_start_preserves_inv, unmap_start_preserves_inv,

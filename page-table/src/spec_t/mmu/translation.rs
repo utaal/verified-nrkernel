@@ -1,4 +1,4 @@
-#![verus::trusted]
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 // Trusted: This file defines the semantics of how page table entries are interpreted by the
 // hardware. This is only the semantics of how we go from bits to an interpretation; The hardware
 // model in rl3.rs models the non-atomic nature of page table walks + caching + ..
@@ -6,9 +6,10 @@
 use vstd::prelude::*;
 use crate::spec_t::mem;
 use crate::spec_t::mmu::defs::{
-    aligned, MemRegion, Flags, PAGE_SIZE, MAX_PHYADDR_WIDTH, axiom_max_phyaddr_width_facts, bit,
-    bitmask_inc,
+    MemRegion, Flags, PAGE_SIZE, MAX_PHYADDR_WIDTH, bit, bitmask_inc,
 };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ aligned, axiom_max_phyaddr_width_facts, };
 
 verus!{
 

@@ -1,15 +1,18 @@
 use vstd::prelude::*;
 use vstd::assert_by_contradiction;
 
-use crate::spec_t::mmu::defs::{
-    Flags, x86_arch_spec, axiom_x86_arch_exec_spec, MAX_BASE,
-    L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, aligned, new_seq, bitmask_inc, PTE,
-    PageTableEntryExec, MemRegion
-};
+
+use crate::spec_t::mmu::defs::{ Flags,  L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,  bitmask_inc };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ x86_arch_spec, MAX_BASE, aligned, new_seq };
+use crate::spec_t::mmu::defs::{ PageTableEntry, PageTableEntryExec, MemRegion};
 use crate::spec_t::impl_spec;
 use crate::spec_t::mem;
-use crate::spec_t::hardware::{ interp_pt_mem, l0_bits, l1_bits, l2_bits, l3_bits, valid_pt_walk, read_entry, GPDE, nat_to_u64 };
+use crate::spec_t::hardware::{ GhostPageDirectoryEntry };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::hardware::{ interp_pt_mem,  valid_pt_walk, read_entry, l0_bits, l1_bits, l2_bits, l3_bits, nat_to_u64 };
 
+#[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq, x86_arch_inv };
 use crate::impl_u::l1;
 use crate::impl_u::l2_impl::{ PT, PTDir };
@@ -88,13 +91,13 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
             GPDE::Directory {
                 addr: l0_dir_addr, RW: l0_RW, US: l0_US, XD: l0_XD, ..
             } => {
-                assert(interp_l0_entry.is_Directory());
+                assert(interp_l0_entry is Directory);
                 let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
                 let l0_dir_ghost_pt = pt.entries[l0_idx as int].get_Some_0();
                 assert(PT::directories_obey_invariant_at(&mem, pt, 0, mem.cr3_spec().base));
                 assert(PT::inv_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
                 assert(interp_l0_dir.directories_obey_invariant());
-                assert(interp_l0_dir.entries[l0_idx as int].get_Directory_0().inv());
+                assert(interp_l0_dir.entries[l0_idx as int]->Directory_0.inv());
                 PT::lemma_interp_at_facts(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
                 let interp_l1_dir   = PT::interp_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
                 let interp_l1_entry = PT::interp_at_entry(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr, l1_idx);
@@ -132,7 +135,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                     GPDE::Directory {
                         addr: l1_dir_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                     } => {
-                        assert(interp_l1_entry.is_Directory());
+                        assert(interp_l1_entry is Directory);
                         let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
                         let l1_dir_ghost_pt = l0_dir_ghost_pt.entries[l1_idx as int].get_Some_0();
                         assert(PT::directories_obey_invariant_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
@@ -182,7 +185,7 @@ pub proof fn lemma_page_table_walk_interp_aux_1(mem: mem::PageTableMemory, pt: P
                             GPDE::Directory {
                                 addr: l2_dir_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                             } => {
-                                assert(interp_l2_entry.is_Directory());
+                                assert(interp_l2_entry is Directory);
                                 let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
                                 let l2_dir_ghost_pt = l1_dir_ghost_pt.entries[l2_idx as int].get_Some_0();
                                 assert(PT::directories_obey_invariant_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr));
@@ -299,13 +302,13 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                     GPDE::Directory {
                         addr: l0_dir_addr, RW: l0_RW, US: l0_US, XD: l0_XD, ..
                     } => {
-                        assert(interp_l0_entry.is_Directory());
+                        assert(interp_l0_entry is Directory);
                         let l1_base_vaddr = x86_arch_spec.entry_base(0, 0, l0_idx);
                         let l0_dir_ghost_pt = pt.entries[l0_idx as int].get_Some_0();
                         assert(PT::directories_obey_invariant_at(&mem, pt, 0, mem.cr3_spec().base));
                         assert(PT::inv_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
                         assert(interp_l0_dir.directories_obey_invariant());
-                        assert(interp_l0_dir.entries[l0_idx as int].get_Directory_0().inv());
+                        assert(interp_l0_dir.entries[l0_idx as int]->Directory_0.inv());
                         PT::lemma_interp_at_facts(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
                         let interp_l1_dir   = PT::interp_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr);
                         let interp_l1_entry = PT::interp_at_entry(&mem, l0_dir_ghost_pt, 1, l0_dir_addr, l1_base_vaddr, l1_idx);
@@ -349,7 +352,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                             GPDE::Directory {
                                 addr: l1_dir_addr, RW: l1_RW, US: l1_US, XD: l1_XD, ..
                             } => {
-                                assert(interp_l1_entry.is_Directory());
+                                assert(interp_l1_entry is Directory);
                                 let l2_base_vaddr = x86_arch_spec.entry_base(1, l1_base_vaddr, l1_idx);
                                 let l1_dir_ghost_pt = l0_dir_ghost_pt.entries[l1_idx as int].get_Some_0();
                                 assert(PT::directories_obey_invariant_at(&mem, l0_dir_ghost_pt, 1, l0_dir_addr));
@@ -403,7 +406,7 @@ pub proof fn lemma_page_table_walk_interp_aux_2(mem: mem::PageTableMemory, pt: P
                                     GPDE::Directory {
                                         addr: l2_dir_addr, RW: l2_RW, US: l2_US, XD: l2_XD, ..
                                     } => {
-                                        assert(interp_l2_entry.is_Directory());
+                                        assert(interp_l2_entry is Directory);
                                         let l3_base_vaddr = x86_arch_spec.entry_base(2, l2_base_vaddr, l2_idx);
                                         let l2_dir_ghost_pt = l1_dir_ghost_pt.entries[l2_idx as int].get_Some_0();
                                         assert(PT::directories_obey_invariant_at(&mem, l1_dir_ghost_pt, 2, l1_dir_addr));
@@ -534,7 +537,7 @@ proof fn lemma_no_entries_implies_interp_at_aux_no_entries(mem: mem::PageTableMe
     } else {
         let entry = PT::interp_at_entry(&mem, pt, layer, ptr, base_vaddr, init.len());
         assert(PT::ghost_pt_matches_structure(&mem, pt, layer, ptr));
-        assert forall|i: nat| i < 512 implies PT::view_at(&mem, pt, layer, ptr, i).is_Empty() by {
+        assert forall|i: nat| i < 512 implies PT::view_at(&mem, pt, layer, ptr, i) is Empty by {
             let entry = mem.spec_read(i, pt.region);
             assert((entry & (1u64 << 0)) != (1u64 << 0)) by (bit_vector) requires entry == 0u64;
         };
@@ -557,7 +560,6 @@ impl impl_spec::InterfaceSpec for impl_spec::PageTableImpl {
         lemma_new_seq::<Option<PTDir>>(512, Option::None);
         assert(PT::inv(mem, pt)) by {
             x86_arch_inv();
-            axiom_x86_arch_exec_spec();
             PT::lemma_zeroed_page_implies_empty_at(mem, pt, 0, mem.cr3_spec().base);
         };
         lemma_no_entries_implies_interp_at_aux_no_entries(*mem, pt, 0, mem.cr3_spec().base, 0, seq![]);

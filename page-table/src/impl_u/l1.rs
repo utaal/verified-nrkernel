@@ -1,10 +1,16 @@
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{new_seq};
+#[cfg(verus_keep_ghost)]
 use crate::definitions_u::{lemma_new_seq};
+#[cfg(verus_keep_ghost)]
 use crate::extra::{ self, result_map };
 use crate::impl_u::indexing;
 
-use crate::spec_t::mmu::defs::{ MemRegion, overlap, Arch, between, aligned, PTE };
+use crate::spec_t::mmu::defs::{ MemRegion, Arch, PTE };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{ overlap, between, aligned, };
+#[cfg(verus_keep_ghost)]
 use crate::impl_u::l0;
 
 verus! {
@@ -91,12 +97,11 @@ impl Directory {
     pub open spec(checked) fn directories_are_in_next_layer(&self) -> bool
         recommends self.well_formed()
     {
-        forall|i: nat| i < self.entries.len() && self.entries.index(i as int) is Directory
-            ==> {
-                let directory = #[trigger] self.entries[i as int]->Directory_0;
-                &&& directory.layer == self.layer + 1
-                &&& directory.base_vaddr == self.base_vaddr + i * self.entry_size()
-            }
+        forall|i: nat| i < self.entries.len() && self.entries.index(i as int) is Directory ==> {
+            let directory = #[trigger] self.entries[i as int]->Directory_0;
+            &&& directory.layer == self.layer + 1
+            &&& directory.base_vaddr == self.base_vaddr + i * self.entry_size()
+        }
     }
 
     pub open spec(checked) fn directories_obey_invariant(&self) -> bool

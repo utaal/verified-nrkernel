@@ -1,5 +1,11 @@
 # Verified Page Table for NrOS
 
+## Overview
+
+This repo contains a verified implementation, (currently) single-threaded, of an OS' page table management code,
+and proofs that it behaves according to a userspace process' expectations when combined with a model of the hardware's
+memory management (memory translation) subsystem.
+
 ## Verification
 
 Install Verus as described [in the official documentation](https://github.com/verus-lang/verus/blob/main/INSTALL.md).
@@ -7,7 +13,7 @@ Install Verus as described [in the official documentation](https://github.com/ve
 ```bash
 # Replace $verus with the path to the verus binary
 git clone git@github.com:utaal/verified-nrkernel.git
-$verus ./verified-nrkernel/page-table/main.rs --cfg feature=\"impl\" --rlimit 30
+$verus ./verified-nrkernel/page-table/lib.rs --cfg feature=\"impl\" --rlimit 30
 ```
 
 Verification may take around a minute. You should see output similar to this:
