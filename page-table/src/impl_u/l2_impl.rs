@@ -13,11 +13,12 @@ use crate::definitions_u::{ lemma_new_seq };
 use crate::impl_u::l1;
 use crate::impl_u::indexing;
 use crate::spec_t::mem;
-use crate::spec_t::mmu::translation::{PDE,GPDE, MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US,
+use crate::spec_t::mmu::translation::{ PDE,GPDE, MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US,
 MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_PAT, MASK_L1_PG_FLAG_PS,
-MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR, MASK_L3_PG_ADDR};
+MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR, MASK_L3_PG_ADDR };
 #[cfg(verus_keep_ghost)]
 use crate::extra;
+use crate::spec_t::os_code_vc::WrappedMapToken;
 
 
 verus! {
@@ -106,7 +107,7 @@ pub open spec fn addr_is_zero_padded(layer: nat, addr: usize, is_page: bool) -> 
     }
 }
 
-// PDE is defined in crate::spec_t::hardware to define the page table walk
+// PDE is defined in crate::spec_t::mmu::defs to define the page table walk
 // semantics. Here we reuse it for the implementation and add exec functions to it.
 impl PDE {
     // PAT flag is set to zero for huge pages and super pages
@@ -538,10 +539,7 @@ pub open spec fn entry_at_spec(mem: &mem::PageTableMemory, pt: PTDir, layer: nat
 
 /// Get the view of the entry at address ptr + i * WORD_SIZE
 pub open spec fn view_at(mem: &mem::PageTableMemory, pt: PTDir, layer: nat, ptr: usize, i: nat) -> GPDE {
-    PDE {
-        entry: mem.spec_read(i, pt.region),
-        layer: Ghost(layer),
-    }@
+    entry_at_spec(mem, pt, layer, ptr, i)@
 }
 
 /// Get the entry at address ptr + i * WORD_SIZE
@@ -1210,8 +1208,8 @@ fn map_frame_aux(mem: &mut mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer:
 
                         // posts
                         assert forall|r: MemRegion| !pt.used_regions.contains(r) && !new_regions@.contains(r)
-                               implies #[trigger] mem.region_view(r) === old(mem).region_view(r) by
-                        { assert(!dir_pt@.used_regions.contains(r)); };
+                           implies #[trigger] mem.region_view(r) === old(mem).region_view(r)
+                           by { assert(!dir_pt@.used_regions.contains(r)); };
                         assert(mem.regions() === old(mem).regions().union(new_regions@));
                         assert(pt_res@.used_regions === pt.used_regions.union(new_regions@));
                         assert(pt_res@.region === pt.region);

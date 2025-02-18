@@ -872,6 +872,7 @@ pub mod code {
         pub proof fn prophesy_write(tracked &mut self, addr: usize, value: usize)
             requires
                 old(self).tstate() is Init,
+                aligned(addr as nat, 8),
             ensures
                 self.lbl() == mmu::Lbl::Write(self.core(), addr, value),
                 old(self).prophesied_step(*self),

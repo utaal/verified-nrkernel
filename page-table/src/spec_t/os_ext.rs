@@ -363,10 +363,10 @@ pub mod code {
     pub exec fn allocate(Tracked(tok): Tracked<&mut Token>) -> (res: MemRegionExec)
         requires
             old(tok).tstate() is Validated,
-            old(tok).lbl() matches os_ext::Lbl::Deallocate { core: lbl_core, .. } && lbl_core == old(tok).core(),
+            old(tok).lbl() matches os_ext::Lbl::Allocate { core: lbl_core, .. } && lbl_core == old(tok).core(),
         ensures
             tok.tstate() is Spent,
-            res@ == old(tok).lbl()->Deallocate_reg,
+            res@ == old(tok).lbl()->Allocate_res,
     {
         unimplemented!() // TODO:
     }

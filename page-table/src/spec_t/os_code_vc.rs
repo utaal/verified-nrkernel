@@ -7,7 +7,7 @@ use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ aligned };
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MemRegionExec, PTE };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
@@ -379,7 +379,7 @@ impl Token {
     { admit(); } // axiom
 }
 
-trait CodeVC {
+pub trait CodeVC {
     // We specify the steps to be taken as labels. But the label for `MapEnd` includes the return
     // value, which we want to be equal to the result returned by the function. But we can't
     // specify this in the requires clause because we can't refer to the result there. Instead we
@@ -435,6 +435,186 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
     &&& post.mmu@.pt_mem       == pre.mmu@.pt_mem
     &&& post.mmu@.writes       == pre.mmu@.writes
     &&& post.mmu@.pending_maps == pre.mmu@.pending_maps
+}
+
+pub tracked struct WrappedMapToken {
+    tracked tok: Token,
+    ghost done: bool,
+    ghost orig_st: os::State,
+}
+
+// TODO: Maybe absorb the do_step_* functions below directly into the wrapped ones in this impl.
+// (In the hopes that we can avoid the really long pre- and post-conditions)
+impl WrappedMapToken {
+    pub closed spec fn orig_st(&self) -> os::State {
+        self.orig_st
+    }
+
+    pub closed spec fn args(&self) -> (nat, PTE) {
+        (self.tok.st().core_states[self.tok.core()]->MapExecuting_vaddr,
+         self.tok.st().core_states[self.tok.core()]->MapExecuting_pte)
+    }
+
+    pub proof fn new(tracked tok: Token) -> (tracked res: WrappedMapToken)
+        requires
+            tok.consts().valid_ult(tok.thread()),
+            tok.st().core_states[tok.core()] is MapExecuting,
+            tok.thread() == tok.st().core_states[tok.core()]->MapExecuting_ult_id,
+            tok.steps().len() > 0,
+            tok.progress() is Ready,
+            tok.st().mmu@.pending_maps === map![],
+            tok.st().inv(tok.consts()),
+        ensures
+            res.inv(),
+            res.orig_st() == tok.st(),
+    {
+        let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st() };
+        assert(Map::new(
+                |k| t.mem()@.contains_key(k) && !t.orig_st().mmu@.pt_mem@.contains_key(k),
+                |k| t.mem()@[k])
+            =~= map![]);
+        t
+    }
+
+    pub proof fn destruct(tracked self) -> (tracked tok: Token)
+        requires self.inv()
+        ensures
+            true, // TODO: more stuff
+            tok.st().mmu@.pending_maps
+                == Map::new(
+                    |k| self.mem()@.contains_key(k) && !self.orig_st().mmu@.pt_mem@.contains_key(k),
+                    |k| self.mem()@[k]),
+    {
+        self.tok
+    }
+
+    pub closed spec fn inv(&self) -> bool {
+        &&& self.tok.st().inv(self.tok.consts())
+        &&& self.tok.consts().valid_core(self.tok.core())
+        &&& self.tok.consts().valid_ult(self.tok.thread())
+        &&& self.tok.thread() == self.tok.st().core_states[self.tok.core()]->MapExecuting_ult_id
+        &&& self.tok.st().core_states[self.tok.core()] is MapExecuting
+        &&& self.tok.steps().len() > 0
+        &&& self.tok.progress() is Ready
+        &&& self.tok.st().mmu@.pending_maps
+            == Map::new(
+                |k| self.mem()@.contains_key(k) && !self.orig_st().mmu@.pt_mem@.contains_key(k),
+                |k| self.mem()@[k])
+    }
+
+    pub closed spec fn mem(&self) -> mmu::pt_mem::PTMem {
+        self.tok.st().mmu@.pt_mem
+    }
+
+    pub exec fn read(tracked &mut self, addr: usize) -> (res: usize)
+        requires
+            aligned(addr as nat, 8),
+            old(self).inv(),
+        ensures
+            res & MASK_NEG_DIRTY_ACCESS == self.mem().read(addr) & MASK_NEG_DIRTY_ACCESS,
+            self.mem() == old(self).mem(),
+            self.orig_st() == old(self).orig_st(),
+            self.inv(),
+    {
+        let state1 = Ghost(self.tok.st());
+        let core = Ghost(self.tok.core());
+        let tracked mut mmu_tok = self.tok.get_mmu_token();
+        proof {
+            mmu_tok.prophesy_read(addr);
+            let vaddr = self.tok.st().core_states[core@]->MapExecuting_vaddr;
+            let pte = self.tok.st().core_states[core@]->MapExecuting_pte;
+            let post = os::State {
+                mmu: mmu_tok.post(),
+                ..self.tok.st()
+            };
+            let read_result = mmu_tok.lbl()->Read_2;
+            assert(mmu::rl3::next(self.tok.st().mmu, post.mmu, self.tok.consts().mmu, mmu_tok.lbl()));
+            assert(os::step_ReadPTMem(self.tok.consts(), self.tok.st(), post, core@, addr, read_result, RLbl::Tau));
+            assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::ReadPTMem { core: core@, paddr: addr, value: read_result }, RLbl::Tau));
+            self.tok.register_internal_step_mmu(&mut mmu_tok, post);
+            os_invariant::next_preserves_inv(self.tok.consts(), state1@, self.tok.st(), RLbl::Tau);
+        }
+
+        let res = mmu::rl3::code::read(Tracked(&mut mmu_tok), addr);
+        let state2 = Ghost(self.tok.st());
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            // TODO: This probably needs an additional invariant on the os state machine
+            // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
+            assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
+            //assert(state1@.os_ext.lock == Some(core@));
+            self.tok.return_mmu_token(mmu_tok);
+            let pidx = self.tok.do_concurrent_trs();
+            let state3 = Ghost(self.tok.st());
+            lemma_concurrent_trs(state2@, state3@, self.tok.consts(), self.tok.core(), pidx);
+        }
+        res
+    }
+
+    pub exec fn write_stutter(tracked &mut self, addr: usize, value: usize)
+        requires
+            aligned(addr as nat, 8),
+            old(self).inv(),
+            old(self).mem().is_nonneg_write(addr, value),
+            old(self).mem().write(addr, value)@ == old(self).mem()@,
+        ensures
+            self.mem() == old(self).mem().write(addr, value),
+            self.orig_st() == old(self).orig_st(),
+            self.inv(),
+    {
+        do_step_write_stutter(Tracked(&mut self.tok), addr, value);
+    }
+
+    pub exec fn write_change(tracked &mut self, addr: usize, value: usize)
+        requires
+            aligned(addr as nat, 8),
+            old(self).inv(),
+            old(self).mem().is_nonneg_write(addr, value),
+            old(self).mem().write(addr, value)@ == old(self).mem()@.insert(old(self).args().0 as usize, old(self).args().1),
+        ensures
+            self.mem() == old(self).mem().write(addr, value),
+            self.orig_st() == old(self).orig_st(),
+            self.inv(),
+    {
+        proof { admit(); }
+        //do_step_write_stutter(Tracked(&mut self.tok), addr, value);
+    }
+
+    pub exec fn allocate(tracked &mut self) -> (res: MemRegionExec)
+        requires
+            old(self).inv(),
+        ensures
+            true, // TODO: disjointness but disjoint from what?
+            aligned(res.base as nat, 4096),
+            res.size == 4096,
+            self.mem() == old(self).mem(),
+            self.orig_st() == old(self).orig_st(),
+            self.inv(),
+    {
+        let state1 = Ghost(self.tok.st());
+        let core = Ghost(self.tok.core());
+        let tracked mut osext_tok = self.tok.get_osext_token();
+        proof {
+            osext_tok.prophesy_allocate();
+            let post = os::State { os_ext: osext_tok.post(), ..self.tok.st() };
+            assert(os::step_Allocate(self.tok.consts(), self.tok.st(), post, core@, osext_tok.lbl()->Allocate_res, RLbl::Tau));
+            assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::Allocate { core: core@, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
+            self.tok.register_internal_step_osext(&mut osext_tok, post);
+            os_invariant::next_preserves_inv(self.tok.consts(), state1@, self.tok.st(), RLbl::Tau);
+        }
+
+        let res = os_ext::code::allocate(Tracked(&mut osext_tok));
+        let state2 = Ghost(self.tok.st());
+
+        proof {
+            self.tok.return_osext_token(osext_tok);
+            let pidx = self.tok.do_concurrent_trs();
+            let state3 = Ghost(self.tok.st());
+            lemma_concurrent_trs(state2@, state3@, self.tok.consts(), self.tok.core(), pidx);
+        }
+        res
+    }
 }
 
 pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, vaddr: usize, pte: PageTableEntryExec)
@@ -635,12 +815,12 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
                 core: tok.core(),
             }),
         tok.st().mmu@.pending_maps == old(tok).st().mmu@.pending_maps,
+        tok.st().mmu@.pt_mem == old(tok).st().mmu@.pt_mem.write(addr, value),
         tok.st().inv(tok.consts()),
         tok.progress() is Ready,
         tok.consts() == old(tok).consts(),
         tok.steps() == old(tok).steps(),
 {
-
     let state1 = Ghost(tok.st());
     let core = Ghost(tok.core());
     let tracked mut mmu_tok = tok.get_mmu_token();
