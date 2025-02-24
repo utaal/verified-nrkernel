@@ -688,11 +688,7 @@ impl CoreState {
 
 impl State {
     pub open spec fn interp_pt_mem(self) -> Map<nat, PTE> {
-        let pt = self.mmu@.pt_mem@;
-        Map::new(
-            |k:nat| k <= usize::MAX && pt.contains_key(k as usize),
-            |k:nat| pt[k as usize]
-        )
+        crate::spec_t::os_code_vc::nat_keys(self.mmu@.pt_mem@)
     }
 
     pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {

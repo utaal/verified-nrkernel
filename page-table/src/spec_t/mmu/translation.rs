@@ -289,40 +289,35 @@ impl PDE {
     /// Returns `true` iff all must-be-zero bits for a given entry are zero.
     #[verifier::opaque]
     pub open spec fn all_mb0_bits_are_zero(self) -> bool {
-        if self.entry & MASK_FLAG_P == MASK_FLAG_P {
-            if self.layer == 0 {  // PML4, always directory
+        if self.layer == 0 {  // PML4, always directory
+            // 51:M, 7
+            &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
+            &&& self.entry & bit!(7usize) == 0
+        } else if self.layer == 1 {  // PDPT
+            if self.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
+                // 51:M, 29:13
+                &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
+                &&& self.entry & bitmask_inc!(13usize,29usize) == 0
+            } else {
                 // 51:M, 7
                 &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
                 &&& self.entry & bit!(7usize) == 0
-            } else if self.layer == 1 {  // PDPT
-                if self.entry & MASK_L1_PG_FLAG_PS == MASK_L1_PG_FLAG_PS {
-                    // 51:M, 29:13
-                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
-                    &&& self.entry & bitmask_inc!(13usize,29usize) == 0
-                } else {
-                    // 51:M, 7
-                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 51) == 0
-                    &&& self.entry & bit!(7usize) == 0
-                }
-            } else if self.layer == 2 {  // PD
-                if self.entry & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
-                    // 62:M, 20:13
-                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
-                    &&& self.entry & bitmask_inc!(13usize,20usize) == 0
-                } else {
-                    // 62:M, 7
-                    &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
-                    &&& self.entry & bit!(7usize) == 0
-                }
-            } else if self.layer == 3 {  // PT, always frame
-                // 62:M
-                self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
-            } else {
-                arbitrary()
             }
+        } else if self.layer == 2 {  // PD
+            if self.entry & MASK_L2_PG_FLAG_PS == MASK_L2_PG_FLAG_PS {
+                // 62:M, 20:13
+                &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
+                &&& self.entry & bitmask_inc!(13usize,20usize) == 0
+            } else {
+                // 62:M, 7
+                &&& self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
+                &&& self.entry & bit!(7usize) == 0
+            }
+        } else if self.layer == 3 {  // PT, always frame
+            // 62:M
+            self.entry & bitmask_inc!(MAX_PHYADDR_WIDTH, 62) == 0
         } else {
-            // No bits are reserved for unused entries
-            true
+            arbitrary()
         }
     }
 

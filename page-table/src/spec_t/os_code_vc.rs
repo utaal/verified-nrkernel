@@ -6,8 +6,8 @@ use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned };
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MemRegionExec, PTE };
+use crate::spec_t::mmu::defs::{ aligned, MemRegion, new_seq, bit };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MemRegionExec, PTE, MAX_PHYADDR, candidate_mapping_overlaps_existing_vmem };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
@@ -437,22 +437,68 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
     &&& post.mmu@.pending_maps == pre.mmu@.pending_maps
 }
 
+/// We define a view of the wrapped map token with the memory stuff that the implementation uses to
+/// define its invariant and interpretation. This way read-only ops (e.g. `read`) leave the view
+/// fully unchanged, which simplifies reasoning. Otherwise we have to argue that the invariant is
+/// preserved as only irrelevant parts of the state may have changed. (Since `read` still has to
+/// take a mut ref as it changes the underlying token.)
+pub struct WrappedMapTokenView {
+    pub orig_st: os::State,
+    pub args: (nat, PTE),
+    pub regions: Map<MemRegion, Seq<usize>>,
+    pub pml4: usize,
+    ///// This field is non-public so we can build the per-region abstraction layer on top of it.
+    //pt_mem: mmu::pt_mem::PTMem,
+}
+
+impl WrappedMapTokenView {
+    // TODO: delete
+    //pub closed spec fn region_view(&self, r: MemRegion) -> Seq<usize> {
+    //    self.regions[r]
+    //    //Seq::new(512, |i: int| self.pt_mem.mem[(r.base + i * 8) as usize])
+    //}
+
+    pub open spec fn read(self, idx: usize, r: MemRegion) -> usize {
+        self.regions[r][idx as int] & MASK_NEG_DIRTY_ACCESS
+    }
+
+    pub open spec fn interp(self) -> Map<nat, PTE> {
+        // TODO: instantiate this with the l2 interp
+        arbitrary()
+    }
+
+    pub open spec fn write(self, idx: usize, value: usize, r: MemRegion) -> WrappedMapTokenView {
+        WrappedMapTokenView {
+            regions: self.regions.insert(r, self.regions[r].update(idx as int, value)),
+            ..self
+        }
+    }
+}
+
+// TODO: This wrapper stuff should go into impl_u somewhere
 pub tracked struct WrappedMapToken {
     tracked tok: Token,
     ghost done: bool,
     ghost orig_st: os::State,
+    ghost regions: Set<MemRegion>,
 }
 
 // TODO: Maybe absorb the do_step_* functions below directly into the wrapped ones in this impl.
 // (In the hopes that we can avoid the really long pre- and post-conditions)
 impl WrappedMapToken {
-    pub closed spec fn orig_st(&self) -> os::State {
-        self.orig_st
-    }
-
-    pub closed spec fn args(&self) -> (nat, PTE) {
-        (self.tok.st().core_states[self.tok.core()]->MapExecuting_vaddr,
-         self.tok.st().core_states[self.tok.core()]->MapExecuting_pte)
+    pub closed spec fn view(&self) -> WrappedMapTokenView {
+        WrappedMapTokenView {
+            orig_st: self.orig_st,
+            args:
+                (self.tok.st().core_states[self.tok.core()]->MapExecuting_vaddr,
+                 self.tok.st().core_states[self.tok.core()]->MapExecuting_pte),
+            regions:
+                Map::new(
+                    |r: MemRegion| self.regions.contains(r),
+                    |r: MemRegion| Seq::new(512, |i: int| self.tok.st().mmu@.pt_mem.mem[(r.base + i * 8) as usize])),
+            pml4: self.tok.st().mmu@.pt_mem.pml4,
+            //pt_mem: self.tok.st().mmu@.pt_mem,
+        }
     }
 
     pub proof fn new(tracked tok: Token) -> (tracked res: WrappedMapToken)
@@ -466,12 +512,13 @@ impl WrappedMapToken {
             tok.st().inv(tok.consts()),
         ensures
             res.inv(),
-            res.orig_st() == tok.st(),
+            res@.orig_st == tok.st(),
     {
-        let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st() };
+        let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st(), regions: arbitrary() };
+        assume(t.inv_regions());
         assert(Map::new(
-                |k| t.mem()@.contains_key(k) && !t.orig_st().mmu@.pt_mem@.contains_key(k),
-                |k| t.mem()@[k])
+                |k| t.tok.st().mmu@.pt_mem@.contains_key(k) && !t@.orig_st.mmu@.pt_mem@.contains_key(k),
+                |k| t.tok.st().mmu@.pt_mem@[k])
             =~= map![]);
         t
     }
@@ -480,16 +527,19 @@ impl WrappedMapToken {
         requires self.inv()
         ensures
             true, // TODO: more stuff
-            tok.st().mmu@.pending_maps
-                == Map::new(
-                    |k| self.mem()@.contains_key(k) && !self.orig_st().mmu@.pt_mem@.contains_key(k),
-                    |k| self.mem()@[k]),
+            // TODO: is it okay to just have pending_maps be this thing? (I think so)
+            //tok.st().mmu@.pending_maps
+            //    == Map::new(
+            //        |k| self@.pt_mem@.contains_key(k) && !self@.orig_st.mmu@.pt_mem@.contains_key(k),
+            //        |k| self@.pt_mem@[k]),
     {
         self.tok
     }
 
     pub closed spec fn inv(&self) -> bool {
+        // OSSM invariant
         &&& self.tok.st().inv(self.tok.consts())
+        // Other stuff
         &&& self.tok.consts().valid_core(self.tok.core())
         &&& self.tok.consts().valid_ult(self.tok.thread())
         &&& self.tok.thread() == self.tok.st().core_states[self.tok.core()]->MapExecuting_ult_id
@@ -498,121 +548,193 @@ impl WrappedMapToken {
         &&& self.tok.progress() is Ready
         &&& self.tok.st().mmu@.pending_maps
             == Map::new(
-                |k| self.mem()@.contains_key(k) && !self.orig_st().mmu@.pt_mem@.contains_key(k),
-                |k| self.mem()@[k])
+                |k| self.tok.st().mmu@.pt_mem@.contains_key(k) && !self.orig_st.mmu@.pt_mem@.contains_key(k),
+                |k| self.tok.st().mmu@.pt_mem@[k])
+        &&& self.inv_regions()
     }
 
-    pub closed spec fn mem(&self) -> mmu::pt_mem::PTMem {
-        self.tok.st().mmu@.pt_mem
+    spec fn inv_regions(&self) -> bool {
+        &&& forall|r| #[trigger] self.regions.contains(r) ==> aligned(r.base, 4096) && r.size == 4096
     }
 
-    pub exec fn read(tracked &mut self, addr: usize) -> (res: usize)
+    pub exec fn read(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, r: Ghost<MemRegion>) -> (res: usize)
         requires
-            aligned(addr as nat, 8),
-            old(self).inv(),
+            old(tok)@.regions.contains_key(r@),
+            r@.base == pbase,
+            idx < 512,
+            old(tok).inv(),
         ensures
-            res & MASK_NEG_DIRTY_ACCESS == self.mem().read(addr) & MASK_NEG_DIRTY_ACCESS,
-            self.mem() == old(self).mem(),
-            self.orig_st() == old(self).orig_st(),
-            self.inv(),
+            res == tok@.read(idx, r@),
+            tok@ == old(tok)@,
+            tok.inv(),
     {
-        let state1 = Ghost(self.tok.st());
-        let core = Ghost(self.tok.core());
-        let tracked mut mmu_tok = self.tok.get_mmu_token();
-        proof {
-            mmu_tok.prophesy_read(addr);
-            let vaddr = self.tok.st().core_states[core@]->MapExecuting_vaddr;
-            let pte = self.tok.st().core_states[core@]->MapExecuting_pte;
-            let post = os::State {
-                mmu: mmu_tok.post(),
-                ..self.tok.st()
-            };
-            let read_result = mmu_tok.lbl()->Read_2;
-            assert(mmu::rl3::next(self.tok.st().mmu, post.mmu, self.tok.consts().mmu, mmu_tok.lbl()));
-            assert(os::step_ReadPTMem(self.tok.consts(), self.tok.st(), post, core@, addr, read_result, RLbl::Tau));
-            assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::ReadPTMem { core: core@, paddr: addr, value: read_result }, RLbl::Tau));
-            self.tok.register_internal_step_mmu(&mut mmu_tok, post);
-            os_invariant::next_preserves_inv(self.tok.consts(), state1@, self.tok.st(), RLbl::Tau);
-        }
-
-        let res = mmu::rl3::code::read(Tracked(&mut mmu_tok), addr);
-        let state2 = Ghost(self.tok.st());
-
-        proof {
-            broadcast use to_rl1::next_refines;
-            // TODO: This probably needs an additional invariant on the os state machine
-            // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
-            assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
-            //assert(state1@.os_ext.lock == Some(core@));
-            self.tok.return_mmu_token(mmu_tok);
-            let pidx = self.tok.do_concurrent_trs();
-            let state3 = Ghost(self.tok.st());
-            lemma_concurrent_trs(state2@, state3@, self.tok.consts(), self.tok.core(), pidx);
-        }
-        res
+        let addr = pbase + idx * 8;
+        do_step_read(Tracked(&mut tok.tok), addr) & MASK_NEG_DIRTY_ACCESS
+        //let state1 = Ghost(self.tok.st());
+        //let core = Ghost(self.tok.core());
+        //let tracked mut mmu_tok = self.tok.get_mmu_token();
+        //proof {
+        //    mmu_tok.prophesy_read(addr);
+        //    let vaddr = self.tok.st().core_states[core@]->MapExecuting_vaddr;
+        //    let pte = self.tok.st().core_states[core@]->MapExecuting_pte;
+        //    let post = os::State {
+        //        mmu: mmu_tok.post(),
+        //        ..self.tok.st()
+        //    };
+        //    let read_result = mmu_tok.lbl()->Read_2;
+        //    assert(mmu::rl3::next(self.tok.st().mmu, post.mmu, self.tok.consts().mmu, mmu_tok.lbl()));
+        //    assert(os::step_ReadPTMem(self.tok.consts(), self.tok.st(), post, core@, addr, read_result, RLbl::Tau));
+        //    assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::ReadPTMem { core: core@, paddr: addr, value: read_result }, RLbl::Tau));
+        //    self.tok.register_internal_step_mmu(&mut mmu_tok, post);
+        //    os_invariant::next_preserves_inv(self.tok.consts(), state1@, self.tok.st(), RLbl::Tau);
+        //}
+        //
+        //let res = mmu::rl3::code::read(Tracked(&mut mmu_tok), addr);
+        //let state2 = Ghost(self.tok.st());
+        //
+        //proof {
+        //    broadcast use to_rl1::next_refines;
+        //    // TODO: This probably needs an additional invariant on the os state machine
+        //    // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
+        //    assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
+        //    //assert(state1@.os_ext.lock == Some(core@));
+        //    self.tok.return_mmu_token(mmu_tok);
+        //    let pidx = self.tok.do_concurrent_trs();
+        //    let state3 = Ghost(self.tok.st());
+        //    lemma_concurrent_trs(state2@, state3@, self.tok.consts(), self.tok.core(), pidx);
+        //}
+        //res
     }
 
-    pub exec fn write_stutter(tracked &mut self, addr: usize, value: usize)
+    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
         requires
-            aligned(addr as nat, 8),
-            old(self).inv(),
-            old(self).mem().is_nonneg_write(addr, value),
-            old(self).mem().write(addr, value)@ == old(self).mem()@,
+            old(tok)@.regions.contains_key(r@),
+            r@.base == pbase,
+            idx < 512,
+            old(tok).inv(),
+            value & 1 == 1,
+            old(tok)@.read(idx, r@) & 1 == 0,
+            old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp(),
         ensures
-            self.mem() == old(self).mem().write(addr, value),
-            self.orig_st() == old(self).orig_st(),
-            self.inv(),
+            tok@ == old(tok)@.write(idx, value, r@),
+            //tok@.pt_mem == old(tok)@.pt_mem.write(addr, value),
+            //tok@.regions[r@] === old(tok)@.regions[r@].update(idx as int, value),
+            //tok@.args == old(tok)@.args,
+            //tok@.pml4 == old(tok)@.pml4,
+            //forall|r2: MemRegion| r2 !== r@ ==> tok@.regions[r2] === old(tok)@.regions[r2],
+            //tok@.orig_st == old(tok)@.orig_st,
+            //tok@.regions == old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)),
+            tok.inv(),
     {
-        do_step_write_stutter(Tracked(&mut self.tok), addr, value);
-    }
-
-    pub exec fn write_change(tracked &mut self, addr: usize, value: usize)
-        requires
-            aligned(addr as nat, 8),
-            old(self).inv(),
-            old(self).mem().is_nonneg_write(addr, value),
-            old(self).mem().write(addr, value)@ == old(self).mem()@.insert(old(self).args().0 as usize, old(self).args().1),
-        ensures
-            self.mem() == old(self).mem().write(addr, value),
-            self.orig_st() == old(self).orig_st(),
-            self.inv(),
-    {
+        assume(forall|tok: Self| nat_keys(tok.tok.st().mmu@.pt_mem@) == #[trigger] (tok@.interp()));
+        // TODO: some equivalence between writes on ptmem and on WrappedMapTokenView needed
         proof { admit(); }
-        //do_step_write_stutter(Tracked(&mut self.tok), addr, value);
+        //assume(forall|tok: Self, r, idx, v|
+        //    tok.tok.st().mmu@.pt_mem.write(r.base + idx * 8, v) == tok@.);
+        assert(bit!(0usize) == 1) by (bit_vector);
+        assert(forall|v: usize| v & bit!(0) == #[trigger] (v & !(bit!(5) | bit!(6)) & bit!(0))) by (bit_vector);
+        do_step_write_stutter(Tracked(&mut tok.tok), pbase + idx * 8, value);
+        assert(tok@.regions[r@] =~= old(tok)@.regions[r@].update(idx as int, value));
+        assert forall|r2: MemRegion| r2 !== r@ implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
+            // TODO: This would require disjointness invariant in `inv_regions` which would be
+            // duplicated from the one we already have in the impl. Gotta find a better way of
+            // doing this.
+            admit();
+        };
+        assert(tok@.regions =~= old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)));
     }
 
-    pub exec fn allocate(tracked &mut self) -> (res: MemRegionExec)
+    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>, pt: Ghost<crate::impl_u::l2_impl::PTDir>)
         requires
-            old(self).inv(),
+            old(tok)@.regions.contains_key(r@),
+            r@.base == pbase,
+            idx < 512,
+            old(tok).inv(),
+            value & 1 == 1,
+            old(tok)@.read(idx, r@) & 1 == 0,
+            !candidate_mapping_overlaps_existing_vmem(old(tok)@.interp(), old(tok)@.args.0, old(tok)@.args.1),
+            //crate::impl_u::l2_impl::PT::interp(old(tok)@, pt@).interp().map
+            // TODO: Need to split MapOpEnd into effectful write and actual end transition
+            old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp().insert(old(tok)@.args.0, old(tok)@.args.1),
+        ensures
+            //tok@.pt_mem == old(tok)@.pt_mem.write(addr, value),
+            //tok@.regions[r@] === old(tok)@.regions[r@].update(idx as int, value),
+            //tok@.args == old(tok)@.args,
+            //tok@.pml4 == old(tok)@.pml4,
+            //forall|r2: MemRegion| r2 !== r@ ==> tok@.regions[r2] === old(tok)@.regions[r2],
+            //tok@.orig_st == old(tok)@.orig_st,
+            //tok@.regions == old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)),
+            tok@ == old(tok)@.write(idx, value, r@),
+            tok.inv(),
+    {
+        // TODO: prove this from the precond
+        //assume(old(tok)@.pt_mem.write(add(pbase, mul(idx, 8)), value)@ ==
+        //    (if candidate_mapping_overlaps_existing_vmem(nat_keys(old(tok)@.pt_mem@), old(tok)@.args.0, old(tok)@.args.1) {
+        //        old(tok)@.pt_mem@
+        //    } else {
+        //        old(tok)@.pt_mem@.insert(old(tok)@.args.0 as usize, old(tok)@.args.1)
+        //    }));
+        proof { admit(); }
+        // TODO: do a write step that corresponds to OSSM mapopend
+        //assert(bit!(0usize) == 1) by (bit_vector);
+        //assert(forall|v: usize| v & bit!(0) == #[trigger] (v & !(bit!(5) | bit!(6)) & bit!(0))) by (bit_vector);
+        //do_step_write_stutter(Tracked(&mut tok.tok), pbase + idx * 8, value);
+        //assert(tok@.regions[r@] =~= old(tok)@.regions[r@].update(idx as int, value));
+        //assert forall|r2: MemRegion| r2 !== r@ implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
+        //    // TODO: This would require disjointness invariant in `inv_regions` which would be
+        //    // duplicated from the one we already have in the impl. Gotta find a better way of
+        //    // doing this.
+        //    admit();
+        //};
+    }
+
+    pub exec fn allocate(Tracked(tok): Tracked<&mut Self>) -> (res: MemRegionExec)
+        requires
+            old(tok).inv(),
         ensures
             true, // TODO: disjointness but disjoint from what?
             aligned(res.base as nat, 4096),
             res.size == 4096,
-            self.mem() == old(self).mem(),
-            self.orig_st() == old(self).orig_st(),
-            self.inv(),
+            res.base + 4096 <= MAX_PHYADDR, // TODO: unnecessary?
+            !old(tok)@.regions.contains_key(res@), // TODO: This is weird. It's weak and should be
+                                                   // subsumed by disjointness? (which isn't
+                                                   // currently here but should be)
+            tok@.regions === old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)),
+            tok@.pml4 == old(tok)@.pml4,
+            tok@.args == old(tok)@.args,
+            tok@.orig_st == old(tok)@.orig_st,
+            tok.inv(),
     {
-        let state1 = Ghost(self.tok.st());
-        let core = Ghost(self.tok.core());
-        let tracked mut osext_tok = self.tok.get_osext_token();
+        let state1 = Ghost(tok.tok.st());
+        let core = Ghost(tok.tok.core());
+        let tracked mut osext_tok = tok.tok.get_osext_token();
         proof {
             osext_tok.prophesy_allocate();
-            let post = os::State { os_ext: osext_tok.post(), ..self.tok.st() };
-            assert(os::step_Allocate(self.tok.consts(), self.tok.st(), post, core@, osext_tok.lbl()->Allocate_res, RLbl::Tau));
-            assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::Allocate { core: core@, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
-            self.tok.register_internal_step_osext(&mut osext_tok, post);
-            os_invariant::next_preserves_inv(self.tok.consts(), state1@, self.tok.st(), RLbl::Tau);
+            let post = os::State { os_ext: osext_tok.post(), ..tok.tok.st() };
+            assert(os::step_Allocate(tok.tok.consts(), tok.tok.st(), post, core@, osext_tok.lbl()->Allocate_res, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Allocate { core: core@, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
+            tok.tok.register_internal_step_osext(&mut osext_tok, post);
+            os_invariant::next_preserves_inv(tok.tok.consts(), state1@, tok.tok.st(), RLbl::Tau);
         }
 
         let res = os_ext::code::allocate(Tracked(&mut osext_tok));
-        let state2 = Ghost(self.tok.st());
+        let state2 = Ghost(tok.tok.st());
 
         proof {
-            self.tok.return_osext_token(osext_tok);
-            let pidx = self.tok.do_concurrent_trs();
-            let state3 = Ghost(self.tok.st());
-            lemma_concurrent_trs(state2@, state3@, self.tok.consts(), self.tok.core(), pidx);
+            tok.tok.return_osext_token(osext_tok);
+            let pidx = tok.tok.do_concurrent_trs();
+            let state3 = Ghost(tok.tok.st());
+            lemma_concurrent_trs(state2@, state3@, tok.tok.consts(), tok.tok.core(), pidx);
         }
+        assume(res.base + 4096 <= MAX_PHYADDR);
+        assume(!old(tok)@.regions.contains_key(res@));
+        proof {
+            tok.regions = tok.regions.insert(res@);
+        }
+        // TODO: We may have to zero the page ourselves or alternatively allow spontaneous writes
+        // to unallocated memory regions.
+        assume(tok@.regions[res@] === new_seq::<usize>(512nat, 0usize));
+        assert(tok@.regions =~= old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)));
         res
     }
 }
