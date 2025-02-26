@@ -159,9 +159,6 @@ impl PDE {
         axiom_max_phyaddr_width_facts();
         reveal(PDE::all_mb0_bits_are_zero);
         if self.layer() == 1 {
-            assert(e & bit!(12usize) == 0);
-            assert(e & bitmask_inc!(13usize,29usize) == 0);
-            assert(32 <= mw <= 52);
             assert(e & bitmask_inc!(12usize, mw - 1) == e & bitmask_inc!(30usize, mw - 1)) by (bit_vector)
                 requires e & bit!(12usize) == 0, e & bitmask_inc!(13usize,29usize) == 0, 32 <= mw <= 52;
         } else if self.layer() == 2 {
@@ -994,6 +991,7 @@ fn map_frame_aux(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<P
         //old(tok)@.alloc_available_pages() >= 3 - layer,
         accepted_mapping(vaddr as nat, pte@),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).accepted_mapping(vaddr as nat, pte@),
+        old(tok)@.args == (vaddr as nat, pte@),
         base <= vaddr < MAX_BASE,
     ensures
         match res {
@@ -1297,8 +1295,6 @@ fn map_frame_aux(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<P
                 lemma_bitvector_facts();
                 assert(new_page_entry.entry & 1 == 1);
                 assert(tok@.read(idx, pt.region) & 1 == 0);
-                assume(old(tok)@.args.0 == vaddr);
-                assume(old(tok)@.args.1 == pte@);
                 assume(!candidate_mapping_overlaps_existing_vmem(tok@.interp(), vaddr as nat, pte@));
                 assume(tok@.write(idx, new_page_entry.entry, pt.region).interp() == tok@.interp().insert(vaddr as nat, pte@));
             }
@@ -1713,7 +1709,7 @@ proof fn lemma_not_empty_at_implies_interp_at_not_empty(tok: WrappedMapTokenView
     lemma_not_empty_at_implies_interp_at_aux_not_empty(tok, pt, layer, ptr, base, seq![], i);
 }
 
-pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTDir>, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
+pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTDir>, pml4: usize, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
     requires
         inv(old(tok)@, old(pt)@),
         interp(old(tok)@, old(pt)@).inv(),
@@ -1722,6 +1718,8 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         accepted_mapping(vaddr as nat, pte@),
         interp(old(tok)@, old(pt)@).accepted_mapping(vaddr as nat, pte@),
         vaddr < MAX_BASE,
+        pml4 == old(tok)@.pml4,
+        old(tok)@.args == (vaddr as nat, pte@),
     ensures
         inv(tok@, pt@),
         interp(tok@, pt@).inv(),
@@ -1732,14 +1730,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         },
 {
     proof { interp(tok@, pt@).lemma_map_frame_refines_map_frame(vaddr as nat, pte@); }
-    // TODO: Need to decide on how/where to expose pml4/cr3. We probably just pass it in as an
-    // argument?
-    let cr3 = {
-        proof { admit(); }
-        unreached()
-    };
-    assume(cr3 == tok@.pml4);
-    match map_frame_aux(Tracked(tok), *pt, 0, cr3, 0, vaddr, pte) {
+    match map_frame_aux(Tracked(tok), *pt, 0, pml4, 0, vaddr, pte) {
         Ok(res) => {
             proof { interp(old(tok)@, pt@).lemma_map_frame_preserves_inv(vaddr as nat, pte@); }
             *pt = Ghost(res@.0);
@@ -1797,6 +1788,8 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
         !old(tok)@.regions.contains_key(res.1@),
         tok@.regions.dom() == old(tok)@.regions.dom().insert(res.1@),
         tok@.pml4 == old(tok)@.pml4,
+        tok@.args == old(tok)@.args,
+        tok@.orig_st == old(tok)@.orig_st,
         //tok.alloc_available_pages() == old(tok)@.alloc_available_pages() - 1,
         forall|i: nat| #![auto] i < 512 && i != idx ==> entry_at_spec(tok@, res.0@, layer as nat, ptr, i)@ == entry_at_spec(old(tok)@, res.0@, layer as nat, ptr, i)@,
         forall|r: MemRegion| r != res.0@.region && r != res.0@.entries[idx as int].get_Some_0().region ==> tok@.regions[r] == old(tok)@.regions[r],
