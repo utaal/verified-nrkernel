@@ -688,7 +688,7 @@ impl CoreState {
 
 impl State {
     pub open spec fn interp_pt_mem(self) -> Map<nat, PTE> {
-        crate::spec_t::os_code_vc::nat_keys(self.mmu@.pt_mem@)
+        crate::spec_t::mmu::defs::nat_keys(self.mmu@.pt_mem@)
     }
 
     pub open spec fn inflight_unmap_vaddr(self) -> Set<nat> {

@@ -390,4 +390,8 @@ pub proof fn x86_arch_spec_upper_bound()
     assert(x86_arch_spec.upper_vaddr(0, 0) == 512 * 512 * 1024 * 1024 * 1024) by (compute_only);
 }
 
+pub open spec fn nat_keys<V>(m: Map<usize, V>) -> Map<nat, V> {
+    Map::new(|k: nat| k <= usize::MAX && m.contains_key(k as usize), |k: nat| m[k as usize])
+}
+
 } // verus!

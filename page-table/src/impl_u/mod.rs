@@ -8,4 +8,6 @@ pub mod l2_impl;
 //pub mod l2_refinement;
 #[cfg(feature = "impl")]
 pub mod indexing;
+#[cfg(feature = "impl")]
+pub mod wrapped_token;
 pub mod os_refinement;

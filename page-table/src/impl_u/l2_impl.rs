@@ -17,7 +17,7 @@ MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_PAT, MASK_L1
 MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR, MASK_L3_PG_ADDR, MASK_NEG_DIRTY_ACCESS };
 #[cfg(verus_keep_ghost)]
 use crate::extra;
-use crate::spec_t::os_code_vc::{ WrappedMapToken, WrappedMapTokenView };
+use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedMapTokenView };
 
 
 verus! {
