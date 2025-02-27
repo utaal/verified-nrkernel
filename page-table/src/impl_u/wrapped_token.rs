@@ -181,7 +181,7 @@ impl WrappedMapToken {
         //res
     }
 
-    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>, pt: Ghost<PTDir>)
+    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>, pt1: Ghost<PTDir>, pt2: Ghost<PTDir>)
         requires
             old(tok)@.regions.contains_key(r@),
             r@.base == pbase,
@@ -190,7 +190,8 @@ impl WrappedMapToken {
             value & 1 == 1,
             old(tok)@.read(idx, r@) & 1 == 0,
             old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp(),
-            //crate::impl_u::l2_impl::PT::inv(old(tok)@, pt@),
+            //crate::impl_u::l2_impl::PT::inv(old(tok)@, pt1@),
+            //crate::impl_u::l2_impl::PT::inv(old(tok)@.write(idx, value, r@), pt2@),
         ensures
             tok@ == old(tok)@.write(idx, value, r@),
             //tok@.pt_mem == old(tok)@.pt_mem.write(addr, value),
