@@ -11,6 +11,7 @@ use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, Token, unchanged_state_during_concurrent_trs };
+use crate::impl_u::l2_impl::PTDir;
 
 verus! {
 
@@ -58,8 +59,8 @@ impl WrappedMapToken {
         WrappedMapTokenView {
             orig_st: self.orig_st,
             args:
-                (self.tok.st().core_states[self.tok.core()]->MapExecuting_vaddr,
-                 self.tok.st().core_states[self.tok.core()]->MapExecuting_pte),
+                (self.orig_st.core_states[self.tok.core()]->MapExecuting_vaddr,
+                 self.orig_st.core_states[self.tok.core()]->MapExecuting_pte),
             regions:
                 Map::new(
                     |r: MemRegion| self.regions.contains(r),
@@ -80,6 +81,8 @@ impl WrappedMapToken {
         ensures
             res.inv(),
             res@.orig_st == tok.st(),
+            tok.st().core_states[tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, .. }
+                && res@.args == (vaddr, pte),
     {
         let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st(), regions: arbitrary() };
         assume(t.inv_regions());
@@ -91,8 +94,12 @@ impl WrappedMapToken {
     }
 
     pub proof fn destruct(tracked self) -> (tracked tok: Token)
-        requires self.inv()
+        requires
+            self.inv(),
+            // TODO: more, specifically some sequencing so we can guarantee the posts
         ensures
+            tok.progress() is Ready,
+            tok.steps() === seq![],
             true, // TODO: more stuff
             // TODO: is it okay to just have pending_maps be this thing? (I think so)
             //tok.st().mmu@.pending_maps
@@ -100,6 +107,7 @@ impl WrappedMapToken {
             //        |k| self@.pt_mem@.contains_key(k) && !self@.orig_st.mmu@.pt_mem@.contains_key(k),
             //        |k| self@.pt_mem@[k]),
     {
+        admit();
         self.tok
     }
 
@@ -173,7 +181,7 @@ impl WrappedMapToken {
         //res
     }
 
-    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
+    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>, pt: Ghost<PTDir>)
         requires
             old(tok)@.regions.contains_key(r@),
             r@.base == pbase,
@@ -182,6 +190,7 @@ impl WrappedMapToken {
             value & 1 == 1,
             old(tok)@.read(idx, r@) & 1 == 0,
             old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp(),
+            //crate::impl_u::l2_impl::PT::inv(old(tok)@, pt@),
         ensures
             tok@ == old(tok)@.write(idx, value, r@),
             //tok@.pt_mem == old(tok)@.pt_mem.write(addr, value),
@@ -211,7 +220,7 @@ impl WrappedMapToken {
         assert(tok@.regions =~= old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)));
     }
 
-    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>, pt: Ghost<crate::impl_u::l2_impl::PTDir>)
+    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
         requires
             old(tok)@.regions.contains_key(r@),
             r@.base == pbase,
@@ -306,7 +315,7 @@ impl WrappedMapToken {
     }
 }
 
-pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, vaddr: usize, pte: PageTableEntryExec)
+pub proof fn do_step_mapstart(tracked tok: &mut Token, vaddr: usize, pte: PageTableEntryExec)
     requires
         os::step_Map_enabled(vaddr as nat, pte@),
         old(tok).consts().valid_ult(old(tok).thread()),
@@ -330,46 +339,42 @@ pub exec fn do_step_mapstart(Tracked(tok): Tracked<&mut Token>, vaddr: usize, pt
         tok.progress() is Ready,
         tok.st().inv(tok.consts()),
 {
-    let state1 = Ghost(tok.st());
-    let core = Ghost(tok.core());
-    assert(core@ == tok.consts().ult2core[tok.thread()]);
-    proof {
-        let pidx = tok.do_concurrent_trs();
-        // TODO: This part is weird because according to the state machine this step we're taking
-        // is unstable. But in practice it is stable (actually, no it's not really), it's just that
-        // we use the core state to express that fact.. We probably just need to assume that the
-        // first step is stable, which we can do by starting with progress as Ready
-        //
-        // Maybe we don't do mapstart in the implementation.. which would be a bit strange but
-        // probably fine. then the first step (acquiring the lock) is actually stable. But then
-        // we're not enforcing that the first step actually is that of acuiring the lock. Is that a
-        // problem?
-        assume(tok.st().core_states[core@] == state1@.core_states[core@]);
-        assume(tok.st().inv(tok.consts()));
-        //lemma_concurrent_trs(state1@, tok.st(), tok.consts(), tok.core(), pidx);
-    }
-    let state2 = Ghost(tok.st());
-    proof {
-        let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
-        let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr as nat, pte@);
-        let post = os::State {
-            core_states: tok.st().core_states.insert(core@, new_cs),
-            sound: new_sound,
-            ..tok.st()
-        };
-        let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
-        assert(os::step_MapStart(tok.consts(), tok.st(), post, core@, lbl));
-        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core: core@ }, lbl));
-        tok.register_external_step(post);
-        let state3 = Ghost(tok.st());
-        os_invariant::next_preserves_inv(tok.consts(), state2@, state3@, lbl);
-        tok.do_concurrent_trs();
-        let state4 = Ghost(tok.st());
-        //lemma_concurrent_trs(state3@, state4@, tok.consts(), tok.core(), pidx);
-        assume(state4@.core_states[core@] == state3@.core_states[core@]);
-        assume(state4@.inv(tok.consts()));
-        assume(unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()));
-    }
+    let state1 = tok.st();
+    let core = tok.core();
+    assert(core == tok.consts().ult2core[tok.thread()]);
+    let pidx = tok.do_concurrent_trs();
+    // TODO: This part is weird because according to the state machine this step we're taking
+    // is unstable. But in practice it is stable (actually, no it's not really), it's just that
+    // we use the core state to express that fact.. We probably just need to assume that the
+    // first step is stable, which we can do by starting with progress as Ready
+    //
+    // Maybe we don't do mapstart in the implementation.. which would be a bit strange but
+    // probably fine. then the first step (acquiring the lock) is actually stable. But then
+    // we're not enforcing that the first step actually is that of acuiring the lock. Is that a
+    // problem?
+    assume(tok.st().core_states[core] == state1.core_states[core]);
+    assume(tok.st().inv(tok.consts()));
+    //lemma_concurrent_trs(state1, tok.st(), tok.consts(), tok.core(), pidx);
+    let state2 = tok.st();
+    let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
+    let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr as nat, pte@);
+    let post = os::State {
+        core_states: tok.st().core_states.insert(core, new_cs),
+        sound: new_sound,
+        ..tok.st()
+    };
+    let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
+    assert(os::step_MapStart(tok.consts(), tok.st(), post, core, lbl));
+    assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core: core }, lbl));
+    tok.register_external_step(post);
+    let state3 = tok.st();
+    os_invariant::next_preserves_inv(tok.consts(), state2, state3, lbl);
+    tok.do_concurrent_trs();
+    let state4 = tok.st();
+    //lemma_concurrent_trs(state3, state4, tok.consts(), tok.core(), pidx);
+    assume(state4.core_states[core] == state3.core_states[core]);
+    assume(state4.inv(tok.consts()));
+    assume(unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()));
 }
 
 pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>)
@@ -557,5 +562,8 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
     }
 }
 
+//proof fn foo(tok: WrappedMapTokenView)
+//    ensures
+//    forall|tok: Self| nat_keys(tok.tok.st().mmu@.pt_mem@) == #[trigger] (tok@.interp());
 
 } // verus!

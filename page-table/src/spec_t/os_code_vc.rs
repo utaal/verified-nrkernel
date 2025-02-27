@@ -382,26 +382,26 @@ pub trait CodeVC {
     // use an additional prophetic argument, which carries the return value and to which we can
     // refer in the requires clause.
     exec fn sys_do_map(
-        Tracked(tok): Tracked<&mut Token>,
+        Tracked(tok): Tracked<Token>,
         vaddr: usize,
         pte: PageTableEntryExec,
         tracked proph_res: Prophecy<Result<(),()>>
-    ) -> (res: Result<(),()>)
+    ) -> (res: (Result<(),()>, Tracked<Token>))
         requires
             os::step_Map_enabled(vaddr as nat, pte@),
-            old(tok).st().inv(old(tok).consts()),
-            old(tok).consts().valid_ult(old(tok).thread()),
-            old(tok).st().core_states[old(tok).core()] is Idle,
-            old(tok).steps() === seq![
-                RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ },
-                RLbl::MapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
+            tok.st().inv(tok.consts()),
+            tok.consts().valid_ult(tok.thread()),
+            tok.st().core_states[tok.core()] is Idle,
+            tok.steps() === seq![
+                RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ },
+                RLbl::MapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
-            old(tok).progress() is Unready,
+            tok.progress() is Unready,
             proph_res.may_resolve(),
         ensures
-            res == proph_res.value(),
-            tok.steps() === seq![],
-            tok.progress() is Ready,
+            res.0 == proph_res.value(),
+            res.1@.steps() === seq![],
+            res.1@.progress() is Ready,
     ;
 
     exec fn sys_do_unmap(

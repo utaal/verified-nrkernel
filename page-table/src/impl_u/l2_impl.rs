@@ -1025,6 +1025,7 @@ fn map_frame_aux(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<P
                 Err(interp_at(tok@, pt, layer as nat, ptr, base as nat)) === interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@),
         },
         tok@.pml4 == old(tok)@.pml4,
+        tok.inv(),
     // decreases X86_NUM_LAYERS - layer
 {
     proof { lemma_interp_at_facts(tok@, pt, layer as nat, ptr, base as nat); }
@@ -1298,7 +1299,7 @@ fn map_frame_aux(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<P
                 assume(!candidate_mapping_overlaps_existing_vmem(tok@.interp(), vaddr as nat, pte@));
                 assume(tok@.write(idx, new_page_entry.entry, pt.region).interp() == tok@.interp().insert(vaddr as nat, pte@));
             }
-            WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region), Ghost(pt));
+            WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region));
 
             assert(inv_at(tok@, pt, layer as nat, ptr)) by {
                 lemma_bitvector_facts();
@@ -1728,6 +1729,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
             Ok(_) => Ok(interp(tok@, pt@).interp()) === interp(old(tok)@, old(pt)@).interp().map_frame(vaddr as nat, pte@),
             Err(_) => Err(interp(tok@, pt@).interp()) === interp(old(tok)@, old(pt)@).interp().map_frame(vaddr as nat, pte@),
         },
+        tok.inv(),
 {
     proof { interp(tok@, pt@).lemma_map_frame_refines_map_frame(vaddr as nat, pte@); }
     match map_frame_aux(Tracked(tok), *pt, 0, pml4, 0, vaddr, pte) {
@@ -1831,7 +1833,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
         lemma_bitvector_facts();
     }
     assert(tok@.write(idx, new_dir_entry.entry, pt.region).interp() == tok@.interp());
-    WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region));
+    WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region), Ghost(pt));
 
     let ghost pt_res =
         PTDir {
