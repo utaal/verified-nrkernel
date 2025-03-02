@@ -49,7 +49,7 @@ impl CodeVC for PT {
 
         // TODO: don't magic pml4 into existence
         let pml4: usize = 0;
-        assume(pml4 == wtok@.pml4);
+        assume(pml4 == wtok@.pt_mem.pml4);
 
         assume(vaddr < MAX_BASE); // TODO: We probably need to somehow get this out of the first transition?
 

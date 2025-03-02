@@ -11,7 +11,7 @@ use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, Token, unchanged_state_during_concurrent_trs };
-use crate::impl_u::l2_impl::PTDir;
+use crate::impl_u::l2_impl::{ PT, PTDir };
 
 verus! {
 
@@ -24,7 +24,9 @@ pub struct WrappedMapTokenView {
     pub orig_st: os::State,
     pub args: (nat, PTE),
     pub regions: Map<MemRegion, Seq<usize>>,
-    pub pml4: usize,
+    /// We also keep the flat memory directly because this is what the MMU's interpretation is
+    /// defined on.
+    pub pt_mem: mmu::pt_mem::PTMem,
 }
 
 impl WrappedMapTokenView {
@@ -33,13 +35,13 @@ impl WrappedMapTokenView {
     }
 
     pub open spec fn interp(self) -> Map<nat, PTE> {
-        // TODO: instantiate this with the l2 interp
-        arbitrary()
+        nat_keys(self.pt_mem@)
     }
 
     pub open spec fn write(self, idx: usize, value: usize, r: MemRegion) -> WrappedMapTokenView {
         WrappedMapTokenView {
             regions: self.regions.insert(r, self.regions[r].update(idx as int, value)),
+            pt_mem: self.pt_mem.write(add(r.base as usize, mul(idx, 8)), value),
             ..self
         }
     }
@@ -65,7 +67,7 @@ impl WrappedMapToken {
                 Map::new(
                     |r: MemRegion| self.regions.contains(r),
                     |r: MemRegion| Seq::new(512, |i: int| self.tok.st().mmu@.pt_mem.mem[(r.base + i * 8) as usize])),
-            pml4: self.tok.st().mmu@.pt_mem.pml4,
+            pt_mem: self.tok.st().mmu@.pt_mem,
         }
     }
 
@@ -181,7 +183,7 @@ impl WrappedMapToken {
         //res
     }
 
-    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>, pt1: Ghost<PTDir>, pt2: Ghost<PTDir>)
+    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
         requires
             old(tok)@.regions.contains_key(r@),
             r@.base == pbase,
@@ -189,6 +191,9 @@ impl WrappedMapToken {
             old(tok).inv(),
             value & 1 == 1,
             old(tok)@.read(idx, r@) & 1 == 0,
+            // This precondition makes the abstraction kind of leaky but we want to use the MMU
+            // interp here. Otherwise we'd have to take two PTDirs as arguments and also require
+            // their preconditions just to express this.
             old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp(),
             //crate::impl_u::l2_impl::PT::inv(old(tok)@, pt1@),
             //crate::impl_u::l2_impl::PT::inv(old(tok)@.write(idx, value, r@), pt2@),
@@ -277,7 +282,7 @@ impl WrappedMapToken {
                                                    // subsumed by disjointness? (which isn't
                                                    // currently here but should be)
             tok@.regions === old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)),
-            tok@.pml4 == old(tok)@.pml4,
+            tok@.pt_mem == old(tok)@.pt_mem,
             tok@.args == old(tok)@.args,
             tok@.orig_st == old(tok)@.orig_st,
             tok.inv(),
@@ -313,6 +318,27 @@ impl WrappedMapToken {
         assume(tok@.regions[res@] === new_seq::<usize>(512nat, 0usize));
         assert(tok@.regions =~= old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)));
         res
+    }
+
+    proof fn lemma_interps_match(self, pt: PTDir)
+        requires PT::inv(self@, pt)
+        ensures PT::interp(self@, pt).interp().map == nat_keys(self@.pt_mem@)
+    {
+        // TODO: Depending on how bad this is we may consider getting rid of nat_keys and just
+        // making sure the types agree without it.
+        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+        assert forall|va, pte| #[trigger] PT::interp(self@, pt).interp().map.contains_pair(va as nat, pte)
+            implies self.tok.st().mmu@.pt_mem@.contains_pair(va, pte)
+        by {
+            admit();
+        };
+        assert forall|va, pte| self.tok.st().mmu@.pt_mem@.contains_pair(va, pte)
+            implies #[trigger] PT::interp(self@, pt).interp().map.contains_pair(va as nat, pte)
+        by {
+            admit();
+        };
+        admit();
+        assert(PT::interp(self@, pt).interp().map =~= nat_keys(self.tok.st().mmu@.pt_mem@));
     }
 }
 
@@ -562,9 +588,5 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
         assert(state3@.mmu@.pending_maps === state1@.mmu@.pending_maps);
     }
 }
-
-//proof fn foo(tok: WrappedMapTokenView)
-//    ensures
-//    forall|tok: Self| nat_keys(tok.tok.st().mmu@.pt_mem@) == #[trigger] (tok@.interp());
 
 } // verus!

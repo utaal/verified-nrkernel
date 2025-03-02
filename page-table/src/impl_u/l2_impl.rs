@@ -563,8 +563,8 @@ pub mod PT {
 use super::*;
 
 pub open spec(checked) fn inv(tok: WrappedMapTokenView, pt: PTDir) -> bool {
-    &&& pt.region.base == tok.pml4
-    &&& inv_at(tok, pt, 0, tok.pml4)
+    &&& pt.region.base == tok.pt_mem.pml4
+    &&& inv_at(tok, pt, 0, tok.pt_mem.pml4)
 }
 
 /// Get the view of the entry at address ptr + i * WORD_SIZE
@@ -746,7 +746,7 @@ pub open spec fn interp_at_aux(tok: WrappedMapTokenView, pt: PTDir, layer: nat, 
 }
 
 pub open spec fn interp(tok: WrappedMapTokenView, pt: PTDir) -> l1::Directory {
-    interp_at(tok, pt, 0, tok.pml4, 0)
+    interp_at(tok, pt, 0, tok.pt_mem.pml4, 0)
 }
 
 proof fn lemma_inv_at_different_memory(tok1: WrappedMapTokenView, tok2: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize)
@@ -1007,7 +1007,7 @@ fn map_frame_aux(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<P
             Err(e) =>
                 Err(interp_at(tok@, pt, layer as nat, ptr, base as nat)) === interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@),
         },
-        tok@.pml4 == old(tok)@.pml4,
+        tok@.pt_mem.pml4 == old(tok)@.pt_mem.pml4,
         tok.inv(),
     // decreases X86_NUM_LAYERS - layer
 {
@@ -1047,8 +1047,8 @@ fn map_frame_aux(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<P
                 Err(())
             } else {
                 let dir_addr = entry.address();
-                assert(pt.entries[idx as int].is_Some());
-                let ghost dir_pt = pt.entries.index(idx as int).get_Some_0();
+                assert(pt.entries[idx as int] is Some);
+                let ghost dir_pt = pt.entries[idx as int]->Some_0;
                 assert(directories_obey_invariant_at(tok@, pt, layer as nat, ptr));
                 match map_frame_aux(Tracked(tok), Ghost(dir_pt), layer + 1, dir_addr, entry_base, vaddr, pte) {
                     Ok(rec_res) => {
@@ -1565,7 +1565,7 @@ pub proof fn lemma_zeroed_page_implies_empty_at(tok: WrappedMapTokenView, pt: PT
         layer_in_range(layer),
         pt.entries.len() == X86_NUM_ENTRIES,
         forall|i: nat| i < X86_NUM_ENTRIES ==> tok.regions[pt.region][i as int] == 0,
-        forall|i: nat| i < X86_NUM_ENTRIES ==> pt.entries[i as int].is_None(),
+        forall|i: nat| i < X86_NUM_ENTRIES ==> pt.entries[i as int] is None,
     ensures
         empty_at(tok, pt, layer, ptr),
         inv_at(tok, pt, layer, ptr),
@@ -1680,7 +1680,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         accepted_mapping(vaddr as nat, pte@),
         interp(old(tok)@, old(pt)@).accepted_mapping(vaddr as nat, pte@),
         vaddr < MAX_BASE,
-        pml4 == old(tok)@.pml4,
+        pml4 == old(tok)@.pt_mem.pml4,
         old(tok)@.args == (vaddr as nat, pte@),
     ensures
         inv(tok@, pt@),
@@ -1750,7 +1750,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
         inv_at(tok@, res.0@, layer as nat, ptr),
         !old(tok)@.regions.contains_key(res.1@),
         tok@.regions.dom() == old(tok)@.regions.dom().insert(res.1@),
-        tok@.pml4 == old(tok)@.pml4,
+        tok@.pt_mem.pml4 == old(tok)@.pt_mem.pml4,
         tok@.args == old(tok)@.args,
         tok@.orig_st == old(tok)@.orig_st,
         //tok.alloc_available_pages() == old(tok)@.alloc_available_pages() - 1,
@@ -1837,23 +1837,20 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
                     ==> inv_at(tok_with_empty, pt_res.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr)
             } by {
                 let entry = entry_at_spec(tok_with_empty, pt_res, layer as nat, ptr, i)@;
-                if i == idx {
-                } else {
-                    if entry is Directory {
-                        let pt_entry = pt.entries[i as int].get_Some_0();
-                        assert(inv_at(old(tok)@, pt_entry, (layer + 1) as nat, entry->Directory_addr));
-                        assert(pt.entries[i as int] == pt_res.entries[i as int]);
-                        assert(old(tok)@.regions.contains_key(pt_entry.region));
-                        lemma_inv_at_different_memory(old(tok)@, tok_with_empty, pt_entry, (layer + 1) as nat, entry->Directory_addr);
-                        assert(inv_at(tok_with_empty, pt_res.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr));
-                    }
+                if i != idx && entry is Directory {
+                    //assert(inv_at(old(tok)@, pt_entry, (layer + 1) as nat, entry->Directory_addr));
+                    //assert(pt.entries[i as int] == pt_res.entries[i as int]);
+                    //assert(old(tok)@.regions.contains_key(pt_entry.region));
+                    lemma_inv_at_different_memory(old(tok)@, tok_with_empty, pt.entries[i as int]->Some_0, (layer + 1) as nat, entry->Directory_addr);
+                    //assert(inv_at(tok_with_empty, pt_res.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr));
                 }
             };
         };
         assert(inv_at(tok_with_empty, pt_res, layer as nat, ptr));
     }
 
-    WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region), Ghost(pt), Ghost(pt_res));
+    assume(tok@.write(idx, new_dir_entry.entry, pt.region).interp() == tok@.interp());
+    WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region));
     assert(tok@ == tok_with_empty);
 
     proof {
@@ -2255,7 +2252,6 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
 //pub fn unmap_noreclaim(mem: &mut mem::PageTableMemory, vaddr: usize) -> Result<(),()> {
 //    unmap_noreclaim_aux(mem, 0, mem.cr3().base, 0, vaddr)
 //}
-
 
 }
 
