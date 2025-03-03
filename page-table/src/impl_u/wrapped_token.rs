@@ -45,6 +45,27 @@ impl WrappedMapTokenView {
             ..self
         }
     }
+
+    pub proof fn lemma_interps_match(self, pt: PTDir)
+        requires PT::inv(self, pt)
+        ensures PT::interp(self, pt).interp().map == self.interp()
+    {
+        // TODO: Depending on how bad this is we may consider getting rid of nat_keys and just
+        // making sure the types agree without it.
+        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+        assert forall|va, pte| #[trigger] PT::interp(self, pt).interp().map.contains_pair(va as nat, pte)
+            implies self.pt_mem@.contains_pair(va, pte)
+        by {
+            admit();
+        };
+        assert forall|va, pte| self.pt_mem@.contains_pair(va, pte)
+            implies #[trigger] PT::interp(self, pt).interp().map.contains_pair(va as nat, pte)
+        by {
+            admit();
+        };
+        admit();
+        assert(PT::interp(self, pt).interp().map =~= nat_keys(self.pt_mem@));
+    }
 }
 
 pub tracked struct WrappedMapToken {
@@ -238,7 +259,7 @@ impl WrappedMapToken {
             //crate::impl_u::l2_impl::PT::interp(old(tok)@, pt@).interp().map
             // TODO: Need to split MapOpEnd into effectful write and actual end transition
             old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp().insert(old(tok)@.args.0, old(tok)@.args.1),
-        ensures
+            ensures
             //tok@.pt_mem == old(tok)@.pt_mem.write(addr, value),
             //tok@.regions[r@] === old(tok)@.regions[r@].update(idx as int, value),
             //tok@.args == old(tok)@.args,
@@ -318,27 +339,6 @@ impl WrappedMapToken {
         assume(tok@.regions[res@] === new_seq::<usize>(512nat, 0usize));
         assert(tok@.regions =~= old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)));
         res
-    }
-
-    proof fn lemma_interps_match(self, pt: PTDir)
-        requires PT::inv(self@, pt)
-        ensures PT::interp(self@, pt).interp().map == nat_keys(self@.pt_mem@)
-    {
-        // TODO: Depending on how bad this is we may consider getting rid of nat_keys and just
-        // making sure the types agree without it.
-        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
-        assert forall|va, pte| #[trigger] PT::interp(self@, pt).interp().map.contains_pair(va as nat, pte)
-            implies self.tok.st().mmu@.pt_mem@.contains_pair(va, pte)
-        by {
-            admit();
-        };
-        assert forall|va, pte| self.tok.st().mmu@.pt_mem@.contains_pair(va, pte)
-            implies #[trigger] PT::interp(self@, pt).interp().map.contains_pair(va as nat, pte)
-        by {
-            admit();
-        };
-        admit();
-        assert(PT::interp(self@, pt).interp().map =~= nat_keys(self.tok.st().mmu@.pt_mem@));
     }
 }
 
