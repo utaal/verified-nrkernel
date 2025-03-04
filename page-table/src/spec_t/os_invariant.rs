@@ -281,6 +281,13 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
+            os::Step::MapOpChange { core, paddr, value } => {
+                admit();
+            },
+            os::Step::MapNoOp { core } => {
+                admit();
+            },
+            /*
             os::Step::MapOpEnd { core, paddr, value, result } => {
                 let vaddr = s1.core_states[core]->MapExecuting_vaddr;
                 let ult_id = s1.core_states[core]->MapExecuting_ult_id;
@@ -354,6 +361,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 }
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
+            */
             //Unmap steps
             os::Step::UnmapStart { core } => {
                 let ult_id = lbl->UnmapStart_thread_id;

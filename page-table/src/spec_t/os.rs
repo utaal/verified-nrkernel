@@ -67,7 +67,8 @@ pub enum Step {
     MapOpStart { core: Core },
     Allocate { core: Core, res: MemRegion },
     MapOpStutter { core: Core, paddr: usize, value: usize },
-    MapOpEnd { core: Core, paddr: usize, value: usize, result: Result<(), ()> },
+    MapOpChange { core: Core, paddr: usize, value: usize },
+    MapNoOp { core: Core },
     MapEnd { core: Core },
     // Unmap
     UnmapStart { core: Core },
@@ -341,34 +342,43 @@ pub open spec fn step_Allocate(c: Constants, s1: State, s2: State, core: Core, r
     &&& s2.sound == s1.sound
 }
 
-
-pub open spec fn step_MapOpEnd(
+pub open spec fn step_MapOpChange(
     c: Constants,
     s1: State,
     s2: State,
     core: Core,
     paddr: usize,
     value: usize,
-    result: Result<(), ()>,
     lbl: RLbl,
 ) -> bool {
     &&& lbl is Tau
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::MapExecuting { ult_id, vaddr, pte }
+    &&& !candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte)
+    &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
+
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
-    &&& if candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte) {
-        &&& result is Err
-        &&& s2.interp_pt_mem() == s1.interp_pt_mem()
-    } else {
-        &&& result is Ok
-        &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
-    }
     &&& s2.os_ext == s1.os_ext
     //new state
-    &&& s2.core_states == s1.core_states.insert(core, CoreState::MapDone { ult_id, vaddr, pte, result })
+    &&& s2.core_states == s1.core_states.insert(core, CoreState::MapDone { ult_id, vaddr, pte, result: Ok(()) })
+    &&& s1.sound == s2.sound
+}
+
+pub open spec fn step_MapNoOp(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
+    &&& lbl is Tau
+    //enabling conditions
+    &&& c.valid_core(core)
+    &&& s1.core_states[core] matches CoreState::MapExecuting { ult_id, vaddr, pte }
+    &&& candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte)
+
+    // mmu statemachine steps
+    &&& s2.mmu == s1.mmu
+    &&& s2.os_ext == s1.os_ext
+    //new state
+    &&& s2.core_states == s1.core_states.insert(core, CoreState::MapDone { ult_id, vaddr, pte, result: Err(()) })
     &&& s1.sound == s2.sound
 }
 
@@ -599,7 +609,8 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: 
         Step::MapOpStart { core }                          => step_MapOpStart(c, s1, s2, core, lbl),
         Step::Allocate { core, res }                       => step_Allocate(c, s1, s2, core, res, lbl),
         Step::MapOpStutter { core, paddr, value }          => step_MapOpStutter(c, s1, s2, core, paddr, value, lbl),
-        Step::MapOpEnd { core, paddr, value, result }      => step_MapOpEnd(c, s1, s2, core, paddr, value, result, lbl),
+        Step::MapOpChange { core, paddr, value }           => step_MapOpChange(c, s1, s2, core, paddr, value, lbl),
+        Step::MapNoOp { core }                             => step_MapNoOp(c, s1, s2, core, lbl),
         Step::MapEnd { core }                              => step_MapEnd(c, s1, s2, core, lbl),
         //Unmap steps
         Step::UnmapStart { core }                          => step_UnmapStart(c, s1, s2, core, lbl),

@@ -56,7 +56,8 @@ impl os::Step {
             os::Step::MapOpStart { core, .. } |
             os::Step::Allocate { core, .. } |
             os::Step::MapOpStutter { core, .. } |
-            os::Step::MapOpEnd { core, .. } |
+            os::Step::MapOpChange { core, .. } |
+            os::Step::MapNoOp { core, .. } |
             os::Step::MapEnd { core, .. } |
             os::Step::UnmapStart { core, .. } |
             os::Step::UnmapOpStart { core, .. } |
