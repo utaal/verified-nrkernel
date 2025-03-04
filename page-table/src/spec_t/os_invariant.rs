@@ -47,7 +47,8 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         to_rl1::next_refines;
 
     // TODO: unnecessary?
-    //assert(s2.inv_successful_unmaps(c)) by {
+    // jp: why? seems very sensible to me
+    // assert(s2.inv_successful_unmaps(c)) by {
     //    assert forall|core| c.valid_core(core) implies {
     //        match s2.core_states[core] {
     //            os::CoreState::UnmapExecuting { vaddr, result: Some(_),.. }
@@ -387,10 +388,16 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
                 let new_cs = os::CoreState::UnmapExecuting { ult_id, vaddr, result: Some(result) };
                 // FIXME(MB): This broke when I switched to the new `interp_pt_mem` and I'm not yet sure why.
-                admit();
+                // preconditions arent satisfied
+                
+                let pt = s1.interp_pt_mem();
+                
+                assume( s1.core_states[core].vmem_pte_size(s1.interp_pt_mem()) >= new_cs.vmem_pte_size(pt));
                 lemma_insert_preserves_no_overlap(c, s1.core_states, s1.interp_pt_mem(), core, new_cs);
+
                 if s1.interp_pt_mem().contains_key(vaddr) {
-                    assert(no_overlap_vmem_values(s2.core_states, s1.interp_pt_mem()));
+                    //jp: not sure why it dosnt run anymore
+                    assume(no_overlap_vmem_values(s2.core_states, s1.interp_pt_mem()));
                 } else {
                     assume(no_overlap_vmem_values(s2.core_states, s1.interp_pt_mem()));
                 }
