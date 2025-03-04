@@ -11,6 +11,7 @@ vstd = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae6037
 [features]
 impl = []
 noreclaim = []
+standalone = []
 default = ["impl"]
 
 # [profile.release]

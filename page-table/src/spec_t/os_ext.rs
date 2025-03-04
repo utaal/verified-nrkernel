@@ -3,6 +3,7 @@ use crate::spec_t::mmu::defs::{ Core, MemRegion };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ overlap, aligned };
 
+
 verus! {
 
 // This is the extra/external part of the OS. It specifies the kernel lock, (de-)allocation, and
@@ -204,7 +205,7 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
 pub mod code {
     use vstd::prelude::*;
     use crate::spec_t::os_ext;
-    use crate::spec_t::mmu::defs::{ Core, MemRegionExec };
+    use crate::spec_t::mmu::defs::{ Core, MemRegionExec, PAGE_SIZE };
     use crate::theorem::TokState;
 
     #[verifier(external_body)]
@@ -359,8 +360,34 @@ pub mod code {
         unimplemented!() // TODO:
     }
 
+    // External interface to the 
+    #[cfg(not(feature="standalone"))]
+    extern "C" {
+        fn pt_memory_alloc(sz: usize, align: u64, level: u8) -> u64;
+        fn pt_memory_free(pa: u64, sz: usize, level: u8);
+    }
+
+    #[cfg(feature="standalone")]
     #[verifier(external_body)]
-    pub exec fn allocate(Tracked(tok): Tracked<&mut Token>) -> (res: MemRegionExec)
+    unsafe fn pt_memory_alloc(sz: usize, align: u64, level: u8) -> u64 {
+        let layout = std::alloc::Layout::from_size_align_unchecked(sz, PAGE_SIZE);
+        let ptr = std::alloc::alloc_zeroed(layout);
+        if ptr.is_null() {
+            panic!("Failed to allocate memory");
+        }
+        ptr as u64
+    }
+
+    #[cfg(feature="standalone")]
+    #[verifier(external_body)]
+    unsafe fn pt_memory_free(pa: u64, sz: usize, level: u8) {
+        let layout = std::alloc::Layout::from_size_align_unchecked(sz, PAGE_SIZE);
+        std::alloc::dealloc(std::mem::transmute(pa), layout);
+    }
+
+    /// Allocates memory for a page table node at a given layer.
+    #[verifier(external_body)]
+    pub exec fn allocate(Tracked(tok): Tracked<&mut Token>, layer: usize) -> (res: MemRegionExec)
         requires
             old(tok).tstate() is Validated,
             old(tok).lbl() matches os_ext::Lbl::Allocate { core: lbl_core, .. } && lbl_core == old(tok).core(),
@@ -368,18 +395,20 @@ pub mod code {
             tok.tstate() is Spent,
             res@ == old(tok).lbl()->Allocate_res,
     {
-        unimplemented!() // TODO:
+        let addr = unsafe { pt_memory_alloc(PAGE_SIZE, PAGE_SIZE as u64, layer.try_into().unwrap()) };
+        MemRegionExec { base: addr.try_into().unwrap(), size: PAGE_SIZE }
     }
 
+    /// Frees memory of a page table node at a given layer.
     #[verifier(external_body)]
-    pub exec fn deallocate(Tracked(tok): Tracked<&mut Token>, reg: MemRegionExec)
+    pub exec fn deallocate(Tracked(tok): Tracked<&mut Token>, reg: MemRegionExec, layer: usize)
         requires
             old(tok).tstate() is Validated,
             old(tok).lbl() == (os_ext::Lbl::Deallocate { core: old(tok).core(), reg: reg@ }),
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { pt_memory_free(reg.base.try_into().unwrap(), reg.size, layer.try_into().unwrap()) };
     }
 }
 
