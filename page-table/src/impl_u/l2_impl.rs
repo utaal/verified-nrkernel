@@ -2058,7 +2058,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
         })
 {
     let ghost interp = interp_at(tok@, pt, layer as nat, ptr, base as nat);
-    let new_dir_region = WrappedMapToken::allocate(Tracked(tok));
+    let new_dir_region = WrappedMapToken::allocate(Tracked(tok), layer);
     let ghost tok_with_alloc = tok@;
     let new_dir_ptr = new_dir_region.base;
     let ghost new_dir_pt =

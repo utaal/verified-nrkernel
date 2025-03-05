@@ -291,7 +291,7 @@ impl WrappedMapToken {
         //};
     }
 
-    pub exec fn allocate(Tracked(tok): Tracked<&mut Self>) -> (res: MemRegionExec)
+    pub exec fn allocate(Tracked(tok): Tracked<&mut Self>, layer: usize) -> (res: MemRegionExec)
         requires
             old(tok).inv(),
         ensures
@@ -320,7 +320,7 @@ impl WrappedMapToken {
             os_invariant::next_preserves_inv(tok.tok.consts(), state1@, tok.tok.st(), RLbl::Tau);
         }
 
-        let res = os_ext::code::allocate(Tracked(&mut osext_tok));
+        let res = os_ext::code::allocate(Tracked(&mut osext_tok), layer);
         let state2 = Ghost(tok.tok.st());
 
         proof {
