@@ -36,10 +36,7 @@ impl CodeVC for PT {
         //    res.1.progress() is Ready,
 
 
-        proof {
-            crate::impl_u::wrapped_token::do_step_mapstart(&mut tok, vaddr, pte);
-        }
-        crate::impl_u::wrapped_token::do_step_mapopstart(Tracked(&mut tok));
+        crate::impl_u::wrapped_token::register_step_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
         // TODO: Needs an invariant
         assume(tok.st().mmu@.pending_maps === map![]);
         let tracked wtok = WrappedMapToken::new(tok);

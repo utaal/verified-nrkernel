@@ -6,7 +6,7 @@ use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ aligned, MemRegion, new_seq, bit, usize_keys };
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec, PTE, MAX_PHYADDR, candidate_mapping_overlaps_existing_vmem_usize };
+use crate::spec_t::mmu::defs::{ MemRegionExec, PTE, MAX_PHYADDR, candidate_mapping_overlaps_existing_vmem_usize };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
@@ -174,16 +174,16 @@ impl WrappedMapToken {
         //let tracked mut mmu_tok = self.tok.get_mmu_token();
         //proof {
         //    mmu_tok.prophesy_read(addr);
-        //    let vaddr = self.tok.st().core_states[core@]->MapExecuting_vaddr;
-        //    let pte = self.tok.st().core_states[core@]->MapExecuting_pte;
+        //    let vaddr = self.tok.st().core_states[core]->MapExecuting_vaddr;
+        //    let pte = self.tok.st().core_states[core]->MapExecuting_pte;
         //    let post = os::State {
         //        mmu: mmu_tok.post(),
         //        ..self.tok.st()
         //    };
         //    let read_result = mmu_tok.lbl()->Read_2;
         //    assert(mmu::rl3::next(self.tok.st().mmu, post.mmu, self.tok.consts().mmu, mmu_tok.lbl()));
-        //    assert(os::step_ReadPTMem(self.tok.consts(), self.tok.st(), post, core@, addr, read_result, RLbl::Tau));
-        //    assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::ReadPTMem { core: core@, paddr: addr, value: read_result }, RLbl::Tau));
+        //    assert(os::step_ReadPTMem(self.tok.consts(), self.tok.st(), post, core, addr, read_result, RLbl::Tau));
+        //    assert(os::next_step(self.tok.consts(), self.tok.st(), post, os::Step::ReadPTMem { core: core, paddr: addr, value: read_result }, RLbl::Tau));
         //    self.tok.register_internal_step_mmu(&mut mmu_tok, post);
         //    os_invariant::next_preserves_inv(self.tok.consts(), state1@, self.tok.st(), RLbl::Tau);
         //}
@@ -195,8 +195,8 @@ impl WrappedMapToken {
         //    broadcast use to_rl1::next_refines;
         //    // TODO: This probably needs an additional invariant on the os state machine
         //    // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
-        //    assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
-        //    //assert(state1@.os_ext.lock == Some(core@));
+        //    assume(state1@.mmu@.is_tso_read_deterministic(core, addr));
+        //    //assert(state1@.os_ext.lock == Some(core));
         //    self.tok.return_mmu_token(mmu_tok);
         //    let pidx = self.tok.do_concurrent_trs();
         //    let state3 = Ghost(self.tok.st());
@@ -226,7 +226,7 @@ impl WrappedMapToken {
 
         let addr = pbase + idx * 8;
         let state1 = Ghost(tok.tok.st());
-        let core = Ghost(tok.tok.core());
+        let ghost core = tok.tok.core();
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
             broadcast use to_rl1::next_refines;
@@ -236,8 +236,8 @@ impl WrappedMapToken {
             let post = os::State { mmu: mmu_tok.post(), ..tok.tok.st() };
 
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(os::step_MapOpStutter(tok.tok.consts(), tok.tok.st(), post, core@, addr, value, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpStutter { core: core@, paddr: addr, value }, RLbl::Tau));
+            assert(os::step_MapOpStutter(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpStutter { core: core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1@, tok.tok.st(), RLbl::Tau);
         }
@@ -247,7 +247,7 @@ impl WrappedMapToken {
 
         proof {
             // TODO: This probably needs an additional invariant on the os state machine
-            assert(state1@.os_ext.lock == Some(core@));
+            assert(state1@.os_ext.lock == Some(core));
             tok.tok.return_mmu_token(mmu_tok);
             let pidx = tok.tok.do_concurrent_trs();
             let state3 = Ghost(tok.tok.st());
@@ -265,7 +265,7 @@ impl WrappedMapToken {
         };
         assume(tok@.regions[r@] == tok@.regions[r@].update(idx as int, value));
         assert(tok@.regions =~= old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)));
-        assert(tok.tok.st().core_states[core@] == old(tok).tok.st().core_states[core@]);
+        assert(tok.tok.st().core_states[core] == old(tok).tok.st().core_states[core]);
     }
 
     pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
@@ -287,7 +287,7 @@ impl WrappedMapToken {
 
         let addr = pbase + idx * 8;
         let state1 = Ghost(tok.tok.st());
-        let core = Ghost(tok.tok.core());
+        let ghost core = tok.tok.core();
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
             broadcast use to_rl1::next_refines;
@@ -298,18 +298,18 @@ impl WrappedMapToken {
             let pte = tok@.args.1;
             // TODO: ???
             admit();
-            assert(tok.tok.st().core_states[core@] is MapExecuting);
-            assert(tok.tok.st().core_states[core@] matches os::CoreState::MapExecuting { vaddr: v, pte: p, .. } && vaddr == v && pte == p);
+            assert(tok.tok.st().core_states[core] is MapExecuting);
+            assert(tok.tok.st().core_states[core] matches os::CoreState::MapExecuting { vaddr: v, pte: p, .. } && vaddr == v && pte == p);
             let new_cs = os::CoreState::MapDone { ult_id: tok.tok.thread(), vaddr, pte, result: Ok(()) };
             let post = os::State {
-                core_states: tok.tok.st().core_states.insert(core@, new_cs),
+                core_states: tok.tok.st().core_states.insert(core, new_cs),
                 mmu: mmu_tok.post(),
                 ..tok.tok.st()
             };
 
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core@, addr, value, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core: core@, paddr: addr, value }, RLbl::Tau));
+            assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core: core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1@, tok.tok.st(), RLbl::Tau);
             admit();
@@ -320,7 +320,7 @@ impl WrappedMapToken {
 
         proof {
             // TODO: This probably needs an additional invariant on the os state machine
-            assert(state1@.os_ext.lock == Some(core@));
+            assert(state1@.os_ext.lock == Some(core));
             tok.tok.return_mmu_token(mmu_tok);
             let pidx = tok.tok.do_concurrent_trs();
             let state3 = Ghost(tok.tok.st());
@@ -358,13 +358,13 @@ impl WrappedMapToken {
             tok.inv(),
     {
         let state1 = Ghost(tok.tok.st());
-        let core = Ghost(tok.tok.core());
+        let ghost core = tok.tok.core();
         let tracked mut osext_tok = tok.tok.get_osext_token();
         proof {
             osext_tok.prophesy_allocate();
             let post = os::State { os_ext: osext_tok.post(), ..tok.tok.st() };
-            assert(os::step_Allocate(tok.tok.consts(), tok.tok.st(), post, core@, osext_tok.lbl()->Allocate_res, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Allocate { core: core@, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
+            assert(os::step_Allocate(tok.tok.consts(), tok.tok.st(), post, core, osext_tok.lbl()->Allocate_res, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Allocate { core: core, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
             tok.tok.register_internal_step_osext(&mut osext_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1@, tok.tok.st(), RLbl::Tau);
         }
@@ -391,119 +391,201 @@ impl WrappedMapToken {
     }
 }
 
-pub proof fn do_step_mapstart(tracked tok: &mut Token, vaddr: usize, pte: PageTableEntryExec)
+//pub proof fn do_step_mapstart(tracked tok: &mut Token, vaddr: usize, pte: PageTableEntryExec)
+//    requires
+//        os::step_Map_enabled(vaddr as nat, pte@),
+//        old(tok).consts().valid_ult(old(tok).thread()),
+//        old(tok).consts().valid_core(old(tok).core()), // TODO: ??
+//        old(tok).st().core_states[old(tok).core()] is Idle,
+//        old(tok).steps().len() > 0,
+//        old(tok).steps().first() == (RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ }),
+//        old(tok).progress() is Unready,
+//        old(tok).st().inv(old(tok).consts()),
+//    ensures
+//        tok.core() == old(tok).core(),
+//        tok.st().core_states[tok.core()] is MapWaiting,
+//        tok.st().core_states[tok.core()]->MapWaiting_ult_id == tok.thread(),
+//        tok.st().core_states[tok.core()]->MapWaiting_vaddr == vaddr as nat,
+//        tok.st().core_states[tok.core()]->MapWaiting_pte == pte@,
+//        //unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
+//        //tok.st().os_ext.lock == old(tok).st().os_ext.lock,
+//        tok.thread() == old(tok).thread(),
+//        tok.consts() == old(tok).consts(),
+//        tok.steps() == old(tok).steps().drop_first(),
+//        tok.progress() is Ready,
+//        tok.st().inv(tok.consts()),
+//{
+//    let state1 = tok.st();
+//    let core = tok.core();
+//    assert(core == tok.consts().ult2core[tok.thread()]);
+//    let pidx = tok.do_concurrent_trs();
+//    // TODO: This part is weird because according to the state machine this step we're taking
+//    // is unstable. But in practice it is stable (actually, no it's not really), it's just that
+//    // we use the core state to express that fact.. We probably just need to assume that the
+//    // first step is stable, which we can do by starting with progress as Ready
+//    //
+//    // Maybe we don't do mapstart in the implementation.. which would be a bit strange but
+//    // probably fine. then the first step (acquiring the lock) is actually stable. But then
+//    // we're not enforcing that the first step actually is that of acuiring the lock. Is that a
+//    // problem?
+//
+//    // This is provable actually.
+//    assume(tok.st().core_states[core] == state1.core_states[core]);
+//    assume(tok.st().inv(tok.consts()));
+//    //lemma_concurrent_trs(state1, tok.st(), tok.consts(), tok.core(), pidx);
+//    let state2 = tok.st();
+//    let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
+//    let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr as nat, pte@);
+//    let post = os::State {
+//        core_states: tok.st().core_states.insert(core, new_cs),
+//        sound: new_sound,
+//        ..tok.st()
+//    };
+//    let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
+//    assert(os::step_MapStart(tok.consts(), tok.st(), post, core, lbl));
+//    assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core: core }, lbl));
+//    tok.register_external_step(post);
+//    let state3 = tok.st();
+//    os_invariant::next_preserves_inv(tok.consts(), state2, state3, lbl);
+//    tok.do_concurrent_trs();
+//    let state4 = tok.st();
+//    //lemma_concurrent_trs(state3, state4, tok.consts(), tok.core(), pidx);
+//    assume(state4.core_states[core] == state3.core_states[core]);
+//    assume(state4.inv(tok.consts()));
+//}
+
+pub exec fn register_step_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(vaddr): Ghost<nat>, Ghost(pte): Ghost<PTE>)
     requires
-        os::step_Map_enabled(vaddr as nat, pte@),
+        os::step_Map_enabled(vaddr, pte),
         old(tok).consts().valid_ult(old(tok).thread()),
         old(tok).consts().valid_core(old(tok).core()), // TODO: ??
         old(tok).st().core_states[old(tok).core()] is Idle,
-        old(tok).steps().len() > 0,
-        old(tok).steps().first() == (RLbl::MapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat, pte: pte@ }),
+        old(tok).steps().len() == 2,
+        old(tok).steps().first() == (RLbl::MapStart { thread_id: old(tok).thread(), vaddr, pte }),
         old(tok).progress() is Unready,
         old(tok).st().inv(old(tok).consts()),
     ensures
         tok.core() == old(tok).core(),
-        tok.st().core_states[tok.core()] is MapWaiting,
-        tok.st().core_states[tok.core()]->MapWaiting_ult_id == tok.thread(),
-        tok.st().core_states[tok.core()]->MapWaiting_vaddr == vaddr as nat,
-        tok.st().core_states[tok.core()]->MapWaiting_pte == pte@,
-        unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
-        //tok.st().os_ext.lock == old(tok).st().os_ext.lock,
         tok.thread() == old(tok).thread(),
-        tok.consts() == old(tok).consts(),
-        tok.steps() == old(tok).steps().drop_first(),
+        tok.st().core_states[tok.core()] == (os::CoreState::MapExecuting { ult_id: tok.thread(), vaddr, pte }),
         tok.progress() is Ready,
-        tok.st().inv(tok.consts()),
-{
-    let state1 = tok.st();
-    let core = tok.core();
-    assert(core == tok.consts().ult2core[tok.thread()]);
-    let pidx = tok.do_concurrent_trs();
-    // TODO: This part is weird because according to the state machine this step we're taking
-    // is unstable. But in practice it is stable (actually, no it's not really), it's just that
-    // we use the core state to express that fact.. We probably just need to assume that the
-    // first step is stable, which we can do by starting with progress as Ready
-    //
-    // Maybe we don't do mapstart in the implementation.. which would be a bit strange but
-    // probably fine. then the first step (acquiring the lock) is actually stable. But then
-    // we're not enforcing that the first step actually is that of acuiring the lock. Is that a
-    // problem?
-    assume(tok.st().core_states[core] == state1.core_states[core]);
-    assume(tok.st().inv(tok.consts()));
-    //lemma_concurrent_trs(state1, tok.st(), tok.consts(), tok.core(), pidx);
-    let state2 = tok.st();
-    let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
-    let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr as nat, pte@);
-    let post = os::State {
-        core_states: tok.st().core_states.insert(core, new_cs),
-        sound: new_sound,
-        ..tok.st()
-    };
-    let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ };
-    assert(os::step_MapStart(tok.consts(), tok.st(), post, core, lbl));
-    assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core: core }, lbl));
-    tok.register_external_step(post);
-    let state3 = tok.st();
-    os_invariant::next_preserves_inv(tok.consts(), state2, state3, lbl);
-    tok.do_concurrent_trs();
-    let state4 = tok.st();
-    //lemma_concurrent_trs(state3, state4, tok.consts(), tok.core(), pidx);
-    assume(state4.core_states[core] == state3.core_states[core]);
-    assume(state4.inv(tok.consts()));
-    assume(unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()));
-}
-
-pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>)
-    requires
-        old(tok).consts().valid_ult(old(tok).thread()),
-        old(tok).thread() == old(tok).st().core_states[old(tok).core()]->MapWaiting_ult_id,
-        old(tok).st().core_states[old(tok).core()] is MapWaiting,
-        old(tok).steps().len() > 0,
-        old(tok).progress() is Ready,
-        old(tok).st().inv(old(tok).consts()),
-    ensures
-        tok.core() == old(tok).core(),
-        tok.thread() == old(tok).thread(),
-        old(tok).st().core_states[tok.core()] matches os::CoreState::MapWaiting { ult_id, vaddr, pte }
-            && tok.st().core_states[tok.core()] == (os::CoreState::MapExecuting { ult_id, vaddr, pte }),
-        tok.progress() is Ready,
-        unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
         tok.st().os_ext.lock == Some(tok.core()),
         tok.st().inv(tok.consts()),
         tok.consts() == old(tok).consts(),
-        tok.steps() == old(tok).steps(),
+        tok.steps() == old(tok).steps().drop_first(),
 {
-    let state1 = Ghost(tok.st());
-    let core = Ghost(tok.core());
-    assert(core@ == tok.consts().ult2core[tok.thread()]);
+    let ghost state1 = tok.st();
+    let ghost core = tok.core();
+    let ghost pidx = tok.do_concurrent_trs();
+    proof {
+        // TODO: Need a lemma_concurrent_trs to prove this when we don't hold the lock
+        assume(tok.st().core_states[core] == state1.core_states[core]);
+        assume(tok.st().inv(tok.consts()));
+        //lemma_concurrent_trs(state1, tok.st(), tok.consts(), tok.core(), pidx);
+        let state2 = tok.st();
+        let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr, pte };
+        let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr, pte);
+        let post = os::State {
+            core_states: tok.st().core_states.insert(core, new_cs),
+            sound: new_sound,
+            ..tok.st()
+        };
+        let lbl = RLbl::MapStart { thread_id: tok.thread(), vaddr, pte };
+        assert(os::step_MapStart(tok.consts(), tok.st(), post, core, lbl));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapStart { core: core }, lbl));
+        tok.register_external_step(post);
+        let state3 = tok.st();
+        os_invariant::next_preserves_inv(tok.consts(), state2, state3, lbl);
+        tok.do_concurrent_trs();
+        let state4 = tok.st();
+        //lemma_concurrent_trs(state3, state4, tok.consts(), tok.core(), pidx);
+        assume(state4.core_states[core] == state3.core_states[core]);
+        assume(state4.inv(tok.consts()));
+    }
+
+
+    let state5 = Ghost(tok.st());
+    assert(core == tok.consts().ult2core[tok.thread()]);
     let tracked mut osext_tok = tok.get_osext_token();
     proof {
         osext_tok.prophesy_acquire_lock();
-        let vaddr = tok.st().core_states[core@]->MapWaiting_vaddr;
-        let pte = tok.st().core_states[core@]->MapWaiting_pte;
+        let vaddr = tok.st().core_states[core]->MapWaiting_vaddr;
+        let pte = tok.st().core_states[core]->MapWaiting_pte;
         let new_cs = os::CoreState::MapExecuting { ult_id: tok.thread(), vaddr, pte };
         let post = os::State {
-            core_states: tok.st().core_states.insert(core@, new_cs),
+            core_states: tok.st().core_states.insert(core, new_cs),
             os_ext: osext_tok.post(),
             ..tok.st()
         };
         //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
-        assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core@, RLbl::Tau));
-        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core: core@ }, RLbl::Tau));
+        assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core: core }, RLbl::Tau));
         tok.register_internal_step_osext(&mut osext_tok, post);
-        os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
+        os_invariant::next_preserves_inv(tok.consts(), state5@, tok.st(), RLbl::Tau);
     }
 
     os_ext::code::acquire_lock(Tracked(&mut osext_tok));
-    let state2 = Ghost(tok.st());
+    let state6 = Ghost(tok.st());
 
     proof {
         tok.return_osext_token(osext_tok);
         let pidx = tok.do_concurrent_trs();
-        let state3 = Ghost(tok.st());
-        lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
+        let state7 = Ghost(tok.st());
+        lemma_concurrent_trs(state6@, state7@, tok.consts(), tok.core(), pidx);
     }
 }
+
+//pub exec fn do_step_mapopstart(Tracked(tok): Tracked<&mut Token>)
+//    requires
+//        old(tok).consts().valid_ult(old(tok).thread()),
+//        old(tok).thread() == old(tok).st().core_states[old(tok).core()]->MapWaiting_ult_id,
+//        old(tok).st().core_states[old(tok).core()] is MapWaiting,
+//        old(tok).steps().len() > 0,
+//        old(tok).progress() is Ready,
+//        old(tok).st().inv(old(tok).consts()),
+//    ensures
+//        tok.core() == old(tok).core(),
+//        tok.thread() == old(tok).thread(),
+//        old(tok).st().core_states[tok.core()] matches os::CoreState::MapWaiting { ult_id, vaddr, pte }
+//            && tok.st().core_states[tok.core()] == (os::CoreState::MapExecuting { ult_id, vaddr, pte }),
+//        tok.progress() is Ready,
+//        unchanged_state_during_concurrent_trs(old(tok).st(), tok.st()),
+//        tok.st().os_ext.lock == Some(tok.core()),
+//        tok.st().inv(tok.consts()),
+//        tok.consts() == old(tok).consts(),
+//        tok.steps() == old(tok).steps(),
+//{
+//    let state1 = Ghost(tok.st());
+//    let ghost core = tok.core();
+//    assert(core == tok.consts().ult2core[tok.thread()]);
+//    let tracked mut osext_tok = tok.get_osext_token();
+//    proof {
+//        osext_tok.prophesy_acquire_lock();
+//        let vaddr = tok.st().core_states[core]->MapWaiting_vaddr;
+//        let pte = tok.st().core_states[core]->MapWaiting_pte;
+//        let new_cs = os::CoreState::MapExecuting { ult_id: tok.thread(), vaddr, pte };
+//        let post = os::State {
+//            core_states: tok.st().core_states.insert(core, new_cs),
+//            os_ext: osext_tok.post(),
+//            ..tok.st()
+//        };
+//        //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
+//        assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
+//        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core: core }, RLbl::Tau));
+//        tok.register_internal_step_osext(&mut osext_tok, post);
+//        os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
+//    }
+//
+//    os_ext::code::acquire_lock(Tracked(&mut osext_tok));
+//    let state2 = Ghost(tok.st());
+//
+//    proof {
+//        tok.return_osext_token(osext_tok);
+//        let pidx = tok.do_concurrent_trs();
+//        let state3 = Ghost(tok.st());
+//        lemma_concurrent_trs(state2@, state3@, tok.consts(), tok.core(), pidx);
+//    }
+//}
 
 pub exec fn do_step_read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res: usize)
     requires
@@ -526,22 +608,22 @@ pub exec fn do_step_read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res
         res & MASK_NEG_DIRTY_ACCESS == tok.st().mmu@.pt_mem.read(addr) & MASK_NEG_DIRTY_ACCESS,
 {
     let state1 = Ghost(tok.st());
-    let core = Ghost(tok.core());
-    assert(core@ == tok.consts().ult2core[tok.thread()]);
-    assert(tok.consts().valid_core(core@));
+    let ghost core = tok.core();
+    assert(core == tok.consts().ult2core[tok.thread()]);
+    assert(tok.consts().valid_core(core));
     let tracked mut mmu_tok = tok.get_mmu_token();
     proof {
         mmu_tok.prophesy_read(addr);
-        let vaddr = tok.st().core_states[core@]->MapExecuting_vaddr;
-        let pte = tok.st().core_states[core@]->MapExecuting_pte;
+        let vaddr = tok.st().core_states[core]->MapExecuting_vaddr;
+        let pte = tok.st().core_states[core]->MapExecuting_pte;
         let post = os::State {
             mmu: mmu_tok.post(),
             ..tok.st()
         };
         let read_result = mmu_tok.lbl()->Read_2;
         assert(mmu::rl3::next(tok.st().mmu, post.mmu, tok.consts().mmu, mmu_tok.lbl()));
-        assert(os::step_ReadPTMem(tok.consts(), tok.st(), post, core@, addr, read_result, RLbl::Tau));
-        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::ReadPTMem { core: core@, paddr: addr, value: read_result }, RLbl::Tau));
+        assert(os::step_ReadPTMem(tok.consts(), tok.st(), post, core, addr, read_result, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::ReadPTMem { core: core, paddr: addr, value: read_result }, RLbl::Tau));
         tok.register_internal_step_mmu(&mut mmu_tok, post);
         os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
     }
@@ -553,8 +635,8 @@ pub exec fn do_step_read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res
         broadcast use to_rl1::next_refines;
         // TODO: This probably needs an additional invariant on the os state machine
         // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
-        assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
-        assert(state1@.os_ext.lock == Some(core@));
+        assume(state1@.mmu@.is_tso_read_deterministic(core, addr));
+        assert(state1@.os_ext.lock == Some(core));
         tok.return_mmu_token(mmu_tok);
         let pidx = tok.do_concurrent_trs();
         let state3 = Ghost(tok.st());
@@ -592,7 +674,7 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
         tok.steps() == old(tok).steps(),
 {
     let state1 = Ghost(tok.st());
-    let core = Ghost(tok.core());
+    let ghost core = tok.core();
     let tracked mut mmu_tok = tok.get_mmu_token();
     proof {
         broadcast use to_rl1::next_refines;
@@ -601,8 +683,8 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
         assume(!state1@.mmu@.writes.all.is_empty() ==> core == state1@.mmu@.writes.core);
 
         mmu_tok.prophesy_write(addr, value);
-        let vaddr = tok.st().core_states[core@]->MapExecuting_vaddr;
-        let pte = tok.st().core_states[core@]->MapExecuting_pte;
+        let vaddr = tok.st().core_states[core]->MapExecuting_vaddr;
+        let pte = tok.st().core_states[core]->MapExecuting_pte;
         let post = os::State { mmu: mmu_tok.post(), ..tok.st() };
         // TODO: Need to think about how to resolve this. Hopefully can use the pt_mem view everywhere.
         assume(usize_keys(state1@.interp_pt_mem()) == old(tok).st().mmu@.pt_mem@);
@@ -616,8 +698,8 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
         //) === map![]);
         //assert(tok.st().mmu@.pending_maps == old(tok).st().mmu@.pending_maps);
         assert(mmu::rl3::next(tok.st().mmu, post.mmu, tok.consts().mmu, mmu_tok.lbl()));
-        assert(os::step_MapOpStutter(tok.consts(), tok.st(), post, core@, addr, value, RLbl::Tau));
-        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStutter { core: core@, paddr: addr, value }, RLbl::Tau));
+        assert(os::step_MapOpStutter(tok.consts(), tok.st(), post, core, addr, value, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStutter { core: core, paddr: addr, value }, RLbl::Tau));
         tok.register_internal_step_mmu(&mut mmu_tok, post);
         os_invariant::next_preserves_inv(tok.consts(), state1@, tok.st(), RLbl::Tau);
     }
@@ -628,8 +710,8 @@ pub exec fn do_step_write_stutter(Tracked(tok): Tracked<&mut Token>, addr: usize
     proof {
         // TODO: This probably needs an additional invariant on the os state machine
         // Something like this: is_in_crit_sect(core) && writes nonempty ==> writes.core == core
-        //assume(state1@.mmu@.is_tso_read_deterministic(core@, addr));
-        assert(state1@.os_ext.lock == Some(core@));
+        //assume(state1@.mmu@.is_tso_read_deterministic(core, addr));
+        assert(state1@.os_ext.lock == Some(core));
         tok.return_mmu_token(mmu_tok);
         let pidx = tok.do_concurrent_trs();
         let state3 = Ghost(tok.st());

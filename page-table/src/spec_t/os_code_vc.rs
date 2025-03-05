@@ -140,8 +140,8 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
         post.core_states[core] == pre.core_states[core],
         post.inv(c),
 {
-    let pred =
-        |pre: os::State, post: os::State| pre.inv(c) && pre.os_ext.lock == Some(core) ==> {
+    let pred = |pre: os::State, post: os::State|
+        pre.inv(c) && pre.os_ext.lock == Some(core) ==> {
             &&& unchanged_state_during_concurrent_trs(pre, post)
             &&& post.core_states[core] == pre.core_states[core]
             &&& post.os_ext.lock == pre.os_ext.lock
@@ -217,7 +217,6 @@ impl Token {
     }
 
 
-    #[verifier(external_body)] // axiom
     pub proof fn do_concurrent_trs(tracked &mut self) -> (pidx: nat)
         requires
             old(self).progress() is Unready,
@@ -227,7 +226,7 @@ impl Token {
             self.thread() == old(self).thread(),
             self.steps() == old(self).steps(),
             concurrent_trs(old(self).st(), self.st(), old(self).consts(), old(self).core(), pidx),
-    { unimplemented!() }
+    { admit(); arbitrary() } // axiom
 
 
 
