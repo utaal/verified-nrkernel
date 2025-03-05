@@ -332,8 +332,8 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
         },
         os::Step::MapNoOp { core } => {
             if s1.sound {
-                admit();
-                //step_MapEnd_refines(c, s1, s2, core, paddr, value, result);
+                assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
+                lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
             }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
@@ -501,12 +501,12 @@ proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, c
     };
 }
 
-/*
-proof fn step_MapOpEnd_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, paddr: usize, value: usize, result: Result<(), ()>,  lbl: RLbl)
+
+proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, paddr: usize, value: usize,  lbl: RLbl)
     requires
         s1.inv(c),
         s2.inv(c),
-        os::step_MapOpEnd(c, s1, s2, core, paddr, value, result, lbl),
+        os::step_MapOpChange(c, s1, s2, core, paddr, value, lbl),
         s1.sound,
     ensures
         hlspec::step_Stutter(c.interp(), s1.interp(c), s2.interp(c), lbl)
@@ -521,9 +521,6 @@ proof fn step_MapOpEnd_refines(c: os::Constants, s1: os::State, s2: os::State, c
     assume(hl_s1.thread_state === hl_s2.thread_state);
     assume(hl_s2.mappings === hl_s1.mappings);
     admit();
-
-
-    
 
     /*
     let ult_id = s1.core_states[core]->MapDone_ult_id;
@@ -863,7 +860,6 @@ proof fn step_MapOpEnd_refines(c: os::Constants, s1: os::State, s2: os::State, c
     }
 */
 }
-*/
 
 
 proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
