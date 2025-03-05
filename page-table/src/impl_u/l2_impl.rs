@@ -4,10 +4,10 @@ use vstd::assert_by_contradiction;
 
 use crate::spec_t::mmu::defs::{ MemRegion, MemRegionExec, PTE, PageTableEntryExec, Flags,
 x86_arch_exec, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
-L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
+L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc, usize_keys };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ between, aligned, new_seq, x86_arch_spec,
-axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem };
+axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem_usize };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
 use crate::impl_u::l1;
@@ -756,6 +756,10 @@ pub open spec fn interp(tok: WrappedMapTokenView, pt: PTDir) -> l1::Directory {
     interp_at(tok, pt, 0, tok.pt_mem.pml4, 0)
 }
 
+pub open spec fn interp_to_l0(tok: WrappedMapTokenView, pt: PTDir) -> Map<usize, PTE> {
+    usize_keys(interp(tok, pt).interp().map)
+}
+
 proof fn lemma_inv_at_different_memory(tok1: WrappedMapTokenView, tok2: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize)
     requires
         inv_at(tok1, pt, layer, ptr),
@@ -1005,7 +1009,7 @@ fn map_frame_aux(
         //old(tok)@.alloc_available_pages() >= 3 - layer,
         accepted_mapping(vaddr as nat, pte@),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).accepted_mapping(vaddr as nat, pte@),
-        old(tok)@.args == (vaddr as nat, pte@),
+        old(tok)@.args == (vaddr, pte@),
         base <= vaddr < MAX_BASE,
         forall|tok_new, pt_new, new_regions|
            #[trigger] builder_pre(old(tok)@, pt, tok_new, pt_new, layer as nat, ptr, new_regions)
@@ -1517,11 +1521,11 @@ fn map_frame_aux(
                 // The old and new interps match the MMU interp.
                 // We need this because the `write_change` precondition is expressed in terms of
                 // the MMU interp.
-                assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map == old(tok)@.interp()) by {
+                assert(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])) == old(tok)@.interp()) by {
                     assert(builder_pre(old(tok)@, pt, old(tok)@, pt, layer as nat, ptr, set![]));
                     old(tok)@.lemma_interps_match(rebuild_root_pt(pt, set![]));
                 };
-                assert(interp(tok_after_write, rebuild_root_pt(pt, set![])).interp().map == tok_after_write.interp()) by {
+                assert(interp_to_l0(tok_after_write, rebuild_root_pt(pt, set![])) == tok_after_write.interp()) by {
                     tok_after_write.lemma_interps_match(rebuild_root_pt(pt, set![]));
                 };
                 // TODO: These need to be part of the properties the builder provides i think
@@ -1541,12 +1545,12 @@ fn map_frame_aux(
                 interp(old(tok)@, rebuild_root_pt(pt, set![])).lemma_accepted_mapping_implies_interp_accepted_mapping_manual(vaddr as nat, pte@);
                 //assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().accepted_mapping(vaddr as nat, pte@));
                 assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().valid_mapping(vaddr as nat, pte@));
-                assert(!candidate_mapping_overlaps_existing_vmem(tok@.interp(), vaddr as nat, pte@));
+                assert(!candidate_mapping_overlaps_existing_vmem_usize(tok@.interp(), vaddr, pte@));
                 //assert(
                 //    interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map_frame(vaddr as nat, pte@).get_Ok_0().map
                 //        === interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map.insert(vaddr as nat, pte@)
                 //);
-                assert(tok_after_write.interp() == tok@.interp().insert(vaddr as nat, pte@));
+                assert(tok_after_write.interp() == tok@.interp().insert(vaddr, pte@));
             }
             WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region));
 
@@ -1965,7 +1969,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         interp(old(tok)@, old(pt)@).accepted_mapping(vaddr as nat, pte@),
         vaddr < MAX_BASE,
         pml4 == old(tok)@.pt_mem.pml4,
-        old(tok)@.args == (vaddr as nat, pte@),
+        old(tok)@.args == (vaddr, pte@),
     ensures
         inv(tok@, pt@),
         interp(tok@, pt@).inv(),
