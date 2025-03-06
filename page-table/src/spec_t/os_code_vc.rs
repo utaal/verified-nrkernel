@@ -203,6 +203,7 @@ impl Token {
     pub spec fn st(self) -> os::State;
     pub spec fn steps(self) -> Seq<RLbl>;
     pub spec fn progress(self) -> Progress;
+    pub spec fn on_first_step(self) -> bool;
 
     pub open spec fn core(self) -> Core {
         self.consts().ult2core[self.thread()]
@@ -214,6 +215,7 @@ impl Token {
         &&& new.st() == self.st()
         &&& new.steps() == self.steps()
         &&& new.progress() is TokenWithdrawn
+        &&& new.on_first_step() == self.on_first_step()
     }
 
 
@@ -225,6 +227,7 @@ impl Token {
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.steps() == old(self).steps(),
+            self.on_first_step() == old(self).on_first_step(),
             concurrent_trs(old(self).st(), self.st(), old(self).consts(), old(self).core(), pidx),
     { admit(); arbitrary() } // axiom
 
@@ -235,6 +238,7 @@ impl Token {
     #[verifier(external_body)] // axiom
     pub proof fn get_mmu_token(tracked &mut self) -> (tracked tok: mmu::rl3::code::Token)
         requires
+            !old(self).on_first_step(),
             old(self).steps().len() > 0,
             old(self).progress() is Ready,
         ensures
@@ -256,6 +260,7 @@ impl Token {
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(tok).post(),
         ensures
+            self.on_first_step() == old(self).on_first_step(),
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.st() == post,
@@ -275,6 +280,7 @@ impl Token {
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(tok).post(),
         ensures
+            self.on_first_step() == old(self).on_first_step(),
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.st() == post,
@@ -286,6 +292,7 @@ impl Token {
     pub proof fn return_mmu_token(tracked &mut self, tracked tok: mmu::rl3::code::Token)
         requires tok.tstate() is Spent,
         ensures
+            self.on_first_step() == old(self).on_first_step(),
             self.thread() == old(self).thread(),
             self.consts() == old(self).consts(),
             self.st() == old(self).st(),
@@ -300,6 +307,7 @@ impl Token {
     #[verifier(external_body)]
     pub proof fn get_osext_token(tracked &mut self) -> (tracked tok: os_ext::code::Token)
         requires
+            !old(self).on_first_step(),
             old(self).steps().len() > 0,
             old(self).progress() is Ready,
         ensures
@@ -321,6 +329,7 @@ impl Token {
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
         ensures
+            self.on_first_step() == old(self).on_first_step(),
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.st() == post,
@@ -340,6 +349,7 @@ impl Token {
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
         ensures
+            self.on_first_step() == old(self).on_first_step(),
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.st() == post,
@@ -351,6 +361,7 @@ impl Token {
     pub proof fn return_osext_token(tracked &mut self, tracked tok: os_ext::code::Token)
         requires tok.tstate() is Spent,
         ensures
+            self.on_first_step() == old(self).on_first_step(),
             self.thread() == old(self).thread(),
             self.consts() == old(self).consts(),
             self.st() == old(self).st(),
@@ -367,6 +378,7 @@ impl Token {
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(self).st().mmu,
         ensures
+            !self.on_first_step(),
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.st() == post,
@@ -383,11 +395,13 @@ pub trait CodeVC {
     // refer in the requires clause.
     exec fn sys_do_map(
         Tracked(tok): Tracked<Token>,
+        pml4: usize,
         vaddr: usize,
         pte: PageTableEntryExec,
         tracked proph_res: Prophecy<Result<(),()>>
     ) -> (res: (Result<(),()>, Tracked<Token>))
         requires
+            // State machine VC preconditions
             os::step_Map_enabled(vaddr as nat, pte@),
             tok.st().inv(tok.consts()),
             tok.consts().valid_ult(tok.thread()),
@@ -396,8 +410,11 @@ pub trait CodeVC {
                 RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ },
                 RLbl::MapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
+            tok.on_first_step(),
             tok.progress() is Unready,
+            // Caller preconditions
             proph_res.may_resolve(),
+            pml4 == tok.st().mmu@.pt_mem.pml4,
         ensures
             res.0 == proph_res.value(),
             res.1@.steps() === seq![],
@@ -421,6 +438,7 @@ pub trait CodeVC {
                 RLbl::UnmapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat },
                 RLbl::UnmapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
+            old(tok).on_first_step(),
             old(tok).progress() is Unready,
             proph_res.may_resolve(),
         ensures

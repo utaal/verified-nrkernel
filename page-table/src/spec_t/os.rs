@@ -882,8 +882,17 @@ impl State {
         &&& self.mmu@.happy
     }
 
+    pub open spec fn inv_write_core(self, c: Constants) -> bool {
+        forall|core|
+            #[trigger] c.valid_core(core)
+            && self.core_states[core].is_in_crit_sect()
+            && self.mmu@.writes.all !== set![]
+                ==> self.mmu@.writes.core == core
+    }
+
     pub open spec fn inv(self, c: Constants) -> bool {
         &&& self.inv_basic(c)
+        &&& self.inv_write_core(c)
         //&&& self.tlb_inv(c)
         &&& self.overlapping_vmem_inv(c)
     }
