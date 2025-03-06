@@ -360,14 +360,15 @@ pub mod code {
         unimplemented!() // TODO:
     }
 
-    // External interface to the 
-    #[cfg(not(feature="standalone"))]
+
+    // External interface to the  memory allocation of the linux module
+    #[cfg(feature="linuxmodule")]
     extern "C" {
         fn pt_memory_alloc(sz: usize, align: u64, level: u8) -> u64;
         fn pt_memory_free(pa: u64, sz: usize, level: u8);
     }
 
-    #[cfg(feature="standalone")]
+    #[cfg(not(feature="linuxmodule"))]
     #[verifier(external_body)]
     unsafe fn pt_memory_alloc(sz: usize, align: u64, level: u8) -> u64 {
         let layout = std::alloc::Layout::from_size_align_unchecked(sz, PAGE_SIZE);
@@ -378,7 +379,7 @@ pub mod code {
         ptr as u64
     }
 
-    #[cfg(feature="standalone")]
+    #[cfg(not(feature="linuxmodule"))]
     #[verifier(external_body)]
     unsafe fn pt_memory_free(pa: u64, sz: usize, level: u8) {
         let layout = std::alloc::Layout::from_size_align_unchecked(sz, PAGE_SIZE);
