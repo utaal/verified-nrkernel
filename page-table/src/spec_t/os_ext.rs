@@ -338,15 +338,30 @@ pub mod code {
         unimplemented!() // TODO:
     }
 
+    // External interface to the  memory allocation of the linux module
+    #[cfg(feature="linuxmodule")]
+    extern "C" {
+        fn flush_tlb_mm_range(mm: *const c_void, start: u64, end: u64, stride: u64, freed_tables: bool);
+        fn flush_tlb_page(start: u64, page_size: u64);
+    }
+
+    /// initiates a shootdown for a given virtual page of a given size
+    /// 
+    /// this only covers tlb invalidations of a single page
     #[verifier(external_body)]
-    pub exec fn init_shootdown(Tracked(tok): Tracked<&mut Token>, vaddr: usize)
+    pub exec fn init_shootdown(Tracked(tok): Tracked<&mut Token>, vaddr: usize, size: usize)
         requires
             old(tok).tstate() is Validated,
             old(tok).lbl() == (os_ext::Lbl::InitShootdown { core: old(tok).core(), vaddr: vaddr as nat }),
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        // on linux this is a blocking call to flush the TLB for the given page. 
+        #[cfg(feature="linuxmodule")]
+        flush_tlb_page(vaddr as u64, size);
+
+        // #[cfg(not(feature="linuxmodule"))]
+        // implementation of the shootdown is not necessary if we run this as an standalone module
     }
 
     #[verifier(external_body)]
@@ -357,7 +372,11 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        // #[cfg(feature="linuxmodule")]
+        // implementation of the shootdown acknowledgement in Linux is not necessary, as `flush_tlb_page` is blocking. 
+        
+        // #[cfg(not(feature="linuxmodule"))]
+        // implementation for the standalone module is not neccessary as this runs in user space.
     }
 
 
