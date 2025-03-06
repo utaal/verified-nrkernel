@@ -427,6 +427,7 @@ pub trait CodeVC {
     // used to map the frame in the first place. 
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<&mut Token>,
+        pml4: usize,
         core: Core,
         vaddr: usize,
         tracked proph_res: Prophecy<Result<(),()>>

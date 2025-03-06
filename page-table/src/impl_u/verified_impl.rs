@@ -44,6 +44,7 @@ impl CodeVC for PT {
     #[verifier(external_body)]
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<&mut Token>,
+        pml4: usize,
         core: Core,
         vaddr: usize,
         tracked proph_res: Prophecy<Result<(),()>>
