@@ -24,11 +24,23 @@ pub struct State {
     /// Per-node state (TLBs)
     pub tlbs: Map<Core, Map<usize, PTE>>,
     pub writes: Writes,
-    /// Tracks the virtual address ranges for which we cannot guarantee atomic walk results
-    /// If polarity is negative, we give no guarantees about the results in these ranges; If it's
-    /// positive, the possible results are atomic semantics or an "invalid" result.
-    /// Each element is a tuple `(vbase, size)`
+    /// Tracks the virtual addresses and entries for which we may see non-atomic results.
+    /// If polarity is positive, translations may non-atomically fail.
+    /// If polarity is negative, translations may non-atomically succeed.
     pub pending_maps: Map<usize, PTE>,
+    pub pending_unmaps: Map<usize, PTE>,
+    pub polarity: Polarity,
+}
+
+pub enum Polarity {
+    Mapping,
+    Unmapping
+}
+
+impl Polarity {
+    pub open spec fn flip(self) -> Polarity {
+        if self is Mapping { Polarity::Unmapping } else { Polarity::Mapping }
+    }
 }
 
 pub enum Step {
@@ -44,8 +56,11 @@ pub enum Step {
     MemOpTLB { tlb_va: usize },
     TLBFill { core: Core, vaddr: usize },
     TLBEvict { core: Core, tlb_va: usize },
+    // Non-atomic TLB fill after an unmap
+    TLBFillNA { core: Core, vaddr: usize },
     // TSO
-    Write,
+    WriteNonneg,
+    WriteNonpos,
     Read,
     Barrier,
     SadWrite,
@@ -55,13 +70,24 @@ pub enum Step {
 
 
 impl State {
-    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize) -> bool {
-        &&& !self.writes.all.is_empty() ==> core == self.writes.core
-        &&& self.pt_mem.is_nonneg_write(addr, value)
+    pub open spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, pol: Polarity) -> bool {
+        &&& !self.writes.tso.is_empty() ==> core == self.writes.core
+        &&& if pol is Mapping {
+                self.pt_mem.is_nonneg_write(addr, value)
+            } else {
+                self.pt_mem.is_nonpos_write(addr, value)
+            }
     }
 
     pub open spec fn is_tso_read_deterministic(self, core: Core, addr: usize) -> bool {
-        self.writes.all.contains(addr) ==> self.writes.core == core
+        self.writes.tso.contains(addr) ==> self.writes.core == core
+    }
+
+    pub open spec fn can_flip_polarity(self) -> bool {
+        &&& self.happy
+        &&& self.pending_maps === map![]
+        &&& self.pending_unmaps === map![]
+        &&& self.writes.tso === set![]
     }
 
     //pub open spec fn wf(self, c: Constants) -> bool {
@@ -75,6 +101,20 @@ impl State {
     //}
 }
 
+//pub open spec fn step_FlipPolarity(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+//    &&& lbl is Tau
+//
+//    &&& pre.happy
+//    &&& pre.pending_maps === map![]
+//    &&& pre.pending_unmaps === map![]
+//    &&& pre.writes.tso === set![]
+//
+//    &&& post == State {
+//        polarity: pre.polarity.flip(),
+//        ..pre
+//    }
+//}
+
 // ---- Mixed (relevant to multiple of TSO/Cache/Non-Atomic) ----
 
 pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -85,7 +125,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
     &&& post == State {
         writes: Writes {
-            all: if core == pre.writes.core { set![] } else { pre.writes.all },
+            tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
             //neg: pre.writes.neg.insert(core, set![]),
             core: pre.writes.core,
         },
@@ -108,6 +148,7 @@ pub open spec fn step_MemOpNoTr(pre: State, post: State, c: Constants, lbl: Lbl)
 pub open spec fn step_MemOpNoTrNA(pre: State, post: State, c: Constants, vbase: usize, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::MemOp(core, vaddr, memop)
     &&& pre.happy
+    &&& pre.polarity is Mapping
 
     &&& c.valid_core(core)
     &&& pre.pending_maps.contains_key(vbase)
@@ -165,7 +206,7 @@ pub open spec fn step_MemOpTLB(
 
 // ---- Non-atomic page table walks ----
 
-/// A TLB fill in response to an atomic page table walk
+/// A TLB fill resulting from an atomic page table walk
 pub open spec fn step_TLBFill(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
     &&& lbl is Tau
     &&& pre.happy
@@ -192,29 +233,74 @@ pub open spec fn step_TLBEvict(pre: State, post: State, c: Constants, core: Core
     }
 }
 
+/// A TLB fill resulting from a non-atomic page table walk
+pub open spec fn step_TLBFillNA(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
+    let pte = pre.pending_unmaps[vaddr];
+    &&& lbl is Tau
+    &&& pre.happy
+    &&& pre.polarity is Unmapping
+
+    &&& c.valid_core(core)
+    &&& pre.pending_unmaps.contains_key(vaddr)
+
+    &&& post == State {
+        tlbs: pre.tlbs.insert(core, pre.tlbs[core].insert(vaddr, pte)),
+        ..pre
+    }
+}
+
 
 
 // ---- TSO ----
 
-/// Write to core's local store buffer.
-pub open spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Write(core, addr, value)
 
     &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
-    &&& pre.is_this_write_happy(core, addr, value)
+    &&& pre.is_this_write_happy(core, addr, value, Polarity::Mapping)
+    &&& pre.polarity is Mapping || pre.can_flip_polarity()
 
     &&& post.happy      == pre.happy
     &&& post.phys_mem   == pre.phys_mem
     &&& post.pt_mem     == pre.pt_mem.write(addr, value)
     &&& post.tlbs       == pre.tlbs
-    &&& post.writes.all == pre.writes.all.insert(addr)
+    &&& post.writes.tso == pre.writes.tso.insert(addr)
     &&& post.writes.core == core
+    &&& post.polarity == Polarity::Mapping
     //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
     //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
     //    } else { pre.writes.neg }
     &&& post.pending_maps == pre.pending_maps.union_prefer_right(
+        Map::new(
+            |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
+            |vbase| post.pt_mem@[vbase]
+        ))
+    &&& post.pending_unmaps == pre.pending_unmaps
+}
+
+pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::Write(core, addr, value)
+
+    &&& pre.happy
+    &&& c.valid_core(core)
+    &&& aligned(addr as nat, 8)
+    &&& pre.is_this_write_happy(core, addr, value, Polarity::Unmapping)
+    &&& pre.polarity is Unmapping || pre.can_flip_polarity()
+
+    &&& post.happy      == pre.happy
+    &&& post.phys_mem   == pre.phys_mem
+    &&& post.pt_mem     == pre.pt_mem.write(addr, value)
+    &&& post.tlbs       == pre.tlbs
+    &&& post.writes.tso == pre.writes.tso.insert(addr)
+    &&& post.writes.core == core
+    &&& post.polarity == Polarity::Unmapping
+    //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
+    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
+    //    } else { pre.writes.neg }
+    &&& post.pending_maps == pre.pending_maps
+    &&& post.pending_unmaps == pre.pending_unmaps.union_prefer_right(
         Map::new(
             |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
             |vbase| post.pt_mem@[vbase]
@@ -233,8 +319,6 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& post == pre
 }
 
-/// The `step_Barrier` transition corresponds to any serializing instruction. This includes
-/// `mfence` and `iret`.
 pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Barrier(core)
 
@@ -243,7 +327,7 @@ pub open spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl) -
 
     &&& post == State {
         writes: Writes {
-            all: if core == pre.writes.core { set![] } else { pre.writes.all },
+            tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
             ..pre.writes
         },
         pending_maps: if core == pre.writes.core { map![] } else { pre.pending_maps },
@@ -259,8 +343,11 @@ pub open spec fn step_Stutter(pre: State, post: State, c: Constants, lbl: Lbl) -
 pub open spec fn step_SadWrite(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     // If we do a write without fulfilling the right conditions, we set happy to false.
     &&& lbl matches Lbl::Write(core, addr, value)
-    &&& !pre.is_this_write_happy(core, addr, value)
+    &&& {
+    let polarity = if value & 1 == 1 { Polarity::Mapping } else { Polarity::Unmapping };
+    &&& !pre.is_this_write_happy(core, addr, value, polarity)
     &&& !post.happy
+    }
 }
 
 pub open spec fn step_Sadness(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -277,7 +364,9 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::MemOpTLB { tlb_va }       => step_MemOpTLB(pre, post, c, tlb_va, lbl),
         Step::TLBFill { core, vaddr }   => step_TLBFill(pre, post, c, core, vaddr, lbl),
         Step::TLBEvict { core, tlb_va } => step_TLBEvict(pre, post, c, core, tlb_va, lbl),
-        Step::Write                     => step_Write(pre, post, c, lbl),
+        Step::TLBFillNA { core, vaddr } => step_TLBFillNA(pre, post, c, core, vaddr, lbl),
+        Step::WriteNonneg               => step_WriteNonneg(pre, post, c, lbl),
+        Step::WriteNonpos               => step_WriteNonpos(pre, post, c, lbl),
         Step::Read                      => step_Read(pre, post, c, lbl),
         Step::Barrier                   => step_Barrier(pre, post, c, lbl),
         Step::SadWrite                  => step_SadWrite(pre, post, c, lbl),
@@ -292,10 +381,10 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
 
 pub open spec fn init(pre: State, c: Constants) -> bool {
     //&&& pre.pt_mem == ..
+    &&& pre.happy
     &&& pre.tlbs === Map::new(|core| c.valid_core(core), |core| map![])
-    &&& pre.happy == true
     //&&& pre.writes.core == ..
-    &&& pre.writes.all === set![]
+    &&& pre.writes.tso === set![]
     &&& pre.pending_maps === map![]
 
     &&& c.valid_core(pre.writes.core)

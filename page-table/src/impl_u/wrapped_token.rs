@@ -230,11 +230,12 @@ impl WrappedMapToken {
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
             broadcast use to_rl1::next_refines;
-            assert(!state1.mmu@.writes.all.is_empty() ==> core == state1.mmu@.writes.core);
+            assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
             mmu_tok.prophesy_write(addr, value);
             let post = os::State { mmu: mmu_tok.post(), ..tok.tok.st() };
 
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             assert(os::step_MapOpStutter(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpStutter { core: core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -289,7 +290,7 @@ impl WrappedMapToken {
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
             broadcast use to_rl1::next_refines;
-            assert(!state1.mmu@.writes.all.is_empty() ==> core == state1.mmu@.writes.core);
+            assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
             mmu_tok.prophesy_write(addr, value);
             let vaddr = tok@.args.0 as nat;
             let pte = tok@.args.1;
@@ -305,6 +306,7 @@ impl WrappedMapToken {
             };
 
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core: core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
