@@ -846,6 +846,7 @@ pub mod code {
     use crate::theorem::TokState;
     #[cfg(verus_keep_ghost)]
     use crate::spec_t::mmu::defs::{ aligned };
+    use core::arch::asm;
 
     #[verifier(external_body)]
     pub tracked struct Token {}
@@ -920,6 +921,28 @@ pub mod code {
         }
     }
 
+    // External interface to the  memory allocation of the linux module
+    #[cfg(feature="linuxmodule")]
+    extern "C" {
+        fn mem_to_local_phys(va: usize) -> usize;
+        fn local_phys_to_mem(pa: usize) -> usize;
+    }
+
+    /// standalone virtual -> physical address translation
+    /// note we do label it as unsafe as the C version is unsafe
+    #[cfg(not(feature="linuxmodule"))]
+    unsafe fn mem_to_local_phys(va: usize) -> usize {
+        va
+    }
+
+    /// standaline physical -> virtual address translation
+    /// note we do label it as unsafe as the C version is unsafe
+    #[cfg(not(feature="linuxmodule"))]
+    unsafe fn local_phys_to_mem(pa: usize) -> usize {
+        pa
+    }
+
+    /// reads from the memory location given by the physical address in `addr`
     #[verifier(external_body)]
     pub exec fn read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res: usize)
         requires
@@ -930,9 +953,13 @@ pub mod code {
             tok.tstate() is Spent,
             res == old(tok).lbl()->Read_2,
     {
-        unimplemented!() // TODO:
+        unsafe { 
+            let vaddr_ptr : *const usize = local_phys_to_mem(addr) as *const usize;
+            *vaddr_ptr
+        }
     }
 
+    /// writes to the memory location given by the physical address in `addr`
     #[verifier(external_body)]
     pub exec fn write(Tracked(tok): Tracked<&mut Token>, addr: usize, value: usize)
         requires
@@ -941,9 +968,13 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { 
+            let vaddr_ptr : *mut usize = local_phys_to_mem(addr) as *mut usize;
+            *vaddr_ptr = value;
+        }
     }
 
+    /// performs a fence instructions to garantee ordering
     #[verifier(external_body)]
     pub exec fn barrier(Tracked(tok): Tracked<&mut Token>)
         requires
@@ -952,9 +983,11 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { asm!("mfence") };
+        // unsafe { asm!("sfence") };
     }
 
+    /// invalidates the TLB on the local core
     #[verifier(external_body)]
     pub exec fn invlpg(Tracked(tok): Tracked<&mut Token>, vaddr: usize)
         requires
@@ -963,7 +996,13 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        #[cfg(feature="linuxmodule")]
+        unsafe {
+            // note: to execute this instruction we need to be on x86 ring 0. 
+            asm!("invlpg ({})", in(reg) vaddr, options(att_syntax, nostack, preserves_flags));
+        }
+        // #[cfg(not(feature="linuxmodule"))]
+        // this is a no-op in standalone mode
     }
 
     // TODO: need transitions to allocate/deallocate pages i guess
