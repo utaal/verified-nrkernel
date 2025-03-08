@@ -424,7 +424,8 @@ pub trait CodeVC {
     // TODO:
     // Here, we would need to return somehow the address of the frame that was mapped so we can 
     // free it afterwards. In theory, we should be able to return the PageTableEntryExec that was 
-    // used to map the frame in the first place. 
+    // used to map the frame in the first place. We should do this at least as a "hint", or at 
+    // best as a full verifid return value
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<&mut Token>,
         pml4: usize,
