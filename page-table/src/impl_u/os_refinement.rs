@@ -552,7 +552,18 @@ proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, c
             assert(s2.interp_thread_state(c).values().contains(threadstate));
         }
         assert(s1.inflight_unmap_vaddr() =~= s2.inflight_unmap_vaddr());
-        assume(s1.inflight_vaddr() =~= s2.inflight_vaddr());
+        assert(s1.inflight_vaddr() =~= s2.inflight_vaddr()) by {
+            assert(s2.inflight_vaddr().subset_of(s1.inflight_vaddr()));
+            assert forall|v| s1.inflight_vaddr().contains(v) implies s2.inflight_vaddr().contains(v) by {
+                    if (!s1.inflight_unmap_vaddr().contains(v)) {
+                        let map_core = choose|core| s1.core_states.contains_key(core) && s1.core_states[core] matches os::CoreState::MapDone {ult_id, vaddr:v, result: Ok(()), .. };
+                        assert(s2.core_states.contains_key(map_core));
+                        assert(s2.interp_pt_mem().contains_key(v));
+                    }
+                }
+            assert(s1.inflight_vaddr().subset_of(s2.inflight_vaddr()));
+        }
+        assert(s1.effective_mappings() =~= s2.effective_mappings());
         assert(hl_s2.mappings === hl_s1.mappings);
         assert(hl_s2.mem === hl_s1.mem);
         assert(hlspec::state_unchanged_besides_thread_state(
