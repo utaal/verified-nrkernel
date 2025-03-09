@@ -828,10 +828,10 @@ proof fn lemma_interp_at_entry_different_memory(tok1: WrappedMapTokenView, pt1: 
     }
 }
 
-pub proof fn lemma_interp_at_facts(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat)
+pub proof fn lemma_interp_at_facts(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, ne: bool)
     requires
         inv_at(tok, pt, layer, ptr),
-        interp_at(tok, pt, layer, ptr, base_vaddr).inv(),
+        interp_at(tok, pt, layer, ptr, base_vaddr).inv(ne),
     ensures
         interp_at(tok, pt, layer, ptr, base_vaddr).base_vaddr     == base_vaddr,
         interp_at(tok, pt, layer, ptr, base_vaddr).upper_vaddr()  == x86_arch_spec.upper_vaddr(layer, base_vaddr),
@@ -846,10 +846,10 @@ pub proof fn lemma_interp_at_facts(tok: WrappedMapTokenView, pt: PTDir, layer: n
     assert(res.pages_match_entry_size());
     assert(res.directories_are_in_next_layer());
     assert(res.directories_match_arch());
-    assert(res.directories_obey_invariant());
-    assert(res.directories_are_nonempty());
+    assert(res.directories_obey_invariant(ne));
+    //assert(res.directories_are_nonempty());
     assert(res.frames_aligned());
-    res.lemma_inv_implies_interp_inv();
+    res.lemma_inv_implies_interp_inv(ne);
 }
 
 proof fn lemma_interp_at_aux_facts(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
@@ -1004,7 +1004,7 @@ fn map_frame_aux(
     ) -> (res: Result<Ghost<(PTDir,Set<MemRegion>)>,()>)
     requires
         inv_at(old(tok)@, pt, layer as nat, ptr),
-        interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(),
+        interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(true),
         old(tok).inv(),
         //old(tok)@.alloc_available_pages() >= 3 - layer,
         accepted_mapping(vaddr as nat, pte@),
@@ -1065,7 +1065,8 @@ fn map_frame_aux(
     proof {
         broadcast use lemma_bitvector_facts_simple;
         broadcast use lemma_union_empty;
-        lemma_interp_at_facts(tok@, pt, layer as nat, ptr, base as nat);
+        broadcast use l1::lemma_inv_true_implies_inv_false;
+        lemma_interp_at_facts(tok@, pt, layer as nat, ptr, base as nat, true);
     }
     let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
     proof {
@@ -1529,10 +1530,14 @@ fn map_frame_aux(
                     tok_after_write.lemma_interps_match(rebuild_root_pt(pt, set![]));
                 };
                 // TODO: These need to be part of the properties the builder provides i think
-                assume(interp(old(tok)@, rebuild_root_pt(pt, set![])).inv());
+                // Note after making l1 invariant non-emptiness conditional: This may be a bit
+                // trickier now because I'm not sure we can easily use the map_frame refinement to
+                // prove this. We may have to instead reason directly about the interpretation and
+                // change the map_frame condition.
+                assume(interp(old(tok)@, rebuild_root_pt(pt, set![])).inv(true));
                 assume(interp(old(tok)@, rebuild_root_pt(pt, set![])).accepted_mapping(vaddr as nat, pte@));
                 interp(old(tok)@, rebuild_root_pt(pt, set![])).lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
-                assume(interp(tok_after_write, rebuild_root_pt(pt, set![])).inv());
+                assume(interp(tok_after_write, rebuild_root_pt(pt, set![])).inv(true));
                 //assume(interp(tok_new@, rebuild_root_pt(pt_new, new_regions)).accepted_mapping(vaddr as nat, pte@));
                 //interp(tok_after_write, rebuild_root_pt(pt, set![])).lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
 
@@ -1542,7 +1547,7 @@ fn map_frame_aux(
                 //         === interp(old(tok)@, rebuild_root_pt(pt, set![])).map_frame(vaddr as nat, pte@));
                 //assert(Ok(interp(tok_after_write, rebuild_root_pt(pt, set![])).interp())
                 //    === interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map_frame(vaddr as nat, pte@));
-                interp(old(tok)@, rebuild_root_pt(pt, set![])).lemma_accepted_mapping_implies_interp_accepted_mapping_manual(vaddr as nat, pte@);
+                interp(old(tok)@, rebuild_root_pt(pt, set![])).lemma_accepted_mapping_implies_interp_accepted_mapping_manual(vaddr as nat, pte@, true);
                 //assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().accepted_mapping(vaddr as nat, pte@));
                 assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().valid_mapping(vaddr as nat, pte@));
                 assert(!candidate_mapping_overlaps_existing_vmem_usize(tok@.interp(), vaddr, pte@));
@@ -1962,7 +1967,7 @@ proof fn lemma_not_empty_at_implies_interp_at_not_empty(tok: WrappedMapTokenView
 pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTDir>, pml4: usize, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
     requires
         inv(old(tok)@, old(pt)@),
-        interp(old(tok)@, old(pt)@).inv(),
+        interp(old(tok)@, old(pt)@).inv(true),
         old(tok).inv(),
         //old(tok)@.alloc_available_pages() >= 3,
         accepted_mapping(vaddr as nat, pte@),
@@ -1972,7 +1977,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         old(tok)@.args == (vaddr, pte@),
     ensures
         inv(tok@, pt@),
-        interp(tok@, pt@).inv(),
+        interp(tok@, pt@).inv(true),
         // Refinement of l0
         match res {
             Ok(_) => Ok(interp(tok@, pt@).interp()) === interp(old(tok)@, old(pt)@).interp().map_frame(vaddr as nat, pte@),
@@ -2029,7 +2034,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
     requires
         old(tok).inv(),
         inv_at(old(tok)@, pt, layer as nat, ptr),
-        interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(),
+        interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(true),
         //old(tok)@.alloc_available_pages() > 0,
         layer < 3,
         idx < 512,
@@ -2054,7 +2059,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
            &&& entry_at_spec(tok@, pt_res, layer as nat, ptr, idx as nat)@ is Directory
            &&& entry_at_spec(tok@, pt_res, layer as nat, ptr, idx as nat)@->Directory_addr == new_dir_region.base
            &&& new_dir_interp == interp.new_empty_dir(idx as nat)
-           &&& new_dir_interp.inv()
+           &&& new_dir_interp.inv(true)
            &&& pt_res.region == pt.region
            &&& pt_res.entries == pt.entries.update(idx as int, Some(new_dir_pt))
            &&& pt_res.used_regions == pt.used_regions.insert(new_dir_region@)
@@ -2144,7 +2149,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
 
     proof {
         lemma_empty_at_interp_at_equal_l1_empty_dir(tok@, pt_res, layer as nat, ptr, base as nat, idx as nat);
-        interp.lemma_new_empty_dir(idx as nat);
+        interp.lemma_new_empty_dir(idx as nat, true);
         lemma_interp_at_aux_facts(tok@, pt_res, layer as nat, ptr, base as nat, seq![]);
         let entry_base = x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat);
         let new_dir_interp = interp_at(tok@, new_dir_pt, (layer + 1) as nat, new_dir_ptr, entry_base);
