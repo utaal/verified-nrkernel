@@ -718,8 +718,25 @@ impl State {
         })
     }
 
+    pub open spec fn inflight_vaddr(self) -> Set<nat> {
+        Set::new(|v_address: nat| {
+            &&& self.interp_pt_mem().contains_key(v_address)
+            &&& exists|core: Core|
+                self.core_states.contains_key(core) && match self.core_states[core] {
+                    CoreState::UnmapWaiting { ult_id, vaddr }
+                    | CoreState::UnmapExecuting { ult_id, vaddr, .. }
+                    | CoreState::UnmapOpDone { ult_id, vaddr, .. }
+                    | CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. }
+                    | CoreState::MapDone {ult_id, vaddr, result: Ok(()), .. } => {
+                        vaddr === v_address
+                    },
+                    _ => false,
+                }
+        })
+    }
+
     pub open spec fn effective_mappings(self) -> Map<nat, PTE> {
-        self.interp_pt_mem().remove_keys(self.inflight_unmap_vaddr())
+        self.interp_pt_mem().remove_keys(self.inflight_vaddr())
     }
 
     pub open spec fn interp_vmem(self, c: Constants) -> Map<nat, nat> {
