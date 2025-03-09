@@ -634,73 +634,42 @@ proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State
 
     //third goal: prove 
     //(hl_s2.mappings === hl_s1.mappings);
-    assert(s2.interp_pt_mem().remove(vaddr) =~= s1.interp_pt_mem());
-    assert(s1.interp_pt_mem().insert(vaddr, pte) =~= s2.interp_pt_mem());
+    //(hl_s2.mem === hl_s1.mem); follows directly 
+   
+    assert(s1.effective_mappings() =~= s2.effective_mappings()) by {
+        // ==> direction
+        assert(!s1.interp_pt_mem().contains_key(vaddr));
+        assert(!s1.effective_mappings().contains_key(vaddr));
+        assert(s2.interp_pt_mem().remove(vaddr) =~= s1.interp_pt_mem());
+        assert(s1.effective_mappings().dom().subset_of(s2.effective_mappings().dom()));
 
-    // pub open spec fn effective_mappings(self) -> Map<nat, PTE> {
-    //self.interp_pt_mem().remove_keys(self.inflight_unmap_vaddr())
-    assert(true);
-    assume(s1.effective_mappings() =~= s2.effective_mappings());
-
-    
-    if s1.interp_pt_mem().dom().contains(vaddr) {
-        assert(s1.core_states.dom().contains(core));
-        assert(s1.inflight_vaddr().contains(vaddr));
-        assert forall|ids|
-            s1.inflight_vaddr().contains(
-                ids,
-            ) implies #[trigger] s2.inflight_vaddr().insert(vaddr).contains(ids) by {
-            if s1.inflight_vaddr().contains(ids) {
-                if ids === vaddr {
-                } else {
-                    assert(s1.interp_pt_mem().dom().contains(ids));
-                    assert(s2.interp_pt_mem().dom().contains(ids));
-                    let unmap_core = choose|cr|
-                        s1.core_states.dom().contains(cr) && match s1.core_states[cr] {
-                            os::CoreState::MapDone {ult_id, vaddr, result: Ok(()), .. } 
-                            | os::CoreState::UnmapWaiting { ult_id, vaddr }
-                            | os::CoreState::UnmapExecuting { ult_id, vaddr, .. }
-                            | os::CoreState::UnmapOpDone { ult_id, vaddr, .. }
-                            | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. } => {
-                                vaddr === ids
-                            },
-                            _ => false,
-                        };
-                    assert(!(unmap_core == core));
-                    assert(s2.core_states.dom().contains(unmap_core));
-                }
-            }
-        }
-        assert(s1.inflight_vaddr() =~= s2.inflight_vaddr().insert(vaddr));
-    } else {
-        assume(s1.interp_pt_mem() =~= s2.interp_pt_mem());
-        assert forall|ids|
-            s2.inflight_unmap_vaddr().contains(ids) implies s1.inflight_unmap_vaddr().contains(
-            ids,
-        ) by {
-            if s1.inflight_unmap_vaddr().contains(ids) {
-                assert(!(ids === vaddr));
-                assert(s1.interp_pt_mem().dom().contains(ids));
-                assert(s2.interp_pt_mem().dom().contains(ids));
+        // <== direction
+        assert(s2.interp_pt_mem().contains_key(vaddr) && s2.core_states.contains_key(core) && 
+                s2.core_states[core] matches os::CoreState::MapDone {ult_id, vaddr:vaddr, result: Ok(()), .. });
+        assert(s2.inflight_vaddr().contains(vaddr));
+        assert forall |v| s2.effective_mappings().contains_key(v) implies s1.effective_mappings().contains_key(v) by {
+            if (v == vaddr || !s1.inflight_vaddr().contains(v)) {
+                assert(!s2.effective_mappings().contains_key(vaddr));
+            } else {
+                assert(s1.inflight_unmap_vaddr().contains(v));
                 let unmap_core = choose|cr|
                     s1.core_states.dom().contains(cr) && match s1.core_states[cr] {
                         os::CoreState::UnmapWaiting { ult_id, vaddr }
                         | os::CoreState::UnmapExecuting { ult_id, vaddr, .. }
                         | os::CoreState::UnmapOpDone { ult_id, vaddr, .. }
                         | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. } => {
-                            vaddr === ids
+                            vaddr === v
                         },
                         _ => false,
                     };
-                assert(!(unmap_core == core));
-                assert(s2.core_states.dom().contains(unmap_core));
-            } 
+                assert(s2.interp_pt_mem().contains_key(v));
+                // assert(!(unmap_core == core));
+                assert(s2.core_states.contains_key(unmap_core));
+                // assert(s1.core_states[unmap_core] == s2.core_states[unmap_core]);
+                assert(s2.inflight_unmap_vaddr().contains(v));
+            }
         }
-        assert(s1.inflight_unmap_vaddr() =~= s2.inflight_unmap_vaddr());
     }
-
-    //fourth goal: prove  (hl_s2.mem === hl_s1.mem)
-   
 }
 
     /*
