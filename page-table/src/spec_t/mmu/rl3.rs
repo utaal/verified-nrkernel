@@ -11,6 +11,7 @@ use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE }
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ aligned };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
+use crate::spec_t::mmu::rl1::{ Polarity };
 
 verus! {
 
@@ -48,40 +49,22 @@ pub struct History {
     pub walks: Map<Core, Set<Walk>>,
     pub writes: Writes,
     pub pending_maps: Map<usize, PTE>,
-    ///// Current polarity: Are we doing only positive writes or only negative writes? Polarity can be
-    ///// flipped when neg and writes are all empty.
-    ///// A non-flipping write with the wrong polarity sets happy to false.
-    ///// Additionally tracks the current writer core.
-    ///// Technically we could probably infer the polarity from the write tracking but this is easier.
-    //pub polarity: Polarity,
+    pub pending_unmaps: Map<usize, PTE>,
+    pub polarity: Polarity,
 }
 
 pub struct Writes {
     /// Current writer core. If `all` is non-empty, all those writes were done by this core.
     pub core: Core,
-    /// Tracks *all* writes. Set of addresses. Gets cleared when the corresponding core drains its
-    /// store buffer. These writes can cause TSO staleness.
-    pub all: Set<usize>,
+    /// Tracks all writes that may cause stale reads due to TSO. Set of addresses. Gets cleared
+    /// when the corresponding core drains its store buffer.
+    pub tso: Set<usize>,
     ///// Tracks negative writes (to both page and directory mappings). Cleared for a particular core
     ///// when it executes an invlpg.
     ///// These writes can cause staleness due to partial translation caching or non-atomicity of
     ///// walks.
     //pub neg: Map<Core, Set<usize>>,
 }
-
-//pub enum Polarity {
-//    Pos(Core),
-//    Neg(Core),
-//}
-//
-//impl Polarity {
-//    pub open spec fn core(self) -> Core {
-//        match self {
-//            Polarity::Pos(c) => c,
-//            Polarity::Neg(c) => c,
-//        }
-//    }
-//}
 
 /// Any transition that reads from page table memory takes an arbitrary usize `r`, which is used to
 /// non-deterministically flip the accessed and dirty bits.
@@ -131,9 +114,14 @@ impl State {
         self.core_mem(self.hist.writes.core)
     }
 
-    pub closed spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, c: Constants) -> bool {
-        &&& !self.hist.writes.all.is_empty() ==> core == self.hist.writes.core
-        &&& self.writer_mem().is_nonneg_write(addr, value)
+    pub closed spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, pol: Polarity) -> bool {
+        &&& !self.hist.writes.tso.is_empty() ==> core == self.hist.writes.core
+        &&& pol != self.hist.polarity ==> self.can_flip_polarity()
+        &&& if pol is Mapping {
+                self.writer_mem().is_nonneg_write(addr, value)
+            } else {
+                self.writer_mem().is_nonpos_write(addr, value)
+            }
     }
 }
 
@@ -159,7 +147,7 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
         hist: History {
             walks: pre.hist.walks.insert(core, set![]),
             writes: Writes {
-                all: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.all },
+                tso: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.tso },
                 //neg: pre.hist.writes.neg.insert(core, set![]),
                 core: pre.hist.writes.core,
             },
@@ -410,22 +398,27 @@ pub closed spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
-    &&& post.hist.happy == (pre.hist.happy && pre.is_this_write_happy(core, addr, value, c))
+    &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, post.hist.polarity)
     &&& post.hist.walks == pre.hist.walks
-    &&& post.hist.writes.all == pre.hist.writes.all.insert(addr)
+    &&& post.hist.writes.tso == pre.hist.writes.tso.insert(addr)
     //&&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
     //        pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
     //    } else { pre.hist.writes.neg }
     &&& post.hist.writes.core == core
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
         Map::new(
-            |vbase| post.writer_mem()@.contains_key(vbase)
-                    && !pre.writer_mem()@.contains_key(vbase),
+            |vbase| post.writer_mem()@.contains_key(vbase) && !pre.writer_mem()@.contains_key(vbase),
             |vbase| post.writer_mem()@[vbase]
         ))
-    // Whenever this causes polarity to change and happy isn't set to false, the
-    // conditions for polarity to change are satisfied (`can_change_polarity`)
-    //&&& post.hist.polarity == if pre.writer_mem().is_neg_write(addr) { Polarity::Neg(core) } else { Polarity::Pos(core) }
+    &&& post.hist.pending_unmaps == pre.hist.pending_unmaps.union_prefer_right(
+        Map::new(
+            |vbase| pre.writer_mem()@.contains_key(vbase) && !post.writer_mem()@.contains_key(vbase),
+            |vbase| pre.writer_mem()@[vbase]
+        ))
+    &&& post.hist.polarity ==
+            if pre.writer_mem().is_nonneg_write(addr, value) {
+                Polarity::Mapping
+            } else { Polarity::Unmapping }
 }
 
 pub closed spec fn step_Writeback(pre: State, post: State, c: Constants, core: Core, lbl: Lbl) -> bool {
@@ -463,7 +456,7 @@ pub closed spec fn step_Barrier(pre: State, post: State, c: Constants, lbl: Lbl)
     &&& post == State {
         hist: History {
             writes: Writes {
-                all: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.all },
+                tso: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.tso },
                 ..pre.hist.writes
             },
             pending_maps: if core == pre.hist.writes.core { map![] } else { pre.hist.pending_maps },
@@ -510,7 +503,7 @@ pub closed spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.hist.happy == true
     &&& pre.hist.walks === Map::new(|core| c.valid_core(core), |core| set![])
     //&&& pre.hist.writes.core == ..
-    &&& pre.hist.writes.all === set![]
+    &&& pre.hist.writes.tso === set![]
     &&& pre.hist.pending_maps === map![]
 
     &&& c.valid_core(pre.hist.writes.core)
@@ -573,6 +566,14 @@ impl State {
         &&& self.inv_cache_subset_of_hist_walks(c)
         }
     }
+
+    pub closed spec fn can_flip_polarity(self) -> bool {
+        &&& self.hist.happy
+        &&& self.hist.pending_maps === map![]
+        &&& self.hist.pending_unmaps === map![]
+        &&& self.hist.writes.tso === set![]
+    }
+
 } // impl State
 
 
@@ -594,6 +595,7 @@ pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
 
 pub mod refinement {
     use crate::spec_t::mmu::*;
+    use crate::spec_t::mmu::rl1::{ Polarity };
     use crate::spec_t::mmu::rl2;
     use crate::spec_t::mmu::rl3;
     #[cfg(verus_keep_ghost)]
@@ -610,7 +612,11 @@ pub mod refinement {
                 walks: self.hist.walks,
                 sbuf: self.sbuf,
                 writes: self.hist.writes,
-                hist: rl2::History { pending_maps: self.hist.pending_maps },
+                polarity: self.hist.polarity,
+                hist: rl2::History {
+                    pending_maps: self.hist.pending_maps,
+                    pending_unmaps: self.hist.pending_unmaps,
+                },
                 //polarity: self.hist.polarity,
             }
         }
@@ -635,8 +641,16 @@ pub mod refinement {
                             if let Lbl::Write(core, addr, value) = lbl {
                                 (core, addr, value)
                             } else { arbitrary() };
-                        if pre.interp().is_this_write_happy(core, addr, value) {
-                            rl2::Step::Write
+                        let polarity =
+                            if pre.writer_mem().is_nonneg_write(addr, value) {
+                                Polarity::Mapping
+                            } else { Polarity::Unmapping };
+                        if pre.is_this_write_happy(core, addr, value, polarity) {
+                            if polarity is Mapping {
+                                rl2::Step::WriteNonneg
+                            } else {
+                                rl2::Step::WriteNonpos
+                            }
                         } else {
                             rl2::Step::SadWrite
                         }
@@ -722,8 +736,13 @@ pub mod refinement {
                         if let Lbl::Write(core, addr, value) = lbl {
                             (core, addr, value)
                         } else { arbitrary() };
-                    if pre.interp().is_this_write_happy(core, addr, value) {
-                        assert(rl2::step_Write(pre.interp(), post.interp(), c, lbl));
+                    if pre.is_this_write_happy(core, addr, value, post.hist.polarity) {
+                        assert(pre.interp().is_this_write_happy(core, addr, value, post.interp().polarity));
+                        if pre.writer_mem().is_nonneg_write(addr, value) {
+                            assert(rl2::step_WriteNonneg(pre.interp(), post.interp(), c, lbl));
+                        } else {
+                            assert(rl2::step_WriteNonpos(pre.interp(), post.interp(), c, lbl));
+                        }
                     } else {
                         assert(rl2::step_SadWrite(pre.interp(), post.interp(), c, lbl));
                     }
@@ -827,6 +846,7 @@ pub mod code {
     use crate::theorem::TokState;
     #[cfg(verus_keep_ghost)]
     use crate::spec_t::mmu::defs::{ aligned };
+    use core::arch::asm;
 
     #[verifier(external_body)]
     pub tracked struct Token {}
@@ -901,6 +921,28 @@ pub mod code {
         }
     }
 
+    // External interface to the  memory allocation of the linux module
+    #[cfg(feature="linuxmodule")]
+    extern "C" {
+        fn mem_to_local_phys(va: usize) -> usize;
+        fn local_phys_to_mem(pa: usize) -> usize;
+    }
+
+    /// standalone virtual -> physical address translation
+    /// note we do label it as unsafe as the C version is unsafe
+    #[cfg(not(feature="linuxmodule"))]
+    unsafe fn mem_to_local_phys(va: usize) -> usize {
+        va
+    }
+
+    /// standaline physical -> virtual address translation
+    /// note we do label it as unsafe as the C version is unsafe
+    #[cfg(not(feature="linuxmodule"))]
+    unsafe fn local_phys_to_mem(pa: usize) -> usize {
+        pa
+    }
+
+    /// reads from the memory location given by the physical address in `addr`
     #[verifier(external_body)]
     pub exec fn read(Tracked(tok): Tracked<&mut Token>, addr: usize) -> (res: usize)
         requires
@@ -911,9 +953,13 @@ pub mod code {
             tok.tstate() is Spent,
             res == old(tok).lbl()->Read_2,
     {
-        unimplemented!() // TODO:
+        unsafe { 
+            let vaddr_ptr : *const usize = local_phys_to_mem(addr) as *const usize;
+            *vaddr_ptr
+        }
     }
 
+    /// writes to the memory location given by the physical address in `addr`
     #[verifier(external_body)]
     pub exec fn write(Tracked(tok): Tracked<&mut Token>, addr: usize, value: usize)
         requires
@@ -922,9 +968,13 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { 
+            let vaddr_ptr : *mut usize = local_phys_to_mem(addr) as *mut usize;
+            *vaddr_ptr = value;
+        }
     }
 
+    /// performs a fence instructions to garantee ordering
     #[verifier(external_body)]
     pub exec fn barrier(Tracked(tok): Tracked<&mut Token>)
         requires
@@ -933,9 +983,11 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { asm!("mfence") };
+        // unsafe { asm!("sfence") };
     }
 
+    /// invalidates the TLB on the local core
     #[verifier(external_body)]
     pub exec fn invlpg(Tracked(tok): Tracked<&mut Token>, vaddr: usize)
         requires
@@ -944,7 +996,13 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        #[cfg(feature="linuxmodule")]
+        unsafe {
+            // note: to execute this instruction we need to be on x86 ring 0. 
+            asm!("invlpg ({})", in(reg) vaddr, options(att_syntax, nostack, preserves_flags));
+        }
+        // #[cfg(not(feature="linuxmodule"))]
+        // this is a no-op in standalone mode
     }
 
     // TODO: need transitions to allocate/deallocate pages i guess

@@ -49,12 +49,14 @@ impl PTMem {
         &&& value & 1 == 1
     }
 
-    /// Writing a present bit of 0 guarantees that this doesn't become a valid entry.
+    /// Writing a present bit of 1 guarantees that this is not currently a valid entry.
     /// I.e. this write can be:
     /// - Valid -> Invalid
     /// - Invalid -> Invalid
-    pub open spec fn is_nonpos_write(self, _addr: usize, value: usize) -> bool {
-        //&&& self.read(addr) & 1 == 1
+    ///
+    /// The second conjunct guarantees that we write at most once to each address.
+    pub open spec fn is_nonpos_write(self, addr: usize, value: usize) -> bool {
+        &&& self.read(addr) & 1 == 1
         &&& value & 1 == 0
     }
 

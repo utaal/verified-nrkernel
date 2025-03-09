@@ -388,7 +388,7 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::MapDone { ult_id, vaddr: vaddr2, pte, result: result2 }
     &&& thread_id == ult_id && vaddr == vaddr2 && result == result2
-    &&& s1.mmu@.writes.all === set![]
+    &&& s1.mmu@.writes.tso === set![]
     &&& s1.mmu@.pending_maps === map![]
 
     // mmu statemachine steps
@@ -890,17 +890,27 @@ impl State {
         &&& self.inv_successful_unmaps(c)
        // &&& self.inv_successful_maps(c)
         &&& self.inv_lock(c)
-        
     }
 
     pub open spec fn inv_mmu(self, c: Constants) -> bool {
         &&& self.mmu.inv(c.mmu)
         &&& self.mmu.interp().inv(c.mmu)
         &&& self.mmu@.happy
+        // TODO(MB): This is temporary until we start considering unmaps as well
+        &&& self.mmu@.polarity is Mapping
+    }
+
+    pub open spec fn inv_write_core(self, c: Constants) -> bool {
+        forall|core|
+            #[trigger] c.valid_core(core)
+            && self.core_states[core].is_in_crit_sect()
+            && self.mmu@.writes.tso !== set![]
+                ==> self.mmu@.writes.core == core
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
         &&& self.inv_basic(c)
+        &&& self.inv_write_core(c)
         //&&& self.tlb_inv(c)
         &&& self.overlapping_vmem_inv(c)
     }

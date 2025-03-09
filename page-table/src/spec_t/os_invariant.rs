@@ -20,6 +20,8 @@ pub proof fn init_implies_inv(c: os::Constants, s: os::State)
 {
     to_rl1::init_implies_inv(s.mmu, c.mmu);
     to_rl1::init_refines(s.mmu, c.mmu);
+    // TODO(MB): This is temporary until we start considering unmaps as well
+    assume(s.mmu@.polarity is Mapping);
     assert(s.inv_basic(c));
     init_implies_tlb_inv(c, s);
 }
@@ -106,9 +108,27 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         };
     };
 
+    // TODO(MB): This is temporary until we start considering unmaps as well
+    assume(s2.mmu@.polarity is Mapping);
     assert(s2.inv_basic(c));
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
+    next_step_preserves_inv_write_core(c, s1, s2, step, lbl);
+}
+
+pub proof fn next_step_preserves_inv_write_core(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+    requires
+        s1.inv(c),
+        os::next_step(c, s1, s2, step, lbl),
+    ensures
+        s2.inv_write_core(c),
+{
+    // TODO: Proving this probably requires the invariant to be a bit stronger so we know that
+    // writes.all is empty when no operation is in progress
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
+    admit();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

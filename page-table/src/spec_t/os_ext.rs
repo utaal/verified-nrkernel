@@ -316,6 +316,42 @@ pub mod code {
         }
     }
 
+    // External interface to the  memory allocation of the linux module
+    #[cfg(feature="linuxmodule")]
+    extern "C" {
+        fn mmap_pgtable_lock();
+        fn mmap_mm_pgtable_lock(mm: *const c_void);
+        fn mmap_pgtable_unlock();
+        fn mmap_pgtable_unlock(mm: *const c_void);
+    }
+
+    #[cfg(not(feature="linuxmodule"))]
+    use std::sync::atomic::{AtomicBool, Ordering::{Acquire, Release}};
+
+    /// global variable representing the page table lock
+    #[cfg(not(feature="linuxmodule"))]
+    exec static PGTABLE_LOCK: AtomicBool = AtomicBool::new(false);
+
+    /// acquires the page table spinlock
+    #[cfg(not(feature="linuxmodule"))]
+    #[verifier(external_body)]
+    unsafe fn mmap_pgtable_lock() {
+        while PGTABLE_LOCK.swap(true, Acquire) {
+            std::hint::spin_loop();
+        }
+    }
+
+    /// releases the page table spinlock
+    #[cfg(not(feature="linuxmodule"))]
+    #[verifier(external_body)]
+    unsafe fn mmap_pgtable_unlock() {
+        PGTABLE_LOCK.store(false, Release);
+    }
+
+
+    /// acquires the page table lock
+    /// 
+    /// TODO: ideally this takes the lock pointer
     #[verifier(external_body)]
     pub exec fn acquire_lock(Tracked(tok): Tracked<&mut Token>)
         requires
@@ -324,9 +360,12 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { mmap_pgtable_lock(); }
     }
 
+    /// releases the page table lock
+    /// 
+    /// TODO: ideally this takes the lock pointer
     #[verifier(external_body)]
     pub exec fn release_lock(Tracked(tok): Tracked<&mut Token>)
         requires
@@ -335,20 +374,39 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        unsafe { mmap_pgtable_unlock(); }
     }
 
+    // External interface to the TLB maintenance operations of the current OS
+    #[cfg(feature="linuxmodule")]
+    extern "C" {
+        /// invalidates a range of tlb pages for the current mm
+        fn flush_tlb_mm_range(mm: *const c_void, start: u64, end: u64, stride: u64, freed_tables: bool);
+        
+        /// invalidates a tlb page for the given start address and the current mm
+        fn flush_tlb_page(start: u64, page_size: u64);
+    }
+
+    /// initiates a shootdown for a given virtual page of a given size
+    /// 
+    /// this only covers tlb invalidations of a single page at `vaddr` with a page size of `size`
     #[verifier(external_body)]
-    pub exec fn init_shootdown(Tracked(tok): Tracked<&mut Token>, vaddr: usize)
+    pub exec fn init_shootdown(Tracked(tok): Tracked<&mut Token>, vaddr: usize, size: usize)
         requires
             old(tok).tstate() is Validated,
             old(tok).lbl() == (os_ext::Lbl::InitShootdown { core: old(tok).core(), vaddr: vaddr as nat }),
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        // on linux this is a blocking call to flush the TLB for the given page. 
+        #[cfg(feature="linuxmodule")]
+        flush_tlb_page(vaddr as u64, size);
+
+        // #[cfg(not(feature="linuxmodule"))]
+        // implementation of the shootdown is not necessary if we run this as an standalone module
     }
 
+    /// handles processing of the TLB shootdown on a core, acknowledging that the local invalidation has been completed
     #[verifier(external_body)]
     pub exec fn ack_shootdown(Tracked(tok): Tracked<&mut Token>)
         requires
@@ -357,17 +415,25 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unimplemented!() // TODO:
+        // #[cfg(feature="linuxmodule")]
+        // implementation of the shootdown acknowledgement in Linux is not necessary, as `flush_tlb_page` is blocking. 
+        
+        // #[cfg(not(feature="linuxmodule"))]
+        // implementation for the standalone module is not neccessary as this runs in user space.
     }
 
-    // External interface to the 
-    #[cfg(not(feature="standalone"))]
+
+    // External interface to the  memory allocation of the linux module
+    #[cfg(feature="linuxmodule")]
     extern "C" {
+        /// Allocates memory for a page table node when compiling for use in the Linux Kernel Module
         fn pt_memory_alloc(sz: usize, align: u64, level: u8) -> u64;
+        /// Frees memory of a page table node when compiling for use in the Linux Kernel Module
         fn pt_memory_free(pa: u64, sz: usize, level: u8);
     }
 
-    #[cfg(feature="standalone")]
+    /// Allocates memory for a page table node in the standalone case
+    #[cfg(not(feature="linuxmodule"))]
     #[verifier(external_body)]
     unsafe fn pt_memory_alloc(sz: usize, align: u64, level: u8) -> u64 {
         let layout = std::alloc::Layout::from_size_align_unchecked(sz, PAGE_SIZE);
@@ -378,14 +444,18 @@ pub mod code {
         ptr as u64
     }
 
-    #[cfg(feature="standalone")]
+    /// Frees memory for a page table node in the standalone case
+    #[cfg(not(feature="linuxmodule"))]
     #[verifier(external_body)]
     unsafe fn pt_memory_free(pa: u64, sz: usize, level: u8) {
         let layout = std::alloc::Layout::from_size_align_unchecked(sz, PAGE_SIZE);
         std::alloc::dealloc(std::mem::transmute(pa), layout);
     }
 
-    /// Allocates memory for a page table node at a given layer.
+    /// Allocates memory for a page table node
+    /// 
+    /// the `layer` is used here to give a *hint* to the allocator which level of the page table we're allocating for. 
+    /// (Note: this is mainly here due to the way Linux allocates memory for page tables)
     #[verifier(external_body)]
     pub exec fn allocate(Tracked(tok): Tracked<&mut Token>, layer: usize) -> (res: MemRegionExec)
         requires
@@ -400,6 +470,9 @@ pub mod code {
     }
 
     /// Frees memory of a page table node at a given layer.
+    /// 
+    /// the `layer` is used here as a *hint* to the allocator which level of the page table this memory was used for. 
+    /// (Note: this is mainly here due to the way Linux allocates memory for page tables)
     #[verifier(external_body)]
     pub exec fn deallocate(Tracked(tok): Tracked<&mut Token>, reg: MemRegionExec, layer: usize)
         requires
