@@ -27,7 +27,7 @@ impl CodeVC for PT {
         let tracked wtok = WrappedMapToken::new(tok);
         let mut pt = Ghost(arbitrary());
         assume(crate::impl_u::l2_impl::PT::inv(wtok@, pt@));
-        assume(crate::impl_u::l2_impl::PT::interp(wtok@, pt@).inv());
+        assume(crate::impl_u::l2_impl::PT::interp(wtok@, pt@).inv(true));
 
 
         assume(vaddr < MAX_BASE); // TODO: We probably need to somehow get this out of the first transition?
