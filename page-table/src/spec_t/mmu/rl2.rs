@@ -640,7 +640,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
         next_step_preserves_wf(pre, post, c, step, lbl);
         next_step_preserves_inv_sbuf_facts(pre, post, c, step, lbl);
         if post.polarity is Mapping {
-            if pre.polarity is Unmapping {
+            if pre.polarity is Unmapping { // Flipped polarity in this transition
                 broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
                 //assert(pre.inv_mapping__valid_is_not_in_sbuf(c));
                 //assert(pre.inv_mapping__valid_not_pending_is_not_in_sbuf(c));
@@ -657,24 +657,13 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
             next_step_preserves_inv_mapping__valid_not_pending_is_not_in_sbuf(pre, post, c, step, lbl);
             next_step_preserves_inv_mapping__valid_is_not_in_sbuf(pre, post, c, step, lbl);
         } else {
-            if pre.polarity is Unmapping {
+            if pre.polarity is Mapping { // Flipped polarity in this transition
                 broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
                 //assert(pre.inv_mapping__valid_is_not_in_sbuf(c));
                 //assert(pre.inv_mapping__valid_not_pending_is_not_in_sbuf(c));
                 assert(pre.writer_sbuf_entries_have_P_bit_0());
                 // TODO: prove this holds when conditions for polarity change are given (needs invariant)
                 //assume(pre.inv_mapping__inflight_walks(c));
-            } else {
-                match step {
-                    rl2::Step::WriteNonpos => {
-                        let addr = lbl->Write_1;
-                        let value = lbl->Write_2;
-
-                        assert(pre.writer_mem().is_nonpos_write(addr, value));
-                    },
-                    _ => {},
-                }
-                assume(pre.writer_sbuf_entries_have_P_bit_0());
             }
             assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
             assert(post.hist.pending_maps =~= map![]);
@@ -835,9 +824,12 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
                     } else { arbitrary() };
                 if core == pre.writes.core {
                     assert(post.writer_sbuf_entries_are_unique()) by {
-                        // TODO: needs a case distinction on polarity i think
-                        admit();
-                        broadcast use lemma_writer_read_from_sbuf;
+                        broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
+                        if pre.polarity is Mapping && post.polarity is Mapping {
+                            broadcast use lemma_writer_read_from_sbuf;
+                            admit();
+                            assert(post.writer_sbuf_entries_are_unique());
+                        }
                     };
                 } else {
                     assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
@@ -858,10 +850,10 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
 broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: int)
     requires
         state.wf(c),
-        state.inv_sbuf_facts(c),
+        #[trigger] state.inv_sbuf_facts(c),
         0 <= i < state.writer_sbuf().len(),
-    ensures #![auto]
-        state.writer_mem().read(state.writer_sbuf()[i].0) == state.writer_sbuf()[i].1
+    ensures
+        state.writer_mem().read(state.writer_sbuf()[i].0) == (#[trigger] state.writer_sbuf()[i]).1
 {
     state.pt_mem.lemma_write_seq_read(state.writer_sbuf(), i);
 }
@@ -870,6 +862,7 @@ proof fn next_step_preserves_inv_mapping__pending_map_is_base_walk(pre: State, p
     requires
         pre.happy,
         post.happy,
+        post.polarity is Mapping,
         pre.wf(c),
         pre.inv_sbuf_facts(c),
         pre.inv_mapping__pending_map_is_base_walk(c),
@@ -881,9 +874,6 @@ proof fn next_step_preserves_inv_mapping__pending_map_is_base_walk(pre: State, p
         Step::WriteNonneg => {
             broadcast use lemma_step_writenonneg_valid_walk_unchanged;
             assert(post.inv_mapping__pending_map_is_base_walk(c));
-        },
-        Step::WriteNonpos => {
-            admit();
         },
         Step::Writeback { core } => {
             lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
