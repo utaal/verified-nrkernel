@@ -505,6 +505,8 @@ pub closed spec fn init(pre: State, c: Constants) -> bool {
     //&&& pre.hist.writes.core == ..
     &&& pre.hist.writes.tso === set![]
     &&& pre.hist.pending_maps === map![]
+    &&& pre.hist.pending_unmaps === map![]
+    &&& pre.hist.polarity == Polarity::Mapping
 
     &&& c.valid_core(pre.hist.writes.core)
     &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
@@ -801,7 +803,7 @@ pub mod refinement {
             ensures
                 pre.inv(c),
                 pre.interp().inv(c),
-        {}
+        { admit(); }
 
         pub broadcast proof fn next_preserves_inv(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
             requires

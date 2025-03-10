@@ -386,6 +386,8 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
     &&& pre.pending_maps === map![]
+    &&& pre.pending_unmaps === map![]
+    &&& pre.polarity === Polarity::Mapping
 
     &&& c.valid_core(pre.writes.core)
     &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
