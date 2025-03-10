@@ -811,25 +811,19 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
         pre.happy,
         post.happy,
         pre.wf(c),
-        pre.inv_sbuf_facts(c),
+        pre.inv(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_sbuf_facts(c)
 {
     if post.happy {
         match step {
             Step::WriteNonneg => {
-                let (core, wraddr, value) =
-                    if let Lbl::Write(core, addr, value) = lbl {
-                        (core, addr, value)
-                    } else { arbitrary() };
+                let core = lbl->Write_0;
                 if core == pre.writes.core {
                     assert(post.writer_sbuf_entries_are_unique()) by {
-                        broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
-                        if pre.polarity is Mapping && post.polarity is Mapping {
-                            broadcast use lemma_writer_read_from_sbuf;
-                            admit();
-                            assert(post.writer_sbuf_entries_are_unique());
-                        }
+                        broadcast use
+                            lemma_writes_tso_empty_implies_sbuf_empty,
+                            lemma_writer_read_from_sbuf;
                     };
                 } else {
                     assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
@@ -840,7 +834,20 @@ proof fn next_step_preserves_inv_sbuf_facts(pre: State, post: State, c: Constant
                 assert(post.inv_sbuf_facts(c));
             },
             Step::WriteNonpos => {
-                admit();
+                let core = lbl->Write_0;
+                if core == pre.writes.core {
+                    assert(post.writer_sbuf_entries_are_unique()) by {
+                        broadcast use
+                            lemma_writes_tso_empty_implies_sbuf_empty,
+                            lemma_writer_read_from_sbuf;
+                    };
+                } else {
+                    assert_by_contradiction!(pre.writer_sbuf() =~= seq![], {
+                        assert(pre.writes.tso.contains(pre.writer_sbuf()[0].0));
+                    });
+                    assert(post.non_writer_sbufs_are_empty(c));
+                }
+                assert(post.inv_sbuf_facts(c));
             },
             _ => assert(post.inv_sbuf_facts(c)),
         }
@@ -1254,11 +1261,10 @@ broadcast proof fn lemma_writes_tso_empty_implies_sbuf_empty(pre: State, c: Cons
         assert forall|a| pre.sbuf[core].contains(a) implies false by {
             assert(pre.writes.tso.contains(a.0));
         };
-        // TODO: ??
-        assume(pre.sbuf[core] =~= seq![]);
-    } else {
+        assert_by_contradiction!(pre.sbuf[core] =~= seq![], {
+            assert(pre.sbuf[core].contains(pre.sbuf[core][0]));
+        });
     }
-    assert(pre.sbuf[core] =~= seq![]);
 }
 
 
@@ -1657,7 +1663,8 @@ pub mod refinement {
             // When unmapping, the atomic walk is a prefix of the inflight walk but both must be
             // invalid.
             // No case distinction on pending_maps or pending_unmaps needed. This transition always
-            // appears atomic.
+            // appears atomic. (With strong enough conditions, i.e. start at bottom and unmap
+            // empty directories one by one.
             admit();
         }
     }
