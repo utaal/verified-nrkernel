@@ -852,8 +852,7 @@ impl State {
     pub open spec fn inv_successful_maps(self, c: Constants) -> bool {
         forall|core: Core| c.valid_core(core) ==>
             match self.core_states[core] {
-                CoreState::MapExecuting { vaddr, pte, .. }
-                | CoreState::MapDone { vaddr, pte, result: Result::Ok(_), .. }
+                CoreState::MapDone { vaddr, pte, result: Result::Ok(_), .. }
                     => self.interp_pt_mem().contains_pair(vaddr, pte),
                 _ => true,
             }
@@ -888,7 +887,7 @@ impl State {
         &&& self.valid_ids(c)
         &&& self.inflight_pte_above_zero_pte_result_consistent(c)
         &&& self.inv_successful_unmaps(c)
-       // &&& self.inv_successful_maps(c)
+        &&& self.inv_successful_maps(c)
         &&& self.inv_lock(c)
     }
 

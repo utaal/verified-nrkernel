@@ -201,6 +201,7 @@ proof fn lemma_map_soundness_equality(
                         &&& s.interp_pt_mem().dom().contains(b)
                         &&& overlap(pte.frame, s.interp_pt_mem().index(b).frame)
                     };
+            let overlap_pte = s.interp_pt_mem()[base];
             if !os::candidate_mapping_overlaps_inflight_pmem(
                 s.interp_pt_mem(),
                 s.core_states.values(),
@@ -222,8 +223,12 @@ proof fn lemma_map_soundness_equality(
                         };
                     assert(s.core_states.values().contains(s.core_states.index(critical_core)));
                     if (s.core_states[critical_core] is MapDone) {
-                        //Todo this part:
-                        assume(s.interp(c).thread_state.values().contains(hlspec::ThreadState::Map { vaddr: base, pte: s.interp_pt_mem().index(base)}));
+                        let critical_ult_id = s.core_states[critical_core]->MapDone_ult_id;
+                        let b = hlspec::ThreadState::Map { vaddr: base, pte: overlap_pte };
+                        assert ( s.interp(c).thread_state.values().contains(b) && match b {
+                            hlspec::ThreadState::Map { vaddr: base, pte: overlap_pte } => overlap(pte.frame, overlap_pte.frame),
+                            _ => { false },
+                        });
                         assert(hlspec::candidate_mapping_overlaps_inflight_pmem(
                             s.interp(c).thread_state.values(),
                             pte,

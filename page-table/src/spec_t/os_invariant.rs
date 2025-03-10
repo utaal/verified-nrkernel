@@ -47,20 +47,19 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     broadcast use
         to_rl1::next_preserves_inv,
         to_rl1::next_refines;
-
-    // TODO: unnecessary?
-    // jp: why? seems very sensible to me
-    // assert(s2.inv_successful_unmaps(c)) by {
-    //    assert forall|core| c.valid_core(core) implies {
-    //        match s2.core_states[core] {
-    //            os::CoreState::UnmapExecuting { vaddr, result: Some(_),.. }
-    //            | os::CoreState::UnmapOpDone { vaddr, .. }
-    //            | os::CoreState::UnmapShootdownWaiting { vaddr, .. }
-    //                => !s2.interp_pt_mem().dom().contains(vaddr),
-    //            _ => true,
-    //        }
-    //    } by { let _ = s1.core_states[core].is_in_crit_sect(); }
-    //};
+    /*
+     assert(s2.inv_successful_maps(c)) by {
+        assert forall|core| c.valid_core(core) implies {
+            match s2.core_states[core] {
+                os::CoreState::UnmapExecuting { vaddr, result: Some(_),.. }
+                | os::CoreState::UnmapOpDone { vaddr, .. }
+                | os::CoreState::UnmapShootdownWaiting { vaddr, .. }
+                    => !s2.interp_pt_mem().dom().contains(vaddr),
+                _ => true,
+            }
+        } by { let _ = s1.core_states[core].is_in_crit_sect(); }
+    };
+    */
     assert(s2.inflight_pte_above_zero_pte_result_consistent(c)) by {
         assert forall|core: Core| c.valid_core(core) implies
             match s2.core_states[core] {
@@ -1152,6 +1151,10 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_hl_implies_os(
         }
     };
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// usefull lemmata about maps
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub proof fn lemma_map_insert_values_equality<A, B>(map: Map<A, B>, key: A, value: B)
     requires
