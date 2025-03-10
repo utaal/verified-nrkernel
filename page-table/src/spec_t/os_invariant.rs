@@ -89,6 +89,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
                         if step matches os::Step::UnmapStart { core } {
                             // MB: Not sure how this would be provable here but I think the proof worked at
                             // some point?
+                            // JP: will have to think about this one but right now im not sure why it dosnt work?
                             // May have to split invariant into two:
                             // 1. all entries in interp have size > 0
                             // 2. all entries in the core state are also in the interp
@@ -1188,6 +1189,16 @@ pub proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
 {
     assert(map.insert(key, value).dom().contains(key));
     assert(map.insert(key, value)[key] == value);
+}
+
+//sanity chock 
+//Todo delete later, when sanity regained
+pub proof fn lemmma_map_every_value_has_key<A, B>(map: Map<A, B>, value: B)
+    requires
+        map.values().contains(value),
+    ensures
+        exists |key| #![auto] map.dom().contains(key) && map[key] == value,
+{
 }
 
 } // verus!

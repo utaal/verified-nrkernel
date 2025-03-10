@@ -695,6 +695,21 @@ impl CoreState {
             CoreState::Idle => arbitrary(),
         }
     }
+
+    pub open spec fn ult_id(self) -> nat
+        recommends !self.is_idle(),
+    {
+        match self {
+            CoreState::MapWaiting { ult_id, .. }
+            | CoreState::MapExecuting { ult_id, .. }
+            | CoreState::MapDone { ult_id, .. }
+            | CoreState::UnmapWaiting { ult_id, .. }
+            | CoreState::UnmapExecuting { ult_id, .. }
+            | CoreState::UnmapOpDone { ult_id, .. }
+            | CoreState::UnmapShootdownWaiting { ult_id, .. } => { ult_id },
+            CoreState::Idle => arbitrary(),
+        }
+    }
 }
 
 impl State {
@@ -873,7 +888,7 @@ impl State {
     pub open spec fn inv_lock(self, c: Constants) -> bool {
         forall|core: Core| #[trigger] c.valid_core(core) ==>
             (self.os_ext.lock === Some(core) <==> self.core_states[core].is_in_crit_sect())
-    }
+    } 
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
