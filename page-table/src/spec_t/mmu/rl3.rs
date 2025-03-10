@@ -483,7 +483,7 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::WalkInit { core, vaddr }     => step_WalkInit(pre, post, c, core, vaddr, lbl),
         Step::WalkStep { core, walk, r }   => step_WalkStep(pre, post, c, core, walk, r, lbl),
         Step::TLBFill { core, walk, r }    => step_TLBFill(pre, post, c, core, walk, r, lbl),
-        Step::TLBEvict { core, tlb_va }     => step_TLBEvict(pre, post, c, core, tlb_va, lbl),
+        Step::TLBEvict { core, tlb_va }    => step_TLBEvict(pre, post, c, core, tlb_va, lbl),
         //Step::WalkDone { core, walk, r } => step_WalkDone(pre, post, c, core, walk, r, lbl),
         Step::Write                        => step_Write(pre, post, c, lbl),
         Step::Writeback { core }           => step_Writeback(pre, post, c, core, lbl),

@@ -302,8 +302,8 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.pending_maps == pre.pending_maps
     &&& post.pending_unmaps == pre.pending_unmaps.union_prefer_right(
         Map::new(
-            |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
-            |vbase| post.pt_mem@[vbase]
+            |vbase| pre.pt_mem@.contains_key(vbase) && !post.pt_mem@.contains_key(vbase),
+            |vbase| pre.pt_mem@[vbase]
         ))
 }
 
