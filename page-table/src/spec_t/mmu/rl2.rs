@@ -556,6 +556,16 @@ impl State {
         &&& self.writer_sbuf_subset_all_writes()
     }
 
+    pub open spec fn inv_unmapping__inflight_walks(self, c: Constants) -> bool {
+        forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
+            &&& aligned(walk.vaddr as nat, 8)
+            &&& walk.path.len() <= 3
+            &&& !walk.complete
+            &&& (is_iter_walk_prefix(self.core_mem(core), walk)
+                || is_invalid_walk_and_atomic_is_invalid(self.core_mem(core), walk))
+        }
+    }
+
     pub open spec fn inv_mapping__inflight_walks(self, c: Constants) -> bool {
         forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
             &&& aligned(walk.vaddr as nat, 8)
@@ -575,6 +585,8 @@ impl State {
                 ==> !self.writer_sbuf().contains_fst(addr)
     }
 
+    /// If a ptwalk is successful on the writer core and not tracked by `pending_maps`, then its
+    /// locations are not in the store buffer.
     pub open spec fn inv_mapping__valid_not_pending_is_not_in_sbuf(self, c: Constants) -> bool {
         forall|va:usize,a|
             #![trigger
@@ -601,13 +613,21 @@ impl State {
 
     pub open spec fn inv_unmapping(self, c: Constants) -> bool {
         &&& self.writer_sbuf_entries_have_P_bit_0()
+        &&& self.inv_unmapping__inflight_walks(c)
         &&& self.hist.pending_maps === map![]
+    }
+
+    /// Stuff that's true when we're not currently mapping or unmapping anything. (I.e. when we
+    /// could flip the polarity.)
+    pub open spec fn inv_between(self, c: Constants) -> bool {
+        &&& self.inv_mapping__inflight_walks(c)
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
         self.happy ==> {
         &&& self.wf(c)
         &&& self.inv_sbuf_facts(c)
+        &&& self.can_flip_polarity() ==> self.inv_between(c)
         &&& self.polarity is Mapping ==> self.inv_mapping(c)
         &&& self.polarity is Unmapping ==> self.inv_unmapping(c)
         }
@@ -657,17 +677,181 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
             next_step_preserves_inv_mapping__valid_not_pending_is_not_in_sbuf(pre, post, c, step, lbl);
             next_step_preserves_inv_mapping__valid_is_not_in_sbuf(pre, post, c, step, lbl);
         } else {
-            if pre.polarity is Mapping { // Flipped polarity in this transition
-                broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
-                //assert(pre.inv_mapping__valid_is_not_in_sbuf(c));
-                //assert(pre.inv_mapping__valid_not_pending_is_not_in_sbuf(c));
-                assert(pre.writer_sbuf_entries_have_P_bit_0());
-                // TODO: prove this holds when conditions for polarity change are given (needs invariant)
-                //assume(pre.inv_mapping__inflight_walks(c));
-            }
-            assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
-            assert(post.hist.pending_maps =~= map![]);
+            next_step_preserves_inv_unmapping(pre, post, c, step, lbl);
         }
+        if post.can_flip_polarity() {
+            next_step_preserves_inv_between(pre, post, c, step, lbl);
+        }
+    }
+}
+
+proof fn next_step_preserves_inv_between(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        post.can_flip_polarity(),
+        pre.happy,
+        post.happy,
+        pre.inv(c),
+        post.wf(c),
+        post.inv_sbuf_facts(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_between(c)
+{
+    admit();
+}
+
+proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.inv(c),
+        post.wf(c),
+        post.inv_sbuf_facts(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_unmapping(c)
+{
+    assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
+    assert(post.hist.pending_maps =~= map![]);
+    assert(post.writer_sbuf_entries_have_P_bit_0()) by {
+        if pre.polarity is Mapping { // Flipped polarity in this transition
+            broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
+            //assert(pre.inv_mapping__valid_is_not_in_sbuf(c));
+            //assert(pre.inv_mapping__valid_not_pending_is_not_in_sbuf(c));
+            assert(pre.writer_sbuf_entries_have_P_bit_0());
+            // TODO: prove this holds when conditions for polarity change are given (needs invariant)
+            //assume(pre.inv_mapping__inflight_walks(c));
+        }
+    };
+
+    assert(post.inv_unmapping__inflight_walks(c)) by {
+        next_step_preserves_inv_unmapping__inflight_walks(pre, post, c, step, lbl);
+    };
+}
+
+proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.wf(c),
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.inv_sbuf_facts(c),
+        post.inv_sbuf_facts(c),
+        //pre.inv_mapping__valid_is_not_in_sbuf(c),
+        pre.inv_unmapping__inflight_walks(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_unmapping__inflight_walks(c)
+{
+    broadcast use lemma_step_core_mem;
+    match step {
+        Step::WalkStep { core, walk } => {
+            reveal(rl2::walk_next);
+            assert(post.inv_unmapping__inflight_walks(c));
+        },
+        Step::WriteNonpos => {
+            // TODO: For mapping this proof didn't need inv_mapping__valid_is_not_in_sbuf. (But we
+            // do get a weaker premise here (disjunction))
+            let (wrcore, wraddr, value) =
+                if let Lbl::Write(core, addr, value) = lbl {
+                    (core, addr, value)
+                } else { arbitrary() };
+            assert(post.inv_unmapping__inflight_walks(c)) by {
+                assert forall|core, walk|
+                    c.valid_core(core) && #[trigger] post.walks[core].contains(walk)
+                implies
+                    is_iter_walk_prefix(post.core_mem(core), walk)
+                    || is_invalid_walk_and_atomic_is_invalid(post.core_mem(core), walk)
+                by {
+                    if wrcore == core {
+                        reveal(rl2::walk_next);
+                        lemma_mem_view_after_step_write(pre, post, c, lbl);
+                        pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
+                        pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+                        post.pt_mem.lemma_write_seq(post.writer_sbuf());
+                        assert(post.core_mem(core) == post.writer_mem());
+                        assert(post.writes.core == pre.writes.core ==> pre.core_mem(core) == pre.writer_mem());
+                        //assert(is_iter_walk_prefix(pre.core_mem(core), walk)
+                        //        || is_invalid_walk_and_atomic_is_invalid(pre.core_mem(core), walk));
+                        if is_iter_walk_prefix(pre.core_mem(core), walk) {
+                            admit();
+                        } else {
+                            assert(is_invalid_walk_and_atomic_is_invalid(pre.core_mem(core), walk));
+                            assume(is_invalid_walk_and_atomic_is_invalid(post.core_mem(core), walk));
+                        }
+                    }
+                };
+            };
+        },
+        Step::Writeback { core: wrcore } => {
+            // TODO: This case probably needs an equivalent of inv_mapping__valid_is_not_in_sbuf
+            let wraddr = pre.writer_sbuf()[0].0;
+            let value = pre.writer_sbuf()[0].1;
+            assert(wrcore == pre.writes.core);
+            assert(wrcore == post.writes.core);
+            assert(post.inv_unmapping__inflight_walks(c)) by {
+                assert forall|core, walk|
+                    c.valid_core(core) && #[trigger] post.walks[core].contains(walk)
+                implies
+                    is_iter_walk_prefix(post.core_mem(core), walk)
+                    || is_invalid_walk_and_atomic_is_invalid(post.core_mem(core), walk)
+                by {
+                    if wrcore == core {
+                        lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
+                    } else {
+                        admit();
+                        // TODO: Kind of unstable and really ugly proof
+                        let pre_walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
+                        let pre_walkp1 = walk_next(pre.core_mem(core), pre_walkp0);
+                        let pre_walkp2 = walk_next(pre.core_mem(core), pre_walkp1);
+                        let pre_walkp3 = walk_next(pre.core_mem(core), pre_walkp2);
+                        let pre_walkp4 = walk_next(pre.core_mem(core), pre_walkp3);
+                        let post_walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
+                        let post_walkp1 = walk_next(post.core_mem(core), post_walkp0);
+                        let post_walkp2 = walk_next(post.core_mem(core), post_walkp1);
+                        let post_walkp3 = walk_next(post.core_mem(core), post_walkp2);
+                        let post_walkp4 = walk_next(post.core_mem(core), post_walkp3);
+                        reveal(rl2::walk_next);
+                        //lemma_mem_view_after_step_write(pre, post, c, lbl);
+                        //pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
+                        pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
+                        post.pt_mem.lemma_write_seq(post.writer_sbuf());
+                        assert(bit!(0usize) == 1) by (bit_vector);
+                        assert(pre.core_mem(core) == pre.pt_mem);
+                        assert(post.core_mem(core) == post.pt_mem);
+                        // TODO: extract to lemma, also used in lemma_valid_not_pending_implies_equal
+                        assert(forall|i| #![auto] 0 <= i < walk.path.len() ==> aligned(walk.path[i].0 as nat, 8)) by {
+                            broadcast use PDE::lemma_view_addr_aligned;
+                            crate::spec_t::mmu::translation::lemma_bit_indices_less_512(walk.vaddr);
+                        };
+                        if walk.path.len() == 0 {
+                            assert(walk == pre_walkp0);
+                        } else if walk.path.len() == 1 {
+                            assert(walk == pre_walkp1);
+
+                            assert(post_walkp1.path[0] == pre_walkp1.path[0]);
+                        } else if walk.path.len() == 2 {
+                            assert(walk == pre_walkp2);
+                            assert(!pre_walkp1.complete);
+
+                            assert(post_walkp2.path.len() == pre_walkp2.path.len());
+                            assert(post_walkp2.path[0] == pre_walkp2.path[0]);
+                            assert(post_walkp2.path[1] == pre_walkp2.path[1]);
+                        } else if walk.path.len() == 3 {
+                            assert(walk == pre_walkp3);
+                            assert(!pre_walkp1.complete);
+                            assert(!pre_walkp2.complete);
+
+                            assert(post_walkp3.path.len() == pre_walkp3.path.len());
+                            assert(post_walkp3.path[0] == pre_walkp3.path[0]);
+                            assert(post_walkp3.path[1] == pre_walkp3.path[1]);
+                            //assert(post_walkp3.path[2] == pre_walkp3.path[2]);
+                        } else {
+                            assert(false);
+                        }
+                    }
+                };
+            };
+        },
+        _ => assert(post.inv_unmapping__inflight_walks(c)),
     }
 }
 
@@ -724,8 +908,6 @@ proof fn next_step_preserves_inv_mapping__inflight_walks(pre: State, post: State
                     }
                 };
             };
-        },
-        Step::WriteNonpos => {
         },
         Step::Writeback { core: wrcore } => {
             let wraddr = pre.writer_sbuf()[0].0;
@@ -785,15 +967,6 @@ proof fn next_step_preserves_inv_mapping__inflight_walks(pre: State, post: State
                             assert(post_walkp3.path[0] == pre_walkp3.path[0]);
                             assert(post_walkp3.path[1] == pre_walkp3.path[1]);
                             //assert(post_walkp3.path[2] == pre_walkp3.path[2]);
-                        } else if walk.path.len() == 4 {
-                            assert(walk == pre_walkp4);
-                            assert(!pre_walkp1.complete);
-                            assert(!pre_walkp2.complete);
-                            assert(!pre_walkp3.complete);
-
-                            assert(post_walkp4.path.len() == pre_walkp4.path.len());
-                            //assert(post_walkp4.path[0] == pre_walkp4.path[0]);
-                            //assert(post_walkp4.path[1] == pre_walkp4.path[1]);
                         } else {
                             assert(false);
                         }
@@ -1268,6 +1441,13 @@ broadcast proof fn lemma_writes_tso_empty_implies_sbuf_empty(pre: State, c: Cons
 }
 
 
+pub open spec fn is_invalid_walk_and_atomic_is_invalid(mem: PTMem, walk: Walk) -> bool {
+    let walk_na = finish_iter_walk(mem, walk);
+    let walk_a  = iter_walk(mem, walk.vaddr);
+    &&& walk_na.result() is Invalid
+    &&& walk_a.result() is Invalid
+}
+
 pub open spec fn is_iter_walk_prefix(mem: PTMem, walk: Walk) -> bool {
     let walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
     let walkp1 = walk_next(mem, walkp0);
@@ -1292,6 +1472,18 @@ pub open spec fn is_iter_walk_prefix(mem: PTMem, walk: Walk) -> bool {
         &&& !walkp3.complete
     } else {
         false
+    }
+}
+
+pub open spec fn finish_iter_walk(mem: PTMem, walk: Walk) -> Walk {
+    if walk.complete { walk } else {
+        let walk = rl2::walk_next(mem, walk);
+        if walk.complete { walk } else {
+            let walk = rl2::walk_next(mem, walk);
+            if walk.complete { walk } else {
+                rl2::walk_next(mem, walk)
+            }
+        }
     }
 }
 
