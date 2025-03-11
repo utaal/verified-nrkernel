@@ -1191,14 +1191,4 @@ pub proof fn lemma_map_insert_value<A, B>(map: Map<A, B>, key: A, value: B)
     assert(map.insert(key, value)[key] == value);
 }
 
-//sanity chock 
-//Todo delete later, when sanity regained
-pub proof fn lemmma_map_every_value_has_key<A, B>(map: Map<A, B>, value: B)
-    requires
-        map.values().contains(value),
-    ensures
-        exists |key| #![auto] map.dom().contains(key) && map[key] == value,
-{
-}
-
 } // verus!
