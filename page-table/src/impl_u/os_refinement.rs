@@ -691,13 +691,6 @@ proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State
 }
 
     /*
-    let ult_id = s1.core_states[core]->MapDone_ult_id;
-    let vaddr = s1.core_states[core]->MapDone_vaddr;
-    let pte = s1.core_states[core]->MapDone_pte;
-    let result = s1.core_states[core]->MapDone_result;
-
-    assert(hlspec::valid_thread(hl_c, ult_id));
-    assert(s1.interp(c).thread_state[ult_id] is Map);
 
     if candidate_mapping_overlaps_existing_vmem(hl_s1.mappings, vaddr, pte) {
         assert(candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte));
@@ -768,7 +761,7 @@ proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State
                 MemRegion { base: vaddr, size: pte.frame.size },
             ));
 
-        } else { // contradiction
+        } else { //contraditioct
             assert(!candidate_mapping_overlaps_existing_vmem(hl_s1.mappings, vaddr, pte));
             assert(hlspec::candidate_mapping_overlaps_inflight_vmem(
                 s1.interp(c).thread_state.values(),
@@ -832,7 +825,71 @@ proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State
                 assert(hl_s2.thread_state === hl_s1.thread_state.insert(ult_id, hlspec::ThreadState::Idle));
                 //assert(!candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte));
                 assert(result is Ok);
-                assert(s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte));
+                
+                assert(hl_s2.mappings.contains_pair(vaddr, pte));
+                assert(forall|idx|
+                    hl_s1.mappings.contains_key(idx) ==> hl_s2.mappings.contains_key(idx));
+                assert(forall|idx| #![auto]
+                    hl_s2.mappings.contains_key(idx) ==> hl_s1.mappings.insert(vaddr, pte).contains_key(idx));
+                assert(hl_s2.mappings =~= hl_s1.mappings.insert(vaddr, pte));
+                //idx part was here
+            } else {
+                assert(!candidate_mapping_overlaps_existing_vmem(hl_s1.mappings, vaddr, pte));
+                assert(result is Err);
+                let os_overlap_vaddr = choose|b: nat| #![auto] {
+                        &&& s1.interp_pt_mem().dom().contains(b)
+                        &&& overlap(
+                            MemRegion { base: vaddr, size: pte.frame.size },
+                            MemRegion { base: b, size: s1.interp_pt_mem()[b].frame.size },
+                        )
+                    };
+
+                assert(s1.interp_pt_mem().dom().contains(os_overlap_vaddr));
+                assert(!hl_s1.mappings.dom().contains(os_overlap_vaddr));
+                assert(s1.inflight_unmap_vaddr().contains(os_overlap_vaddr));
+                let unmap_core = choose|core|
+                    s1.core_states.dom().contains(core) && match s1.core_states[core] {
+                        os::CoreState::UnmapWaiting { ult_id, vaddr }
+                        | os::CoreState::UnmapExecuting { ult_id, vaddr, .. }
+                        | os::CoreState::UnmapOpDone { ult_id, vaddr, .. }
+                        | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. } => {
+                            vaddr === os_overlap_vaddr
+                        },
+                        _ => false,
+                    };
+                assert(!s1.core_states[unmap_core].is_in_crit_sect());
+                assert(s1.core_states[unmap_core] is UnmapWaiting);
+                assert(overlap(
+                    MemRegion { base: vaddr, size: pte.frame.size },
+                    MemRegion {
+                        base: s1.core_states[unmap_core]->UnmapWaiting_vaddr,
+                        size:
+                            s1.interp_pt_mem()[s1.core_states[unmap_core]->UnmapWaiting_vaddr].frame.size,
+                    },
+                ));
+                assert(c.valid_core(core) && c.valid_core(unmap_core)
+                    && !s1.core_states[core].is_idle() && !s1.core_states[unmap_core].is_idle()
+                    && overlap(
+                    MemRegion {
+                        base: s1.core_states[core].vaddr(),
+                        size: s1.core_states[core].vmem_pte_size(s1.interp_pt_mem()),
+                    },
+                    MemRegion {
+                        base: s1.core_states[unmap_core].vaddr(),
+                        size: s1.core_states[unmap_core].vmem_pte_size(s1.interp_pt_mem()),
+                    },
+                ) && (core != unmap_core));
+            }
+            assert(false);
+        }
+    }
+
+}
+*/
+
+/*
+//equality of inflight_unmmap_vaddr
+assert(s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte));
                 assert(!s1.inflight_unmap_vaddr().contains(vaddr));
                 assert forall|idx|
                     s1.inflight_unmap_vaddr().contains(
@@ -902,132 +959,8 @@ proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State
                     }
                 };
                 assert(s1.inflight_unmap_vaddr() =~= s2.inflight_unmap_vaddr());
-                assert(hl_s2.mappings.contains_pair(vaddr, pte));
-                assert(forall|idx|
-                    hl_s1.mappings.contains_key(idx) ==> hl_s2.mappings.contains_key(idx));
-                assert(forall|idx| #![auto]
-                    hl_s2.mappings.contains_key(idx) ==> hl_s1.mappings.insert(vaddr, pte).contains_key(idx));
-                assert(hl_s2.mappings =~= hl_s1.mappings.insert(vaddr, pte));
-                lemma_mem_domain_from_mappings(c.interp().phys_mem_size, hl_s1.mappings, vaddr, pte);
-                assert forall|idx: nat| #![auto]
-                    hl_s1.mem.dom().contains(idx) implies hl_s2.mem[idx] === hl_s1.mem[idx] by {
-                    // TODO overlapping mapped vmem
-                    if hl_s1.mem.dom().contains(idx) {
-                        assert(hlspec::mem_domain_from_mappings_contains(
-                            hl_c.phys_mem_size,
-                            idx,
-                            hl_s1.mappings,
-                        ));
-                        assert(hl_s2.mem.dom().contains(idx));
-                        let vidx = (idx * WORD_SIZE as nat);
-                        let (mem_base, mem_pte): (nat, PTE) = choose|base: nat, pte: PTE| {
-                            &&& #[trigger] hl_s1.mappings.contains_pair(base, pte)
-                            &&& hlspec::mem_domain_from_entry_contains(hl_c.phys_mem_size, vidx, base, pte)
-                        };
-                        let paddr = (mem_pte.frame.base + (vidx - mem_base)) as nat;
 
-                        assert(hl_s1.mappings.contains_pair(mem_base, mem_pte));
-                        assert(between(vidx, mem_base, mem_base + mem_pte.frame.size));
 
-                        assert forall|page, entry|
-                            hl_s2.mappings.contains_pair(page, entry) && between(
-                                vidx,
-                                page,
-                                page + entry.frame.size,
-                            ) implies (page == mem_base) && (entry == mem_pte) by {
-                            if hl_s2.mappings.contains_pair(page, entry) && between(
-                                vidx,
-                                page,
-                                page + entry.frame.size,
-                            ) {
-                                assert(overlap(
-                                    MemRegion { base: page, size: entry.frame.size },
-                                    MemRegion { base: mem_base, size: mem_pte.frame.size },
-                                ));
-                                assert(s2.interp_pt_mem().dom().contains(page));
-                                assert(s2.interp_pt_mem().dom().contains(mem_base));
-                                if s2.interp_pt_mem().remove(page).dom().contains(mem_base) {
-                                    assert(false);
-                                } else {
-                                    assert(page == mem_base);
-                                    assert(entry == mem_pte);
-                                }
-                            }
-                        }
-                        assert forall|page, entry|
-                            hl_s1.mappings.contains_pair(page, entry) && between(
-                                vidx,
-                                page,
-                                page + entry.frame.size,
-                            ) implies (page == mem_base) && (entry == mem_pte) by {
-                            assert(s1.effective_mappings().dom().subset_of(
-                                s2.effective_mappings().dom(),
-                            ));
-                            assert(hl_s1.mappings.submap_of(hl_s2.mappings));
-                            assert(hl_s2.mappings.contains_pair(page, entry) && between(
-                                vidx,
-                                page,
-                                page + entry.frame.size,
-                            ));
-                        }
-                    }
-                }
-                assert(hl_s2.mem.dom() === hlspec::mem_domain_from_mappings(
-                    hl_c.phys_mem_size,
-                    hl_s2.mappings,
-                ));
-            } else {
-                assert(!candidate_mapping_overlaps_existing_vmem(hl_s1.mappings, vaddr, pte));
-                assert(result is Err);
-                let os_overlap_vaddr = choose|b: nat| #![auto] {
-                        &&& s1.interp_pt_mem().dom().contains(b)
-                        &&& overlap(
-                            MemRegion { base: vaddr, size: pte.frame.size },
-                            MemRegion { base: b, size: s1.interp_pt_mem()[b].frame.size },
-                        )
-                    };
-
-                assert(s1.interp_pt_mem().dom().contains(os_overlap_vaddr));
-                assert(!hl_s1.mappings.dom().contains(os_overlap_vaddr));
-                assert(s1.inflight_unmap_vaddr().contains(os_overlap_vaddr));
-                let unmap_core = choose|core|
-                    s1.core_states.dom().contains(core) && match s1.core_states[core] {
-                        os::CoreState::UnmapWaiting { ult_id, vaddr }
-                        | os::CoreState::UnmapExecuting { ult_id, vaddr, .. }
-                        | os::CoreState::UnmapOpDone { ult_id, vaddr, .. }
-                        | os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. } => {
-                            vaddr === os_overlap_vaddr
-                        },
-                        _ => false,
-                    };
-                assert(!s1.core_states[unmap_core].is_in_crit_sect());
-                assert(s1.core_states[unmap_core] is UnmapWaiting);
-                assert(overlap(
-                    MemRegion { base: vaddr, size: pte.frame.size },
-                    MemRegion {
-                        base: s1.core_states[unmap_core]->UnmapWaiting_vaddr,
-                        size:
-                            s1.interp_pt_mem()[s1.core_states[unmap_core]->UnmapWaiting_vaddr].frame.size,
-                    },
-                ));
-                assert(c.valid_core(core) && c.valid_core(unmap_core)
-                    && !s1.core_states[core].is_idle() && !s1.core_states[unmap_core].is_idle()
-                    && overlap(
-                    MemRegion {
-                        base: s1.core_states[core].vaddr(),
-                        size: s1.core_states[core].vmem_pte_size(s1.interp_pt_mem()),
-                    },
-                    MemRegion {
-                        base: s1.core_states[unmap_core].vaddr(),
-                        size: s1.core_states[unmap_core].vmem_pte_size(s1.interp_pt_mem()),
-                    },
-                ) && (core != unmap_core));
-            }
-            assert(false);
-        }
-    }
-
-}
 */
 
 proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
@@ -1056,7 +989,6 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
     let result = s1.core_states[core]->MapDone_result;
 
     assert(vaddr == vaddr2);
-
     assert(hl_c.valid_thread(ult_id));
     assert(hl_s2.sound == hl_s1.sound);
     assert(hl_s2.thread_state === hl_s1.thread_state.insert(
@@ -1065,67 +997,146 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
     ));
     assert(s1.interp(c).thread_state[ult_id] is Map);
 
+    if (result is Ok) {
 
-    if (candidate_mapping_overlaps_existing_vmem(hl_s1.mappings, vaddr, pte) ){
+        //proofgoal: ! os overlap => ! hl overlap
+        //by inv_overlap_of_mapped_maps-invariant we know:
+        assert(!candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem().remove(vaddr), vaddr, pte));
+        //thereby follows as effective mappings is always a subset of interp_pt_mem and vaddr not being in effective mappings:
+        assert(!candidate_mapping_overlaps_existing_vmem(s1.effective_mappings(), vaddr, pte)) by {
+            assert(s1.core_states.contains_key(core));
+            assert(s1.inflight_vaddr().contains(vaddr));
+            assert(!s1.effective_mappings().dom().contains(vaddr));
+            assert(s1.effective_mappings().dom().subset_of(s2.interp_pt_mem().remove(vaddr).dom()));
+        }
 
+        //proofgoal (1/4): (result is Ok);
+        assert ( result is Ok);
 
-        assert(candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte));
-        assume(result is Err);
-        assume(hl_s2.mappings === hl_s1.mappings);
-        assert(hl_s2.mem === hl_s1.mem);
+        //proofgoal (2/4): ( hl_s2.mappings === hl_s1.mappings.insert(vaddr, pte))
+        assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
+        assert(s1.interp_pt_mem().contains_pair(vaddr, pte));
+        //todo:
+        assume(!s1.inflight_unmap_vaddr().contains(vaddr));
+        //todo:
+        assert(s1.inflight_unmap_vaddr() =~= s2.inflight_unmap_vaddr()) by {
+            admit();
+        }
+        assert(!s2.inflight_vaddr().contains(vaddr));
+        assert(s1.inflight_vaddr() =~= s1.inflight_unmap_vaddr().insert(vaddr));
+        assert(s2.inflight_vaddr() =~= s1.inflight_vaddr().remove(vaddr));
+        assert(hl_s2.mappings === hl_s1.mappings.insert(vaddr, pte));
 
-//        assert(s1.interp_pt_mem() == s2.interp_pt_mem());
-//
-//        lemma_map_insert_values_equality(s1.core_states, core, os::CoreState::Idle);
-//        assert(s1.core_states.values().insert(os::CoreState::Idle)
-//            =~= s2.core_states.values().insert(s1.core_states[core]));
-//
-//        assert forall|key| #[trigger]
-//            hl_s1.thread_state.dom().contains(key) implies hl_s1.thread_state.insert(
-//            ult_id,
-//            hlspec::ThreadState::Idle,
-//        )[key] == hl_s2.thread_state[key] by {
-//            let core_of_key = c.ult2core[key];
-//            if core_of_key === core {
-//            } else {
-//                assert(s1.core_states[core_of_key] == s2.core_states[core_of_key]);
-//                assert(s1.core_states[c.ult2core[key]] === s2.core_states[c.ult2core[key]]);
-//            }
-//        }
-//        assert(hl_s2.thread_state === hl_s1.thread_state.insert(ult_id, hlspec::ThreadState::Idle));
-//        assert(s1.core_states[core] is MapDone);
-//
-//        lemma_map_insert_values_equality(
-//            hl_s1.thread_state,
-//            ult_id,
-//            hlspec::ThreadState::Idle,
-//        );
-//        assert(hl_s1.thread_state.values().insert(hlspec::ThreadState::Idle)
-//            =~= hl_s2.thread_state.values().insert(hl_s1.thread_state[ult_id]));
-//        lemma_inflight_vaddr_equals_hl_unmap(c, s1);
-//        lemma_inflight_vaddr_equals_hl_unmap(c, s2);
-//        assert forall|base|
-//            s1.inflight_unmap_vaddr().contains(base) implies s2.inflight_unmap_vaddr().contains(
-//            base,
-//        ) by {
-//            let threadstate = choose|thread_state| {
-//                    &&& s1.interp_thread_state(c).values().contains(thread_state)
-//                    &&& s1.interp_pt_mem().dom().contains(base)
-//                    &&& thread_state matches hlspec::ThreadState::Unmap { vaddr, .. }
-//                    &&& vaddr === base
-//                };
-//            assert(!(hl_s1.thread_state[ult_id] is Unmap));
-//            assert(hl_s1.thread_state.values().insert(hlspec::ThreadState::Idle).contains(
-//                threadstate,
-//            ));
-//            assert(hl_s2.thread_state.values().contains(threadstate));
-//        }
-//        assert(s1.inflight_unmap_vaddr() =~= s2.inflight_unmap_vaddr());
+        // proofgoal (3/4): assert ( (forall|idx: nat| #![auto] hl_s1.mem.contains_key(idx) ==> hl_s2.mem[idx] === hl_s1.mem[idx]));
+        lemma_mem_domain_from_mappings(c.interp().phys_mem_size, hl_s1.mappings, vaddr, pte);
+        assert forall|idx: nat| #![auto]
+            hl_s1.mem.dom().contains(idx) implies hl_s2.mem[idx] === hl_s1.mem[idx] by {
+                if hl_s1.mem.dom().contains(idx) {
+                    assert(hlspec::mem_domain_from_mappings_contains(
+                        hl_c.phys_mem_size,
+                        idx,
+                        hl_s1.mappings,
+                    ));
+                    assert(hl_s2.mem.dom().contains(idx));
+                    let vidx = (idx * WORD_SIZE as nat);
+                    let (mem_base, mem_pte): (nat, PTE) = choose|base: nat, pte: PTE| {
+                        &&& #[trigger] hl_s1.mappings.contains_pair(base, pte)
+                        &&& hlspec::mem_domain_from_entry_contains(hl_c.phys_mem_size, vidx, base, pte)
+                    };
+                    let paddr = (mem_pte.frame.base + (vidx - mem_base)) as nat;
+
+                    assert(hl_s1.mappings.contains_pair(mem_base, mem_pte));
+                    assert(between(vidx, mem_base, mem_base + mem_pte.frame.size));
+
+                    assert forall|page, entry|
+                        hl_s2.mappings.contains_pair(page, entry) && between(
+                            vidx,
+                            page,
+                            page + entry.frame.size,
+                        ) implies (page == mem_base) && (entry == mem_pte) 
+                    by {
+                        if hl_s2.mappings.contains_pair(page, entry) && between(
+                            vidx,
+                            page,
+                            page + entry.frame.size,
+                        ) {
+                            assert(overlap(
+                                MemRegion { base: page, size: entry.frame.size },
+                                MemRegion { base: mem_base, size: mem_pte.frame.size },
+                            ));
+                            assert(s2.interp_pt_mem().dom().contains(page));
+                            assert(s2.interp_pt_mem().dom().contains(mem_base));
+                            if s2.interp_pt_mem().remove(page).dom().contains(mem_base) {
+                                assert(false);
+                            } else {
+                                assert(page == mem_base);
+                                assert(entry == mem_pte);
+                            }
+                        }
+                    }
+                assert forall|page, entry|
+                    hl_s1.mappings.contains_pair(page, entry) && between(
+                        vidx,
+                        page,
+                        page + entry.frame.size,
+                    ) implies (page == mem_base) && (entry == mem_pte) by {
+                    assert(s1.effective_mappings().dom().subset_of(
+                        s2.effective_mappings().dom(),
+                    ));
+                    assert(hl_s1.mappings.submap_of(hl_s2.mappings));
+                    assert(hl_s2.mappings.contains_pair(page, entry) && between(
+                        vidx,
+                        page,
+                        page + entry.frame.size,
+                    ));
+                }
+            }
+        }
+
+        // proofgoal (4/4): ( hl_s2.mem.dom() === hlspec::mem_domain_from_mappings(hl_c.phys_mem_size, hl_s2.mappings))
+        assert(hl_s2.mem.dom() === hlspec::mem_domain_from_mappings(
+            hl_c.phys_mem_size,
+            hl_s2.mappings,
+        ));
+
     } else {
-        assume(result is Ok);
-        assume(hl_s2.mappings === hl_s1.mappings.insert(vaddr, pte));
-        assume((forall|idx: nat| #![auto] hl_s1.mem.contains_key(idx) ==> hl_s2.mem[idx] === hl_s1.mem[idx]));
-        assert(hl_s2.mem.dom() === crate::spec_t::hlspec::mem_domain_from_mappings(hl_c.phys_mem_size, hl_s2.mappings));
+
+        //proofgoal: os overlap => hl overlap
+        assert(candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte));
+        assert(candidate_mapping_overlaps_existing_vmem(s1.effective_mappings(), vaddr, pte)) by {
+            let os_overlap_vaddr = choose|b: nat| #![auto] {
+                &&& s1.interp_pt_mem().dom().contains(b)
+                &&& overlap(
+                    MemRegion { base: vaddr, size: pte.frame.size },
+                    MemRegion { base: b, size: s1.interp_pt_mem()[b].frame.size },
+                )
+            };
+            if (s1.inflight_vaddr().contains(os_overlap_vaddr)) {
+                assert(s1.inflight_unmap_vaddr().contains(os_overlap_vaddr));
+                //todo: this
+                admit();
+            } else {
+                assert(s1.effective_mappings().contains_key(os_overlap_vaddr));
+            }
+        }
+
+        //proofgoal (1/3) result is Err
+        assert(result is Err);
+
+        //proofgoal (2/3) s2.mappings === s1.mappings
+        assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
+        assert(s1.inflight_unmap_vaddr() =~= s2.inflight_unmap_vaddr()) by {
+            assert(s2.inflight_unmap_vaddr().subset_of(s1.inflight_unmap_vaddr()));
+            assert(s1.core_states[core] is MapDone);
+            assert(s1.core_states.remove(core) =~= s2.core_states.remove(core));
+            assert(s1.inflight_unmap_vaddr().subset_of(s2.inflight_unmap_vaddr()));
+        };
+        assert(s1.inflight_unmap_vaddr() =~= s1.inflight_vaddr());
+        assert(s1.inflight_vaddr() =~= s2.inflight_vaddr());
+        assert(s2.effective_mappings() =~= s1.effective_mappings());
+
+        //proofgoal (3/3) s2.mem === s1.mem
+        assert(hl_s1.mem =~= hl_s2.mem);
     }
 }
 //disclaimer this probably dosnt have to be so long.
