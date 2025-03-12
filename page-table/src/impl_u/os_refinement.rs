@@ -98,7 +98,6 @@ proof fn lemma_inflight_unmap_vaddr_equals_hl_unmap(c: os::Constants, s: os::Sta
 
 }
 
-
 proof fn lemma_non_empty_set_contains_element<A>(s: Set<A>)
     requires !(s === Set::empty()) || !(s.is_empty()),
     ensures exists|a| s.contains(a),
@@ -155,13 +154,31 @@ proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(
         s2.inv_basic(c),
         s1.interp_thread_state(c) === s2.interp_thread_state(c),
         s1.interp_pt_mem() === s2.interp_pt_mem(),
+        os::next(c, s1, s2, RLbl::Tau),
     ensures
         s1.effective_mappings() === s2.effective_mappings(),
 {
     lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s1);
     lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s2);
-    //this lemma dosnt hold for map, needs alternative for that case and (maybe?) more preconditions (or invariants?)
-    assume(s2.inflight_vaddr() =~= s1.inflight_vaddr());
+    let step = choose|step| os::next_step(c, s1, s2, step, RLbl::Tau);
+    if (s1.inflight_unmap_vaddr() =~= s1.inflight_vaddr()) {
+        assert(s2.inflight_unmap_vaddr() =~= s2.inflight_vaddr()) by {
+            if (!(s2.inflight_unmap_vaddr() =~= s2.inflight_vaddr())){
+                let map_vaddr = choose|v| s2.inflight_vaddr().contains(v) && !s2.inflight_unmap_vaddr().contains(v);
+                let map_core = choose |core| s2.core_states.dom().contains(core) && s2.core_states[core] matches os::CoreState::MapDone {ult_id, vaddr:map_vaddr, result: Ok(()), .. };
+                assert(!s2.effective_mappings().contains_key(map_vaddr));
+                assert(s2.interp_pt_mem().contains_key(map_vaddr));
+            }
+        }
+        assert(s2.inflight_vaddr() =~= s1.inflight_vaddr());
+    } else {
+        let map_vaddr = choose|v| s1.inflight_vaddr().contains(v) && !s1.inflight_unmap_vaddr().contains(v);
+        let map_core = choose |core| s1.core_states.dom().contains(core) && s1.core_states[core] matches os::CoreState::MapDone {ult_id, vaddr:map_vaddr, result: Ok(()), .. };
+        assert(!s1.effective_mappings().contains_key(map_vaddr));
+        assert(s1.core_states[map_core] == s2.core_states[map_core]);
+        assert(s2.inflight_vaddr().contains(map_vaddr) && !s2.inflight_unmap_vaddr().contains(map_vaddr));
+        assert(s2.inflight_vaddr() =~= s1.inflight_vaddr());
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -468,7 +485,6 @@ proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, c
         assert(hl_s2.thread_state.values().insert(hlspec::ThreadState::Idle)
             =~= hl_s1.thread_state.values().insert(hlspec::ThreadState::Map { vaddr, pte }));
         assert(s1.interp_pt_mem() == s2.interp_pt_mem());
-        //jp todo think about maps
         lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s1);
         lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s2);
         assert forall|base|
@@ -1443,7 +1459,6 @@ proof fn step_UnmapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, c
             ));
             assert(!s1.interp_pt_mem().dom().contains(vaddr));
             assert(!s2.interp_pt_mem().dom().contains(vaddr));
-            //jp todo think about map
             lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s2);
             lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s1);
             //assert(s1.inflight_unmap_vaddr().subset_of(s2.inflight_unmap_vaddr()));
