@@ -101,20 +101,6 @@ impl State {
     //}
 }
 
-//pub open spec fn step_FlipPolarity(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
-//    &&& lbl is Tau
-//
-//    &&& pre.happy
-//    &&& pre.pending_maps === map![]
-//    &&& pre.pending_unmaps === map![]
-//    &&& pre.writes.tso === set![]
-//
-//    &&& post == State {
-//        polarity: pre.polarity.flip(),
-//        ..pre
-//    }
-//}
-
 // ---- Mixed (relevant to multiple of TSO/Cache/Non-Atomic) ----
 
 pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {

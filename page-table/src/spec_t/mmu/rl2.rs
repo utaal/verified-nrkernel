@@ -573,18 +573,32 @@ impl State {
         }
     }
 
-    pub open spec fn inv_unmapping__pending_unmap_is_invalid(self, c: Constants) -> bool {
-        forall|va| #![auto] self.pending_unmap_for(va) ==> self.writer_mem().pt_walk(va).result() is Invalid
-    }
+    //pub open spec fn inv_unmapping__pending_unmap_is_invalid(self, c: Constants) -> bool {
+    //    forall|va| #![auto] self.hist.pending_unmaps.contains_key(va) ==> self.writer_mem().pt_walk(va).result() is Invalid
+    //}
 
-    pub open spec fn inv_unmapping__valid_pending_unmap(self, c: Constants) -> bool {
-        forall|core, va| #![trigger self.core_mem(core).pt_walk(va).result()] {
-            let vbase = self.core_mem(core).pt_walk(va).result()->Valid_vbase;
-            let pte = self.core_mem(core).pt_walk(va).result()->Valid_pte;
-               self.core_mem(core).pt_walk(va).result() is Valid
-            && c.valid_core(core)
-            && self.hist.pending_unmaps.contains_key(vbase)
-            ==> self.hist.pending_unmaps[vbase] == pte
+    //pub open spec fn inv_unmapping__valid_pending_unmap(self, c: Constants) -> bool {
+    //    forall|core, va| #![trigger self.core_mem(core).pt_walk(va).result()] {
+    //        let vbase = self.core_mem(core).pt_walk(va).result()->Valid_vbase;
+    //        let pte = self.core_mem(core).pt_walk(va).result()->Valid_pte;
+    //           self.core_mem(core).pt_walk(va).result() is Valid
+    //        && c.valid_core(core)
+    //        && self.hist.pending_unmaps.contains_key(vbase)
+    //        ==> self.hist.pending_unmaps[vbase] == pte
+    //    }
+    //}
+
+    pub open spec fn inv_unmapping__valid_walk(self, c: Constants) -> bool {
+        forall|va, core| #![auto] c.valid_core(core) && self.core_mem(core).pt_walk(va).result() is Valid ==> {
+            let core_walk = self.core_mem(core).pt_walk(va);
+            let vbase = core_walk.result()->Valid_vbase;
+            let pte = core_walk.result()->Valid_pte;
+            let writer_walk = self.writer_mem().pt_walk(va);
+            if self.hist.pending_unmaps.contains_key(vbase) {
+                pte == self.hist.pending_unmaps[vbase]
+            } else {
+                core_walk == writer_walk
+            }
         }
     }
 
@@ -622,9 +636,8 @@ impl State {
     /// locations are not in the store buffer.
     pub open spec fn inv_mapping__valid_not_pending_is_not_in_sbuf(self, c: Constants) -> bool {
         forall|va:usize,a|
-            #![trigger
-                self.writer_mem().pt_walk(va),
-                self.writer_sbuf().contains_fst(a)] {
+            #![trigger self.writer_mem().pt_walk(va), self.writer_sbuf().contains_fst(a)]
+        {
             let walk = self.writer_mem().pt_walk(va);
             walk.result() is Valid && !self.pending_map_for(va) && walk.path.contains_fst(a)
                 ==> !self.writer_sbuf().contains_fst(a)
@@ -647,8 +660,8 @@ impl State {
     pub open spec fn inv_unmapping(self, c: Constants) -> bool {
         &&& self.writer_sbuf_entries_have_P_bit_0()
         &&& self.inv_unmapping__inflight_walks(c)
-        &&& self.inv_unmapping__pending_unmap_is_invalid(c)
-        &&& self.inv_unmapping__valid_pending_unmap(c)
+        //&&& self.inv_unmapping__pending_unmap_is_invalid(c)
+        &&& self.inv_unmapping__valid_walk(c)
         //&&& self.inv_unmapping__mismatched_walks(c)
         &&& self.hist.pending_maps === map![]
     }
@@ -702,6 +715,8 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
             }
             // TODO: Need an argument here that we only add things (pre is submap of post)
             // (already have this somewhere?)
+            // Note: We could just sidestep this by making the writes constrained based on the
+            // interp exactly the way we use it in the impl.
             assume(pre.writer_mem()@.submap_of(post.writer_mem()@));
             assert(post.hist.pending_unmaps =~= map![]);
             next_step_preserves_inv_mapping__inflight_walks(pre, post, c, step, lbl);
@@ -744,23 +759,133 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
 {
     assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
     assert(post.hist.pending_maps =~= map![]);
-    assert(post.writer_sbuf_entries_have_P_bit_0()) by {
-        if pre.polarity is Mapping { // Flipped polarity in this transition
-            broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
-            //assert(pre.inv_mapping__valid_is_not_in_sbuf(c));
-            //assert(pre.inv_mapping__valid_not_pending_is_not_in_sbuf(c));
-            assert(pre.writer_sbuf_entries_have_P_bit_0());
-            // TODO: prove this holds when conditions for polarity change are given (needs invariant)
-            //assume(pre.inv_mapping__inflight_walks(c));
-        }
-    };
+    if pre.polarity is Mapping { // Flipped polarity in this transition
+        broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
+        assert(pre.writer_sbuf_entries_have_P_bit_0());
+    }
+    assert(post.writer_sbuf_entries_have_P_bit_0());
 
     assert(post.inv_unmapping__inflight_walks(c)) by {
         next_step_preserves_inv_unmapping__inflight_walks(pre, post, c, step, lbl);
     };
-    //assume(post.inv_unmapping__mismatched_walks(c));
-    assume(post.inv_unmapping__valid_pending_unmap(c));
-    assume(post.inv_unmapping__pending_unmap_is_invalid(c));
+    assert(post.inv_unmapping__valid_walk(c)) by {
+        next_step_preserves_inv_unmapping__valid_walk(pre, post, c, step, lbl);
+    };
+}
+
+proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.wf(c),
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.inv_sbuf_facts(c),
+        pre.inv_unmapping(c),
+        post.inv_sbuf_facts(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_unmapping__valid_walk(c)
+{
+    broadcast use
+        group_ambient,
+        lemma_step_core_mem;
+    assert(pre.inv_unmapping__valid_walk(c));
+    match step {
+        Step::WalkStep { core, walk } => {
+            reveal(rl2::walk_next);
+            assert(post.inv_unmapping__valid_walk(c));
+        },
+        Step::WriteNonpos => {
+            let (wrcore, wraddr, value) =
+                if let Lbl::Write(core, addr, value) = lbl {
+                    (core, addr, value)
+                } else { arbitrary() };
+            assert forall|va, core| #![auto]
+                c.valid_core(core) && post.core_mem(core).pt_walk(va).result() is Valid implies {
+                    let core_walk = post.core_mem(core).pt_walk(va);
+                    let vbase = core_walk.result()->Valid_vbase;
+                    let pte = core_walk.result()->Valid_pte;
+                    let writer_walk = post.writer_mem().pt_walk(va);
+                    if post.hist.pending_unmaps.contains_key(vbase) {
+                        post.hist.pending_unmaps[vbase] == pte
+                    } else {
+                        core_walk == writer_walk
+                    }
+                }
+            by {
+                lemma_pt_walk_result_vbase_equal(pre.writer_mem(), va);
+                broadcast use lemma_unmapping__pt_walk_valid_in_post_unchanged;
+                reveal(pt_mem::PTMem::view);
+                //lemma_pt_walk_result_vbase_equal(post.writer_mem(), va);
+                //lemma_mem_view_after_step_write(pre, post, c, lbl);
+
+                let core_walk = post.core_mem(core).pt_walk(va);
+                let writer_walk = post.writer_mem().pt_walk(va);
+                let vbase = core_walk.result()->Valid_vbase;
+                let pte = core_walk.result()->Valid_pte;
+                if wrcore == core {
+                    //lemma_unmapping__pt_walk_valid_in_post_unchanged(pre, post, c, step, lbl, va);
+                    pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), va);
+                    //if post.hist.pending_unmaps.contains_key(vbase) {
+                    //    if pre.hist.pending_unmaps.contains_key(vbase) {
+                    //        assume(pre.inv_unmapping__pending_unmap_is_invalid(c));
+                    //        assert(pre.writer_mem().pt_walk(vbase).result() is Invalid);
+                    //    } else {
+                    //        reveal(pt_mem::PTMem::view);
+                    //    }
+                    //} else {
+                    //    let writer_walk = post.writer_mem().pt_walk(va);
+                    //    assert(core_walk == writer_walk);
+                    //}
+                } else {
+                    //reveal(pt_mem::PTMem::view);
+                    assert(core_walk == pre.core_mem(core).pt_walk(va));
+                    //if post.hist.pending_unmaps.contains_key(vbase) {
+                    //    if pre.hist.pending_unmaps.contains_key(vbase) {
+                    //        assert(post.hist.pending_unmaps[vbase] == pre.hist.pending_unmaps[vbase]);
+                    //    } else {
+                    //    }
+                    //} else {
+                    //    assert(post.writer_mem().pt_walk(vbase).result() is Valid);
+                    //    lemma_unmapping__pt_walk_valid_in_post_unchanged(pre, post, c, step, lbl, vbase);
+                    //    assert(core_walk == writer_walk);
+                    //}
+                }
+            };
+            assert(post.inv_unmapping__valid_walk(c));
+        },
+        Step::Writeback { core } => {
+            assert(bit!(0usize) == 1) by (bit_vector);
+            lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
+            assert(post.inv_unmapping__valid_walk(c));
+        },
+        _ => assert(post.inv_unmapping__valid_walk(c)),
+    }
+}
+
+broadcast proof fn lemma_unmapping__pt_walk_valid_in_post_unchanged(pre: State, post: State, c: Constants, step: Step, lbl: Lbl, va: usize)
+    requires
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        #[trigger] post.writer_mem().pt_walk(va).result() is Valid,
+        #[trigger] next_step(pre, post, c, step, lbl),
+    ensures
+        post.writer_mem().pt_walk(va) == pre.writer_mem().pt_walk(va)
+{
+    broadcast use group_ambient;
+    reveal(pt_mem::PTMem::view);
+    match step {
+        rl2::Step::WriteNonpos => {
+            lemma_mem_view_after_step_write(pre, post, c, lbl);
+        },
+        rl2::Step::Writeback { core } => {
+            lemma_writeback_preserves_writer_mem(pre, post, c, core, lbl);
+        },
+        _ => {},
+    }
+    assert(bit!(0usize) == 1) by (bit_vector);
 }
 
 proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
@@ -770,13 +895,16 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
         post.happy,
         post.polarity is Unmapping,
         pre.inv_sbuf_facts(c),
+        pre.inv_unmapping(c),
         post.inv_sbuf_facts(c),
         //pre.inv_mapping__valid_is_not_in_sbuf(c),
         pre.inv_unmapping__inflight_walks(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping__inflight_walks(c)
 {
-    broadcast use lemma_step_core_mem;
+    broadcast use
+        group_ambient,
+        lemma_step_core_mem;
     match step {
         Step::WalkStep { core, walk } => {
             reveal(rl2::walk_next);
@@ -800,8 +928,6 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
                         reveal(rl2::walk_next);
                         lemma_mem_view_after_step_write(pre, post, c, lbl);
                         pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
-                        pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
-                        post.pt_mem.lemma_write_seq(post.writer_sbuf());
                         assert(post.core_mem(core) == post.writer_mem());
                         assert(post.writes.core == pre.writes.core ==> pre.core_mem(core) == pre.writer_mem());
                         //assert(is_iter_walk_prefix(pre.core_mem(core), walk)
@@ -912,7 +1038,9 @@ proof fn next_step_preserves_inv_mapping__inflight_walks(pre: State, post: State
         next_step(pre, post, c, step, lbl),
     ensures post.inv_mapping__inflight_walks(c)
 {
-    broadcast use lemma_step_core_mem;
+    broadcast use
+        group_ambient,
+        lemma_step_core_mem;
     match step {
         Step::WalkStep { core, walk } => {
             reveal(rl2::walk_next);
@@ -934,8 +1062,6 @@ proof fn next_step_preserves_inv_mapping__inflight_walks(pre: State, post: State
                         reveal(rl2::walk_next);
                         lemma_mem_view_after_step_write(pre, post, c, lbl);
                         pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
-                        pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
-                        post.pt_mem.lemma_write_seq(post.writer_sbuf());
                         assert(post.core_mem(core) == post.writer_mem());
                         if post.writes.core == pre.writes.core {
                         } else {
@@ -1074,6 +1200,15 @@ broadcast proof fn lemma_writer_read_from_sbuf(state: State, c: Constants, i: in
     state.pt_mem.lemma_write_seq_read(state.writer_sbuf(), i);
 }
 
+broadcast proof fn lemma_core_mem_pml4(state: State, c: Constants, core: Core)
+    requires
+        #[trigger] c.valid_core(core),
+    ensures
+        (#[trigger] state.core_mem(core)).pml4 == state.pt_mem.pml4,
+{
+    state.pt_mem.lemma_write_seq(state.sbuf[core])
+}
+
 proof fn next_step_preserves_inv_mapping__pending_map_is_base_walk(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.happy,
@@ -1119,11 +1254,8 @@ proof fn lemma_mem_view_after_step_write(pre: State, post: State, c: Constants, 
         pre.inv_sbuf_facts(c),
         step_WriteNonneg(pre, post, c, lbl) || step_WriteNonpos(pre, post, c, lbl),
     ensures
-        post.writer_mem()
-            == (PTMem {
-                    pml4: pre.pt_mem.pml4,
-                    mem: pre.writer_mem().mem.insert(lbl->Write_1, lbl->Write_2),
-            })
+        post.writer_mem().pml4 == pre.pt_mem.pml4,
+        post.writer_mem().mem  == pre.writer_mem().mem.insert(lbl->Write_1, lbl->Write_2),
 {
     let (core, wraddr, value) =
         if let Lbl::Write(core, addr, value) = lbl {
@@ -1664,6 +1796,10 @@ broadcast proof fn lemma_bits_align_to_usize(vaddr: usize)
     assert(l3_bits!(sub(vaddr, vaddr % 8)) == l3_bits!(vaddr)) by (bit_vector);
 }
 
+broadcast group group_ambient {
+    lemma_core_mem_pml4
+}
+
 pub mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl1;
@@ -1710,10 +1846,12 @@ pub mod refinement {
                 rl2::Step::MemOpTLB { tlb_va } => rl1::Step::MemOpTLB { tlb_va },
                 rl2::Step::TLBFill { core, walk } => {
                     let walk_na_res = rl2::walk_next(pre.core_mem(core), walk).result();
-                    if pre.hist.pending_unmaps.contains_key(walk_na_res->Valid_vbase) {
-                        rl1::Step::TLBFillNA { core, vaddr: walk_na_res->Valid_vbase }
+                    let vaddr = walk_na_res->Valid_vbase;
+                    //let pte = walk_na_res->Valid_pte;
+                    if pre.hist.pending_unmaps.contains_key(vaddr) {
+                        rl1::Step::TLBFillNA { core, vaddr }
                     } else {
-                        rl1::Step::TLBFill { core, vaddr: walk.vaddr }
+                        rl1::Step::TLBFill { core, vaddr }
                     }
                 },
                 rl2::Step::TLBEvict { core, tlb_va } => rl1::Step::TLBEvict { core, tlb_va },
@@ -1756,27 +1894,30 @@ pub mod refinement {
                 let walk_na = rl2::walk_next(pre.core_mem(core), walk);
                 let walk_a  = pre.writer_mem().pt_walk(walk.vaddr);
                 let walk_na_res = walk_na.result();
+                //assert(walk_na_res is Valid);
+                let vbase = walk_na_res->Valid_vbase;
+                let pte = walk_na_res->Valid_pte;
                 rl2::lemma_iter_walk_equals_pt_walk(pre.core_mem(core), walk.vaddr);
                 rl2::lemma_iter_walk_equals_pt_walk(pre.writer_mem(), walk.vaddr);
+                //rl2::lemma_iter_walk_equals_pt_walk(pre.core_mem(core), vbase);
+                //rl2::lemma_iter_walk_equals_pt_walk(pre.writer_mem(), vbase);
+                rl2::lemma_pt_walk_result_vbase_equal(pre.writer_mem(), walk.vaddr);
 
                 if pre.polarity is Mapping {
                     if core != pre.writes.core {
                         rl2::lemma_valid_implies_equal_walks(pre, c, core, walk.vaddr);
                     }
-                    assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, walk.vaddr, lbl));
+                    assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, vbase, lbl));
                 } else {
-                    if pre.hist.pending_unmaps.contains_key(walk_na_res->Valid_vbase) {
-                        let pte = pre.hist.pending_unmaps[walk_na_res->Valid_vbase];
-                        assert(pte == pre.interp().pending_unmaps[walk_na_res->Valid_vbase]);
-
-                        assert(rl2::is_iter_walk_prefix(pre.core_mem(core), walk));
-                        // TODO: Should somehow follow from inv_unmapping__mismatched_walks
-                        assert(pte == walk_na_res->Valid_pte);
-                        assert(rl1::step_TLBFillNA(pre.interp(), post.interp(), c, core, walk_na_res->Valid_vbase, lbl));
+                    if pre.hist.pending_unmaps.contains_key(vbase) {
+                        //assert(pte == pre.interp().pending_unmaps[vbase]);
+                        //assert(pre.hist.pending_unmaps.contains_pair(vbase, pte));
+                        //assert(rl2::is_iter_walk_prefix(pre.core_mem(core), walk));
+                        //assert(pte == walk_na_res->Valid_pte);
+                        assert(rl1::step_TLBFillNA(pre.interp(), post.interp(), c, core, vbase, lbl));
                     } else {
-                        // TODO: contradiction from inv_unmapping__pending_unmap_is_invalid?
-                        admit();
-                        assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, walk.vaddr, lbl));
+                        assert(pre.writer_mem().pt_walk(vbase).result() == WalkResult::Valid { vbase, pte });
+                        assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, vbase, lbl));
                     }
                 }
             },
