@@ -907,10 +907,15 @@ impl State {
         &&& forall|core: Core| c.valid_core(core) <==> #[trigger] self.core_states.contains_key(core)
     }
 
+    pub open spec fn inv_mapped_ptes_above_zero(self) -> bool {
+        forall|vaddr|  #[trigger] self.interp_pt_mem().dom().contains(vaddr) ==> self.interp_pt_mem()[vaddr].frame.size > 0
+    }
+
     pub open spec fn inv_basic(self, c: Constants) -> bool {
         &&& self.wf(c)
         &&& self.inv_mmu(c)
         &&& self.valid_ids(c)
+        &&& self.inv_mapped_ptes_above_zero()
         &&& self.inflight_pte_above_zero_pte_result_consistent(c)
         &&& self.inv_successful_unmaps(c)
         &&& self.inv_successful_maps(c)

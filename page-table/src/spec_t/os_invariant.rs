@@ -86,15 +86,6 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
                 os::CoreState::UnmapWaiting { vaddr, .. }
                 | os::CoreState::UnmapExecuting { vaddr, result: None, .. } => {
                     if s2.interp_pt_mem().contains_key(vaddr) {
-                        if step matches os::Step::UnmapStart { core } {
-                            // MB: Not sure how this would be provable here but I think the proof worked at
-                            // some point?
-                            // JP: will have to think about this one but right now im not sure why it dosnt work?
-                            // May have to split invariant into two:
-                            // 1. all entries in interp have size > 0
-                            // 2. all entries in the core state are also in the interp
-                            assume(s2.interp_pt_mem()[vaddr].frame.size > 0);
-                        }
                         assert(s2.interp_pt_mem()[vaddr].frame.size > 0);
                     }
                 },
