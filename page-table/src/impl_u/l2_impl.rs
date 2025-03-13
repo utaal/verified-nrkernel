@@ -1176,14 +1176,18 @@ fn map_frame_aux(
                         assert(inv_at(tok_new, pt_new, layer as nat, ptr));
                     };
 
-                    assert forall|r: MemRegion| !pt.used_regions.contains(r) && !new_regions.contains(r)
-                       implies #[trigger] tok@.regions[r] === old(tok)@.regions[r]
-                       by { assert(!dir_pt.used_regions.contains(r)); };
-
-                    assume(forall|r: MemRegion| !pt.used_regions.contains(r) && !new_regions.contains(r) ==> #[trigger] tok_new.regions[r] === old(tok)@.regions[r]);
-                    assert(inv_at(tok_new, pt_new, layer as nat, ptr));
-
+                    assert(inv_at(tok@, pt, layer as nat, ptr));
                     assert(tok@ == old(tok)@);
+
+                    assert forall |r| !(pt.used_regions.contains(r)) && !(new_regions.contains(r)) implies #[trigger]tok_new.regions[r] === tok@.regions[r] by {
+                        assert(!dir_pt.used_regions.contains(r)); 
+                        if tok_new.regions.contains_key(r) {
+                            assert(tok_new.regions[r] == tok@.regions[r]);
+                        } else {
+                            assert(!tok@.regions.contains_key(r));
+                        }
+                    }
+                    
                     assert(builder_pre(tok@, pt, tok_new, pt_new, layer as nat, ptr, new_regions));
                     assert(inv(tok_new, rebuild_root_pt(pt_new, new_regions)));
 
