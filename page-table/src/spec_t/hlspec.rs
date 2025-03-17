@@ -69,10 +69,10 @@ impl State {
         }
     }
 
-    pub open spec fn vaddr_mapping_is_being_modified_choose(self, c: Constants, va: nat) -> Option<(nat, PTE)>
+    pub open spec fn vaddr_mapping_is_being_modified_choose_thread(self, c: Constants, va: nat) -> nat
         recommends self.vaddr_mapping_is_being_modified(c, va)
     {
-        let thread = choose|thread| {
+        choose|thread| {
             &&& c.valid_thread(thread)
             &&& match self.thread_state[thread] {
                 ThreadState::Map { vaddr, pte } => between(va, vaddr, vaddr + pte.frame.size),
@@ -80,7 +80,13 @@ impl State {
                     => between(va, vaddr, vaddr + pte.frame.size),
                 _ => false,
             }
-        };
+        }
+    }
+
+    pub open spec fn vaddr_mapping_is_being_modified_choose(self, c: Constants, va: nat) -> Option<(nat, PTE)>
+        recommends self.vaddr_mapping_is_being_modified(c, va)
+    {
+        let thread = self.vaddr_mapping_is_being_modified_choose_thread(c, va);
         match self.thread_state[thread] {
             // Non-atomic pagefault
             ThreadState::Map { vaddr, pte }              => None,
@@ -313,8 +319,6 @@ pub open spec fn step_MemOpNA(c: Constants, s1: State, s2: State, lbl: RLbl) -> 
             }
         },
         None => {
-            // If pte is None, no mapping containing vaddr exists..
-            &&& !mem_domain_from_mappings(c.phys_mem_size, s1.mappings).contains(vmem_idx)
             // .. and the result is always a pagefault and an unchanged memory.
             &&& s2.mem === s1.mem
             &&& op.is_pagefault()

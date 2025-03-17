@@ -444,7 +444,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(t2.thread_state === t1.thread_state);
             assert(t2.sound == t1.sound);
             assert(op.is_pagefault());
-            assume(aligned(vaddr, 8));
+            assert(aligned(vaddr, 8));
             assert(d.valid_thread(thread_id));
             assert(t1.thread_state.dom().contains(thread_id));
             assert(t1.thread_state[thread_id] is Idle);
@@ -469,8 +469,31 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(hlspec::step_MemOp(c.interp(), s1.interp(c), s2.interp(c), None, lbl));
         },
         rl1::Step::MemOpNoTrNA { .. } => {
+            let t1 = s1.interp(c);
+            let t2 = s2.interp(c);
+            let d = c.interp();
+            let thread_id = lbl->MemOp_thread_id;
+            let op = lbl->MemOp_op;
+
+            let vmem_idx = crate::spec_t::mem::word_index_spec(vaddr);
+            let pte = t1.vaddr_mapping_is_being_modified_choose(d, vaddr);
+
             // TODO: Needs an invariant about pending_maps
-            admit();
+            assume(t1.vaddr_mapping_is_being_modified(d, vaddr));
+            let thread = t1.vaddr_mapping_is_being_modified_choose_thread(d, vaddr);
+            assume(t1.thread_state[thread] is Map);
+
+            assert(pte.is_none());
+
+            assert(aligned(vaddr, 8));
+            assert(d.valid_thread(thread_id));
+            assert(t1.thread_state[thread_id] is Idle);
+            assert(t2.mappings === t1.mappings);
+            assert(t2.thread_state === t1.thread_state);
+            assert(t2.sound == t1.sound);
+            assert(t2.mem == t1.mem);
+            assert(op.is_pagefault());
+
             assert(hlspec::step_MemOpNA(c.interp(), s1.interp(c), s2.interp(c), lbl));
         },
         rl1::Step::MemOpTLB { tlb_va } => {
