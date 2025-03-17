@@ -290,10 +290,7 @@ pub open spec fn step_MemOpNA(c: Constants, s1: State, s2: State, lbl: RLbl) -> 
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
             let pmem_idx = mem::word_index_spec(paddr);
-            // If pte is Some, it's an existing mapping that contains vaddr..
-            &&& s1.mappings.contains_pair(base, pte)
-            &&& between(vaddr, base, base + pte.frame.size)
-            // .. and the result depends on the flags.
+            // the result depends on the flags
             &&& match op {
                 MemOp::Store { new_value, result } => {
                     if pmem_idx < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
