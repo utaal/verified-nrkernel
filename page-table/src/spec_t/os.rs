@@ -199,6 +199,8 @@ pub open spec fn step_MMU(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool
 pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     &&& lbl matches RLbl::MemOp { thread_id, vaddr, op }
     &&& core == c.ult2core[thread_id]
+    &&& c.valid_ult(thread_id)
+    &&& s1.core_states[core] is Idle
     //mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::MemOp(core, vaddr as usize, op))
     &&& s2.os_ext == s1.os_ext
