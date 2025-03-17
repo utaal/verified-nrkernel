@@ -4,6 +4,8 @@ use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_
 use crate::spec_t::mmu::defs::{ PTE, bitmask_inc, WORD_SIZE, bit };
 use crate::spec_t::mmu::{ Walk, WalkResult };
 
+use crate::spec_t::mmu::*;
+
 verus! {
 
 // TODO: memory size
@@ -122,6 +124,62 @@ impl PTMem {
             mem.pt_walk(va).result() is Valid ==> mem.read(mem.pt_walk(va).path.last().0) & 1 == 1,
     {
         assert(bit!(0usize) == 1) by (bit_vector);
+    }
+
+    pub proof fn lemma_pt_walk_agrees_in_frame(self, vbase: usize, vaddr: usize)
+        requires
+            self.is_base_pt_walk(vbase),
+            vbase <= vaddr < vbase + self.pt_walk(vbase).result()->pte.frame.size,
+        ensures
+            self.pt_walk(vaddr).result() is Valid
+    {
+        assert(sub(vbase, vbase % (4096) as usize) == vbase
+            && vbase <= vaddr < vbase + 4096
+            ==> l0_bits!(vaddr) == l0_bits!(vbase)
+             && l1_bits!(vaddr) == l1_bits!(vbase)
+             && l2_bits!(vaddr) == l2_bits!(vbase)
+             && l3_bits!(vaddr) == l3_bits!(vbase)
+        ) by(bit_vector);
+        assert(sub(vbase, vbase % (512 * 4096) as usize) == vbase
+            && vbase <= vaddr < vbase + 512 * 4096
+            ==> l0_bits!(vaddr) == l0_bits!(vbase)
+             && l1_bits!(vaddr) == l1_bits!(vbase)
+             && l2_bits!(vaddr) == l2_bits!(vbase)
+        ) by(bit_vector);
+        assert(sub(vbase, vbase % (512 * (512 * 4096)) as usize) == vbase
+            && vbase <= vaddr < vbase + 512 * (512 * 4096)
+            ==> l0_bits!(vaddr) == l0_bits!(vbase)
+             && l1_bits!(vaddr) == l1_bits!(vbase)
+        ) by(bit_vector);
+        /*assert(sub(vbase, vbase % (512 * (512 * (512 * 4096))) as usize) == vbase
+            && vbase <= vaddr < vbase + 512 * (512 * (512 * 4096))
+            ==> l0_bits!(vaddr) == l0_bits!(vbase)
+        ) by(bit_vector);*/
+
+        /*let path = self.pt_walk(vbase).path;
+        if path.last().1 is Page {
+            if path.len() == 2 {
+                assert(self.pt_walk(vbase).result()->pte.frame.size == L1_ENTRY_SIZE);
+                assert(self.pt_walk(vbase).result()->pte.frame.size == 512 * (512 * 4096));
+                assert(crate::spec_t::mmu::defs::align_to_usize(vbase, (512 * (512 * 4096)) as usize) == vbase);
+                //assert(vbase % (512 * (512 * 4096)) as usize == 0);
+                assert(l0_bits!(vaddr) == l0_bits!(vbase));
+                assert(self.pt_walk(vaddr).path.last().1 is Page);
+            } else if path.len() == 3 {
+                assert(self.pt_walk(vaddr).path.last().1 is Page);
+            } else if path.len() == 4 {
+                assert(self.pt_walk(vbase).result()->pte.frame.size == L3_ENTRY_SIZE);
+
+                assert(l0_bits!(vaddr) == l0_bits!(vbase));
+
+                assert(self.pt_walk(vaddr).path.len() == 4);
+                assert(self.pt_walk(vaddr).path.last().1 is Page);
+            } else {
+                assert(false);
+            }
+        } else {
+            assert(false);
+        }*/
     }
 
     pub open spec fn is_base_pt_walk(self, vaddr: usize) -> bool {

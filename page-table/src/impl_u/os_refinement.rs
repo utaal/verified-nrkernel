@@ -393,6 +393,9 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
     }
 }
 
+use crate::spec_t::hlspec::*;
+use crate::spec_t::mmu::defs::aligned;
+use crate::spec_t::mmu::pt_mem::PTMem;
 proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
     requires
         s1.inv(c),
@@ -426,9 +429,43 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
     let op = lbl->MemOp_op;
     let mlbl = mmu::Lbl::MemOp(core, vaddr as usize, op);
     let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
+    assert(rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, mmu_step, mlbl));
     match mmu_step {
         rl1::Step::MemOpNoTr { .. } => {
-            admit();
+            assert(rl1::step_MemOpNoTr(s1.mmu@, s2.mmu@, c.mmu, mlbl));
+            let vmem_idx = crate::spec_t::mem::word_index_spec(vaddr);
+            let t1 = s1.interp(c);
+            let t2 = s2.interp(c);
+            let d = c.interp();
+            assert(lbl is MemOp);
+            let thread_id = lbl->MemOp_thread_id;
+            assert(t2.mem === t1.mem);
+            assert(t2.mappings === t1.mappings);
+            assert(t2.thread_state === t1.thread_state);
+            assert(t2.sound == t1.sound);
+            assert(op.is_pagefault());
+            assume(aligned(vaddr, 8));
+            assert(d.valid_thread(thread_id));
+            assert(t1.thread_state.dom().contains(thread_id));
+            assert(t1.thread_state[thread_id] is Idle);
+            assert(!mem_domain_from_mappings(d.phys_mem_size, t1.mappings).contains(vmem_idx)) by {
+                //reveal(PTMem::view);
+                let vaddr2 = vmem_idx * WORD_SIZE as nat;
+                assert(vaddr == vaddr2);
+                assert forall|base: nat, pte: PTE|
+                  #[trigger] t1.mappings.contains_pair(base, pte)
+                   && mem_domain_from_entry_contains(d.phys_mem_size, vaddr, base, pte)
+                   implies false
+                by {
+                    assert(s1.interp_pt_mem().dom().contains(base));
+                    reveal(PTMem::view);
+                    assert(s1.mmu@.pt_mem.pt_walk(base as usize).result() is Valid);
+                    assert(s1.mmu@.pt_mem.pt_walk(vaddr as usize).result() is Invalid);
+                    s1.mmu@.pt_mem.lemma_pt_walk_agrees_in_frame(base as usize, vaddr as usize);
+                    assert(false);
+                }
+                assert(!mem_domain_from_mappings_contains(d.phys_mem_size, vmem_idx, t1.mappings));
+            }
             assert(hlspec::step_MemOp(c.interp(), s1.interp(c), s2.interp(c), None, lbl));
         },
         rl1::Step::MemOpNoTrNA { .. } => {
@@ -443,7 +480,6 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
         },
         _ => assert(false),
     };
-
 }
 
 proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
