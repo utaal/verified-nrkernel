@@ -1,4 +1,7 @@
 // #![feature(nonnull_slice_from_raw_parts)]
+#![cfg_attr(feature="linuxmodule", no_std)]
+
+#[cfg(not(feature="linuxmodule"))]
 extern crate alloc;
 
 pub mod impl_u;
