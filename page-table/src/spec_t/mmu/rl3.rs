@@ -5,9 +5,9 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE, word_index_spec };
+use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned };
+use crate::spec_t::mmu::defs::{ aligned, word_index_spec };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 use crate::spec_t::mmu::rl1::{ Polarity };
 

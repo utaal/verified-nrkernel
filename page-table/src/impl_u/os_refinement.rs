@@ -394,6 +394,7 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
 }
 
 use crate::spec_t::hlspec::*;
+#[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::aligned;
 use crate::spec_t::mmu::pt_mem::PTMem;
 proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)

@@ -4,12 +4,13 @@ use vstd::assert_by_contradiction;
 
 use crate::spec_t::mmu::defs::{ MemRegion, MemRegionExec, PTE, PageTableEntryExec, Flags,
 x86_arch_exec, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
-L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc, usize_keys };
+L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ between, aligned, new_seq, x86_arch_spec,
-axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem_usize };
+axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem_usize, usize_keys };
 #[cfg(verus_keep_ghost)]
-use crate::definitions_u::{ lemma_new_seq, aligned_exec };
+use crate::definitions_u::{ lemma_new_seq };
+use crate::definitions_u::{ aligned_exec };
 use crate::impl_u::l1;
 use crate::impl_u::indexing;
 use crate::spec_t::mmu::translation::{ PDE,GPDE, MASK_FLAG_P, MASK_FLAG_RW, MASK_FLAG_US,

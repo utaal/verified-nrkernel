@@ -1,6 +1,8 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MAX_BASE, MemRegionExec };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MemRegionExec };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::MAX_BASE;
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken };
 use crate::impl_u::l2_impl::PT::{ map_frame, unmap };

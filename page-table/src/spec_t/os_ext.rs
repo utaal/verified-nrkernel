@@ -320,9 +320,9 @@ pub mod code {
     #[cfg(feature="linuxmodule")]
     extern "C" {
         fn mmap_pgtable_lock();
-        fn mmap_mm_pgtable_lock(mm: *const c_void);
+        fn mmap_mm_pgtable_lock(mm: u64);
         fn mmap_pgtable_unlock();
-        fn mmap_pgtable_unlock(mm: *const c_void);
+        fn mmap_mm_pgtable_unlock(mm: u64);
     }
 
     #[cfg(not(feature="linuxmodule"))]
@@ -381,8 +381,8 @@ pub mod code {
     #[cfg(feature="linuxmodule")]
     extern "C" {
         /// invalidates a range of tlb pages for the current mm
-        fn flush_tlb_mm_range(mm: *const c_void, start: u64, end: u64, stride: u64, freed_tables: bool);
-        
+        fn flush_tlb_mm_range(mm: u64, start: u64, end: u64, stride: u64, freed_tables: bool);
+
         /// invalidates a tlb page for the given start address and the current mm
         fn flush_tlb_page(start: u64, page_size: u64);
     }
@@ -400,7 +400,7 @@ pub mod code {
     {
         // on linux this is a blocking call to flush the TLB for the given page. 
         #[cfg(feature="linuxmodule")]
-        flush_tlb_page(vaddr as u64, size);
+        unsafe { flush_tlb_page(vaddr as u64, size as u64); }
 
         // #[cfg(not(feature="linuxmodule"))]
         // implementation of the shootdown is not necessary if we run this as an standalone module

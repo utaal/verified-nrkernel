@@ -7,12 +7,12 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::{ rl3, rl1 };
 use crate::spec_t::{ hlspec, mmu };
 use crate::spec_t::mmu::defs::{
-    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core, word_index_spec
+    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core
 };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec,
+    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, word_index_spec
 };
 #[cfg(verus_keep_ghost)]
 use crate::extra::result_map_ok;

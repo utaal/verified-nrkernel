@@ -5,12 +5,14 @@ use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, MemRegion, new_seq, bit, usize_keys };
-use crate::spec_t::mmu::defs::{ MemRegionExec, PTE, MAX_PHYADDR, candidate_mapping_overlaps_existing_vmem_usize };
+use crate::spec_t::mmu::defs::{ aligned, new_seq, bit, usize_keys, candidate_mapping_overlaps_existing_vmem_usize };
+use crate::spec_t::mmu::defs::{ MemRegionExec, MemRegion, PTE, MAX_PHYADDR };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
-use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, Token, unchanged_state_during_concurrent_trs };
+use crate::spec_t::os_code_vc::Token;
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, unchanged_state_during_concurrent_trs };
 use crate::impl_u::l2_impl::{ PT, PTDir };
 
 verus! {
