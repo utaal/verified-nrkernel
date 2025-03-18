@@ -398,7 +398,7 @@ pub trait CodeVC {
         pml4: usize,
         vaddr: usize,
         pte: PageTableEntryExec,
-        tracked proph_res: Prophecy<Result<(),()>>
+        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<(),()>, Tracked<Token>))
         requires
             // State machine VC preconditions
@@ -426,9 +426,9 @@ pub trait CodeVC {
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<Token>,
         pml4: usize,
-        core: Core,
+        core: Tracked<Core>,
         vaddr: usize,
-        tracked proph_res: Prophecy<Result<(),()>>
+        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
         requires
             tok.core() == core,

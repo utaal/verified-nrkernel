@@ -9,7 +9,7 @@ use crate::impl_u::l2_impl::PT::{ map_frame, unmap };
 
 verus! {
 
-struct PT {}
+pub struct PT {}
 
 impl CodeVC for PT {
     exec fn sys_do_map(
@@ -17,7 +17,7 @@ impl CodeVC for PT {
         pml4: usize,
         vaddr: usize,
         pte: PageTableEntryExec,
-        tracked proph_res: Prophecy<Result<(),()>>
+        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (Result<(),()>, Tracked<Token>)
     {
         let tracked mut tok = tok;
@@ -47,9 +47,9 @@ impl CodeVC for PT {
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<Token>,
         pml4: usize,
-        core: Core,
+        core: Tracked<Core>,
         vaddr: usize,
-        tracked proph_res: Prophecy<Result<(),()>>
+        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
     {
         let tracked wtok = WrappedUnmapToken::new(tok);

@@ -10,68 +10,72 @@ pub mod extra;
 pub mod theorem;
 
 use vstd::prelude::verus;
-
+use vstd::prelude::Tracked;
+#[cfg(feature="linuxmodule")]
+use crate::spec_t::mmu::defs::{ Core, PageTableEntryExec, MemRegionExec, Flags};
+use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 verus!{
 
 global size_of usize == 8;
 
-}
+
 
 //pub mod hlspec_user;
 //pub mod os_trace;
 
-// #[repr(C)]
-// pub struct MapFlags {
-//     writable: u64,
-//     readable: u64,
-//     executable: u64,
-//     devicemem: u64,
-//     usermode: u64,
-//     bar: u64,
-// }
+#[cfg(feature="linuxmodule")]
+#[no_mangle]
+pub extern "C" fn veros_init() -> i64 {
+    0 // return 0 to indicate success
+}
 
-pub const WRITABLE: u64 = 1 << 0;
-pub const READABLE: u64 = 1 << 1;
-pub const EXECUTABLE: u64 = 1 << 2;
-pub const DEVICEMEM: u64 = 1 << 3;
-pub const USERMODE: u64 = 1 << 4;
-pub const BAR: u64 = 1 << 5;
+/// Entry point from the linux kernel to map a region of memory
+#[cfg(feature="linuxmodule")]
+#[no_mangle]
+pub extern "C" fn veros_map_frame(
+    pt_ptr: u64,
+    vaddr: u64,
+    pte: PageTableEntryExec) -> i64
+{
 
+    let pml4 = pt_ptr as usize;
+    let token: Tracked<Token> = Tracked::assume_new();
+    let proph_res = Tracked(Prophecy::new());
 
-pub extern "C" fn v_x8664pml4_init(pt_ptr: *mut core::ffi::c_void) -> i64 {
-    0 // return the PML4 state representation of the verified implementation.
+    let (res, _tok) = impl_u::verified_impl::PT::sys_do_map(token, pml4, vaddr as usize, pte, proph_res);
+    if res.is_ok() {
+        return 0;
+    } else {
+        return -1;
+    }
 }
 
 
+
+#[cfg(feature="linuxmodule")]
 #[no_mangle]
-pub extern "C" fn v_x8664pml4_map(
-    pt_ptr: *mut core::ffi::c_void,
+pub extern "C" fn veros_unmap_frame(
+    pt_ptr: u64,
     vaddr: u64,
-    sz: u64,
-    flags: u64) -> i64
+    ret_frame: &mut MemRegionExec) -> i64
 {
+    let pml4 = pt_ptr as usize;
+    let token: Tracked<Token> = Tracked::assume_new();
+    let proph_res = Tracked(Prophecy::new());
+    let core : Tracked<Core> = Tracked::assume_new();
+
+    let (res, _tok) = impl_u::verified_impl::PT::sys_do_unmap(token, pml4, core, vaddr as usize, proph_res);
+    match res {
+        Ok(frame) => {
+            *ret_frame = frame;
+            return 0;
+        }
+        Err(_) => {
+            return -1;
+        }
+    }
     0 // return 0 to indicate success
 }
 
 
-
-
-#[no_mangle]
-pub extern "C" fn v_x8664pml4_unmap(
-    pt_ptr: *mut core::ffi::c_void,
-    vaddr: u64,
-    sz: u64) -> i64
-{
-    0 // return 0 to indicate success
-}
-
-
-#[no_mangle]
-pub extern "C" fn v_x8664pml4_protect(
-    pt_ptr: *mut core::ffi::c_void,
-    vaddr: u64,
-    sz: u64,
-    flags: u64) -> i64
-{
-    0 // return 0 to indicate success
-}
+} // verus!
