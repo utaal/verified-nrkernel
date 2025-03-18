@@ -475,4 +475,62 @@ pub exec fn register_step_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Gh
     }
 }
 
+
+
+// TODO: For now, much of the Unmap stuff is just placeholders so we can call unmap again.
+
+pub tracked struct WrappedUnmapToken {
+    tracked tok: Token,
+    ghost done: bool,
+    ghost orig_st: os::State,
+    ghost regions: Set<MemRegion>,
+}
+
+impl WrappedUnmapToken {
+    // TODO: shouldn't be external_body
+    #[verifier(external_body)]
+    pub proof fn new(tracked tok: Token) -> (tracked res: WrappedUnmapToken) {
+        unimplemented!()
+    }
+
+    pub proof fn destruct(tracked self) -> (tracked tok: Token) {
+        admit();
+        self.tok
+    }
+
+    pub exec fn read(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, r: Ghost<MemRegion>) -> (res: usize) {
+        proof { admit(); }
+        let addr = pbase + idx * 8;
+        let ghost state1 = tok.tok.st();
+        let ghost core = tok.tok.core();
+        assert(core == tok.tok.consts().ult2core[tok.tok.thread()]);
+        assert(tok.tok.consts().valid_core(core));
+        let tracked mut mmu_tok = tok.tok.get_mmu_token();
+
+        let res = mmu::rl3::code::read(Tracked(&mut mmu_tok), addr);
+
+        res & MASK_NEG_DIRTY_ACCESS
+    }
+
+    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>) {
+        proof { admit(); }
+        let addr = pbase + idx * 8;
+        let tracked mut mmu_tok = tok.tok.get_mmu_token();
+        mmu::rl3::code::write(Tracked(&mut mmu_tok), addr, value);
+    }
+
+    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>) {
+        proof { admit(); }
+        let addr = pbase + idx * 8;
+        let tracked mut mmu_tok = tok.tok.get_mmu_token();
+        mmu::rl3::code::write(Tracked(&mut mmu_tok), addr, value);
+    }
+
+    pub exec fn deallocate(Tracked(tok): Tracked<&mut Self>, layer: usize, region: MemRegionExec) {
+        proof { admit(); }
+        let tracked mut osext_tok = tok.tok.get_osext_token();
+        os_ext::code::deallocate(Tracked(&mut osext_tok), region, layer)
+    }
+}
+
 } // verus!

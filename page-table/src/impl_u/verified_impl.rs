@@ -1,9 +1,9 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MAX_BASE };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MAX_BASE, MemRegionExec };
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
-use crate::impl_u::wrapped_token::{ WrappedMapToken };
-use crate::impl_u::l2_impl::PT::{ map_frame };
+use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken };
+use crate::impl_u::l2_impl::PT::{ map_frame, unmap };
 
 verus! {
 
@@ -43,13 +43,21 @@ impl CodeVC for PT {
 
     #[verifier(external_body)]
     exec fn sys_do_unmap(
-        Tracked(tok): Tracked<&mut Token>,
+        Tracked(tok): Tracked<Token>,
         pml4: usize,
         core: Core,
         vaddr: usize,
         tracked proph_res: Prophecy<Result<(),()>>
-    ) -> (res: Result<(),()>)
-    { unimplemented!() }
+    ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
+    {
+        let tracked wtok = WrappedUnmapToken::new(tok);
+        let mut pt = Ghost(arbitrary());
+        let res = unmap(Tracked(&mut wtok), &mut pt, pml4, vaddr);
+
+        let tracked tok = wtok.destruct();
+
+        (res, Tracked(tok))
+    }
 }
 
 

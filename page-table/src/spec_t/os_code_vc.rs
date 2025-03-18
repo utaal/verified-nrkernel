@@ -4,7 +4,7 @@ use crate::spec_t::os;
 use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MemRegionExec };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 
@@ -421,32 +421,29 @@ pub trait CodeVC {
             res.1@.progress() is Ready,
     ;
 
-    // TODO:
-    // Here, we would need to return somehow the address of the frame that was mapped so we can 
-    // free it afterwards. In theory, we should be able to return the PageTableEntryExec that was 
-    // used to map the frame in the first place. We should do this at least as a "hint", or at 
-    // best as a full verifid return value
+    /// This function returns the memory region that was unmapped but that value should be
+    /// considered a hint as it's not verified.
     exec fn sys_do_unmap(
-        Tracked(tok): Tracked<&mut Token>,
+        Tracked(tok): Tracked<Token>,
         pml4: usize,
         core: Core,
         vaddr: usize,
         tracked proph_res: Prophecy<Result<(),()>>
-    ) -> (res: Result<(),()>)
+    ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
         requires
-            old(tok).core() == core,
-            old(tok).st().core_states[core] is Idle,
-            old(tok).steps() === seq![
-                RLbl::UnmapStart { thread_id: old(tok).thread(), vaddr: vaddr as nat },
-                RLbl::UnmapEnd { thread_id: old(tok).thread(), vaddr: vaddr as nat, result: proph_res.value() }
+            tok.core() == core,
+            tok.st().core_states[core] is Idle,
+            tok.steps() === seq![
+                RLbl::UnmapStart { thread_id: tok.thread(), vaddr: vaddr as nat },
+                RLbl::UnmapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: proph_res.value() }
             ],
-            old(tok).on_first_step(),
-            old(tok).progress() is Unready,
+            tok.on_first_step(),
+            tok.progress() is Unready,
             proph_res.may_resolve(),
         ensures
-            res == proph_res.value(),
-            tok.steps() === seq![],
-            tok.progress() is Ready,
+            res.0 is Ok <==> proph_res.value() is Ok,
+            res.1@.steps() === seq![],
+            res.1@.progress() is Ready,
     ;
 }
 
