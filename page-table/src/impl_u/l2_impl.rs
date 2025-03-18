@@ -1596,7 +1596,7 @@ fn map_frame_aux(
             //assert forall|i: nat| i < X86_NUM_ENTRIES implies
             //    #[trigger] entry_at_spec(tok@, pt_with_empty@, layer as nat, ptr, i)
             //    == if i == idx { new_dir_entry } else { entry_at_spec(tok_with_empty, pt_with_empty@, layer as nat, ptr, i) } by { };
-            assert(inv_at(tok_with_empty, pt_with_empty@, layer as nat, ptr));
+            assert(inv_at(tok_with_empty, pt_with_empty, layer as nat, ptr));
 
             // TODO: instead of rebuild_root_pt this may have to use a closure we get back from
             // insert_empty_directory above.

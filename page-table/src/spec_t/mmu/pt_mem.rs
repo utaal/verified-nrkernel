@@ -4,8 +4,6 @@ use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_
 use crate::spec_t::mmu::defs::{ PTE, bitmask_inc, WORD_SIZE, bit };
 use crate::spec_t::mmu::{ Walk, WalkResult };
 
-use crate::spec_t::mmu::*;
-
 verus! {
 
 // TODO: memory size
