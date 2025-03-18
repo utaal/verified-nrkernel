@@ -5,9 +5,9 @@
 use vstd::prelude::*;
 
 use crate::spec_t::mmu::{ rl3, rl1 };
-use crate::spec_t::{ hlspec, mem, mmu };
+use crate::spec_t::{ hlspec, mmu };
 use crate::spec_t::mmu::defs::{
-    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core,
+    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core, word_index_spec
 };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
@@ -767,7 +767,7 @@ impl State {
                 let (base, pte) = choose|base: nat, pte: PTE| #![auto]
                     mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
-                let pmem_idx = mem::word_index_spec(paddr);
+                let pmem_idx = word_index_spec(paddr);
                 self.mmu@.phys_mem[pmem_idx as int]
             },
         )

@@ -4,7 +4,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
     between, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap,
-    MemRegion, PTE, WORD_SIZE, Core
+    MemRegion, PTE, WORD_SIZE, Core, word_index_spec,
 };
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::mmu::{ self, rl1 };
@@ -433,7 +433,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
     match mmu_step {
         rl1::Step::MemOpNoTr { .. } => {
             assert(rl1::step_MemOpNoTr(s1.mmu@, s2.mmu@, c.mmu, mlbl));
-            let vmem_idx = crate::spec_t::mem::word_index_spec(vaddr);
+            let vmem_idx = word_index_spec(vaddr);
             let t1 = s1.interp(c);
             let t2 = s2.interp(c);
             let d = c.interp();
@@ -475,7 +475,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             let thread_id = lbl->MemOp_thread_id;
             let op = lbl->MemOp_op;
 
-            let vmem_idx = crate::spec_t::mem::word_index_spec(vaddr);
+            let vmem_idx = word_index_spec(vaddr);
             let pte = t1.vaddr_mapping_is_being_modified_choose(d, vaddr);
 
             // TODO: Needs an invariant about pending_maps

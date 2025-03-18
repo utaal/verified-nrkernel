@@ -415,4 +415,26 @@ pub open spec fn usize_keys<V>(m: Map<nat, V>) -> Map<usize, V>
     Map::new(|k: usize| m.contains_key(k as nat), |k: usize| m[k as nat])
 }
 
+pub fn word_index(addr: usize) -> (res: usize)
+    requires
+        aligned(addr as nat, 8),
+    ensures
+        res as nat === word_index_spec(addr as nat),
+        // Prove this equivalence to use the indexing lemmas
+        res as nat === crate::spec_t::mmu::defs::index_from_offset(addr as nat, WORD_SIZE as nat),
+        word_index_spec(addr as nat) === crate::spec_t::mmu::defs::index_from_offset(
+            addr as nat,
+            WORD_SIZE as nat,
+        ),
+{
+    addr / WORD_SIZE
+}
+
+pub open spec fn word_index_spec(addr: nat) -> nat
+    recommends
+        aligned(addr, 8),
+{
+    addr / (WORD_SIZE as nat)
+}
+
 } // verus!

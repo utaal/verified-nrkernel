@@ -2,9 +2,8 @@
 use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
-    between, candidate_mapping_overlaps_existing_pmem, overlap, PTE, WORD_SIZE,
+    between, candidate_mapping_overlaps_existing_pmem, overlap, PTE, WORD_SIZE, word_index_spec
 };
-use crate::spec_t::mem;
 #[cfg(verus_keep_ghost)]
 use crate::extra::{ lemma_set_of_first_n_nat_is_finite, lemma_subset_is_finite };
 use crate::theorem::RLbl;
@@ -51,7 +50,7 @@ pub proof fn lemma_mem_domain_from_mappings(
         let (base2, pte2) = choose|base: nat, pte: PTE|
             {
                 let paddr = (pte.frame.base + (vaddr - base)) as nat;
-                let pmem_idx = mem::word_index_spec(paddr);
+                let pmem_idx = word_index_spec(paddr);
                 &&& #[trigger] mappings.contains_pair(base, pte)
                 &&& between(vaddr, base, base + pte.frame.size)
                 &&& pmem_idx < phys_mem_size
@@ -69,7 +68,7 @@ pub proof fn lemma_mem_domain_from_mappings(
         let (base2, pte2) = choose|base2: nat, pte2: PTE|
             {
                 let paddr = (pte2.frame.base + (vaddr - base2)) as nat;
-                let pmem_idx = mem::word_index_spec(paddr);
+                let pmem_idx = word_index_spec(paddr);
                 &&& #[trigger] mappings.insert(base, pte).contains_pair(base2, pte2)
                 &&& between(vaddr, base2, base2 + pte2.frame.size)
                 &&& pmem_idx < phys_mem_size

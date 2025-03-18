@@ -4,10 +4,7 @@
 // model in rl3.rs models the non-atomic nature of page table walks + caching + ..
 
 use vstd::prelude::*;
-use crate::spec_t::mem;
-use crate::spec_t::mmu::defs::{
-    MemRegion, Flags, PAGE_SIZE, MAX_PHYADDR_WIDTH, bit, bitmask_inc,
-};
+use crate::spec_t::mmu::defs::{ Flags, MAX_PHYADDR_WIDTH, bit, bitmask_inc, };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ aligned, axiom_max_phyaddr_width_facts, };
 
@@ -395,35 +392,5 @@ pub proof fn lemma_bit_indices_less_512(va: usize)
     assert(l2_bits!(va) < 512) by (bit_vector);
     assert(l3_bits!(va) < 512) by (bit_vector);
 }
-
-pub open spec fn read_entry(
-    pt_mem: mem::PageTableMemory,
-    dir_addr: nat,
-    layer: nat,
-    idx: nat,
-) -> GPDE {
-    let region = MemRegion { base: dir_addr as nat, size: PAGE_SIZE as nat };
-    PDE { entry: pt_mem.spec_read(idx, region), layer: Ghost(layer) }@
-}
-
-// /// TODO: list 4-level paging no HLAT etc. as assumptions (+ the register to enable XD semantics,
-// /// it's must-be-zero otherwise)
-// ///
-// /// The intended semantics for valid_pt_walk is this:
-// /// Given a `PageTableMemory` `pt_mem`, the predicate is true for those `addr` and `pte` where the
-// /// MMU's page table walk arrives at an entry mapping the frame `pte.frame`. The properties in
-// /// `pte.flags` reflect the properties along the translation path. I.e. `pte.flags.is_writable` is
-// /// true iff the RW flag is set in all directories along the translation path and in the frame
-// /// mapping. Similarly, `pte.flags.is_supervisor` is true iff the US flag is unset in all those
-// /// structures and `pte.flags.disable_execute` is true iff the XD flag is set in at least one of
-// /// those structures.
-// ///
-// /// In practice, we always set these flags to their more permissive state in directories and only
-// /// make more restrictive settings in the frame mappings. (Ensured in the invariant, see conjunct
-// /// `directories_have_flags` in refinement layers 1 and 2.) But in the hardware model we still
-// /// define the full, correct semantics to ensure the implementation sets the flags correctly.
-// ///
-// /// Note that `valid_pt_walk` is only true for the base address of a mapping. E.g. if a 4k entry is
-// /// mapped at address 0, then we have `valid_pt_walk(.., 0, ..)` but not `valid_pt_walk(.., 1, ..)`.
 
 } // verus!

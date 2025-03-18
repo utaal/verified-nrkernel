@@ -1,13 +1,11 @@
 use vstd::prelude::*;
 use vstd::assert_by_contradiction;
-#[cfg(verus_keep_ghost)]
-use crate::spec_t::mem::word_index_spec;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, bit, WORD_SIZE, MAX_PHYADDR_WIDTH, axiom_max_phyaddr_width_facts, MemOp,
-    LoadResult };
+    LoadResult, word_index_spec };
 use crate::spec_t::mmu::defs::{ Core, PTE };
 use crate::spec_t::mmu::rl3::{ Writes };
 use crate::spec_t::mmu::rl1::{ Polarity };

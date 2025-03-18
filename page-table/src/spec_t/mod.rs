@@ -5,6 +5,5 @@ pub mod os_code_vc;
 //#[cfg(feature = "impl")]
 //pub mod impl_spec;
 pub mod hlproof;
-pub mod mem;
 pub mod os_invariant;
 pub mod mmu;

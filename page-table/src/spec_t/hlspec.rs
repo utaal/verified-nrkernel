@@ -5,13 +5,13 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
     MemRegion, PTE, MemOp, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE,
+    word_index_spec,
 };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec,
 };
-use crate::spec_t::mem;
 use crate::theorem::RLbl;
 
 #[cfg(verus_keep_ghost)]
@@ -132,7 +132,7 @@ pub open spec fn mem_domain_from_entry_contains(
     pte: PTE,
 ) -> bool {
     let paddr = (pte.frame.base + (vaddr - base)) as nat;
-    let pmem_idx = mem::word_index_spec(paddr);
+    let pmem_idx = word_index_spec(paddr);
     &&& between(vaddr, base, base + pte.frame.size)
     &&& pmem_idx < phys_mem_size
 }
@@ -230,14 +230,14 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
 pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, pte: Option<(nat, PTE)>, lbl: RLbl) -> bool {
     &&& lbl matches RLbl::MemOp { thread_id, vaddr, op }
     &&& {
-    let vmem_idx = mem::word_index_spec(vaddr);
+    let vmem_idx = word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] is Idle
     &&& match pte {
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = mem::word_index_spec(paddr);
+            let pmem_idx = word_index_spec(paddr);
             // If pte is Some, it's an existing mapping that contains vaddr..
             &&& s1.mappings.contains_pair(base, pte)
             &&& between(vaddr, base, base + pte.frame.size)
@@ -288,14 +288,14 @@ pub open spec fn step_MemOpNA(c: Constants, s1: State, s2: State, lbl: RLbl) -> 
     &&& s1.vaddr_mapping_is_being_modified(c, vaddr)
     &&& {
     let pte = s1.vaddr_mapping_is_being_modified_choose(c, vaddr);
-    let vmem_idx = mem::word_index_spec(vaddr);
+    let vmem_idx = word_index_spec(vaddr);
     &&& aligned(vaddr, 8)
     &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] is Idle
     &&& match pte {
         Some((base, pte)) => {
             let paddr = (pte.frame.base + (vaddr - base)) as nat;
-            let pmem_idx = mem::word_index_spec(paddr);
+            let pmem_idx = word_index_spec(paddr);
             // the result depends on the flags
             &&& match op {
                 MemOp::Store { new_value, result } => {
