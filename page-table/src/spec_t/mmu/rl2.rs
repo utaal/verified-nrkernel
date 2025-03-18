@@ -565,13 +565,44 @@ impl State {
 
     pub open spec fn inv_unmapping__inflight_walks(self, c: Constants) -> bool {
         forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
+            let walk_na = finish_iter_walk(self.core_mem(core), walk);
+            let walk_a  = iter_walk(self.core_mem(core), walk.vaddr);
             &&& aligned(walk.vaddr as nat, 8)
             &&& walk.path.len() <= 3
             &&& !walk.complete
-            &&& (is_iter_walk_prefix(self.core_mem(core), walk)
-                || is_invalid_walk_and_atomic_is_invalid(self.core_mem(core), walk))
+            // TODO:
+            // Needs decision:
+            // Either enforce that unmapping happens bottom-to-top or need to modify this:
+            // - If we unmap a directory that still has children, we could have inflight walks
+            //   "caching" that part of the path. I.e. they may still complete successfully, so we
+            //   have staleness due to non-atomicity/translation caching, not just TSO.
+            // - Enforcing bottom-to-top might be tricky and add complexity to impl VCs
+            //
+            // Enforcing bottom-to-top:
+            // - Have to be able to differentiate removal of a page mapping vs directory mapping
+            // - When we explicitly do separate memory ranges I could use the address to
+            //   distinguish whether we're unmapping a page mapping or a directory mapping
+            // - But this may not work generally with huge page mappings?
+            // - Doing this in a context-free way is very hard or impossible?
+            //
+            // Without bottom-to-top:
+            // - We can now have in-flight walks that will complete successfully but don't satisfy
+            //   is_iter_walk_prefix
+            // - Specifically: If we remove a non-empty directory, walks using that directory may
+            //   be in-progress and eventually complete successfully
+            &&& (if walk_a.result() is Invalid {
+                     ||| walk_na.result() is Invalid
+                     ||| (walk_na.result() matches WalkResult::Valid { vbase, pte }
+                          && self.hist.pending_unmaps.contains_pair(vbase, pte))
+                 } else {
+                     is_iter_walk_prefix(self.core_mem(core), walk)
+                 })
         }
     }
+
+    // (write mem read = core mem read) || write mem read has P=0 and core mem read has P=1
+
+
 
     //pub open spec fn inv_unmapping__pending_unmap_is_invalid(self, c: Constants) -> bool {
     //    forall|va| #![auto] self.hist.pending_unmaps.contains_key(va) ==> self.writer_mem().pt_walk(va).result() is Invalid
@@ -600,6 +631,12 @@ impl State {
                 core_walk == writer_walk
             }
         }
+    }
+
+    pub open spec fn inv_unmapping__invalid_walk(self, c: Constants) -> bool {
+        forall|va, core| #![auto]
+            c.valid_core(core) && self.core_mem(core).pt_walk(va).result() is Invalid
+                ==> self.writer_mem().pt_walk(va).result() is Invalid
     }
 
     //pub open spec fn inv_unmapping__mismatched_walks(self, c: Constants) -> bool {
@@ -765,6 +802,10 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
     }
     assert(post.writer_sbuf_entries_have_P_bit_0());
 
+    if pre.polarity is Mapping {
+        // TODO: Have to prove this explicitly from inv_between
+        assume(pre.inv_unmapping__inflight_walks(c));
+    }
     assert(post.inv_unmapping__inflight_walks(c)) by {
         next_step_preserves_inv_unmapping__inflight_walks(pre, post, c, step, lbl);
     };
@@ -773,6 +814,7 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
     };
 }
 
+// unstable
 proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.wf(c),
@@ -898,7 +940,6 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
         pre.inv_unmapping(c),
         post.inv_sbuf_facts(c),
         //pre.inv_mapping__valid_is_not_in_sbuf(c),
-        pre.inv_unmapping__inflight_walks(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping__inflight_walks(c)
 {
@@ -917,32 +958,130 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
                 if let Lbl::Write(core, addr, value) = lbl {
                     (core, addr, value)
                 } else { arbitrary() };
-            assert(post.inv_unmapping__inflight_walks(c)) by {
-                assert forall|core, walk|
-                    c.valid_core(core) && #[trigger] post.walks[core].contains(walk)
-                implies
-                    is_iter_walk_prefix(post.core_mem(core), walk)
-                    || is_invalid_walk_and_atomic_is_invalid(post.core_mem(core), walk)
-                by {
-                    if wrcore == core {
-                        reveal(rl2::walk_next);
-                        lemma_mem_view_after_step_write(pre, post, c, lbl);
-                        pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
-                        assert(post.core_mem(core) == post.writer_mem());
-                        assert(post.writes.core == pre.writes.core ==> pre.core_mem(core) == pre.writer_mem());
-                        //assert(is_iter_walk_prefix(pre.core_mem(core), walk)
-                        //        || is_invalid_walk_and_atomic_is_invalid(pre.core_mem(core), walk));
-                        if is_iter_walk_prefix(pre.core_mem(core), walk) {
-                            admit();
+            //assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
+            assume(forall|va| #![auto] pre.hist.pending_unmaps.contains_key(va)
+                    ==> post.hist.pending_unmaps.contains_pair(va, pre.hist.pending_unmaps[va]));
+            assert forall|core, walk|
+                c.valid_core(core) && #[trigger] post.walks[core].contains(walk) implies {
+                    let walk_na = finish_iter_walk(post.core_mem(core), walk);
+                    let walk_a  = iter_walk(post.core_mem(core), walk.vaddr);
+                    &&& aligned(walk.vaddr as nat, 8)
+                    &&& walk.path.len() <= 3
+                    &&& !walk.complete
+                    &&& (if walk_a.result() is Invalid {
+                             ||| walk_na.result() is Invalid
+                             ||| (walk_na.result() matches WalkResult::Valid { vbase, pte }
+                                  && post.hist.pending_unmaps.contains_pair(vbase, pte))
+                         } else {
+                             is_iter_walk_prefix(post.core_mem(core), walk)
+                         })
+            } by {
+                let pre_walk_na = finish_iter_walk(pre.core_mem(core), walk);
+                let pre_walk_a  = iter_walk(pre.core_mem(core), walk.vaddr);
+                let post_walk_na = finish_iter_walk(post.core_mem(core), walk);
+                let post_walk_a  = iter_walk(post.core_mem(core), walk.vaddr);
+                if wrcore == core {
+                    assert(pre.walks[core].contains(walk));
+                    reveal(rl2::walk_next);
+                    lemma_mem_view_after_step_write(pre, post, c, lbl);
+                    pt_mem::PTMem::lemma_pt_walk(pre.writer_mem(), walk.vaddr);
+                    assert(post.core_mem(core) == post.writer_mem());
+                    assert(post.writes.core == pre.writes.core ==> pre.core_mem(core) == pre.writer_mem());
+                    //assert(is_iter_walk_prefix(pre.core_mem(core), walk)
+                    //        || is_invalid_walk_and_atomic_is_invalid(pre.core_mem(core), walk));
+
+                    if pre_walk_a.result() is Invalid {
+                        admit();
+                        if pre_walk_na.result() is Invalid {
+                            // TODO: A walk cannot become more valid after a nonpositive write
+                            assume(post_walk_na.result() is Invalid);
                         } else {
-                            assert(is_invalid_walk_and_atomic_is_invalid(pre.core_mem(core), walk));
-                            assume(is_invalid_walk_and_atomic_is_invalid(post.core_mem(core), walk));
+                            assert(pre_walk_na.result() matches WalkResult::Valid { vbase, pte }
+                                    && pre.hist.pending_unmaps.contains_pair(vbase, pte));
+                            let vbase = pre_walk_na.result()->Valid_vbase;
+                            let pte = pre_walk_na.result()->Valid_pte;
+                            assert(post.hist.pending_unmaps.contains_pair(vbase, pte));
+                            // TODO: Was the write to any location in pre_walk_na.path with
+                            // index >= walk.path.len()?
+                            // If so, walk becomes invalid. Otherwise stays valid and equal.
+                            assume(post_walk_na.result() is Invalid || post_walk_na == pre_walk_na);
+                        }
+                    } else {
+                        // TODO: This should instead be a case distinction on what address we wrote
+                        // to. I.e.
+                        // 1. We wrote to an address in the prefix of walk, or
+                        // 2. We wrote to an address that the rest of walk relies on, or
+                        // 3. None of the walk relies on that address
+                        if post_walk_a.result() is Invalid {
+                            assert(is_iter_walk_prefix(pre.core_mem(core), walk));
+                            assert(pre_walk_a.result() is Valid);
+                            assert(pre_walk_a == pre_walk_na);
+                            let vbase = pre_walk_a.result()->Valid_vbase;
+                            let pte = pre_walk_a.result()->Valid_pte;
+                            // TODO: from valid walk in pre we should be able to somehow conclude
+                            // that pending_unmaps contains that walk result.
+                            assume(post.hist.pending_unmaps.contains_pair(vbase, pte));
+                            // TODO: The write must have affected this walk, so one of the path
+                            // entries matches the write address
+                            assume(
+                                // TODO: this disjunct if index < walk.path.len()
+                                pre_walk_a == post_walk_na
+                                // TODO: otherwise this disjunct
+                                || post_walk_na.result() is Invalid
+                                );
+                        } else {
+                            // TODO: if atomic walk is unchanged, non-atomic walk should also be
+                            // unchanged.
+                            assume(post_walk_a == post_walk_na);
+                            // TODO: Admitting because slow but this proof worked
+                            admit();
                         }
                     }
-                };
+
+                    //if post_walk_a.result() is Invalid {
+                    //    if pre_walk_a.result() is Invalid {
+                    //        if pre_walk_na.result() is Invalid {
+                    //            // TODO: A walk cannot become more valid after a nonpositive write
+                    //            assume(post_walk_na.result() is Invalid);
+                    //        } else {
+                    //            assert(pre_walk_na.result() matches WalkResult::Valid { vbase, pte }
+                    //                    && pre.hist.pending_unmaps.contains_pair(vbase, pte));
+                    //            let vbase = pre_walk_na.result()->Valid_vbase;
+                    //            let pte = pre_walk_na.result()->Valid_pte;
+                    //            assert(post.hist.pending_unmaps.contains_pair(vbase, pte));
+                    //            // TODO: Was the write to any location in pre_walk_na.path with
+                    //            // index >= walk.path.len()?
+                    //            // If so, walk becomes invalid. Otherwise stays valid and equal.
+                    //            assume(post_walk_na.result() is Invalid || post_walk_na == pre_walk_na);
+                    //        }
+                    //    } else {
+                    //        assert(is_iter_walk_prefix(pre.core_mem(core), walk));
+                    //        assert(pre_walk_a.result() is Valid);
+                    //        assert(pre_walk_a == pre_walk_na);
+                    //        let vbase = pre_walk_a.result()->Valid_vbase;
+                    //        let pte = pre_walk_a.result()->Valid_pte;
+                    //        // TODO: from valid walk in pre we should be able to somehow conclude
+                    //        // that pending_unmaps contains that walk result.
+                    //        assume(post.hist.pending_unmaps.contains_pair(vbase, pte));
+                    //        // TODO: The write must have affected this walk, so one of the path
+                    //        // entries matches the write address
+                    //        assume(
+                    //            // TODO: this disjunct if index < walk.path.len()
+                    //            pre_walk_a == post_walk_na
+                    //            // TODO: otherwise this disjunct
+                    //            || post_walk_na.result() is Invalid
+                    //            );
+                    //    }
+                    //} else {
+                    //    admit();
+                    //    //is_iter_walk_prefix(self.core_mem(core), walk)
+                    //}
+                }
             };
+            assert(post.inv_unmapping__inflight_walks(c));
         },
         Step::Writeback { core: wrcore } => {
+            admit();
             let wraddr = pre.writer_sbuf()[0].0;
             let value = pre.writer_sbuf()[0].1;
             assert(wrcore == pre.writes.core);
@@ -1012,7 +1151,89 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
                 };
             };
         },
-        _ => assert(post.inv_unmapping__inflight_walks(c)),
+        Step::WalkInit { core, vaddr } => {
+            broadcast use lemma_finish_iter_walk_prefix_matches_iter_walk;
+            assert(post.inv_unmapping__inflight_walks(c));
+        },
+        _ => {
+            assert(post.inv_unmapping__inflight_walks(c));
+        },
+    }
+}
+
+broadcast proof fn lemma_finish_iter_walk_prefix_matches_iter_walk(pre: State, core: Core, walk: Walk)
+    requires
+        is_iter_walk_prefix(pre.core_mem(core), walk),
+    ensures
+        #[trigger] finish_iter_walk(pre.core_mem(core), walk) == iter_walk(pre.core_mem(core), walk.vaddr),
+{
+    reveal(walk_next);
+}
+
+proof fn next_step_preserves_inv_unmapping__invalid_walk(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.wf(c),
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.inv_sbuf_facts(c),
+        pre.inv_unmapping(c),
+        post.inv_sbuf_facts(c),
+        pre.inv_unmapping__invalid_walk(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_unmapping__invalid_walk(c)
+{
+    broadcast use
+        group_ambient,
+        lemma_step_core_mem;
+    match step {
+        Step::WriteNonpos => {
+            let (wrcore, wraddr, value) =
+                if let Lbl::Write(core, addr, value) = lbl {
+                    (core, addr, value)
+                } else { arbitrary() };
+            assert(bit!(0usize) == 1) by (bit_vector);
+            assert forall|va, core| #![auto]
+                    c.valid_core(core) && post.core_mem(core).pt_walk(va).result() is Invalid
+                implies
+                    post.writer_mem().pt_walk(va).result() is Invalid
+            by {
+                if wrcore != core {
+                    assert(post.core_mem(core).pt_walk(va) == pre.core_mem(core).pt_walk(va));
+                    // TODO: This should be fairly easy. Lhs of implication stays the same and it
+                    // can only make the rhs true not false.
+                    admit();
+                }
+            };
+            assert(post.inv_unmapping__invalid_walk(c));
+        },
+        Step::Writeback { core: wrcore } => {
+            let wraddr = pre.writer_sbuf()[0].0;
+            let value = pre.writer_sbuf()[0].1;
+            assert(wrcore == pre.writes.core);
+            assert(wrcore == post.writes.core);
+            assert(bit!(0usize) == 1) by (bit_vector);
+            lemma_writeback_preserves_writer_mem(pre, post, c, wrcore, lbl);
+            assert forall|va, core| #![auto]
+                    c.valid_core(core) && post.core_mem(core).pt_walk(va).result() is Invalid
+                implies
+                    post.writer_mem().pt_walk(va).result() is Invalid
+            by {
+                if wrcore != core {
+                    assert(post.writer_mem().pt_walk(va) == pre.writer_mem().pt_walk(va));
+                    // TODO: This one is trickier because we may invalidate a walk in core_mem and
+                    // have to prove that the walk is already invalid in writer_mem.
+                    //
+                    // Can I somehow use inv_unmapping__inflight_walks? Obvious issue is I'd need
+                    // to transfer that statement from inflight walks to completed walks. (I.e. a
+                    // very similar but separate invariant that could probably be proved the same
+                    // way.)
+                    admit();
+                }
+            };
+            assert(post.inv_unmapping__invalid_walk(c));
+        },
+        _ => assert(post.inv_unmapping__invalid_walk(c)),
     }
 }
 
@@ -1616,6 +1837,7 @@ pub open spec fn is_invalid_walk_and_atomic_is_invalid(mem: PTMem, walk: Walk) -
     &&& walk_a.result() is Invalid
 }
 
+// MB: Ideally this would be some one liner `walk.path.is_prefix_of(..)`. But that doesn't seem to work well.
 pub open spec fn is_iter_walk_prefix(mem: PTMem, walk: Walk) -> bool {
     let walkp0 = Walk { vaddr: walk.vaddr, path: seq![], complete: false };
     let walkp1 = walk_next(mem, walkp0);
@@ -1649,7 +1871,10 @@ pub open spec fn finish_iter_walk(mem: PTMem, walk: Walk) -> Walk {
         if walk.complete { walk } else {
             let walk = rl2::walk_next(mem, walk);
             if walk.complete { walk } else {
-                rl2::walk_next(mem, walk)
+                let walk = rl2::walk_next(mem, walk);
+                if walk.complete { walk } else {
+                    rl2::walk_next(mem, walk)
+                }
             }
         }
     }
@@ -1916,7 +2141,7 @@ pub mod refinement {
                         //assert(pte == walk_na_res->Valid_pte);
                         assert(rl1::step_TLBFillNA(pre.interp(), post.interp(), c, core, vbase, lbl));
                     } else {
-                        assert(pre.writer_mem().pt_walk(vbase).result() == WalkResult::Valid { vbase, pte });
+                        //assert(pre.writer_mem().pt_walk(vbase).result() == WalkResult::Valid { vbase, pte });
                         assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, vbase, lbl));
                     }
                 }
@@ -1995,6 +2220,9 @@ pub mod refinement {
         let writer_mem = pre.writer_mem();
         let walk_na = rl2::walk_next(pre.core_mem(core), walk);
 
+        rl2::lemma_iter_walk_equals_pt_walk(core_mem, walk.vaddr);
+        rl2::lemma_iter_walk_equals_pt_walk(writer_mem, walk.vaddr);
+
         if pre.polarity is Mapping {
             assert(forall|i| 0 <= i < walk.path.len() ==> walk_na.path[i] == walk.path[i]) by {
                 reveal(rl2::walk_next);
@@ -2009,8 +2237,6 @@ pub mod refinement {
             // of the memory. (Or if not, it's in a region in `pre.pending_maps`.)
             let walk_a_writer_core = rl2::iter_walk(writer_mem, walk.vaddr);
 
-            rl2::lemma_iter_walk_equals_pt_walk(core_mem, walk.vaddr);
-            rl2::lemma_iter_walk_equals_pt_walk(writer_mem, walk.vaddr);
             assert(walk_a_writer_core == writer_mem.pt_walk(walk.vaddr));
 
             if pre.pending_map_for(walk.vaddr) {
@@ -2036,13 +2262,22 @@ pub mod refinement {
                 }
             }
         } else {
+            //assert(walk_na.result() is Invalid);
+            //let walk_a_same_core = rl2::iter_walk(core_mem, walk.vaddr);
+            //assert(rl2::is_iter_walk_prefix(pre.core_mem(core), walk) || walk_a_same_core.result() is Invalid);
+            // TODO: Reconsider how I formulate this invariant exactly.
+            assume(pre.inv_unmapping__invalid_walk(c));
+            //if walk_a_same_core.result() is Invalid {
+            //    assert(rl1::step_MemOpNoTr(pre.interp(), post.interp(), c, lbl));
+            //} else {
+            //    assert(rl1::step_MemOpNoTr(pre.interp(), post.interp(), c, lbl));
+            //}
             // TODO: something similar to inv_mapping__inflight_walks
             // When unmapping, the atomic walk is a prefix of the inflight walk but both must be
             // invalid.
             // No case distinction on pending_maps or pending_unmaps needed. This transition always
             // appears atomic. (With strong enough conditions, i.e. start at bottom and unmap
             // empty directories one by one.
-            admit();
         }
     }
 
