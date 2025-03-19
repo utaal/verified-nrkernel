@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-builtin_macros = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
-builtin = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
-vstd = { git = "https://github.com/verus-lang/verus.git", rev="097ac7ed283ae60375cd9b2b6017b3c629883b2b" }
+builtin_macros = { path = "../.verus/source/builtin_macros" }
+builtin = { path = "../.verus/source/builtin" }
+vstd = { path = "../.verus/source/vstd", features = [], default-features = false }
 
 [lib]
 path = "src/lib.rs"

@@ -3,14 +3,18 @@
 version = 3
 
 [[package]]
+name = "autocfg"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
+
+[[package]]
 name = "builtin"
 version = "0.1.0"
-source = "git+https://github.com/verus-lang/verus.git?rev=097ac7ed283ae60375cd9b2b6017b3c629883b2b#097ac7ed283ae60375cd9b2b6017b3c629883b2b"
 
 [[package]]
 name = "builtin_macros"
 version = "0.1.0"
-source = "git+https://github.com/verus-lang/verus.git?rev=097ac7ed283ae60375cd9b2b6017b3c629883b2b#097ac7ed283ae60375cd9b2b6017b3c629883b2b"
 dependencies = [
  "prettyplease_verus",
  "proc-macro2",
@@ -18,6 +22,22 @@ dependencies = [
  "syn",
  "syn_verus",
  "synstructure",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "indexmap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
+dependencies = [
+ "autocfg",
+ "hashbrown",
 ]
 
 [[package]]
@@ -31,8 +51,7 @@ dependencies = [
 
 [[package]]
 name = "prettyplease_verus"
-version = "0.1.15"
-source = "git+https://github.com/verus-lang/verus.git?rev=097ac7ed283ae60375cd9b2b6017b3c629883b2b#097ac7ed283ae60375cd9b2b6017b3c629883b2b"
+version = "0.2.29"
 dependencies = [
  "proc-macro2",
  "syn_verus",
@@ -57,10 +76,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "state_machines_macros"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "syn_verus",
+]
+
+[[package]]
 name = "syn"
-version = "1.0.109"
+version = "2.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
+checksum = "b09a44accad81e1ba1cd74a32461ba89dee89095ba17b32f5d03683b1b1fc2a0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -69,8 +98,7 @@ dependencies = [
 
 [[package]]
 name = "syn_verus"
-version = "1.0.95"
-source = "git+https://github.com/verus-lang/verus.git?rev=097ac7ed283ae60375cd9b2b6017b3c629883b2b#097ac7ed283ae60375cd9b2b6017b3c629883b2b"
+version = "2.0.96"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -79,9 +107,8 @@ dependencies = [
 
 [[package]]
 name = "synstructure"
-version = "0.12.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f36bdaa60a83aca3921b5259d5400cbf5e90fc51931376a9bd4a0eb79aa7210f"
+version = "0.13.0"
+source = "git+https://github.com/mystor/synstructure.git?rev=1079497eb2bea252433dac53afe41291d8779641#1079497eb2bea252433dac53afe41291d8779641"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -104,8 +131,8 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 [[package]]
 name = "vstd"
 version = "0.1.0"
-source = "git+https://github.com/verus-lang/verus.git?rev=097ac7ed283ae60375cd9b2b6017b3c629883b2b#097ac7ed283ae60375cd9b2b6017b3c629883b2b"
 dependencies = [
  "builtin",
  "builtin_macros",
+ "state_machines_macros",
 ]
