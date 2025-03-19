@@ -23,6 +23,7 @@ git pull
 # activate building
 source ../tools/activate       # for bash and zsh
 
-vargo build --release
+# we need to build for no std
+vargo build --release --vstd-no-std --vstd-no-alloc
 
 popd
