@@ -426,13 +426,11 @@ pub trait CodeVC {
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<Token>,
         pml4: usize,
-        core: Tracked<Core>,
         vaddr: usize,
         Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
         requires
-            tok.core() == core,
-            tok.st().core_states[core] is Idle,
+            tok.st().core_states[tok.core()] is Idle,
             tok.steps() === seq![
                 RLbl::UnmapStart { thread_id: tok.thread(), vaddr: vaddr as nat },
                 RLbl::UnmapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: proph_res.value() }

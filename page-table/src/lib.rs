@@ -10,9 +10,11 @@ pub mod extra;
 pub mod theorem;
 
 use vstd::prelude::verus;
+#[cfg(feature="linuxmodule")]
 use vstd::prelude::Tracked;
 #[cfg(feature="linuxmodule")]
 use crate::spec_t::mmu::defs::{ Core, PageTableEntryExec, MemRegionExec, Flags};
+#[cfg(feature="linuxmodule")]
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 verus!{
 
@@ -62,9 +64,8 @@ pub extern "C" fn veros_unmap_frame(
     let pml4 = pt_ptr as usize;
     let token: Tracked<Token> = Tracked::assume_new();
     let proph_res = Tracked(Prophecy::new());
-    let core : Tracked<Core> = Tracked::assume_new();
 
-    let (res, _tok) = impl_u::verified_impl::PT::sys_do_unmap(token, pml4, core, vaddr as usize, proph_res);
+    let (res, _tok) = impl_u::verified_impl::PT::sys_do_unmap(token, pml4, vaddr as usize, proph_res);
     match res {
         Ok(frame) => {
             *ret_frame = frame;

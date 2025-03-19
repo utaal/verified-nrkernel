@@ -1,6 +1,6 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, Core, MemRegionExec };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::MAX_BASE;
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
@@ -47,7 +47,6 @@ impl CodeVC for PT {
     exec fn sys_do_unmap(
         Tracked(tok): Tracked<Token>,
         pml4: usize,
-        core: Tracked<Core>,
         vaddr: usize,
         Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
