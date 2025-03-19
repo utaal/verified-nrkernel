@@ -7,12 +7,12 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::{ rl3, rl1 };
 use crate::spec_t::{ hlspec, mmu };
 use crate::spec_t::mmu::defs::{
-    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, WORD_SIZE, Core
+    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, Core, MAX_BASE
 };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, word_index_spec
+    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec
 };
 #[cfg(verus_keep_ghost)]
 use crate::extra::result_map_ok;
@@ -757,20 +757,15 @@ impl State {
         self.interp_pt_mem().remove_keys(self.inflight_vaddr())
     }
 
-    pub open spec fn interp_vmem(self, c: Constants) -> Map<nat, nat> {
-        let phys_mem_size = c.interp().phys_mem_size;
-        let mappings: Map<nat, PTE> = self.effective_mappings();
-        Map::new(
-            |vmem_idx: nat| hlspec::mem_domain_from_mappings_contains(phys_mem_size, vmem_idx, mappings),
-            |vmem_idx: nat| {
-                let vaddr = vmem_idx * WORD_SIZE as nat;
+    pub open spec fn interp_vmem(self, c: Constants) -> Seq<u8> {
+        Seq::new(
+            MAX_BASE,
+            |vaddr: int| {
                 let (base, pte) = choose|base: nat, pte: PTE| #![auto]
-                    mappings.contains_pair(base, pte) && between(vaddr, base, base + pte.frame.size);
-                let paddr = (pte.frame.base + (vaddr - base)) as nat;
-                let pmem_idx = word_index_spec(paddr);
-                self.mmu@.phys_mem[pmem_idx as int]
-            },
-        )
+                    self.effective_mappings().contains_pair(base, pte)
+                    && between(vaddr as nat, base, base + pte.frame.size);
+                self.mmu@.phys_mem[pte.frame.base + (vaddr - base)]
+        })
     }
 
     pub open spec fn interp_thread_state(self, c: Constants) -> Map<nat, hlspec::ThreadState> {
@@ -821,10 +816,10 @@ impl State {
     }
 
     pub open spec fn interp(self, c: Constants) -> hlspec::State {
-        let mappings: Map<nat, PTE> = self.effective_mappings();
-        let mem: Map<nat, nat> = self.interp_vmem(c);
-        let thread_state: Map<nat, hlspec::ThreadState> = self.interp_thread_state(c);
-        let sound: bool = self.sound;
+        let mappings = self.effective_mappings();
+        let mem = self.interp_vmem(c);
+        let thread_state = self.interp_thread_state(c);
+        let sound = self.sound;
         hlspec::State { mem, mappings, thread_state, sound }
     }
 

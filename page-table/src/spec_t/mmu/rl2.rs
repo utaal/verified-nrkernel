@@ -5,10 +5,9 @@ use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, bit, WORD_SIZE, MAX_PHYADDR_WIDTH, axiom_max_phyaddr_width_facts, MemOp,
-    LoadResult, word_index_spec };
+    LoadResult, update_range };
 use crate::spec_t::mmu::defs::{ Core, PTE };
 use crate::spec_t::mmu::rl3::{ Writes };
-use crate::spec_t::mmu::rl1::{ Polarity };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 
 verus! {
@@ -19,8 +18,8 @@ verus! {
 
 pub struct State {
     pub happy: bool,
-    /// Word-indexed physical (non-page-table) memory
-    pub phys_mem: Seq<nat>,
+    /// Byte-indexed physical (non-page-table) memory
+    pub phys_mem: Seq<u8>,
     /// Page table memory
     pub pt_mem: PTMem,
     /// Per-node state (TLBs)
@@ -157,6 +156,9 @@ pub open spec fn step_MemOpNoTr(
     &&& {
     let walk_next = walk_next(pre.core_mem(core), walk);
     &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.walks[core].contains(walk)
     &&& walk.vaddr == memop_vaddr
     &&& walk_next.complete
@@ -177,26 +179,28 @@ pub open spec fn step_MemOpTLB(
     &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
     &&& pre.happy
 
+    &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
+    &&& pre.tlbs[core].contains_key(tlb_va)
     &&& {
     let pte = pre.tlbs[core][tlb_va];
-    let pmem_idx = word_index_spec(pte.frame.base + (memop_vaddr - tlb_va) as nat);
-    &&& c.valid_core(core)
-    &&& aligned(memop_vaddr as nat, 8)
-    &&& pre.tlbs[core].contains_key(tlb_va)
+    let paddr = pte.frame.base + (memop_vaddr - tlb_va);
     &&& tlb_va <= memop_vaddr < tlb_va + pte.frame.size
     &&& match memop {
         MemOp::Store { new_value, result } => {
-            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
+            if paddr < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
                 &&& result is Ok
-                &&& post.phys_mem === pre.phys_mem.update(pmem_idx as int, new_value as nat)
+                &&& post.phys_mem === update_range(pre.phys_mem, paddr, new_value)
             } else {
                 &&& result is Pagefault
                 &&& post.phys_mem === pre.phys_mem
             }
         },
-        MemOp::Load { is_exec, result } => {
-            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                &&& result == LoadResult::Value(pre.phys_mem[pmem_idx as int])
+        MemOp::Load { is_exec, result, .. } => {
+            if paddr < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                &&& result == LoadResult::Value(pre.phys_mem.subrange(paddr, paddr + memop.op_size()))
                 &&& post.phys_mem === pre.phys_mem
             } else {
                 &&& result is Pagefault

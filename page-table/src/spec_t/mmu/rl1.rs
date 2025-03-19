@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, LoadResult, word_index_spec };
+use crate::spec_t::mmu::defs::{ aligned, LoadResult, update_range };
 use crate::spec_t::mmu::defs::{ PTE, Core };
 use crate::spec_t::mmu::rl3::{ Writes };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
@@ -15,8 +15,8 @@ verus! {
 
 pub struct State {
     pub happy: bool,
-    /// Word-indexed physical (non-page-table) memory
-    pub phys_mem: Seq<nat>,
+    /// Byte-indexed physical (non-page-table) memory
+    pub phys_mem: Seq<u8>,
     /// Page table memory
     pub pt_mem: PTMem,
     /// Per-node state (TLBs)
@@ -28,17 +28,6 @@ pub struct State {
     pub pending_maps: Map<usize, PTE>,
     pub pending_unmaps: Map<usize, PTE>,
     pub polarity: Polarity,
-}
-
-pub enum Polarity {
-    Mapping,
-    Unmapping
-}
-
-impl Polarity {
-    pub open spec fn flip(self) -> Polarity {
-        if self is Mapping { Polarity::Unmapping } else { Polarity::Mapping }
-    }
 }
 
 pub enum Step {
@@ -123,6 +112,9 @@ pub open spec fn step_MemOpNoTr(pre: State, post: State, c: Constants, lbl: Lbl)
     &&& pre.happy
 
     &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.pt_mem.pt_walk(memop_vaddr).result() is Invalid
     &&& memop.is_pagefault()
 
@@ -130,13 +122,16 @@ pub open spec fn step_MemOpNoTr(pre: State, post: State, c: Constants, lbl: Lbl)
 }
 
 pub open spec fn step_MemOpNoTrNA(pre: State, post: State, c: Constants, vbase: usize, lbl: Lbl) -> bool {
-    &&& lbl matches Lbl::MemOp(core, vaddr, memop)
+    &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
     &&& pre.happy
     &&& pre.polarity is Mapping
 
     &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.pending_maps.contains_key(vbase)
-    &&& vbase <= vaddr < vbase + pre.pending_maps[vbase].frame.size
+    &&& vbase <= memop_vaddr < vbase + pre.pending_maps[vbase].frame.size
     &&& memop.is_pagefault()
 
     &&& post == pre
@@ -149,29 +144,31 @@ pub open spec fn step_MemOpTLB(
     tlb_va: usize,
     lbl: Lbl,
 ) -> bool {
-    &&& lbl matches Lbl::MemOp(core, vaddr, memop)
+    &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
     &&& pre.happy
 
+    &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
+    &&& pre.tlbs[core].contains_key(tlb_va)
     &&& {
     let pte = pre.tlbs[core][tlb_va];
-    let pmem_idx = word_index_spec(pte.frame.base + (vaddr - tlb_va) as nat);
-    &&& c.valid_core(core)
-    &&& aligned(vaddr as nat, 8)
-    &&& pre.tlbs[core].contains_key(tlb_va)
-    &&& tlb_va <= vaddr < tlb_va + pte.frame.size
+    let paddr = pte.frame.base + (memop_vaddr - tlb_va);
+    &&& tlb_va <= memop_vaddr < tlb_va + pte.frame.size
     &&& match memop {
         MemOp::Store { new_value, result } => {
-            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
+            if paddr < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
                 &&& result is Ok
-                &&& post.phys_mem === pre.phys_mem.update(pmem_idx as int, new_value as nat)
+                &&& post.phys_mem === update_range(pre.phys_mem, paddr, new_value)
             } else {
                 &&& result is Pagefault
                 &&& post.phys_mem === pre.phys_mem
             }
         },
-        MemOp::Load { is_exec, result } => {
-            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                &&& result == LoadResult::Value(pre.phys_mem[pmem_idx as int])
+        MemOp::Load { is_exec, result, .. } => {
+            if paddr < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                &&& result == LoadResult::Value(pre.phys_mem.subrange(paddr, paddr + memop.op_size()))
                 &&& post.phys_mem === pre.phys_mem
             } else {
                 &&& result is Pagefault
@@ -186,6 +183,7 @@ pub open spec fn step_MemOpTLB(
     &&& post.tlbs == pre.tlbs
     &&& post.writes == pre.writes
     &&& post.pending_maps == pre.pending_maps
+    &&& post.pending_unmaps == pre.pending_unmaps
 }
 
 // ---- Non-atomic page table walks ----

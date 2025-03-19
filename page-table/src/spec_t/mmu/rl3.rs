@@ -5,11 +5,10 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
+use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE, update_range };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, word_index_spec };
+use crate::spec_t::mmu::defs::{ aligned };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
-use crate::spec_t::mmu::rl1::{ Polarity };
 
 verus! {
 
@@ -24,8 +23,8 @@ verus! {
 // machine exclusively in terms of the more abstract MMU models it refines.
 
 pub struct State {
-    /// Word-indexed physical (non-page-table) memory
-    phys_mem: Seq<nat>,
+    /// Byte-indexed physical (non-page-table) memory
+    phys_mem: Seq<u8>,
     /// Page table memory
     pt_mem: PTMem,
     /// Per-node state (TLBs)
@@ -156,9 +155,6 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
     }
 }
 
-// We only allow aligned accesses. Can think of unaligned accesses as two aligned accesses. When we
-// get to concurrency we may have to change that.
-// TODO: Is this a problem now?
 pub closed spec fn step_MemOpNoTr(
     pre: State,
     post: State,
@@ -172,6 +168,9 @@ pub closed spec fn step_MemOpNoTr(
     &&& {
     let walk_next = walk_next(pre, core, walk, r);
     &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.walks[core].contains(walk)
     &&& walk.vaddr == memop_vaddr
     &&& walk_next.complete
@@ -194,26 +193,28 @@ pub closed spec fn step_MemOpTLB(
 ) -> bool {
     &&& lbl matches Lbl::MemOp(core, memop_vaddr, memop)
 
+    &&& c.valid_core(core)
+    &&& aligned(memop_vaddr as nat, memop.op_size())
+    &&& memop.valid_op_size()
+    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
+    &&& pre.tlbs[core].contains_key(tlb_va)
     &&& {
     let pte = pre.tlbs[core][tlb_va];
-    let pmem_idx = word_index_spec(pte.frame.base + (memop_vaddr - tlb_va) as nat);
-    &&& c.valid_core(core)
-    &&& aligned(memop_vaddr as nat, 8)
-    &&& pre.tlbs[core].contains_key(tlb_va)
+    let paddr = pte.frame.base + (memop_vaddr - tlb_va);
     &&& tlb_va <= memop_vaddr < tlb_va + pte.frame.size
     &&& match memop {
         MemOp::Store { new_value, result } => {
-            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && pte.flags.is_writable {
+            if paddr < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
                 &&& result is Ok
-                &&& post.phys_mem === pre.phys_mem.update(pmem_idx as int, new_value as nat)
+                &&& post.phys_mem === update_range(pre.phys_mem, paddr, new_value)
             } else {
                 &&& result is Pagefault
                 &&& post.phys_mem === pre.phys_mem
             }
         },
-        MemOp::Load { is_exec, result } => {
-            if pmem_idx < pre.phys_mem.len() && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                &&& result == LoadResult::Value(pre.phys_mem[pmem_idx as int])
+        MemOp::Load { is_exec, result, .. } => {
+            if paddr < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                &&& result == LoadResult::Value(pre.phys_mem.subrange(paddr, paddr + memop.op_size()))
                 &&& post.phys_mem === pre.phys_mem
             } else {
                 &&& result is Pagefault
@@ -595,7 +596,6 @@ pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
 
 pub mod refinement {
     use crate::spec_t::mmu::*;
-    use crate::spec_t::mmu::rl1::{ Polarity };
     use crate::spec_t::mmu::rl2;
     use crate::spec_t::mmu::rl3;
     #[cfg(verus_keep_ghost)]

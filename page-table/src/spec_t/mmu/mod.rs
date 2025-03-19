@@ -16,6 +16,17 @@ use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_
 
 verus! {
 
+pub enum Polarity {
+    Mapping,
+    Unmapping
+}
+
+impl Polarity {
+    pub open spec fn flip(self) -> Polarity {
+        if self is Mapping { Polarity::Unmapping } else { Polarity::Mapping }
+    }
+}
+
 pub struct Walk {
     pub vaddr: usize,
     pub path: Seq<(usize, GPDE)>,

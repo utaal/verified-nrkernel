@@ -160,7 +160,7 @@ pub struct Core {
 
 pub enum LoadResult {
     Pagefault,
-    Value(nat), // word-sized load
+    Value(Seq<u8>),
 }
 
 pub enum StoreResult {
@@ -170,14 +170,33 @@ pub enum StoreResult {
 
 #[allow(inconsistent_fields)]
 pub enum MemOp {
-    Load { is_exec: bool, result: LoadResult },
-    Store { new_value: usize, result: StoreResult },
+    Load { is_exec: bool, size: nat, result: LoadResult },
+    Store { new_value: Seq<u8>, result: StoreResult },
 }
 
 impl MemOp {
     pub open spec fn is_pagefault(self) -> bool {
         ||| self matches MemOp::Load { result: LoadResult::Pagefault, .. }
         ||| self matches MemOp::Store { result: StoreResult::Pagefault, .. }
+    }
+
+    pub open spec fn op_size(self) -> nat {
+        match self {
+            MemOp::Load { size, .. } => size,
+            MemOp::Store { new_value, .. } => new_value.len(),
+        }
+    }
+
+    pub open spec fn valid_op_size(self) -> bool {
+        ||| self.op_size() == 1
+        ||| self.op_size() == 2
+        ||| self.op_size() == 4
+        ||| self.op_size() == 8
+    }
+
+    pub open spec fn crosses_qword_boundary(self, addr: nat) -> bool {
+        // TODO: Surely there's a better way to express this
+        addr % 8 != (addr + self.op_size() - 1) % 8
     }
 }
 
@@ -415,26 +434,14 @@ pub open spec fn usize_keys<V>(m: Map<nat, V>) -> Map<usize, V>
     Map::new(|k: usize| m.contains_key(k as nat), |k: usize| m[k as nat])
 }
 
-pub fn word_index(addr: usize) -> (res: usize)
-    requires
-        aligned(addr as nat, 8),
-    ensures
-        res as nat === word_index_spec(addr as nat),
-        // Prove this equivalence to use the indexing lemmas
-        res as nat === crate::spec_t::mmu::defs::index_from_offset(addr as nat, WORD_SIZE as nat),
-        word_index_spec(addr as nat) === crate::spec_t::mmu::defs::index_from_offset(
-            addr as nat,
-            WORD_SIZE as nat,
-        ),
+pub open spec fn update_range<A>(s: Seq<A>, idx: int, new: Seq<A>) -> Seq<A>
+    decreases new.len()
 {
-    addr / WORD_SIZE
-}
-
-pub open spec fn word_index_spec(addr: nat) -> nat
-    recommends
-        aligned(addr, 8),
-{
-    addr / (WORD_SIZE as nat)
+    if new.len() == 0 {
+        s
+    } else {
+        update_range(s, idx + 1, new.skip(1)).update(idx, new[0])
+    }
 }
 
 } // verus!
