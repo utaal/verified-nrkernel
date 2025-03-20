@@ -193,11 +193,6 @@ impl MemOp {
         ||| self.op_size() == 4
         ||| self.op_size() == 8
     }
-
-    pub open spec fn crosses_qword_boundary(self, addr: nat) -> bool {
-        // TODO: Surely there's a better way to express this
-        addr % 8 != (addr + self.op_size() - 1) % 8
-    }
 }
 
 pub struct MemRegion {

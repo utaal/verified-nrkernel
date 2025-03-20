@@ -114,7 +114,6 @@ pub open spec fn step_MemOpNoTr(pre: State, post: State, c: Constants, lbl: Lbl)
     &&& c.valid_core(core)
     &&& aligned(memop_vaddr as nat, memop.op_size())
     &&& memop.valid_op_size()
-    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.pt_mem.pt_walk(memop_vaddr).result() is Invalid
     &&& memop.is_pagefault()
 
@@ -129,7 +128,6 @@ pub open spec fn step_MemOpNoTrNA(pre: State, post: State, c: Constants, vbase: 
     &&& c.valid_core(core)
     &&& aligned(memop_vaddr as nat, memop.op_size())
     &&& memop.valid_op_size()
-    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.pending_maps.contains_key(vbase)
     &&& vbase <= memop_vaddr < vbase + pre.pending_maps[vbase].frame.size
     &&& memop.is_pagefault()
@@ -150,7 +148,6 @@ pub open spec fn step_MemOpTLB(
     &&& c.valid_core(core)
     &&& aligned(memop_vaddr as nat, memop.op_size())
     &&& memop.valid_op_size()
-    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.tlbs[core].contains_key(tlb_va)
     &&& {
     let pte = pre.tlbs[core][tlb_va];

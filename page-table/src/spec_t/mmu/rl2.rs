@@ -158,7 +158,6 @@ pub open spec fn step_MemOpNoTr(
     &&& c.valid_core(core)
     &&& aligned(memop_vaddr as nat, memop.op_size())
     &&& memop.valid_op_size()
-    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.walks[core].contains(walk)
     &&& walk.vaddr == memop_vaddr
     &&& walk_next.complete
@@ -182,7 +181,6 @@ pub open spec fn step_MemOpTLB(
     &&& c.valid_core(core)
     &&& aligned(memop_vaddr as nat, memop.op_size())
     &&& memop.valid_op_size()
-    &&& !memop.crosses_qword_boundary(memop_vaddr as nat)
     &&& pre.tlbs[core].contains_key(tlb_va)
     &&& {
     let pte = pre.tlbs[core][tlb_va];

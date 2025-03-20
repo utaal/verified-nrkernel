@@ -208,7 +208,6 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, pte: Option<(nat
     &&& s1.thread_state[thread_id] is Idle
     &&& aligned(vaddr, op.op_size())
     &&& op.valid_op_size()
-    &&& !op.crosses_qword_boundary(vaddr)
 
     &&& match pte {
         Some((base, pte)) => {
@@ -263,7 +262,6 @@ pub open spec fn step_MemOpNA(c: Constants, s1: State, s2: State, lbl: RLbl) -> 
     &&& s1.thread_state[thread_id] is Idle
     &&& aligned(vaddr, op.op_size())
     &&& op.valid_op_size()
-    &&& !op.crosses_qword_boundary(vaddr)
 
     &&& s1.vaddr_mapping_is_being_modified(c, vaddr)
     &&& {
