@@ -1,6 +1,6 @@
 // #![feature(nonnull_slice_from_raw_parts)]
-#![no_std]
-// #![cfg_attr(feature="linuxmodule", no_std)]
+//#![no_std]
+#![cfg_attr(feature="linuxmodule", no_std)]
 #[cfg(not(feature="linuxmodule"))]
 extern crate alloc;
 
