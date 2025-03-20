@@ -105,6 +105,42 @@ impl PTMem {
         }
     }
 
+    //pub open spec fn pt_walk(self, vaddr: usize) -> Walk {
+    //    let l0_idx = mul(l0_bits!(vaddr), WORD_SIZE);
+    //    let l1_idx = mul(l1_bits!(vaddr), WORD_SIZE);
+    //    let l2_idx = mul(l2_bits!(vaddr), WORD_SIZE);
+    //    let l3_idx = mul(l3_bits!(vaddr), WORD_SIZE);
+    //    let l0_addr = add(self.pml4, l0_idx);
+    //    let l0e = PDE { entry: self.read(l0_addr), layer: Ghost(0) };
+    //    let path = 
+    //        seq![(l0_addr, l0e@)].add(
+    //            match l0e@ {
+    //                GPDE::Directory { addr: l1_daddr, .. } => {
+    //                    let l1_addr = add(l1_daddr, l1_idx);
+    //                    let l1e = PDE { entry: self.read(l1_addr), layer: Ghost(1) };
+    //                    seq![(l1_addr, l1e@)].add(
+    //                        match l1e@ {
+    //                            GPDE::Directory { addr: l2_daddr, .. } => {
+    //                                let l2_addr = add(l2_daddr, l2_idx);
+    //                                let l2e = PDE { entry: self.read(l2_addr), layer: Ghost(2) };
+    //                                seq![(l2_addr, l2e@)].add(
+    //                                    match l2e@ {
+    //                                        GPDE::Directory { addr: l3_daddr, .. } => {
+    //                                            let l3_addr = add(l3_daddr, l3_idx);
+    //                                            let l3e = PDE { entry: self.read(l3_addr), layer: Ghost(3) };
+    //                                            seq![(l3_addr, l3e@)]
+    //                                        },
+    //                                        _ => seq![],
+    //                                    })
+    //                            },
+    //                            _ => seq![],
+    //                        })
+    //                },
+    //                _ => seq![],
+    //            });
+    //    Walk { vaddr, path, complete: true }
+    //}
+
     pub broadcast proof fn lemma_pt_walk(mem: PTMem, va: usize)
         ensures #![trigger mem.pt_walk(va)]
             mem.pt_walk(va).complete,
