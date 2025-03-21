@@ -757,15 +757,26 @@ impl State {
         self.interp_pt_mem().remove_keys(self.inflight_vaddr())
     }
 
-    pub open spec fn interp_vmem(self, c: Constants) -> Seq<u8> {
+    pub open spec fn base_and_pte_for_vaddr(effective_mappings: Map<nat, PTE>, vaddr: int) -> (nat, PTE) {
+        choose|base: nat, pte: PTE| #![auto]
+            effective_mappings.contains_pair(base, pte)
+            && between(vaddr as nat, base, base + pte.frame.size)
+    }
+
+    pub open spec fn vmem_apply_mappings(
+        effective_mappings: Map<nat, PTE>,
+        phys_mem: Seq<u8>
+    ) -> Seq<u8> {
         Seq::new(
             MAX_BASE,
             |vaddr: int| {
-                let (base, pte) = choose|base: nat, pte: PTE| #![auto]
-                    self.effective_mappings().contains_pair(base, pte)
-                    && between(vaddr as nat, base, base + pte.frame.size);
-                self.mmu@.phys_mem[pte.frame.base + (vaddr - base)]
+                let (base, pte) = Self::base_and_pte_for_vaddr(effective_mappings, vaddr);
+                phys_mem[pte.frame.base + (vaddr - base)]
         })
+    }
+
+    pub open spec fn interp_vmem(self, c: Constants) -> Seq<u8> {
+        Self::vmem_apply_mappings(self.effective_mappings(), self.mmu@.phys_mem)
     }
 
     pub open spec fn interp_thread_state(self, c: Constants) -> Map<nat, hlspec::ThreadState> {

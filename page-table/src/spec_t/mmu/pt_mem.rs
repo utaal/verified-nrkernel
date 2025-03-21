@@ -165,7 +165,8 @@ impl PTMem {
             self.is_base_pt_walk(vbase),
             vbase <= vaddr < vbase + self.pt_walk(vbase).result()->pte.frame.size,
         ensures
-            self.pt_walk(vaddr).result() is Valid
+            self.pt_walk(vaddr).result() 
+                == self.pt_walk(vbase).result(),
     {
         assert(sub(vbase, vbase % (4096) as usize) == vbase
             && vbase <= vaddr < vbase + 4096
@@ -173,18 +174,22 @@ impl PTMem {
              && l1_bits!(vaddr) == l1_bits!(vbase)
              && l2_bits!(vaddr) == l2_bits!(vbase)
              && l3_bits!(vaddr) == l3_bits!(vbase)
+             && sub(vaddr, vaddr % 4096 as usize) == vbase
         ) by(bit_vector);
         assert(sub(vbase, vbase % (512 * 4096) as usize) == vbase
             && vbase <= vaddr < vbase + 512 * 4096
             ==> l0_bits!(vaddr) == l0_bits!(vbase)
              && l1_bits!(vaddr) == l1_bits!(vbase)
              && l2_bits!(vaddr) == l2_bits!(vbase)
+             && sub(vaddr, vaddr % (512 * 4096) as usize) == vbase
         ) by(bit_vector);
         assert(sub(vbase, vbase % (512 * (512 * 4096)) as usize) == vbase
             && vbase <= vaddr < vbase + 512 * (512 * 4096)
             ==> l0_bits!(vaddr) == l0_bits!(vbase)
              && l1_bits!(vaddr) == l1_bits!(vbase)
+             && sub(vaddr, vaddr % (512 * (512 * 4096)) as usize) == vbase
         ) by(bit_vector);
+
         /*assert(sub(vbase, vbase % (512 * (512 * (512 * 4096))) as usize) == vbase
             && vbase <= vaddr < vbase + 512 * (512 * (512 * 4096))
             ==> l0_bits!(vaddr) == l0_bits!(vbase)

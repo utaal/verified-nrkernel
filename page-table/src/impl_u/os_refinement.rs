@@ -18,6 +18,8 @@ use crate::spec_t::os_invariant::{
 };
 use crate::spec_t::{hlspec, os};
 use crate::theorem::RLbl;
+use crate::spec_t::mmu::defs::{between, MemOp, update_range};
+use crate::spec_t::mmu::pt_mem::PTMem;
 
 verus! {
 
@@ -494,12 +496,202 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(hlspec::step_MemOpNA(c.interp(), s1.interp(c), s2.interp(c), lbl));
         },
         rl1::Step::MemOpTLB { tlb_va } => {
-            admit();
+            assume(s1.tlb_inv(c));
+            assert(s1.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(c.valid_core(core));
+            assert(s1.mmu@.tlbs[core].dom().contains(tlb_va));
+            assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr()).contains(tlb_va as nat));
+            assume(!s1.unmap_vaddr().contains(tlb_va as nat));
+            assert(s1.interp_pt_mem().dom().contains(tlb_va as nat)); /* by {
+                assert(s1.mmu@.pt_mem.is_base_pt_walk(tlb_va));
+                assert(s1.mmu@.pt_mem@.dom().contains(tlb_va)) by {
+                    reveal(PTMem::view);
+                };
+            };*/
+            assume(s1.interp_pt_mem()[tlb_va as nat] == s1.mmu@.tlbs[core][tlb_va]);
+            assume(!s1.inflight_vaddr().contains(tlb_va as nat));
+
+            assert(s1.effective_mappings().dom().contains(tlb_va as nat));
             let hl_pte = Some((tlb_va as nat, s1.effective_mappings()[tlb_va as nat]));
+
+            let t1 = s1.interp(c);
+            let t2 = s2.interp(c);
+            let d = c.interp();
+            let thread_id = lbl->MemOp_thread_id;
+
+            assert(d.valid_thread(thread_id));
+            assert(t1.thread_state[thread_id] is Idle);
+            assert(aligned(vaddr, op.op_size()));
+            assert(op.valid_op_size());
+
+            assert(t2.mappings === t1.mappings);
+            assert(t2.thread_state === t1.thread_state);
+            assert(t2.sound == t1.sound);
+
+            let base = tlb_va as nat;
+            let pte = s1.effective_mappings()[tlb_va as nat];
+
+            assert(pte == s1.mmu@.tlbs[core][tlb_va]);
+            //assert(s1.mmu@.pt_mem.is_base_pt_walk(tlb_va));
+
+            let paddr = pte.frame.base + (vaddr - base);
+            assert(t1.mappings.contains_pair(base, pte));
+            assert(base <= vaddr);
+            assert(vaddr < base + pte.frame.size);
+            assert(between(vaddr, base, base + pte.frame.size));
+
+            no_overlaps_effective_mappings(c, s1);
+
+            assume(vaddr as int + op.op_size() as int <= base + pte.frame.size);
+            assume(base + pte.frame.size <= s1.interp_vmem(c).len());
+            assume(pte.frame.base + pte.frame.size <= s1.mmu@.phys_mem.len());
+
+            match op {
+                MemOp::Store { new_value, result } => {
+                    if paddr < d.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
+                        assert(result is Ok);
+                        interp_vmem_update_range(c, s1, base, pte, vaddr as int, op.op_size() as int, new_value);
+                        assert(t2.mem === update_range(t1.mem, vaddr as int, new_value));
+                    } else {
+                        assert(result is Pagefault);
+                        assert(t2.mem === t1.mem);
+                    }
+                },
+                MemOp::Load { is_exec, result, .. } => {
+                    assert(t2.mem === t1.mem);
+                    if paddr < d.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                        assert(result is Value);
+                        interp_vmem_subrange(c, s1, base, pte, vaddr as int, op.op_size() as int);
+                        assert(result->0 == t1.mem.subrange(vaddr as int, vaddr + op.op_size() as int));
+                    } else {
+                        assert(result is Pagefault);
+                    }
+                }
+            }
+
             assert(hlspec::step_MemOp(c.interp(), s1.interp(c), s2.interp(c), hl_pte, lbl));
         },
         _ => assert(false),
     };
+}
+
+spec fn no_overlaps(m: Map<nat, PTE>) -> bool {
+    forall |i, j|
+        #[trigger] m.dom().contains(i) && #[trigger] m.dom().contains(j) && i != j
+          ==> i + m[i].frame.size <= j
+           || j + m[j].frame.size <= i
+}
+
+proof fn no_overlaps_interp_pt_mem(c: os::Constants, s: os::State)
+    requires s.inv(c),
+    ensures no_overlaps(s.interp_pt_mem()),
+{
+    let m = s.interp_pt_mem();
+    assert forall |i, j|
+        #[trigger] m.dom().contains(i) && #[trigger] m.dom().contains(j) && i != j
+          && i + m[i].frame.size > j
+          && j + m[j].frame.size > i
+          implies false
+    by {
+        reveal(PTMem::view);
+        if i <= j < i + m[i].frame.size {
+            s.mmu@.pt_mem.lemma_pt_walk_agrees_in_frame(i as usize, j as usize);
+            assert(false);
+        } else if j <= i < j + m[j].frame.size {
+            s.mmu@.pt_mem.lemma_pt_walk_agrees_in_frame(j as usize, i as usize);
+            assert(false);
+        } else {
+            assert(false);
+        }
+    }
+}
+
+proof fn no_overlaps_effective_mappings(c: os::Constants, s: os::State)
+    requires s.inv(c),
+    ensures no_overlaps(s.effective_mappings()),
+{
+    no_overlaps_interp_pt_mem(c, s);
+}
+
+proof fn interp_vmem_subrange(c: os::Constants, s: os::State, base: nat, pte: PTE, vaddr: int, size: int)
+    requires
+        no_overlaps(s.effective_mappings()),
+        s.effective_mappings().dom().contains(base),
+        s.effective_mappings()[base] == pte,
+        base <= vaddr,
+        size >= 0,
+        vaddr + size <= base + pte.frame.size,
+
+        base + pte.frame.size <= s.interp_vmem(c).len(),
+        pte.frame.base + pte.frame.size <= s.mmu@.phys_mem.len(),
+
+    ensures ({
+        let paddr = pte.frame.base + vaddr - base;
+        s.interp_vmem(c).subrange(vaddr, vaddr + size)
+            == s.mmu@.phys_mem.subrange(paddr, paddr + size)
+    })
+{
+    let paddr = pte.frame.base + vaddr - base;
+
+    vstd::seq_lib::assert_seqs_equal!(
+        s.interp_vmem(c).subrange(vaddr, vaddr + size),
+        s.mmu@.phys_mem.subrange(paddr, paddr + size),
+        idx => {
+            let v = vaddr + idx;
+            let p = paddr + idx;
+
+            let (base0, pte0) = os::State::base_and_pte_for_vaddr(s.effective_mappings(), vaddr);
+
+            assert(s.effective_mappings().contains_pair(base, pte));
+            assert(between(v as nat, base, base + pte.frame.size));
+
+            assert(s.effective_mappings().contains_pair(base0, pte0)
+              && between(v as nat, base0, base0 + pte0.frame.size));
+
+            assert(base0 == base);
+            assert(pte0 == pte);
+
+            assert(s.interp_vmem(c)[v] == s.mmu@.phys_mem[p]);
+        }
+    );
+}
+
+proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte: PTE, vaddr: int, size: int, new: Seq<u8>,)
+    requires
+        no_overlaps(s.effective_mappings()),
+        s.effective_mappings().dom().contains(base),
+        s.effective_mappings()[base] == pte,
+        base <= vaddr,
+        size >= 0,
+        vaddr + size <= base + pte.frame.size,
+
+        base + pte.frame.size <= s.interp_vmem(c).len(),
+        pte.frame.base + pte.frame.size <= s.mmu@.phys_mem.len(),
+
+        size == new.len(),
+
+    ensures ({
+        let paddr = pte.frame.base + vaddr - base;
+        update_range(os::State::vmem_apply_mappings(s.effective_mappings(), s.mmu@.phys_mem), vaddr, new)
+          == os::State::vmem_apply_mappings(s.effective_mappings(), update_range(s.mmu@.phys_mem, paddr, new))
+    })
+{
+    let paddr = pte.frame.base + vaddr - base;
+
+    let b1 = update_range(os::State::vmem_apply_mappings(s.effective_mappings(), s.mmu@.phys_mem), vaddr, new);
+    let b2 = os::State::vmem_apply_mappings(s.effective_mappings(), update_range(s.mmu@.phys_mem, paddr, new));
+
+    assume(false);
+
+    assert(b1.len() == b2.len());
+
+    vstd::assert_seqs_equal!(b1, b2, idx => {
+        if base <= idx < base + pte.frame.size {
+            assert(b1[idx] == b2[idx]);
+        } else {
+            assert(b1[idx] == b2[idx]);
+        }
+    });
 }
 
 proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
