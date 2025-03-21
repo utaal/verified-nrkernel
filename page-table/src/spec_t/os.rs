@@ -757,6 +757,12 @@ impl State {
         self.interp_pt_mem().remove_keys(self.inflight_vaddr())
     }
 
+    pub open spec fn has_base_and_pte_for_vaddr(effective_mappings: Map<nat, PTE>, vaddr: int) -> bool {
+        exists|base: nat, pte: PTE| #![auto]
+            effective_mappings.contains_pair(base, pte)
+            && between(vaddr as nat, base, base + pte.frame.size)
+    }
+
     pub open spec fn base_and_pte_for_vaddr(effective_mappings: Map<nat, PTE>, vaddr: int) -> (nat, PTE) {
         choose|base: nat, pte: PTE| #![auto]
             effective_mappings.contains_pair(base, pte)
@@ -770,8 +776,12 @@ impl State {
         Seq::new(
             MAX_BASE,
             |vaddr: int| {
-                let (base, pte) = Self::base_and_pte_for_vaddr(effective_mappings, vaddr);
-                phys_mem[pte.frame.base + (vaddr - base)]
+                if Self::has_base_and_pte_for_vaddr(effective_mappings, vaddr) {
+                    let (base, pte) = Self::base_and_pte_for_vaddr(effective_mappings, vaddr);
+                    phys_mem[pte.frame.base + (vaddr - base)]
+                } else {
+                    0
+                }
         })
     }
 

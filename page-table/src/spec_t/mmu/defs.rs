@@ -430,13 +430,10 @@ pub open spec fn usize_keys<V>(m: Map<nat, V>) -> Map<usize, V>
 }
 
 pub open spec fn update_range<A>(s: Seq<A>, idx: int, new: Seq<A>) -> Seq<A>
-    decreases new.len()
 {
-    if new.len() == 0 {
-        s
-    } else {
-        update_range(s, idx + 1, new.skip(1)).update(idx, new[0])
-    }
+    s.subrange(0, idx)
+      + new
+      + s.subrange(idx + new.len(), s.len() as int)
 }
 
 } // verus!

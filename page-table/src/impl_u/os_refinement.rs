@@ -681,15 +681,54 @@ proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte
     let b1 = update_range(os::State::vmem_apply_mappings(s.effective_mappings(), s.mmu@.phys_mem), vaddr, new);
     let b2 = os::State::vmem_apply_mappings(s.effective_mappings(), update_range(s.mmu@.phys_mem, paddr, new));
 
-    assume(false);
-
     assert(b1.len() == b2.len());
 
     vstd::assert_seqs_equal!(b1, b2, idx => {
+        let (base0, pte0) = os::State::base_and_pte_for_vaddr(s.effective_mappings(), idx);
+
         if base <= idx < base + pte.frame.size {
+            assert(s.effective_mappings().contains_pair(base, pte));
+            assert(between(idx as nat, base, base + pte.frame.size));
+
+            assert(s.effective_mappings().contains_pair(base0, pte0)
+              && between(idx as nat, base0, base0 + pte0.frame.size));
+
+            assert(base == base0);
+            assert(pte == pte0);
+
             assert(b1[idx] == b2[idx]);
         } else {
-            assert(b1[idx] == b2[idx]);
+            if os::State::has_base_and_pte_for_vaddr(s.effective_mappings(), idx) {
+                assert(base != base0);
+                let p_idx = pte0.frame.base + idx - base0;
+                assert(!(vaddr <= idx < vaddr + new.len()));
+
+                assume(pte0.frame.base + pte0.frame.size <= s.mmu@.phys_mem.len());
+
+                assert(base0 <= idx < base0 + pte0.frame.size);
+                assert(pte0.frame.base <= p_idx < pte0.frame.base + pte0.frame.size);
+
+                assert(base <= vaddr <= vaddr + new.len() <= base + pte.frame.size);
+                assert(s.effective_mappings().dom().contains(base));
+                assert(s.effective_mappings().dom().contains(base0));
+                assert(pte.frame.base <= paddr <= paddr + new.len() <= pte.frame.base + pte.frame.size);
+
+                // need physical ranges of the mappings don't overlap
+                assume(!(paddr <= p_idx < paddr + new.len()));
+
+                assert(paddr + new.len() <= s.mmu@.phys_mem.len());
+                assert(0 <= p_idx < s.mmu@.phys_mem.len());
+
+                assert(b1[idx] == os::State::vmem_apply_mappings(s.effective_mappings(), s.mmu@.phys_mem)[idx]);
+                assert(os::State::vmem_apply_mappings(s.effective_mappings(), s.mmu@.phys_mem)[idx]
+                    == s.mmu@.phys_mem[p_idx]);
+                assert(s.mmu@.phys_mem[p_idx]
+                    == update_range(s.mmu@.phys_mem, paddr, new)[p_idx]);
+
+                assert(b1[idx] == b2[idx]);
+            } else {
+                assert(b1[idx] == b2[idx]);
+            }
         }
     });
 }
