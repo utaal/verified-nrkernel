@@ -98,9 +98,9 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
     &&& post == State {
         writes: Writes {
-            tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
-            //neg: pre.writes.neg.insert(core, set![]),
             core: pre.writes.core,
+            tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
+            nonpos: pre.writes.nonpos.insert(core, set![]),
         },
         pending_maps: if core == pre.writes.core { map![] } else { pre.pending_maps },
         ..pre
@@ -248,9 +248,7 @@ pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.writes.tso == pre.writes.tso.insert(addr)
     &&& post.writes.core == core
     &&& post.polarity == Polarity::Mapping
-    //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
-    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-    //    } else { pre.writes.neg }
+    &&& post.writes.nonpos == pre.writes.nonpos
     &&& post.pending_maps == pre.pending_maps.union_prefer_right(
         Map::new(
             |vbase| post.pt_mem@.contains_key(vbase) && !pre.pt_mem@.contains_key(vbase),
@@ -275,9 +273,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.writes.tso == pre.writes.tso.insert(addr)
     &&& post.writes.core == core
     &&& post.polarity == Polarity::Unmapping
-    //&&& post.writes.neg == if !pre.pt_mem.is_nonneg_write(addr, value) {
-    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-    //    } else { pre.writes.neg }
+    &&& post.writes.nonpos == pre.writes.nonpos.map_values(|ws:Set<_>| ws.insert(addr))
     &&& post.pending_maps == pre.pending_maps
     &&& post.pending_unmaps == pre.pending_unmaps.union_prefer_right(
         Map::new(

@@ -134,9 +134,9 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& post == State {
         walks: pre.walks.insert(core, set![]),
         writes: Writes {
-            tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
-            //neg: pre.writes.neg.insert(core, set![]),
             core: pre.writes.core,
+            tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
+            nonpos: pre.writes.nonpos.insert(core, set![]),
         },
         hist: if core == pre.writes.core { History { pending_maps: map![], ..pre.hist } } else { pre.hist },
         ..pre
@@ -345,9 +345,7 @@ pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.writes.tso === pre.writes.tso.insert(addr)
-    //&&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
-    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-    //    } else { pre.writes.neg }
+    &&& post.writes.nonpos === pre.writes.nonpos
     &&& post.writes.core == core
     &&& post.polarity == Polarity::Mapping
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
@@ -379,9 +377,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.writes.tso === pre.writes.tso.insert(addr)
-    //&&& post.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
-    //        pre.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-    //    } else { pre.writes.neg }
+    &&& post.writes.nonpos == pre.writes.nonpos.map_values(|ws:Set<_>| ws.insert(addr))
     &&& post.writes.core == core
     &&& post.polarity == Polarity::Unmapping
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
@@ -630,6 +626,15 @@ impl State {
         }
     }
 
+    pub open spec fn inv_unmapping__inflight_walk_path(self, c: Constants) -> bool {
+        forall|core, walk, i: int| {
+            &&& c.valid_core(core)
+            &&& self.walks[core].contains(walk)
+            &&& 0 <= i < walk.path.len()
+            &&& !self.writes.nonpos[core].contains(walk.path[i].0)
+        } ==> self.core_mem(core).read(walk.path[i].0) == self.writer_mem().read(walk.path[i].0)
+    }
+
     pub open spec fn inv_mapping__inflight_walks(self, c: Constants) -> bool {
         forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
             &&& aligned(walk.vaddr as nat, 8)
@@ -786,7 +791,10 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
 
     if pre.polarity is Mapping {
         // TODO: Have to prove this explicitly from inv_between
-        assume(pre.inv_unmapping__inflight_walks(c));
+        assert(pre.inv_unmapping__inflight_walks(c)) by {
+            admit();
+            assert(pre.can_flip_polarity());
+        };
         assert(pre.inv_unmapping__core_vs_writer_reads(c)) by {
             reveal(State::inv_unmapping__core_vs_writer_reads);
         };

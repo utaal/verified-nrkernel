@@ -56,11 +56,9 @@ pub struct Writes {
     /// Tracks all writes that may cause stale reads due to TSO. Set of addresses. Gets cleared
     /// when the corresponding core drains its store buffer.
     pub tso: Set<usize>,
-    ///// Tracks negative writes (to both page and directory mappings). Cleared for a particular core
-    ///// when it executes an invlpg.
-    ///// These writes can cause staleness due to partial translation caching or non-atomicity of
-    ///// walks.
-    //pub neg: Map<Core, Set<usize>>,
+    /// Tracks non-positive writes. The effects of these writes may not yet be reflected in
+    /// in-flight walks and translation caches for the given core. Cleared by invlpg.
+    pub nonpos: Map<Core, Set<usize>>,
 }
 
 /// Any transition that reads from page table memory takes an arbitrary usize `r`, which is used to
@@ -144,9 +142,9 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
         hist: History {
             walks: pre.hist.walks.insert(core, set![]),
             writes: Writes {
-                tso: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.tso },
-                //neg: pre.hist.writes.neg.insert(core, set![]),
                 core: pre.hist.writes.core,
+                tso: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.tso },
+                nonpos: pre.hist.writes.nonpos.insert(core, set![]),
             },
             pending_maps: if core == pre.hist.writes.core { map![] } else { pre.hist.pending_maps },
             ..pre.hist
@@ -379,7 +377,6 @@ pub closed spec fn step_TLBEvict(pre: State, post: State, c: Constants, core: Co
 // ---- TSO ----
 // Our modeling of TSO with store buffers is adapted from the one in the paper "A Better x86 Memory
 // Model: x86-TSO".
-// TODO: we don't model atomics, so technically the user-space threads cannot synchronize
 // TODO: max physical size?
 /// Write to core's local store buffer.
 pub closed spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -398,9 +395,9 @@ pub closed spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, post.hist.polarity)
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.tso == pre.hist.writes.tso.insert(addr)
-    //&&& post.hist.writes.neg == if !pre.writer_mem().is_nonneg_write(addr, value) {
-    //        pre.hist.writes.neg.map_values(|ws:Set<_>| ws.insert(addr))
-    //    } else { pre.hist.writes.neg }
+    &&& post.hist.writes.nonpos == if pre.writer_mem().is_nonpos_write(addr, value) {
+            pre.hist.writes.nonpos.map_values(|ws:Set<_>| ws.insert(addr))
+        } else { pre.hist.writes.nonpos }
     &&& post.hist.writes.core == core
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
         Map::new(
@@ -501,6 +498,7 @@ pub closed spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.hist.walks === Map::new(|core| c.valid_core(core), |core| set![])
     //&&& pre.hist.writes.core == ..
     &&& pre.hist.writes.tso === set![]
+    &&& pre.hist.writes.nonpos === Map::new(|core| c.valid_core(core), |core| set![])
     &&& pre.hist.pending_maps === map![]
     &&& pre.hist.pending_unmaps === map![]
     &&& pre.hist.polarity == Polarity::Mapping
@@ -527,11 +525,11 @@ impl State {
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.cache.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.walks.contains_key(core)
-        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.writes.neg.contains_key(core)
+        &&& forall|core| #[trigger] c.valid_core(core) <==> self.hist.writes.nonpos.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) ==> self.walks[core].finite()
         &&& forall|core| #[trigger] c.valid_core(core) ==> self.cache[core].finite()
         &&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.walks[core].finite()
-        //&&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.writes.neg[core].finite()
+        &&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.writes.nonpos[core].finite()
     }
 
     pub closed spec fn inv_inflight_walks(self, c: Constants) -> bool {
@@ -799,7 +797,7 @@ pub mod refinement {
             ensures
                 pre.inv(c),
                 pre.interp().inv(c),
-        { admit(); }
+        {}
 
         pub broadcast proof fn next_preserves_inv(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
             requires
