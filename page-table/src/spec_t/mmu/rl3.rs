@@ -109,9 +109,9 @@ impl State {
         self.core_mem(self.hist.writes.core)
     }
 
-    pub closed spec fn is_this_write_happy(self, core: Core, addr: usize, value: usize, pol: Polarity) -> bool {
+    pub closed spec fn is_this_write_happy(self, c: Constants, core: Core, addr: usize, value: usize, pol: Polarity) -> bool {
         &&& !self.hist.writes.tso.is_empty() ==> core == self.hist.writes.core
-        &&& pol != self.hist.polarity ==> self.can_flip_polarity()
+        &&& pol != self.hist.polarity ==> self.can_flip_polarity(c)
         &&& if pol is Mapping {
                 self.writer_mem().is_nonneg_write(addr, value)
             } else {
@@ -392,7 +392,7 @@ pub closed spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& post.cache == pre.cache
     &&& post.walks == pre.walks
 
-    &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(core, addr, value, post.hist.polarity)
+    &&& post.hist.happy == pre.hist.happy && pre.is_this_write_happy(c, core, addr, value, post.hist.polarity)
     &&& post.hist.walks == pre.hist.walks
     &&& post.hist.writes.tso == pre.hist.writes.tso.insert(addr)
     &&& post.hist.writes.nonpos == if pre.writer_mem().is_nonpos_write(addr, value) {
@@ -564,11 +564,12 @@ impl State {
         }
     }
 
-    pub closed spec fn can_flip_polarity(self) -> bool {
+    pub closed spec fn can_flip_polarity(self, c: Constants) -> bool {
         &&& self.hist.happy
         &&& self.hist.pending_maps === map![]
         &&& self.hist.pending_unmaps === map![]
         &&& self.hist.writes.tso === set![]
+        &&& forall|core| #[trigger] c.valid_core(core) ==> self.hist.writes.nonpos[core] === set![]
     }
 
 } // impl State
@@ -619,7 +620,7 @@ pub mod refinement {
     }
 
     impl rl3::Step {
-        pub closed spec fn interp(self, pre: rl3::State, lbl: Lbl) -> rl2::Step {
+        pub closed spec fn interp(self, pre: rl3::State, c: Constants, lbl: Lbl) -> rl2::Step {
             if pre.hist.happy {
                 match self {
                     rl3::Step::Invlpg                     => rl2::Step::Invlpg,
@@ -641,7 +642,7 @@ pub mod refinement {
                             if pre.writer_mem().is_nonneg_write(addr, value) {
                                 Polarity::Mapping
                             } else { Polarity::Unmapping };
-                        if pre.is_this_write_happy(core, addr, value, polarity) {
+                        if pre.is_this_write_happy(c, core, addr, value, polarity) {
                             if polarity is Mapping {
                                 rl2::Step::WriteNonneg
                             } else {
@@ -689,7 +690,7 @@ pub mod refinement {
         requires
             pre.inv(c),
             rl3::next_step(pre, post, c, step, lbl),
-        ensures rl2::next_step(pre.interp(), post.interp(), c, step.interp(pre, lbl), lbl)
+        ensures rl2::next_step(pre.interp(), post.interp(), c, step.interp(pre, c, lbl), lbl)
     {
         if pre.hist.happy {
             match step {
@@ -732,7 +733,7 @@ pub mod refinement {
                         if let Lbl::Write(core, addr, value) = lbl {
                             (core, addr, value)
                         } else { arbitrary() };
-                    if pre.is_this_write_happy(core, addr, value, post.hist.polarity) {
+                    if pre.is_this_write_happy(c, core, addr, value, post.hist.polarity) {
                         assert(pre.interp().is_this_write_happy(core, addr, value, post.interp().polarity));
                         if pre.writer_mem().is_nonneg_write(addr, value) {
                             assert(rl2::step_WriteNonneg(pre.interp(), post.interp(), c, lbl));

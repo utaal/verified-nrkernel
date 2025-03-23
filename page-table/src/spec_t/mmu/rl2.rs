@@ -92,11 +92,11 @@ impl State {
             }
     }
 
-    pub open spec fn can_flip_polarity(self) -> bool {
-        &&& self.happy
+    pub open spec fn can_flip_polarity(self, c: Constants) -> bool {
         &&& self.hist.pending_maps === map![]
         &&& self.hist.pending_unmaps === map![]
         &&& self.writes.tso === set![]
+        &&& forall|core| #[trigger] c.valid_core(core) ==> self.writes.nonpos[core] === set![]
     }
 
     pub open spec fn pending_unmap_for(self, va: usize) -> bool {
@@ -336,7 +336,7 @@ pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lb
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Mapping)
-    &&& pre.polarity is Mapping || pre.can_flip_polarity()
+    &&& pre.polarity is Mapping || pre.can_flip_polarity(c)
 
     &&& post.happy == pre.happy
     &&& post.phys_mem == pre.phys_mem
@@ -368,7 +368,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Unmapping)
-    &&& pre.polarity is Unmapping || pre.can_flip_polarity()
+    &&& pre.polarity is Unmapping || pre.can_flip_polarity(c)
 
     &&& post.happy == pre.happy
     &&& post.phys_mem == pre.phys_mem
@@ -496,6 +496,7 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.happy == true
     //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
+    &&& pre.writes.nonpos === Map::new(|core| c.valid_core(core), |core| set![])
     &&& pre.hist.pending_maps === map![]
     &&& pre.hist.pending_unmaps === map![]
     &&& pre.polarity === Polarity::Mapping
@@ -697,7 +698,7 @@ impl State {
         self.happy ==> {
         &&& self.wf(c)
         &&& self.inv_sbuf_facts(c)
-        &&& self.can_flip_polarity() ==> self.inv_between(c)
+        &&& self.can_flip_polarity(c) ==> self.inv_between(c)
         &&& self.polarity is Mapping ==> self.inv_mapping(c)
         &&& self.polarity is Unmapping ==> self.inv_unmapping(c)
         }
@@ -738,6 +739,8 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
             // (already have this somewhere?)
             // Note: We could just sidestep this by making the writes constrained based on the
             // interp exactly the way we use it in the impl.
+            // Submap proofs for unmapping turned out to be easy so doing this one as well is
+            // probably easier than pushing more VCs on the impl.
             assume(pre.writer_mem()@.submap_of(post.writer_mem()@));
             assert(post.hist.pending_unmaps =~= map![]);
             next_step_preserves_inv_mapping__inflight_walks(pre, post, c, step, lbl);
@@ -747,7 +750,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
         } else {
             next_step_preserves_inv_unmapping(pre, post, c, step, lbl);
         }
-        if post.can_flip_polarity() {
+        if post.can_flip_polarity(c) {
             next_step_preserves_inv_between(pre, post, c, step, lbl);
         }
     }
@@ -755,7 +758,7 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
 
 proof fn next_step_preserves_inv_between(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
-        post.can_flip_polarity(),
+        post.can_flip_polarity(c),
         pre.happy,
         post.happy,
         pre.inv(c),
@@ -781,7 +784,10 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping(c)
 {
-    assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
+    assert(post.writer_mem()@.submap_of(pre.writer_mem()@)) by {
+        broadcast use lemma_unmapping__pt_walk_valid_in_post_unchanged;
+        reveal(PTMem::view);
+    };
     assert(post.hist.pending_maps =~= map![]);
     if pre.polarity is Mapping { // Flipped polarity in this transition
         broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
@@ -793,7 +799,7 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
         // TODO: Have to prove this explicitly from inv_between
         assert(pre.inv_unmapping__inflight_walks(c)) by {
             admit();
-            assert(pre.can_flip_polarity());
+            assert(pre.can_flip_polarity(c));
         };
         assert(pre.inv_unmapping__core_vs_writer_reads(c)) by {
             reveal(State::inv_unmapping__core_vs_writer_reads);
@@ -968,8 +974,9 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
     assert forall|va| #![auto] pre.hist.pending_unmaps.contains_key(va)
         implies post.hist.pending_unmaps.contains_pair(va, pre.hist.pending_unmaps[va])
     by {
-        assume(post.writer_mem()@.submap_of(pre.writer_mem()@));
+        broadcast use lemma_unmapping__pt_walk_valid_in_post_unchanged;
         reveal(PTMem::view);
+        assert(post.writer_mem()@.submap_of(pre.writer_mem()@));
     };
     assert forall|core, walk|
         c.valid_core(core) && #[trigger] post.walks[core].contains(walk) implies {
@@ -2343,8 +2350,10 @@ pub mod refinement {
                     } else { arbitrary() };
                 rl2::lemma_mem_view_after_step_write(pre, post, c, lbl);
                 pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
-                // TODO: because it's a nonpositive write
-                assume(post.hist.pending_maps == pre.hist.pending_maps);
+                assert(post.hist.pending_maps =~= pre.hist.pending_maps) by {
+                    broadcast use rl2::lemma_unmapping__pt_walk_valid_in_post_unchanged;
+                    reveal(pt_mem::PTMem::view);
+                };
                 assert(rl1::step_WriteNonpos(pre.interp(), post.interp(), c, lbl));
             },
             rl2::Step::Writeback { core } => {

@@ -360,6 +360,7 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.tlbs === Map::new(|core| c.valid_core(core), |core| map![])
     //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
+    &&& pre.writes.nonpos === Map::new(|core| c.valid_core(core), |core| set![])
     &&& pre.pending_maps === map![]
     &&& pre.pending_unmaps === map![]
     &&& pre.polarity === Polarity::Mapping
