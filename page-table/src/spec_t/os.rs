@@ -897,7 +897,7 @@ impl State {
             match self.core_states[core] {
                 CoreState::MapDone { vaddr, pte, result: Result::Ok(_), .. }
                     => !candidate_mapping_overlaps_existing_vmem(self.interp_pt_mem().remove(vaddr), vaddr, pte),
-                    CoreState::MapDone { vaddr, pte, result: Result::Err(_), .. }
+                CoreState::MapDone { vaddr, pte, result: Result::Err(_), .. }
                     => candidate_mapping_overlaps_existing_vmem(self.interp_pt_mem(), vaddr, pte),
                 _ => true,
             }
@@ -946,8 +946,6 @@ impl State {
         &&& self.mmu.inv(c.mmu)
         &&& self.mmu.interp().inv(c.mmu)
         &&& self.mmu@.happy
-        // TODO(MB): This is temporary until we start considering unmaps as well
-        &&& self.mmu@.polarity is Mapping
     }
 
     pub open spec fn inv_write_core(self, c: Constants) -> bool {

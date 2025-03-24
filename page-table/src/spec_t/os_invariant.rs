@@ -20,8 +20,6 @@ pub proof fn init_implies_inv(c: os::Constants, s: os::State)
 {
     to_rl1::init_implies_inv(s.mmu, c.mmu);
     to_rl1::init_refines(s.mmu, c.mmu);
-    // TODO(MB): This is temporary until we start considering unmaps as well
-    assume(s.mmu@.polarity is Mapping);
     assert(s.inv_basic(c));
     init_implies_tlb_inv(c, s);
 }
@@ -99,8 +97,6 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         };
     };
 
-    // TODO(MB): This is temporary until we start considering unmaps as well
-    assume(s2.mmu@.polarity is Mapping);
     assert(s2.inv_basic(c));
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
