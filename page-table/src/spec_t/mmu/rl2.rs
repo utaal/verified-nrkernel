@@ -93,10 +93,10 @@ impl State {
     }
 
     pub open spec fn can_flip_polarity(self, c: Constants) -> bool {
-        &&& self.hist.pending_maps === map![]
-        &&& self.hist.pending_unmaps === map![]
+        //&&& self.hist.pending_maps === map![]
+        //&&& self.hist.pending_unmaps === map![]
         &&& self.writes.tso === set![]
-        &&& forall|core| #[trigger] c.valid_core(core) ==> self.writes.nonpos[core] === set![]
+        &&& self.writes.nonpos === set![]
     }
 
     pub open spec fn pending_unmap_for(self, va: usize) -> bool {
@@ -136,9 +136,16 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
         writes: Writes {
             core: pre.writes.core,
             tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
-            nonpos: pre.writes.nonpos.insert(core, set![]),
+            nonpos:
+                if pre.writes.tso === set![] {
+                    pre.writes.nonpos.remove(core)
+                } else { pre.writes.nonpos },
         },
-        hist: if core == pre.writes.core { History { pending_maps: map![], ..pre.hist } } else { pre.hist },
+        hist: History {
+            pending_maps: if core == pre.writes.core { map![] } else { pre.hist.pending_maps },
+            pending_unmaps: if post.writes.nonpos === set![] { map![] } else { pre.hist.pending_unmaps },
+            ..pre.hist
+        },
         ..pre
     }
 }
@@ -377,7 +384,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.sbuf == pre.sbuf.insert(core, pre.sbuf[core].push((addr, value)))
     &&& post.walks == pre.walks
     &&& post.writes.tso === pre.writes.tso.insert(addr)
-    &&& post.writes.nonpos == pre.writes.nonpos.map_values(|ws:Set<_>| ws.insert(addr))
+    &&& post.writes.nonpos == Set::new(|core| c.valid_core(core))
     &&& post.writes.core == core
     &&& post.polarity == Polarity::Unmapping
     &&& post.hist.pending_maps == pre.hist.pending_maps.union_prefer_right(
@@ -496,7 +503,7 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.happy == true
     //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
-    &&& pre.writes.nonpos === Map::new(|core| c.valid_core(core), |core| set![])
+    &&& pre.writes.nonpos === set![]
     &&& pre.hist.pending_maps === map![]
     &&& pre.hist.pending_unmaps === map![]
     &&& pre.polarity === Polarity::Mapping
@@ -549,15 +556,14 @@ impl State {
         forall|i| #![auto] 0 <= i < self.writer_sbuf().len() ==> self.writer_sbuf()[i].1 & 1 == 0
     }
 
-    pub open spec fn writer_sbuf_subset_all_writes(self) -> bool {
+    pub open spec fn writer_sbuf_subset_tso_writes(self) -> bool {
         forall|a| self.writer_sbuf().contains_fst(a) ==> #[trigger] self.writes.tso.contains(a)
-        //self.writer_sbuf().to_set().map(|x:(_,_)| x.0).subset_of(self.writes.tso)
     }
 
     pub open spec fn inv_sbuf_facts(self, c: Constants) -> bool {
         &&& self.non_writer_sbufs_are_empty(c)
         &&& self.writer_sbuf_entries_are_unique()
-        &&& self.writer_sbuf_subset_all_writes()
+        &&& self.writer_sbuf_subset_tso_writes()
     }
 
     #[verifier(opaque)]
@@ -620,20 +626,29 @@ impl State {
             let writer_walk = self.writer_mem().pt_walk(va);
             if self.hist.pending_unmaps.contains_key(vbase) {
                 pte == self.hist.pending_unmaps[vbase]
-                //&&& writer_walk.result() is Invalid
             } else {
                 core_walk == writer_walk
             }
         }
     }
 
-    pub open spec fn inv_unmapping__inflight_walk_path(self, c: Constants) -> bool {
-        forall|core, walk, i: int| {
-            &&& c.valid_core(core)
-            &&& self.walks[core].contains(walk)
-            &&& 0 <= i < walk.path.len()
-            &&& !self.writes.nonpos[core].contains(walk.path[i].0)
-        } ==> self.core_mem(core).read(walk.path[i].0) == self.writer_mem().read(walk.path[i].0)
+    /// If a core is not in `self.writes.nonpos`, its inflight walks are prefixes of the
+    /// corresponding atomic walks on current memory.
+    ///
+    /// This duplicates some of `inv_unmapping__inflight_walks`. We only really need it to prove
+    /// `inv_mapping__inflight_walks` when we flip polarity.
+    #[verifier(opaque)]
+    pub open spec fn inv_unmapping__notin_nonpos(self, c: Constants) -> bool {
+        forall|core, walk|
+            c.valid_core(core)
+            && !self.writes.nonpos.contains(core)
+            && #[trigger] self.walks[core].contains(walk)
+        ==> {
+            &&& aligned(walk.vaddr as nat, 8)
+            &&& walk.path.len() <= 3
+            &&& !walk.complete
+            &&& is_iter_walk_prefix(self.core_mem(core), walk)
+        }
     }
 
     pub open spec fn inv_mapping__inflight_walks(self, c: Constants) -> bool {
@@ -678,27 +693,24 @@ impl State {
         &&& self.inv_mapping__inflight_walks(c)
         &&& self.inv_mapping__pending_map_is_base_walk(c)
         &&& self.hist.pending_unmaps === map![]
+        &&& self.writes.tso === set![] ==> self.hist.pending_maps === map![]
     }
 
     pub open spec fn inv_unmapping(self, c: Constants) -> bool {
+        &&& self.writes.tso !== set![] ==> self.writes.nonpos === Set::new(|core| c.valid_core(core))
         &&& self.writer_sbuf_entries_have_P_bit_0()
         &&& self.inv_unmapping__inflight_walks(c)
         &&& self.inv_unmapping__core_vs_writer_reads(c)
         &&& self.inv_unmapping__valid_walk(c)
+        &&& self.inv_unmapping__notin_nonpos(c)
         &&& self.hist.pending_maps === map![]
-    }
-
-    /// Stuff that's true when we're not currently mapping or unmapping anything. (I.e. when we
-    /// could flip the polarity.)
-    pub open spec fn inv_between(self, c: Constants) -> bool {
-        &&& self.inv_mapping__inflight_walks(c)
+        &&& self.writes.nonpos === set![] ==> self.hist.pending_unmaps === map![]
     }
 
     pub open spec fn inv(self, c: Constants) -> bool {
         self.happy ==> {
         &&& self.wf(c)
         &&& self.inv_sbuf_facts(c)
-        &&& self.can_flip_polarity(c) ==> self.inv_between(c)
         &&& self.polarity is Mapping ==> self.inv_mapping(c)
         &&& self.polarity is Unmapping ==> self.inv_unmapping(c)
         }
@@ -728,11 +740,16 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
     ensures post.inv(c)
 {
     if pre.happy && post.happy {
+        assert_by_contradiction!(Set::new(|core| c.valid_core(core)) !== set![], {
+            assert(Set::new(|core| c.valid_core(core)).contains(pre.writes.core));
+        });
         next_step_preserves_wf(pre, post, c, step, lbl);
         next_step_preserves_inv_sbuf_facts(pre, post, c, step, lbl);
         if post.polarity is Mapping {
             if pre.polarity is Unmapping { // Flipped polarity in this transition
+                assert(pre.can_flip_polarity(c));
                 broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
+                reveal(State::inv_unmapping__notin_nonpos);
                 assert(pre.inv_mapping__inflight_walks(c));
             }
             // TODO: Need an argument here that we only add things (pre is submap of post)
@@ -743,6 +760,16 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
             // probably easier than pushing more VCs on the impl.
             assume(pre.writer_mem()@.submap_of(post.writer_mem()@));
             assert(post.hist.pending_unmaps =~= map![]);
+            assert(post.writes.tso === set![] ==> post.hist.pending_maps === map![]) by {
+                match step {
+                    Step::WriteNonneg => {
+                        assert_by_contradiction!(post.writes.tso !== set![], {
+                            assert(post.writes.tso.contains(lbl->Write_1));
+                        });
+                    },
+                    _ => {},
+                }
+            };
             next_step_preserves_inv_mapping__inflight_walks(pre, post, c, step, lbl);
             next_step_preserves_inv_mapping__pending_map_is_base_walk(pre, post, c, step, lbl);
             next_step_preserves_inv_mapping__valid_not_pending_is_not_in_sbuf(pre, post, c, step, lbl);
@@ -750,31 +777,12 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
         } else {
             next_step_preserves_inv_unmapping(pre, post, c, step, lbl);
         }
-        if post.can_flip_polarity(c) {
-            next_step_preserves_inv_between(pre, post, c, step, lbl);
-        }
     }
-}
-
-proof fn next_step_preserves_inv_between(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
-    requires
-        post.can_flip_polarity(c),
-        pre.happy,
-        post.happy,
-        pre.inv(c),
-        post.wf(c),
-        post.inv_sbuf_facts(c),
-        next_step(pre, post, c, step, lbl),
-    ensures post.inv_between(c)
-{
-    // TODO: I think to prove this from unmapping polarity, I'll also have to track which cores
-    // have not yet executed an invlpg since the last write
-    // (what i had the writes.neg for, but it could probably be less fine grained, just a flag per core)
-    admit();
 }
 
 proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
+        pre.wf(c),
         pre.happy,
         post.happy,
         post.polarity is Unmapping,
@@ -784,6 +792,9 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping(c)
 {
+    assert_by_contradiction!(Set::new(|core| c.valid_core(core)) !== set![], {
+        assert(Set::new(|core| c.valid_core(core)).contains(pre.writes.core));
+    });
     assert(post.writer_mem()@.submap_of(pre.writer_mem()@)) by {
         broadcast use lemma_unmapping__pt_walk_valid_in_post_unchanged;
         reveal(PTMem::view);
@@ -795,25 +806,24 @@ proof fn next_step_preserves_inv_unmapping(pre: State, post: State, c: Constants
     }
     assert(post.writer_sbuf_entries_have_P_bit_0());
 
-    if pre.polarity is Mapping {
-        // TODO: Have to prove this explicitly from inv_between
+    if pre.can_flip_polarity(c) {
         assert(pre.inv_unmapping__inflight_walks(c)) by {
-            admit();
+            broadcast use
+                lemma_finish_iter_walk_prefix_matches_iter_walk,
+                lemma_iter_walk_equals_pt_walk;
             assert(pre.can_flip_polarity(c));
         };
         assert(pre.inv_unmapping__core_vs_writer_reads(c)) by {
             reveal(State::inv_unmapping__core_vs_writer_reads);
         };
+        assert(pre.inv_unmapping__notin_nonpos(c)) by {
+            reveal(State::inv_unmapping__notin_nonpos);
+        };
     }
-    assert(post.inv_unmapping__valid_walk(c)) by {
-        next_step_preserves_inv_unmapping__valid_walk(pre, post, c, step, lbl);
-    };
-    assert(post.inv_unmapping__core_vs_writer_reads(c)) by {
-        next_step_preserves_inv_unmapping__core_vs_writer_reads(pre, post, c, step, lbl);
-    };
-    assert(post.inv_unmapping__inflight_walks(c)) by {
-        next_step_preserves_inv_unmapping__inflight_walks(pre, post, c, step, lbl);
-    };
+    next_step_preserves_inv_unmapping__valid_walk(pre, post, c, step, lbl);
+    next_step_preserves_inv_unmapping__core_vs_writer_reads(pre, post, c, step, lbl);
+    next_step_preserves_inv_unmapping__inflight_walks(pre, post, c, step, lbl);
+    next_step_preserves_inv_unmapping__notin_nonpos(pre, post, c, step, lbl);
 }
 
 proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
@@ -822,9 +832,9 @@ proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, 
         pre.happy,
         post.happy,
         post.polarity is Unmapping,
+        pre.writes.nonpos === set![] ==> pre.hist.pending_unmaps === map![],
         pre.inv_sbuf_facts(c),
         pre.writer_sbuf_entries_have_P_bit_0(),
-        //pre.inv_unmapping__inflight_walks(c),
         pre.inv_unmapping__valid_walk(c),
         post.inv_sbuf_facts(c),
         next_step(pre, post, c, step, lbl),
@@ -878,6 +888,10 @@ proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, 
             lemma_step_Writeback_preserves_writer_mem(pre, post, c, core, lbl);
             assert(post.inv_unmapping__valid_walk(c));
         },
+        Step::Invlpg => {
+            broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
+            assert(post.inv_unmapping__valid_walk(c));
+        },
         _ => assert(post.inv_unmapping__valid_walk(c)),
     }
 }
@@ -908,6 +922,39 @@ broadcast proof fn lemma_unmapping__pt_walk_valid_in_post_unchanged(pre: State, 
     assert(bit!(0usize) == 1) by (bit_vector);
 }
 
+proof fn next_step_preserves_inv_unmapping__notin_nonpos(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
+    requires
+        pre.wf(c),
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.inv_sbuf_facts(c),
+        pre.inv_unmapping(c),
+        next_step(pre, post, c, step, lbl),
+    ensures post.inv_unmapping__notin_nonpos(c)
+{
+    reveal(State::inv_unmapping__notin_nonpos);
+    broadcast use
+        group_ambient,
+        lemma_step_core_mem;
+    match step {
+        Step::WalkStep { core, walk } => {
+            reveal(rl2::walk_next);
+            assert(post.inv_unmapping__notin_nonpos(c));
+        },
+        Step::WriteNonpos => {
+            assert(post.inv_unmapping__notin_nonpos(c));
+        },
+        Step::Writeback { core } => {
+            broadcast use lemma_writes_tso_empty_implies_sbuf_empty;
+            assert(post.inv_unmapping__notin_nonpos(c));
+        },
+        _ => {
+            assert(post.inv_unmapping__notin_nonpos(c));
+        },
+    }
+}
+
 proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.wf(c),
@@ -919,7 +966,6 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
         post.inv_sbuf_facts(c),
         post.inv_unmapping__valid_walk(c),
         post.inv_unmapping__core_vs_writer_reads(c),
-        //pre.inv_mapping__valid_is_not_in_sbuf(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping__inflight_walks(c)
 {
@@ -943,6 +989,18 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
                 lemma_iter_walk_equals_pt_walk;
             assert(post.inv_unmapping__inflight_walks(c));
         },
+        Step::Invlpg => {
+            reveal(State::inv_unmapping__notin_nonpos);
+            if !pre.can_flip_polarity(c) && post.can_flip_polarity(c) {
+                assert(forall|core| #[trigger] c.valid_core(core) ==> !post.writes.nonpos.contains(core));
+                broadcast use
+                    lemma_finish_iter_walk_prefix_matches_iter_walk,
+                    lemma_iter_walk_equals_pt_walk;
+                assert(post.inv_unmapping__inflight_walks(c));
+            } else {
+                assert(post.inv_unmapping__inflight_walks(c));
+            }
+        },
         _ => {
             assert(post.inv_unmapping__inflight_walks(c));
         },
@@ -962,7 +1020,6 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
         pre.inv_unmapping(c),
         post.inv_sbuf_facts(c),
         post.inv_unmapping__valid_walk(c),
-        //pre.inv_mapping__valid_is_not_in_sbuf(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping__inflight_walks(c)
 {
@@ -1137,12 +1194,10 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
         pre.inv_sbuf_facts(c),
         pre.writer_sbuf_entries_have_P_bit_0(),
         pre.inv_unmapping__inflight_walks(c),
-        //pre.inv_unmapping__core_vs_writer_reads(c),
         pre.inv_unmapping__valid_walk(c),
         post.inv_unmapping__core_vs_writer_reads(c),
         post.inv_sbuf_facts(c),
         post.inv_unmapping__valid_walk(c),
-        //pre.inv_mapping__valid_is_not_in_sbuf(c),
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping__inflight_walks(c)
 {

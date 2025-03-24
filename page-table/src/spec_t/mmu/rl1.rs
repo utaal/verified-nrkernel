@@ -70,11 +70,9 @@ impl State {
         self.writes.tso.contains(addr) ==> self.writes.core == core
     }
 
-    pub open spec fn can_flip_polarity(self) -> bool {
-        &&& self.happy
-        &&& self.pending_maps === map![]
-        &&& self.pending_unmaps === map![]
+    pub open spec fn can_flip_polarity(self, c: Constants) -> bool {
         &&& self.writes.tso === set![]
+        &&& self.writes.nonpos === set![]
     }
 
     //pub open spec fn wf(self, c: Constants) -> bool {
@@ -100,9 +98,13 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
         writes: Writes {
             core: pre.writes.core,
             tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
-            nonpos: pre.writes.nonpos.insert(core, set![]),
+            nonpos:
+                if pre.writes.tso === set![] {
+                    pre.writes.nonpos.remove(core)
+                } else { pre.writes.nonpos },
         },
         pending_maps: if core == pre.writes.core { map![] } else { pre.pending_maps },
+        pending_unmaps: if post.writes.nonpos === set![] { map![] } else { pre.pending_unmaps },
         ..pre
     }
 }
@@ -239,7 +241,7 @@ pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lb
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Mapping)
-    &&& pre.polarity is Mapping || pre.can_flip_polarity()
+    &&& pre.polarity is Mapping || pre.can_flip_polarity(c)
 
     &&& post.happy      == pre.happy
     &&& post.phys_mem   == pre.phys_mem
@@ -264,7 +266,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Unmapping)
-    &&& pre.polarity is Unmapping || pre.can_flip_polarity()
+    &&& pre.polarity is Unmapping || pre.can_flip_polarity(c)
 
     &&& post.happy      == pre.happy
     &&& post.phys_mem   == pre.phys_mem
@@ -273,7 +275,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& post.writes.tso == pre.writes.tso.insert(addr)
     &&& post.writes.core == core
     &&& post.polarity == Polarity::Unmapping
-    &&& post.writes.nonpos == pre.writes.nonpos.map_values(|ws:Set<_>| ws.insert(addr))
+    &&& post.writes.nonpos == Set::new(|core| c.valid_core(core))
     &&& post.pending_maps == pre.pending_maps
     &&& post.pending_unmaps == pre.pending_unmaps.union_prefer_right(
         Map::new(
@@ -360,7 +362,7 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.tlbs === Map::new(|core| c.valid_core(core), |core| map![])
     //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
-    &&& pre.writes.nonpos === Map::new(|core| c.valid_core(core), |core| set![])
+    &&& pre.writes.nonpos === set![]
     &&& pre.pending_maps === map![]
     &&& pre.pending_unmaps === map![]
     &&& pre.polarity === Polarity::Mapping
