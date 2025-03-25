@@ -18,7 +18,7 @@ MASK_FLAG_PWT, MASK_FLAG_PCD, MASK_FLAG_XD, MASK_ADDR, MASK_PG_FLAG_PAT, MASK_L1
 MASK_DIR_ADDR, MASK_L1_PG_ADDR, MASK_L2_PG_ADDR, MASK_L3_PG_ADDR, MASK_NEG_DIRTY_ACCESS };
 #[cfg(verus_keep_ghost)]
 use crate::extra;
-use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedMapTokenView, WrappedUnmapToken };
+use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken, WrappedTokenView, OpArgs };
 
 
 verus! {
@@ -570,13 +570,13 @@ pub mod PT {
 
 use super::*;
 
-pub open spec(checked) fn inv(tok: WrappedMapTokenView, pt: PTDir) -> bool {
+pub open spec(checked) fn inv(tok: WrappedTokenView, pt: PTDir) -> bool {
     &&& pt.region.base == tok.pt_mem.pml4
     &&& inv_at(tok, pt, 0, tok.pt_mem.pml4)
 }
 
 /// Get the view of the entry at address ptr + i * WORD_SIZE
-pub open spec fn entry_at_spec(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, i: nat) -> PDE {
+pub open spec fn entry_at_spec(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, i: nat) -> PDE {
     PDE {
         entry: tok.read(i as usize, pt.region),
         layer: Ghost(layer),
@@ -623,7 +623,7 @@ fn entry_at_unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghos
     e
 }
 
-pub open spec fn ghost_pt_matches_structure(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn ghost_pt_matches_structure(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| #![trigger pt.entries[i as int], entry_at_spec(tok, pt, layer, ptr, i)@]
     i < X86_NUM_ENTRIES ==> {
         let entry = entry_at_spec(tok, pt, layer, ptr, i)@;
@@ -631,7 +631,7 @@ pub open spec fn ghost_pt_matches_structure(tok: WrappedMapTokenView, pt: PTDir,
     }
 }
 
-pub open spec fn directories_obey_invariant_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool
+pub open spec fn directories_obey_invariant_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool
     decreases X86_NUM_LAYERS - layer, 0nat
         when layer_in_range(layer)
 {
@@ -643,7 +643,7 @@ pub open spec fn directories_obey_invariant_at(tok: WrappedMapTokenView, pt: PTD
     }
 }
 
-pub open spec fn empty_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn empty_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| #![auto] i < X86_NUM_ENTRIES ==> entry_at_spec(tok, pt, layer, ptr, i)@ is Invalid
 }
 
@@ -651,7 +651,7 @@ pub open spec(checked) fn layer_in_range(layer: nat) -> bool {
     layer < X86_NUM_LAYERS
 }
 
-pub open spec(checked) fn inv_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool
+pub open spec(checked) fn inv_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool
     decreases X86_NUM_LAYERS - layer
 {
     &&& ptr % PAGE_SIZE == 0
@@ -673,25 +673,25 @@ pub open spec(checked) fn inv_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat
     &&& entry_mb0_bits_are_zero(tok, pt, layer, ptr)
 }
 
-pub open spec fn directories_have_flags(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn directories_have_flags(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| i < X86_NUM_ENTRIES ==> {
         (#[trigger] entry_at_spec(tok, pt, layer, ptr, i)@) matches GPDE::Directory { RW, US, XD, .. } ==> RW && US && !XD
     }
 }
 
-pub open spec fn entry_mb0_bits_are_zero(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn entry_mb0_bits_are_zero(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| i < X86_NUM_ENTRIES ==>
         (#[trigger] entry_at_spec(tok, pt, layer, ptr, i)).all_mb0_bits_are_zero()
 }
 
 /// Entries for super pages and huge pages use bit 12 to denote the PAT flag. We always set that
 /// flag to zero, which allows us to always use the same mask to get the address.
-pub open spec fn hp_pat_is_zero(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn hp_pat_is_zero(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat| #![auto] i < X86_NUM_ENTRIES ==> entry_at_spec(tok, pt, layer, ptr, i).hp_pat_is_zero()
 }
 
 // TODO: should I move some of these ghost_pt things in a invariant defined on PTDir?
-pub open spec fn ghost_pt_used_regions_pairwise_disjoint(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn ghost_pt_used_regions_pairwise_disjoint(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat, j: nat|
         i != j && i < pt.entries.len() && j < pt.entries.len()
         && #[trigger] pt.entries[j as int] is Some && #[trigger] pt.entries[i as int] is Some
@@ -699,13 +699,13 @@ pub open spec fn ghost_pt_used_regions_pairwise_disjoint(tok: WrappedMapTokenVie
 }
 
 // TODO: this may be implied by the other ones
-pub open spec fn ghost_pt_region_notin_used_regions(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn ghost_pt_region_notin_used_regions(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat|
         i < pt.entries.len() && pt.entries[i as int].is_Some()
         ==> !(#[trigger] pt.entries[i as int].get_Some_0().used_regions.contains(pt.region))
 }
 
-pub open spec fn ghost_pt_used_regions_rtrancl(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+pub open spec fn ghost_pt_used_regions_rtrancl(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     // reflexive
     &&& pt.used_regions.contains(pt.region)
     // transitive
@@ -715,7 +715,7 @@ pub open spec fn ghost_pt_used_regions_rtrancl(tok: WrappedMapTokenView, pt: PTD
             ==> pt.used_regions.contains(r)
 }
 
-pub open spec fn interp_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat) -> l1::Directory
+pub open spec fn interp_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat) -> l1::Directory
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES, 2nat
         when inv_at(tok, pt, layer, ptr)
 {
@@ -727,7 +727,7 @@ pub open spec fn interp_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr:
     }
 }
 
-pub open spec fn interp_at_entry(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, idx: nat) -> l1::NodeEntry
+pub open spec fn interp_at_entry(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, idx: nat) -> l1::NodeEntry
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - idx, 0nat
         when inv_at(tok, pt, layer, ptr)
 {
@@ -750,7 +750,7 @@ pub open spec fn interp_at_entry(tok: WrappedMapTokenView, pt: PTDir, layer: nat
     }
 }
 
-pub open spec fn interp_at_aux(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>) -> Seq<l1::NodeEntry>
+pub open spec fn interp_at_aux(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>) -> Seq<l1::NodeEntry>
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 1nat
         when inv_at(tok, pt, layer, ptr)
 {
@@ -762,15 +762,15 @@ pub open spec fn interp_at_aux(tok: WrappedMapTokenView, pt: PTDir, layer: nat, 
     }
 }
 
-pub open spec fn interp(tok: WrappedMapTokenView, pt: PTDir) -> l1::Directory {
+pub open spec fn interp(tok: WrappedTokenView, pt: PTDir) -> l1::Directory {
     interp_at(tok, pt, 0, tok.pt_mem.pml4, 0)
 }
 
-pub open spec fn interp_to_l0(tok: WrappedMapTokenView, pt: PTDir) -> Map<usize, PTE> {
+pub open spec fn interp_to_l0(tok: WrappedTokenView, pt: PTDir) -> Map<usize, PTE> {
     usize_keys(interp(tok, pt).interp().map)
 }
 
-proof fn lemma_inv_at_different_memory(tok1: WrappedMapTokenView, tok2: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize)
+proof fn lemma_inv_at_different_memory(tok1: WrappedTokenView, tok2: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize)
     requires
         inv_at(tok1, pt, layer, ptr),
         pt.used_regions.subset_of(tok2.regions.dom()),
@@ -800,7 +800,7 @@ proof fn lemma_inv_at_different_memory(tok1: WrappedMapTokenView, tok2: WrappedM
     };
 }
 
-proof fn lemma_interp_at_entry_different_memory(tok1: WrappedMapTokenView, pt1: PTDir, tok2: WrappedMapTokenView, pt2: PTDir, layer: nat, ptr: usize, base: nat, idx: nat)
+proof fn lemma_interp_at_entry_different_memory(tok1: WrappedTokenView, pt1: PTDir, tok2: WrappedTokenView, pt2: PTDir, layer: nat, ptr: usize, base: nat, idx: nat)
     requires
         idx < X86_NUM_ENTRIES,
         pt2.region == pt1.region,
@@ -838,7 +838,7 @@ proof fn lemma_interp_at_entry_different_memory(tok1: WrappedMapTokenView, pt1: 
     }
 }
 
-pub proof fn lemma_interp_at_facts(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, ne: bool)
+pub proof fn lemma_interp_at_facts(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, ne: bool)
     requires
         inv_at(tok, pt, layer, ptr),
         interp_at(tok, pt, layer, ptr, base_vaddr).inv(ne),
@@ -862,7 +862,7 @@ pub proof fn lemma_interp_at_facts(tok: WrappedMapTokenView, pt: PTDir, layer: n
     res.lemma_inv_implies_interp_inv(ne);
 }
 
-proof fn lemma_interp_at_aux_facts(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
+proof fn lemma_interp_at_aux_facts(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
     requires inv_at(tok, pt, layer, ptr),
     ensures
         interp_at_aux(tok, pt, layer, ptr, base_vaddr, init).len() == if init.len() > X86_NUM_ENTRIES { init.len() } else { X86_NUM_ENTRIES as nat },
@@ -980,7 +980,7 @@ proof fn lemma_interp_at_aux_facts(tok: WrappedMapTokenView, pt: PTDir, layer: n
 //    res
 //}
 
-spec fn builder_pre(tok_old: WrappedMapTokenView, pt_old: PTDir, tok_new: WrappedMapTokenView, pt_new: PTDir, layer: nat, ptr: usize, new_regions: Set<MemRegion>) -> bool {
+spec fn builder_pre(tok_old: WrappedTokenView, pt_old: PTDir, tok_new: WrappedTokenView, pt_new: PTDir, layer: nat, ptr: usize, new_regions: Set<MemRegion>) -> bool {
     &&& tok_new.pt_mem.pml4 === tok_old.pt_mem.pml4
     // We return the regions that we added
     &&& tok_new.regions.dom() === tok_old.regions.dom().union(new_regions)
@@ -1019,7 +1019,7 @@ fn map_frame_aux(
         //old(tok)@.alloc_available_pages() >= 3 - layer,
         accepted_mapping(vaddr as nat, pte@),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).accepted_mapping(vaddr as nat, pte@),
-        old(tok)@.args == (vaddr, pte@),
+        old(tok)@.args == (OpArgs::Map { base: vaddr, pte: pte@ }),
         base <= vaddr < MAX_BASE,
         forall|tok_new, pt_new, new_regions|
            #[trigger] builder_pre(old(tok)@, pt, tok_new, pt_new, layer as nat, ptr, new_regions)
@@ -1625,7 +1625,6 @@ fn map_frame_aux(
             assert(tok.inv());
             assert(accepted_mapping(vaddr as nat, pte@));
             assert(interp_at(tok@, new_dir_pt, (layer + 1) as nat, new_dir_addr, entry_base as nat).accepted_mapping(vaddr as nat, pte@));
-            assert(tok@.args == (vaddr, pte@));
             assert(base <= vaddr < MAX_BASE);
 
             assert(pt.entries.len() == X86_NUM_ENTRIES);
@@ -1973,7 +1972,7 @@ fn map_frame_aux(
     }
 }
 
-pub proof fn lemma_zeroed_page_implies_empty_at(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize)
+pub proof fn lemma_zeroed_page_implies_empty_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize)
     requires
         ptr % PAGE_SIZE == 0,
         // TODO:
@@ -2001,7 +2000,7 @@ pub proof fn lemma_zeroed_page_implies_empty_at(tok: WrappedMapTokenView, pt: PT
     by { entry_at_spec(tok, pt, layer, ptr, i).lemma_zero_entry_facts(); };
 }
 
-proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, idx: nat)
+proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, idx: nat)
     requires
         inv_at(tok, pt, layer, ptr),
         forall|i: nat| i < init.len() ==> init[i as int] === l1::NodeEntry::Invalid,
@@ -2035,7 +2034,7 @@ proof fn lemma_empty_at_interp_at_aux_equal_l1_empty_dir(tok: WrappedMapTokenVie
     }
 }
 
-proof fn lemma_empty_at_interp_at_equal_l1_empty_dir(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, idx: nat)
+proof fn lemma_empty_at_interp_at_equal_l1_empty_dir(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, idx: nat)
     requires
         inv_at(tok, pt, layer, ptr),
         idx < X86_NUM_ENTRIES,
@@ -2056,7 +2055,7 @@ proof fn lemma_empty_at_interp_at_equal_l1_empty_dir(tok: WrappedMapTokenView, p
     lemma_empty_at_interp_at_aux_equal_l1_empty_dir(tok, pt, layer, ptr, base, seq![], idx);
 }
 
-proof fn lemma_not_empty_at_implies_interp_at_aux_not_empty(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, nonempty_idx: nat)
+proof fn lemma_not_empty_at_implies_interp_at_aux_not_empty(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>, nonempty_idx: nat)
     requires
         inv_at(tok, pt, layer, ptr),
         nonempty_idx < X86_NUM_ENTRIES,
@@ -2073,7 +2072,7 @@ proof fn lemma_not_empty_at_implies_interp_at_aux_not_empty(tok: WrappedMapToken
     }
 }
 
-proof fn lemma_empty_at_implies_interp_at_empty(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
+proof fn lemma_empty_at_implies_interp_at_empty(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
     requires
         inv_at(tok, pt, layer, ptr),
         empty_at(tok, pt, layer, ptr),
@@ -2083,7 +2082,7 @@ proof fn lemma_empty_at_implies_interp_at_empty(tok: WrappedMapTokenView, pt: PT
     lemma_interp_at_aux_facts(tok, pt, layer, ptr, base, seq![]);
 }
 
-proof fn lemma_not_empty_at_implies_interp_at_not_empty(tok: WrappedMapTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
+proof fn lemma_not_empty_at_implies_interp_at_not_empty(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
     requires
         inv_at(tok, pt, layer, ptr),
         !empty_at(tok, pt, layer, ptr),
@@ -2104,7 +2103,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         interp(old(tok)@, old(pt)@).accepted_mapping(vaddr as nat, pte@),
         vaddr < MAX_BASE,
         pml4 == old(tok)@.pt_mem.pml4,
-        old(tok)@.args == (vaddr, pte@),
+        old(tok)@.args == (OpArgs::Map { base: vaddr, pte: pte@ }),
     ensures
         inv(tok@, pt@),
         interp(tok@, pt@).inv(true),

@@ -17,21 +17,26 @@ use crate::impl_u::l2_impl::{ PT, PTDir };
 
 verus! {
 
-/// We define a view of the wrapped map token with the memory stuff that the implementation uses to
+pub enum OpArgs {
+    Map { base: usize, pte: PTE },
+    Unmap { base: usize },
+}
+
+/// We define a view of the wrapped tokens with the memory stuff that the implementation uses to
 /// define its invariant and interpretation. This way read-only ops (e.g. `read`) leave the view
 /// fully unchanged, which simplifies reasoning. Otherwise we have to argue that the invariant is
 /// preserved as only irrelevant parts of the state may have changed. (Since `read` still has to
 /// take a mut ref as it changes the underlying token.)
-pub struct WrappedMapTokenView {
+pub struct WrappedTokenView {
     pub orig_st: os::State,
-    pub args: (usize, PTE),
+    pub args: OpArgs,
     pub regions: Map<MemRegion, Seq<usize>>,
     /// We also keep the flat memory directly because this is what the MMU's interpretation is
     /// defined on.
     pub pt_mem: mmu::pt_mem::PTMem,
 }
 
-impl WrappedMapTokenView {
+impl WrappedTokenView {
     pub open spec fn read(self, idx: usize, r: MemRegion) -> usize {
         self.regions[r][idx as int] & MASK_NEG_DIRTY_ACCESS
     }
@@ -40,8 +45,8 @@ impl WrappedMapTokenView {
         self.pt_mem@
     }
 
-    pub open spec fn write(self, idx: usize, value: usize, r: MemRegion) -> WrappedMapTokenView {
-        WrappedMapTokenView {
+    pub open spec fn write(self, idx: usize, value: usize, r: MemRegion) -> WrappedTokenView {
+        WrappedTokenView {
             regions: self.regions.insert(r, self.regions[r].update(idx as int, value)),
             pt_mem: self.pt_mem.write(add(r.base as usize, mul(idx, 8)), value),
             ..self
@@ -67,6 +72,15 @@ impl WrappedMapTokenView {
         admit();
         assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
     }
+
+    pub proof fn lemma_interps_match_2(self, pt: PTDir)
+        requires PT::inv(self, pt)
+        ensures PT::interp(self, pt).interp().map == crate::spec_t::mmu::defs::nat_keys(self.interp())
+    {
+        self.lemma_interps_match(pt);
+        assume(PT::interp(self, pt).interp().map =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
+        //assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
+    }
 }
 
 pub tracked struct WrappedMapToken {
@@ -77,12 +91,14 @@ pub tracked struct WrappedMapToken {
 }
 
 impl WrappedMapToken {
-    pub closed spec fn view(&self) -> WrappedMapTokenView {
-        WrappedMapTokenView {
+    pub closed spec fn view(&self) -> WrappedTokenView {
+        WrappedTokenView {
             orig_st: self.orig_st,
             args:
-                (self.orig_st.core_states[self.tok.core()]->MapExecuting_vaddr as usize,
-                 self.orig_st.core_states[self.tok.core()]->MapExecuting_pte),
+                OpArgs::Map {
+                    base: self.orig_st.core_states[self.tok.core()]->MapExecuting_vaddr as usize,
+                    pte: self.orig_st.core_states[self.tok.core()]->MapExecuting_pte,
+                },
             regions:
                 Map::new(
                     |r: MemRegion| self.regions.contains(r),
@@ -107,7 +123,7 @@ impl WrappedMapToken {
             res@.orig_st == tok.st(),
             res@.pt_mem == tok.st().mmu@.pt_mem,
             tok.st().core_states[tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, .. }
-                && res@.args == (vaddr as usize, pte),
+                && res@.args == (OpArgs::Map { base: vaddr as usize, pte }),
     {
         let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st(), regions: arbitrary() };
         assume(t.inv_regions());
@@ -145,6 +161,7 @@ impl WrappedMapToken {
         &&& self.tok.consts().valid_ult(self.tok.thread())
         &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, ult_id }
         &&& vaddr <= usize::MAX
+        &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
         &&& self.tok.thread() == ult_id
         &&& self.tok.steps().len() > 0
         &&& self.tok.progress() is Ready
@@ -266,8 +283,9 @@ impl WrappedMapToken {
         };
         assume(tok@.regions[r@] == tok@.regions[r@].update(idx as int, value));
         assert(tok@.regions =~= old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)));
-        // TODO: this is unstable??? (it used to work)
         assume(tok.tok.st().core_states[core] == old(tok).tok.st().core_states[core]);
+        // TODO: Need to add to lemma_concurrent_trs?
+        assume(tok@.args == old(tok)@.args);
     }
 
     pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
@@ -278,8 +296,8 @@ impl WrappedMapToken {
             old(tok).inv(),
             value & 1 == 1,
             old(tok)@.read(idx, r@) & 1 == 0,
-            !candidate_mapping_overlaps_existing_vmem_usize(old(tok)@.interp(), old(tok)@.args.0, old(tok)@.args.1),
-            old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp().insert(old(tok)@.args.0, old(tok)@.args.1),
+            !candidate_mapping_overlaps_existing_vmem_usize(old(tok)@.interp(), old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
+            old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp().insert(old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
         ensures
             tok@ == old(tok)@.write(idx, value, r@),
             tok.inv(),
@@ -295,10 +313,8 @@ impl WrappedMapToken {
             broadcast use to_rl1::next_refines;
             assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
             mmu_tok.prophesy_write(addr, value);
-            let vaddr = tok@.args.0 as nat;
-            let pte = tok@.args.1;
-            // TODO: ???
-            admit();
+            let vaddr = tok@.args->Map_base as nat;
+            let pte = tok@.args->Map_pte;
             assert(tok.tok.st().core_states[core] is MapExecuting);
             assert(tok.tok.st().core_states[core] matches os::CoreState::MapExecuting { vaddr: v, pte: p, .. } && vaddr == v && pte == p);
             let new_cs = os::CoreState::MapDone { ult_id: tok.tok.thread(), vaddr, pte, result: Ok(()) };
@@ -310,6 +326,7 @@ impl WrappedMapToken {
 
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
+            admit();
             assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core: core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -480,8 +497,6 @@ pub exec fn register_step_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Gh
 
 
 
-// TODO: For now, much of the Unmap stuff is just placeholders so we can call unmap again.
-
 pub tracked struct WrappedUnmapToken {
     tracked tok: Token,
     ghost done: bool,
@@ -490,6 +505,21 @@ pub tracked struct WrappedUnmapToken {
 }
 
 impl WrappedUnmapToken {
+    pub closed spec fn view(&self) -> WrappedTokenView {
+        WrappedTokenView {
+            orig_st: self.orig_st,
+            args:
+                OpArgs::Unmap {
+                    base: self.orig_st.core_states[self.tok.core()]->UnmapExecuting_vaddr as usize,
+                },
+            regions:
+                Map::new(
+                    |r: MemRegion| self.regions.contains(r),
+                    |r: MemRegion| Seq::new(512, |i: int| self.tok.st().mmu@.pt_mem.mem[(r.base + i * 8) as usize])),
+            pt_mem: self.tok.st().mmu@.pt_mem,
+        }
+    }
+
     // TODO: shouldn't be external_body
     #[verifier(external_body)]
     pub proof fn new(tracked tok: Token) -> (tracked res: WrappedUnmapToken) {
