@@ -32,7 +32,8 @@ fn panic(_info: &PanicInfo) -> ! {
     loop {}
 }
 
-//pub mod hlspec_user;
+#[cfg(feature="hlspec_user")]
+pub mod hlspec_user;
 //pub mod os_trace;
 
 #[cfg(feature="linuxmodule")]
