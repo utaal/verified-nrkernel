@@ -11,11 +11,11 @@ pub mod extra;
 pub mod theorem;
 
 use vstd::prelude::verus;
-#[cfg(feature="linuxmodule")]
+// #[cfg(feature="linuxmodule")]
 use vstd::prelude::Tracked;
-#[cfg(feature="linuxmodule")]
+// #[cfg(feature="linuxmodule")]
 use crate::spec_t::mmu::defs::{ Core, PageTableEntryExec, MemRegionExec, Flags};
-#[cfg(feature="linuxmodule")]
+// #[cfg(feature="linuxmodule")]
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 verus!{
 
@@ -42,7 +42,8 @@ pub extern "C" fn veros_init() -> i64 {
 }
 
 /// Entry point from the linux kernel to map a region of memory
-#[cfg(feature="linuxmodule")]
+// #[cfg(feature="linuxmodule")]
+// #[used(linker)]
 #[no_mangle]
 pub extern "C" fn veros_map_frame(
     pt_ptr: u64,
@@ -64,7 +65,8 @@ pub extern "C" fn veros_map_frame(
 
 
 
-#[cfg(feature="linuxmodule")]
+// #[cfg(feature="linuxmodule")]
+// #[used(linker)]
 #[no_mangle]
 pub extern "C" fn veros_unmap_frame(
     pt_ptr: u64,
