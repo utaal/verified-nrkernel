@@ -52,7 +52,7 @@ pub enum CoreState {
     UnmapWaiting { ult_id: nat, vaddr: nat },
     UnmapExecuting { ult_id: nat, vaddr: nat, result: Option<Result<PTE, ()>> },
     UnmapOpDone { ult_id: nat, vaddr: nat, result: Result<PTE, ()> },
-    UnmapShootdownWaiting { ult_id: nat, vaddr: nat, result: Result<PTE, ()> },
+    UnmapShootdownWaiting { ult_id: nat, vaddr: nat, pte: PTE },
 }
 
 #[allow(inconsistent_fields)]
@@ -136,13 +136,12 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
                 &&& pt.contains_key(vaddr)
                 &&& overlap(candidate.frame, pt[vaddr].frame)
             },
-            CoreState::UnmapExecuting { ult_id, vaddr, result: Some(result), .. }
-            | CoreState::UnmapOpDone { ult_id, vaddr, result, .. }
-            | CoreState::UnmapShootdownWaiting { ult_id, vaddr, result, .. } => {
-                &&& result is Ok
-                &&& overlap(candidate.frame, result.get_Ok_0().frame)
+            CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Ok(pte)), .. }
+            | CoreState::UnmapOpDone { ult_id, vaddr, result: Ok(pte), .. }
+            | CoreState::UnmapShootdownWaiting { ult_id, vaddr, pte, .. } => {
+                overlap(candidate.frame, pte.frame)
             },
-            CoreState::Idle => false,
+            _ => false,
         }
     }
 }
@@ -173,11 +172,16 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
                 )
             },
             CoreState::UnmapExecuting { vaddr, result: Some(result), .. }
-            | CoreState::UnmapOpDone { vaddr, result, .. }
-            | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
+            | CoreState::UnmapOpDone { vaddr, result, .. } => {
                 let size = if result is Ok { result.get_Ok_0().frame.size } else { 0 };
                 overlap(
                     MemRegion { base: vaddr, size: size },
+                    MemRegion { base: base, size: candidate_size },
+                )
+            },
+            | CoreState::UnmapShootdownWaiting { vaddr, pte, .. } => {
+                overlap(
+                    MemRegion { base: vaddr, size: pte.frame.size },
                     MemRegion { base: base, size: candidate_size },
                 )
             },
@@ -558,7 +562,7 @@ pub open spec fn step_UnmapInitiateShootdown(
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapShootdownWaiting { ult_id, vaddr, result },
+        CoreState::UnmapShootdownWaiting { ult_id, vaddr, pte: result.get_Ok_0() },
     )
     &&& s2.sound == s1.sound
 }
@@ -582,13 +586,15 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
     //enabling conditions
     &&& c.valid_core(core)
     &&& match s1.core_states[core] {
-        CoreState::UnmapShootdownWaiting { result: r2, vaddr: v2, ult_id: id2, .. } => {
-            &&& result == result_map_ok(r2, |r| ()) && vaddr == v2 && thread_id == id2
+        CoreState::UnmapShootdownWaiting { pte, vaddr: v2, ult_id: id2, .. } => {
+            &&& result is Ok
+            &&& vaddr == v2
+            &&& thread_id == id2
             &&& s1.os_ext.shootdown_vec.open_requests.is_empty()
         },
-        CoreState::UnmapOpDone { result: r2, vaddr: v2, ult_id: id2, .. } => {
-            &&& result == result_map_ok(r2, |r| ()) && vaddr == v2 && thread_id == id2
-            &&& result is Err
+        CoreState::UnmapOpDone { result: Err(_), vaddr: v2, ult_id: id2, .. } => {
+            &&& vaddr == v2
+            &&& thread_id == id2
         },
         _ => false,
     }
@@ -676,9 +682,11 @@ impl CoreState {
                 if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 }
             },
             CoreState::UnmapExecuting { result: Some(result), .. }
-            | CoreState::UnmapOpDone { result, .. }
-            | CoreState::UnmapShootdownWaiting { result, .. } => {
+            | CoreState::UnmapOpDone { result, .. } => {
                 if result is Ok { result.get_Ok_0().frame.size } else { 0 }
+            },
+            CoreState::UnmapShootdownWaiting { pte, .. } => {
+                pte.frame.size
             },
             CoreState::Idle => arbitrary(),
         }
@@ -817,8 +825,7 @@ impl State {
                             }
                         },
                         CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: Some(result) }
-                        | CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result }
-                        | CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result } => {
+                        | CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result } => {
                             if ult_id2 == ult_id {
                                 hlspec::ThreadState::Unmap { vaddr, pte:
                                     match result {
@@ -826,6 +833,13 @@ impl State {
                                         Err(_) => None,
                                     }
                                 }
+                            } else {
+                                hlspec::ThreadState::Idle
+                            }
+                        },
+                        CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, pte } => {
+                            if ult_id2 == ult_id {
+                                hlspec::ThreadState::Unmap { vaddr, pte: Some(pte) }
                             } else {
                                 hlspec::ThreadState::Idle
                             }
@@ -876,9 +890,12 @@ impl State {
                     => self.interp_pt_mem().contains_key(vaddr)
                         ==> self.interp_pt_mem()[vaddr].frame.size > 0,
                 CoreState::UnmapExecuting { result: Some(result), .. }
-                | CoreState::UnmapOpDone { result, .. }
-                | CoreState::UnmapShootdownWaiting { result, .. }
-                    => result is Ok ==> result.get_Ok_0().frame.size > 0,
+                | CoreState::UnmapOpDone { result, .. } => {
+                    result is Ok ==> result.get_Ok_0().frame.size > 0
+                },
+                CoreState::UnmapShootdownWaiting { pte, .. } => {
+                    pte.frame.size > 0
+                },
                 CoreState::Idle => true,
             }
     }
@@ -988,9 +1005,9 @@ impl State {
     pub open spec fn unmap_vaddr(self) -> Set<nat> {
         Set::new(|v_address: nat| exists|core: Core|
             self.core_states.contains_key(core) && match self.core_states[core] {
-                CoreState::UnmapOpDone { vaddr, result, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
-                    (result is Ok) && (vaddr === v_address)
+                CoreState::UnmapOpDone { vaddr, result: Ok(pte), .. }
+                | CoreState::UnmapShootdownWaiting { vaddr, pte, .. } => {
+                    vaddr === v_address
                 },
                 _ => false,
             }

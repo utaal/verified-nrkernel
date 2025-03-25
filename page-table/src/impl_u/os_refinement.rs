@@ -1658,8 +1658,8 @@ proof fn step_UnmapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, c
     let hl_s1 = s1.interp(c);
     let hl_s2 = s2.interp(c);
     match s1.core_states[core] {
-        os::CoreState::UnmapShootdownWaiting { ult_id, result, vaddr, .. }
-        | os::CoreState::UnmapOpDone { result, ult_id, vaddr, .. } => {
+        os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, .. }
+        | os::CoreState::UnmapOpDone { ult_id, vaddr, .. } => {
             assert(hl_c.valid_thread(ult_id));
             assert(hl_s2.sound == hl_s1.sound);
             assert(hl_s2.thread_state === hl_s1.thread_state.insert(
