@@ -18,7 +18,9 @@ use crate::spec_t::os_invariant::{
 };
 use crate::spec_t::{hlspec, os};
 use crate::theorem::RLbl;
-use crate::spec_t::mmu::defs::{between, MemOp, update_range};
+use crate::spec_t::mmu::defs::MemOp;
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::mmu::defs::{between, update_range};
 use crate::spec_t::mmu::pt_mem::PTMem;
 
 verus! {
@@ -1084,7 +1086,7 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
         //proofgoal (4/4):  forall|vaddr: int| is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr as nat) ==> s2.mem[vaddr] === s1.mem[vaddr]
         assert forall|mem_vaddr: int|
             is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr as nat)
-        implies hl_s2.mem[mem_vaddr] === hl_s1.mem[mem_vaddr] 
+        implies hl_s2.mem[mem_vaddr] === hl_s1.mem[mem_vaddr]
         by {
             let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr);
             assert forall|page, entry|
@@ -1480,7 +1482,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
         assert(s1.interp_pt_mem().dom().contains(vaddr));
         assert(s1.inflight_vaddr().contains(vaddr));
         let inflight_vaddr = vaddr;
-        let inflight_core = choose|c: Core| s1.core_states.contains_key(c) 
+        let inflight_core = choose|c: Core| s1.core_states.contains_key(c)
                                     && match s1.core_states[c] {
                                         os::CoreState::UnmapWaiting { ult_id, vaddr }
                                         | os::CoreState::UnmapExecuting { ult_id, vaddr, .. }
@@ -1496,7 +1498,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
         assert(!s2.sound);
         if(s1.inflight_unmap_vaddr().contains(inflight_vaddr)){
             lemma_inflight_unmap_vaddr_equals_hl_unmap(c, s1);
-            let unmap_thread_state = choose |thread_state| 
+            let unmap_thread_state = choose |thread_state|
                    s1.interp_thread_state(c).values().contains(thread_state)
                 && s1.interp_pt_mem().dom().contains(inflight_vaddr)
                 && (thread_state matches hlspec::ThreadState::Unmap { vaddr, .. } && vaddr === inflight_vaddr);

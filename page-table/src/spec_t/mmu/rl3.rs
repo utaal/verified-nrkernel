@@ -5,9 +5,9 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE, update_range };
+use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned };
+use crate::spec_t::mmu::defs::{ aligned, update_range };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
@@ -902,7 +902,7 @@ pub mod code {
             ensures
                 self.lbl() == mmu::Lbl::Write(self.core(), addr, value),
                 old(self).prophesied_step(*self),
-        { 
+        {
             admit();
         }
 
@@ -912,7 +912,7 @@ pub mod code {
             ensures
                 self.lbl() == mmu::Lbl::Barrier(self.core()),
                 old(self).prophesied_step(*self),
-        { 
+        {
             admit();
         }
 
@@ -922,7 +922,7 @@ pub mod code {
             ensures
                 self.lbl() == mmu::Lbl::Invlpg(self.core(), addr),
                 old(self).prophesied_step(*self),
-        { 
+        {
             admit();
         }
     }
@@ -959,7 +959,7 @@ pub mod code {
             tok.tstate() is Spent,
             res == old(tok).lbl()->Read_2,
     {
-        unsafe { 
+        unsafe {
             let vaddr_ptr : *const usize = local_phys_to_mem(addr) as *const usize;
             *vaddr_ptr
         }
@@ -974,7 +974,7 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        unsafe { 
+        unsafe {
             let vaddr_ptr : *mut usize = local_phys_to_mem(addr) as *mut usize;
             *vaddr_ptr = value;
         }
@@ -1004,7 +1004,7 @@ pub mod code {
     {
         #[cfg(feature="linuxmodule")]
         unsafe {
-            // note: to execute this instruction we need to be on x86 ring 0. 
+            // note: to execute this instruction we need to be on x86 ring 0.
             asm!("invlpg ({})", in(reg) vaddr, options(att_syntax, nostack, preserves_flags));
         }
         // #[cfg(not(feature="linuxmodule"))]

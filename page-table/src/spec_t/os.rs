@@ -7,12 +7,12 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::{ rl3, rl1 };
 use crate::spec_t::{ hlspec, mmu };
 use crate::spec_t::mmu::defs::{
-    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, Core, MAX_BASE
+    MemRegion, PTE, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MAX_PHYADDR, Core
 };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
-    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec
+    candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, MAX_BASE
 };
 #[cfg(verus_keep_ghost)]
 use crate::extra::result_map_ok;
@@ -918,7 +918,7 @@ impl State {
     pub open spec fn inv_lock(self, c: Constants) -> bool {
         forall|core: Core| #[trigger] c.valid_core(core) ==>
             (self.os_ext.lock === Some(core) <==> self.core_states[core].is_in_crit_sect())
-    } 
+    }
 
     pub open spec fn wf(self, c: Constants) -> bool {
         &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
