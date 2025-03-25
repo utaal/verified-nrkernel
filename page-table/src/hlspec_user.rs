@@ -2,9 +2,11 @@ use vstd::prelude::*;
 
 use crate::spec_t::mmu::defs::{
     aligned, axiom_max_phyaddr_width_facts, candidate_mapping_in_bounds, x86_arch_spec_upper_bound,
-    Flags, LoadResult, MemRegion, PTE, RWOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
+    Flags, LoadResult, MemRegion, PTE, MemOp, StoreResult, MAX_PHYADDR_SPEC, WORD_SIZE,
+    word_index_spec,
 };
 use crate::spec_t::hlspec::*;
+use crate::theorem::RLbl;
 
 verus! {
 
@@ -59,13 +61,15 @@ proof fn program_1() {
     };
 
     // assert(step_Map_start(c, s1, s2, 1, 4096 * 3, pte1));
+    let s1s2rlbl = RLbl::MapStart { thread_id: 1, vaddr: 4096 * 3, pte: pte1 };
     assert(next_step(
         c,
         s1,
         s2,
-        Step::MapStart { thread_id: 1, vaddr: 4096 * 3, pte: pte1 },
+        Step::MapStart,
+        s1s2rlbl,
     ));
-    assert(next(c, s1, s2));
+    assert(next(c, s1, s2, s1s2rlbl));
 
     let mem3 = lemma_extend_mem_domain(s2.mem, 4096 * 3, 4096);
     let s3 = State {
@@ -77,30 +81,31 @@ proof fn program_1() {
     assert(s3.mem.dom() == s2.mem.dom().union(
         Set::new(
             |w: nat|
-                crate::spec_t::mem::word_index_spec(4096 * 3) <= w
-                    < crate::spec_t::mem::word_index_spec(4096 * 3) + (4096nat / WORD_SIZE as nat),
+                crate::spec_t::mmu::defs::word_index_spec(4096 * 3) <= w
+                    < crate::spec_t::mmu::defs::word_index_spec(4096 * 3) + (4096nat / WORD_SIZE as nat),
         ),
     ));
 
     assert(s3.mappings.contains_pair(4096 * 3, pte1));  // discharge exists in `mem_domain_from_mappings_contains`
     assert(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
 
-    assert(next_step(c, s2, s3, Step::MapEnd { thread_id: 1, result: Ok(()) }));
+    let s2s3rlbl = RLbl::MapEnd { thread_id: 1, vaddr: 4096 * 3, result: Ok(()) };
+    assert(next_step(c, s2, s3, Step::MapEnd, s2s3rlbl));
 
     let s4 = State { mem: s3.mem.insert(512 * 3, 42), ..s3 };
 
-    assert(crate::spec_t::mem::word_index_spec(4096 * 3) == 512 * 3) by (nonlinear_arith){
+    assert(crate::spec_t::mmu::defs::word_index_spec(4096 * 3) == 512 * 3) by (nonlinear_arith){
         assert(aligned(4096 * 3, WORD_SIZE as nat));
     }
     assert(next_step(
         c,
         s3,
         s4,
-        Step::ReadWrite {
+        Step::MemOp { pte: Some((4096 * 3, pte1)) },
+        RLbl::MemOp {
             thread_id: 1,
             vaddr: 4096 * 3,
-            op: RWOp::Store { new_value: 42, result: StoreResult::Ok },
-            pte: Some((4096 * 3, pte1)),
+            op: MemOp::Store { new_value: 42, result: StoreResult::Ok },
         },
     ));
 
@@ -109,11 +114,11 @@ proof fn program_1() {
         c,
         s4,
         s5,
-        Step::ReadWrite {
+        Step::MemOp { pte: Some((4096 * 3, pte1)) },
+        RLbl::MemOp {
             thread_id: 1,
             vaddr: 4096 * 3,
-            op: RWOp::Load { is_exec: false, result: LoadResult::Value(42) },
-            pte: Some((4096 * 3, pte1)),
+            op: MemOp::Load { is_exec: false, result: LoadResult::Value(42) },
         },
     ));
 
@@ -130,7 +135,7 @@ proof fn program_1() {
     // assume(false);  //TODO
 
     assert(s6.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s6.mappings));
-    assert(next_step(c, s5, s6, Step::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
+    assert(next_step(c, s5, s6, Step::UnmapStart, RLbl::UnmapStart { thread_id: 2, vaddr: 4096 * 3 }));
 
 }
 
@@ -147,7 +152,7 @@ mod util {
     {
         if size > 0 {
             all_words_in_range((vaddr + WORD_SIZE) as nat, (size - WORD_SIZE) as nat).insert(
-                crate::spec_t::mem::word_index_spec(vaddr),
+                crate::spec_t::mmu::defs::word_index_spec(vaddr),
             )
         } else {
             Set::empty()
@@ -180,8 +185,8 @@ mod util {
             r.dom() =~= map.dom().union(
                 Set::new(
                     |w: nat|
-                        crate::spec_t::mem::word_index_spec(vaddr) <= w
-                            < crate::spec_t::mem::word_index_spec(vaddr) + (size
+                        crate::spec_t::mmu::defs::word_index_spec(vaddr) <= w
+                            < crate::spec_t::mmu::defs::word_index_spec(vaddr) + (size
                             / WORD_SIZE as nat),
                 ),
             ),
@@ -209,7 +214,7 @@ mod util {
                 (vaddr + WORD_SIZE) as nat,
                 (size - WORD_SIZE) as nat,
             );
-            let r = extended.insert(crate::spec_t::mem::word_index_spec(vaddr), arbitrary());
+            let r = extended.insert(crate::spec_t::mmu::defs::word_index_spec(vaddr), arbitrary());
             r
         } else {
             map
@@ -228,8 +233,8 @@ mod util {
             r.dom() =~= map.dom().difference(
                 Set::new(
                     |w: nat|
-                        crate::spec_t::mem::word_index_spec(vaddr) <= w
-                            < crate::spec_t::mem::word_index_spec(vaddr) + (size
+                        crate::spec_t::mmu::defs::word_index_spec(vaddr) <= w
+                            < crate::spec_t::mmu::defs::word_index_spec(vaddr) + (size
                             / WORD_SIZE as nat),
                 ),
             ),
@@ -257,13 +262,117 @@ mod util {
                 (vaddr + WORD_SIZE) as nat,
                 (size - WORD_SIZE) as nat,
             );
-            let r = contracted.remove(crate::spec_t::mem::word_index_spec(vaddr));
+            let r = contracted.remove(crate::spec_t::mmu::defs::word_index_spec(vaddr));
             r
         } else {
             map
         }
     }
 
+}
+
+proof fn get_frame(n: nat, size: nat) -> (m: MemRegion)
+    requires size < 106_496,
+    ensures m == (MemRegion { base: 106_496 * n, size: 4096 })
+{
+    MemRegion { base: 106_496 * n, size: 4096 }
+}
+
+proof fn program_threads_10() {
+    lemma_max_phyaddr_at_least();
+    x86_arch_spec_upper_bound();
+
+    let c = Constants { thread_no: 4, phys_mem_size: 8_192_000 };
+
+    let s1 = State {
+        mem: Map::empty(),
+        thread_state:
+            map![
+            0 => ThreadState::Idle,
+            1 => ThreadState::Idle,
+            2 => ThreadState::Idle,
+            3 => ThreadState::Idle,
+        ],
+        mappings: Map::empty(),
+        sound: true,
+    };
+
+    assert(wf(c, s1));
+    assert(init(c, s1));
+
+    let pte1_memregion = get_frame(0, 4096);
+    let pte1 = PTE {
+        frame: pte1_memregion,
+        flags: Flags { is_writable: true, is_supervisor: false, disable_execute: true },
+    };
+
+    let pte1_vaddr = 4_096_000;
+    let s2 = State {
+        thread_state: s1.thread_state.insert(
+            1,
+            ThreadState::Map { vaddr: pte1_vaddr, pte: pte1 },
+        ),
+        ..s1
+    };
+
+    let s1s2rlbl = RLbl::MapStart { thread_id: 1, vaddr: pte1_vaddr, pte: pte1 };
+    assert(next_step(
+        c,
+        s1,
+        s2,
+        Step::MapStart,
+        s1s2rlbl,
+    ));
+
+    let mem3 = lemma_extend_mem_domain(s2.mem, pte1_vaddr, 4096);
+    let s3 = State {
+        thread_state: s2.thread_state.insert(1, ThreadState::Idle),
+        mappings: s2.mappings.insert(pte1_vaddr, pte1),
+        mem: mem3,
+        ..s2
+    };
+    assert(s3.mem.dom() == s2.mem.dom().union(
+        Set::new(
+            |w: nat|
+                crate::spec_t::mmu::defs::word_index_spec(pte1_vaddr) <= w
+                    < crate::spec_t::mmu::defs::word_index_spec(pte1_vaddr) + (4096nat / WORD_SIZE as nat),
+        ),
+    ));
+
+    assert(s3.mappings.contains_pair(pte1_vaddr, pte1));  // discharge exists in `mem_domain_from_mappings_contains`
+    assert(s3.mem.dom() =~= mem_domain_from_mappings(c.phys_mem_size, s3.mappings));
+
+    let s2s3rlbl = RLbl::MapEnd { thread_id: 1, vaddr: pte1_vaddr, result: Ok(()) };
+    assert(next_step(c, s2, s3, Step::MapEnd, s2s3rlbl));
+
+    // sync point
+    
+    let mut threads = set![0nat, 1, 2, 3];
+    assert(threads.contains(0));
+    let which_thread1 = choose|t: nat| threads.contains(t);
+    assert(which_thread1 < 4);
+
+    let s4 = State { mem: s3.mem.insert(word_index_spec(pte1_vaddr + (which_thread1 * WORD_SIZE) as nat), which_thread1), ..s3 };
+
+    // assert(crate::spec_t::mmu::defs::word_index_spec(pte1_vaddr + (which_thread1 * 8)) == 512 * 3) by (nonlinear_arith){
+    //     assert(aligned(4096 * 3, WORD_SIZE as nat));
+    // }
+    assert(next_step(
+        c,
+        s3,
+        s4,
+        Step::MemOp { pte: Some((pte1_vaddr + (which_thread1 * WORD_SIZE) as nat, pte1)) },
+        RLbl::MemOp {
+            thread_id: which_thread1,
+            vaddr: pte1_vaddr + (which_thread1 * 8),
+            op: MemOp::Store { new_value: 42, result: StoreResult::Ok },
+        },
+    ));
+
+    //let s2 = choose|s2: State| {
+    //    ||| step_MemOp(
+    //}
+    
 }
 
 } // verus!
