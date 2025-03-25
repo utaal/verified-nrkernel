@@ -415,8 +415,10 @@ pub spec const x86_arch_spec: Arch = Arch {
 pub proof fn x86_arch_spec_upper_bound()
     ensures
         x86_arch_spec.upper_vaddr(0, 0) == 512 * 512 * 1024 * 1024 * 1024,
+        x86_arch_spec.upper_vaddr(0, 0) == MAX_BASE
 {
     assert(x86_arch_spec.upper_vaddr(0, 0) == 512 * 512 * 1024 * 1024 * 1024) by (compute_only);
+    assert(x86_arch_spec.upper_vaddr(0, 0) == MAX_BASE) by (compute_only);
 }
 
 pub open spec fn nat_keys<V>(m: Map<usize, V>) -> Map<nat, V> {
