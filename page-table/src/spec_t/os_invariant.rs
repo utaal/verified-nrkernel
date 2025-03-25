@@ -312,7 +312,7 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::Step::UnmapOpChange { core, result, .. } => {
+            os::Step::UnmapOpChange { core, .. } => {
                 let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
                 let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
                 
@@ -364,11 +364,10 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 }
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
-            os::Step::UnmapOpEnd { core } => {
+            os::Step::UnmapOpFail { core } => {
                 let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
                 let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
-                let result = s1.core_states[core]->UnmapExecuting_result->Some_0;
-                let corestate = os::CoreState::UnmapOpDone { ult_id, vaddr, result };
+                let corestate = os::CoreState::UnmapOpDone { ult_id, vaddr, result: Err(()) };
                 lemma_insert_preserves_no_overlap(
                     c,
                     s1.core_states,
@@ -380,10 +379,10 @@ pub proof fn next_step_preserves_overlap_vmem_inv(
                 assert(s2.existing_map_no_overlap_existing_vmem(c));
             },
             os::Step::UnmapInitiateShootdown { core } => {
-                let vaddr = s1.core_states[core]->UnmapOpDone_vaddr;
-                let ult_id = s1.core_states[core]->UnmapOpDone_ult_id;
-                let result = s1.core_states[core]->UnmapOpDone_result;
-                let corestate = os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, result };
+                let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
+                let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
+                let result = s1.core_states[core]->UnmapExecuting_result;
+                let corestate = os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, result: result->Some_0 };
                 lemma_insert_preserves_no_overlap(c, s1.core_states, s1.interp_pt_mem(), core, corestate);
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.existing_map_no_overlap_existing_vmem(c));

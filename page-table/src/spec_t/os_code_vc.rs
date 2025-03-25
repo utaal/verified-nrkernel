@@ -64,7 +64,7 @@ impl os::Step {
             os::Step::Deallocate { core, .. } |
             os::Step::UnmapOpChange { core, .. } |
             os::Step::UnmapOpStutter { core, .. } |
-            os::Step::UnmapOpEnd { core, .. } |
+            os::Step::UnmapOpFail { core, .. } |
             os::Step::UnmapInitiateShootdown { core, .. } |
             os::Step::AckShootdownIPI { core, .. } |
             os::Step::UnmapEnd { core, .. } => core == c,
@@ -184,7 +184,7 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
                 //os::Step::Deallocate { core, reg }                     => admit(),
                 //os::Step::UnmapOpChange { core, paddr, value, result } => admit(),
                 //os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
-                //os::Step::UnmapOpEnd { core }                          => admit(),
+                //os::Step::UnmapOpFail { core }                          => admit(),
                 //os::Step::UnmapInitiateShootdown { core }              => admit(),
                 //os::Step::AckShootdownIPI { core }                     => admit(),
                 //os::Step::UnmapEnd { core }                            => admit(),

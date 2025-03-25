@@ -371,13 +371,13 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
-        os::Step::UnmapOpChange { core, paddr, value, result } => {
+        os::Step::UnmapOpChange { core, paddr, value } => {
             if s1.sound {
-                step_UnmapOpChange_refines(c, s1, s2, core, paddr, value, result, lbl);
+                step_UnmapOpChange_refines(c, s1, s2, core, paddr, value, lbl);
             }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         }
-        os::Step::UnmapOpEnd { core } => {
+        os::Step::UnmapOpFail { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
@@ -1535,14 +1535,13 @@ proof fn step_UnmapOpChange_refines(
     core: Core,
     paddr: usize,
     value: usize,
-    result: Result<PTE, ()>,
     lbl: RLbl,
 )
     requires
         s1.inv(c),
         s2.inv(c),
         s1.sound,
-        os::step_UnmapOpChange(c, s1, s2, core, paddr, value, result, lbl),
+        os::step_UnmapOpChange(c, s1, s2, core, paddr, value, lbl),
     ensures
         hlspec::step_Stutter(c.interp(), s1.interp(c), s2.interp(c), lbl),
 {
@@ -1703,6 +1702,7 @@ proof fn step_UnmapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, c
             assert(s1.effective_mappings() =~= s2.effective_mappings());
             assert(hl_s2.mappings === hl_s1.mappings);
             assert(hl_s2.mem === hl_s1.mem);
+            assert(hlspec::step_UnmapEnd(c.interp(), s1.interp(c), s2.interp(c), lbl));
         },
         _ => {
             assert(false);

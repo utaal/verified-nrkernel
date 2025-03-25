@@ -14,8 +14,6 @@ use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, MAX_BASE
 };
-#[cfg(verus_keep_ghost)]
-use crate::extra::result_map_ok;
 use crate::theorem::RLbl;
 use crate::spec_t::os_ext;
 
@@ -74,9 +72,9 @@ pub enum Step {
     UnmapStart { core: Core },
     UnmapOpStart { core: Core },
     Deallocate { core: Core, reg: MemRegion },
-    UnmapOpChange { core: Core, paddr: usize, value: usize, result: Result<PTE, ()> },
+    UnmapOpChange { core: Core, paddr: usize, value: usize },
     UnmapOpStutter { core: Core, paddr: usize, value: usize },
-    UnmapOpEnd { core: Core },
+    UnmapOpFail { core: Core },
     UnmapInitiateShootdown { core: Core },
     AckShootdownIPI { core: Core },
     UnmapEnd { core: Core },
@@ -472,7 +470,6 @@ pub open spec fn step_UnmapOpChange(
     core: Core,
     paddr: usize,
     value: usize,
-    result: Result<PTE, ()>,
     lbl: RLbl,
 ) -> bool {
     &&& lbl is Tau
@@ -482,21 +479,13 @@ pub open spec fn step_UnmapOpChange(
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
-    &&& if s1.interp_pt_mem().contains_key(vaddr) {
-        &&& result is Ok
-        &&& s2.interp_pt_mem() == s1.interp_pt_mem().remove(vaddr)
-        &&& s2.core_states == s1.core_states.insert(
-            core,
-            CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Ok(s1.interp_pt_mem()[vaddr])) }
-        )
-    } else {
-        &&& result is Err
-        &&& s2.interp_pt_mem() == s1.interp_pt_mem()
-        &&& s2.core_states == s1.core_states.insert(
-            core,
-            CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Err(())) }
-        )
-    }
+    &&& s1.interp_pt_mem().contains_key(vaddr)
+    &&& s2.interp_pt_mem() == s1.interp_pt_mem().remove(vaddr)
+    &&& s2.core_states == s1.core_states.insert(
+        core,
+        CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Ok(s1.interp_pt_mem()[vaddr])) }
+    )
+
     &&& s2.os_ext == s1.os_ext
     &&& s2.sound == s1.sound
 }
@@ -524,18 +513,19 @@ pub open spec fn step_UnmapOpStutter(
     &&& s2.sound == s1.sound
 }
 
-pub open spec fn step_UnmapOpEnd(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
+pub open spec fn step_UnmapOpFail(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //enabling conditions
     &&& c.valid_core(core)
-    &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(res) }
+    &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: None }
+    &&& !s1.interp_pt_mem().contains_key(vaddr)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapOpDone { ult_id, vaddr, result: res }
+        CoreState::UnmapOpDone { ult_id, vaddr, result: Err(()) }
     )
     &&& s2.sound == s1.sound
 }
@@ -550,15 +540,14 @@ pub open spec fn step_UnmapInitiateShootdown(
     &&& lbl is Tau
     //enabling conditions
     &&& c.valid_core(core)
-    &&& s1.core_states[core] matches CoreState::UnmapOpDone { ult_id, vaddr, result }
-    &&& result is Ok
+    &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Ok(pte)) }
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::InitShootdown { core, vaddr })
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
-        CoreState::UnmapShootdownWaiting { ult_id, vaddr, result },
+        CoreState::UnmapShootdownWaiting { ult_id, vaddr, result: Ok(pte) },
     )
     &&& s2.sound == s1.sound
 }
@@ -583,12 +572,17 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
     &&& c.valid_core(core)
     &&& match s1.core_states[core] {
         CoreState::UnmapShootdownWaiting { result: r2, vaddr: v2, ult_id: id2, .. } => {
-            &&& result == result_map_ok(r2, |r| ()) && vaddr == v2 && thread_id == id2
+            &&& result is Ok
+            &&& r2 is Ok
+            &&& vaddr == v2
+            &&& thread_id == id2
             &&& s1.os_ext.shootdown_vec.open_requests.is_empty()
         },
         CoreState::UnmapOpDone { result: r2, vaddr: v2, ult_id: id2, .. } => {
-            &&& result == result_map_ok(r2, |r| ()) && vaddr == v2 && thread_id == id2
             &&& result is Err
+            &&& r2 is Err
+            &&& vaddr == v2
+            &&& thread_id == id2
         },
         _ => false,
     }
@@ -602,29 +596,29 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
 
 pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: RLbl) -> bool {
     match step {
-        Step::MMU                                          => step_MMU(c, s1, s2, lbl),
-        Step::MemOp { core }                               => step_MemOp(c, s1, s2, core, lbl),
-        Step::ReadPTMem { core, paddr, value }             => step_ReadPTMem(c, s1, s2, core, paddr, value, lbl),
-        Step::Barrier { core }                             => step_Barrier(c, s1, s2, core, lbl),
-        Step::Invlpg { core, vaddr }                       => step_Invlpg(c, s1, s2, core, vaddr, lbl),
+        Step::MMU                                   => step_MMU(c, s1, s2, lbl),
+        Step::MemOp { core }                        => step_MemOp(c, s1, s2, core, lbl),
+        Step::ReadPTMem { core, paddr, value }      => step_ReadPTMem(c, s1, s2, core, paddr, value, lbl),
+        Step::Barrier { core }                      => step_Barrier(c, s1, s2, core, lbl),
+        Step::Invlpg { core, vaddr }                => step_Invlpg(c, s1, s2, core, vaddr, lbl),
         //Map steps
-        Step::MapStart { core }                            => step_MapStart(c, s1, s2, core, lbl),
-        Step::MapOpStart { core }                          => step_MapOpStart(c, s1, s2, core, lbl),
-        Step::Allocate { core, res }                       => step_Allocate(c, s1, s2, core, res, lbl),
-        Step::MapOpStutter { core, paddr, value }          => step_MapOpStutter(c, s1, s2, core, paddr, value, lbl),
-        Step::MapOpChange { core, paddr, value }           => step_MapOpChange(c, s1, s2, core, paddr, value, lbl),
-        Step::MapNoOp { core }                             => step_MapNoOp(c, s1, s2, core, lbl),
-        Step::MapEnd { core }                              => step_MapEnd(c, s1, s2, core, lbl),
+        Step::MapStart { core }                     => step_MapStart(c, s1, s2, core, lbl),
+        Step::MapOpStart { core }                   => step_MapOpStart(c, s1, s2, core, lbl),
+        Step::Allocate { core, res }                => step_Allocate(c, s1, s2, core, res, lbl),
+        Step::MapOpStutter { core, paddr, value }   => step_MapOpStutter(c, s1, s2, core, paddr, value, lbl),
+        Step::MapOpChange { core, paddr, value }    => step_MapOpChange(c, s1, s2, core, paddr, value, lbl),
+        Step::MapNoOp { core }                      => step_MapNoOp(c, s1, s2, core, lbl),
+        Step::MapEnd { core }                       => step_MapEnd(c, s1, s2, core, lbl),
         //Unmap steps
-        Step::UnmapStart { core }                          => step_UnmapStart(c, s1, s2, core, lbl),
-        Step::UnmapOpStart { core }                        => step_UnmapOpStart(c, s1, s2, core, lbl),
-        Step::Deallocate { core, reg }                     => step_Deallocate(c, s1, s2, core, reg, lbl),
-        Step::UnmapOpChange { core, paddr, value, result } => step_UnmapOpChange(c, s1, s2, core, paddr, value, result, lbl),
-        Step::UnmapOpStutter { core, paddr, value }        => step_UnmapOpStutter(c, s1, s2, core, paddr, value, lbl),
-        Step::UnmapOpEnd { core }                          => step_UnmapOpEnd(c, s1, s2, core, lbl),
-        Step::UnmapInitiateShootdown { core }              => step_UnmapInitiateShootdown(c, s1, s2, core, lbl),
-        Step::AckShootdownIPI { core }                     => step_AckShootdownIPI(c, s1, s2, core, lbl),
-        Step::UnmapEnd { core }                            => step_UnmapEnd(c, s1, s2, core, lbl),
+        Step::UnmapStart { core }                   => step_UnmapStart(c, s1, s2, core, lbl),
+        Step::UnmapOpStart { core }                 => step_UnmapOpStart(c, s1, s2, core, lbl),
+        Step::Deallocate { core, reg }              => step_Deallocate(c, s1, s2, core, reg, lbl),
+        Step::UnmapOpChange { core, paddr, value }  => step_UnmapOpChange(c, s1, s2, core, paddr, value, lbl),
+        Step::UnmapOpStutter { core, paddr, value } => step_UnmapOpStutter(c, s1, s2, core, paddr, value, lbl),
+        Step::UnmapOpFail { core }                  => step_UnmapOpFail(c, s1, s2, core, lbl),
+        Step::UnmapInitiateShootdown { core }       => step_UnmapInitiateShootdown(c, s1, s2, core, lbl),
+        Step::AckShootdownIPI { core }              => step_AckShootdownIPI(c, s1, s2, core, lbl),
+        Step::UnmapEnd { core }                     => step_UnmapEnd(c, s1, s2, core, lbl),
     }
 }
 
