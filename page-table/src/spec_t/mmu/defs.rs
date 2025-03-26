@@ -152,7 +152,7 @@ pub open spec fn new_seq<T>(i: nat, e: T) -> Seq<T>
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub struct Core {
     pub node_id: nat,
     pub core_id: nat,
@@ -225,7 +225,7 @@ proof fn overlap_sanity_check() {
     assert(!overlap(MemRegion { base: 0, size: 4096 }, MemRegion { base: 8192, size: 16384 }));
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct MemRegionExec { pub base: usize, pub size: usize }
 
 impl MemRegionExec {
@@ -234,7 +234,7 @@ impl MemRegionExec {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct Flags {
     pub is_writable: bool,
     pub is_supervisor: bool,
@@ -251,7 +251,7 @@ pub struct PTE {
     pub flags: Flags,
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct PageTableEntryExec {
     pub frame: MemRegionExec,
     pub flags: Flags,
