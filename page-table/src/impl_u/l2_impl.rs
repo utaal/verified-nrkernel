@@ -1475,7 +1475,7 @@ fn map_frame_aux(
             let new_page_entry = PDE::new_page_entry(layer, pte);
             let ghost pwtok = tok@;
             // This is the token state we'll have after the write happened
-            let ghost tok_after_write = tok@.write(idx, new_page_entry.entry, pt.region);
+            let ghost tok_after_write = tok@.write(idx, new_page_entry.entry, pt.region, true);
 
             proof {
                 lemma_bitvector_facts();
@@ -1582,6 +1582,7 @@ fn map_frame_aux(
                 assert(interp(tok_after_write, root_pt).interp().map
                           == interp(old(tok)@, root_pt).interp().map.insert(old(tok)@.args->Map_base as nat, old(tok)@.args->Map_pte));
             }
+            assume(!tok@.done);
             WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region), Ghost(root_pt));
 
             // TODO: this is mostly a duplicate from the interp thing above. Can we get rid of the
@@ -1610,6 +1611,7 @@ fn map_frame_aux(
 
             Ok(Ghost((pt, set![])))
         } else {
+            assume(!tok@.done);
             let (Ghost(pt_with_empty), new_dir_region, new_dir_entry) = insert_empty_directory(Tracked(tok), Ghost(pt), layer, ptr, base, idx);
             let ghost new_dir_pt = pt_with_empty.entries[idx as int].get_Some_0();
             let new_dir_addr = new_dir_region.base;
@@ -2174,6 +2176,7 @@ fn is_directory_empty(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): 
 fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, base: usize, idx: usize)
     -> (res: (Ghost<PTDir> /* pt_res */, MemRegionExec /* new_dir_region */, PDE /* new_dir_entry */))
     requires
+        !old(tok)@.done,
         old(tok).inv(),
         inv_at(old(tok)@, pt, layer as nat, ptr),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(true),
@@ -2237,7 +2240,7 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
             entries:      pt.entries.update(idx as int, Some(new_dir_pt)),
             used_regions: pt.used_regions.insert(new_dir_pt.region),
         };
-    let ghost tok_with_empty = tok@.write(idx, new_dir_entry.entry, pt.region);
+    let ghost tok_with_empty = tok@.write(idx, new_dir_entry.entry, pt.region, false);
 
 
     proof {
@@ -2285,8 +2288,13 @@ fn insert_empty_directory(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt)
         assert(inv_at(tok_with_empty, pt_res, layer as nat, ptr));
     }
 
-    assume(tok@.write(idx, new_dir_entry.entry, pt.region).interp() == tok@.interp());
-    WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region));
+    let ghost root_pt1 = arbitrary();
+    let ghost root_pt2 = arbitrary();
+    assume(inv(tok@, root_pt1));
+    assume(inv(tok_with_empty, root_pt2));
+    //assume(tok@.write(idx, new_dir_entry.entry, pt.region, false).interp() == tok@.interp());
+    assume(interp_to_l0(tok_with_empty, root_pt2) == interp_to_l0(tok@, root_pt1));
+    WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region), Ghost(root_pt1), Ghost(root_pt2));
     assert(tok@ == tok_with_empty);
 
     proof {
@@ -2554,6 +2562,7 @@ fn unmap_aux(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghost<PTD
             }
         } else {
             if aligned_exec(vaddr, x86_arch_exec.entry_size(layer)) {
+                assume(!tok@.done);
                 WrappedUnmapToken::write_change(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region));
 
                 let removed_regions: Ghost<Set<MemRegion>> = Ghost(Set::empty());

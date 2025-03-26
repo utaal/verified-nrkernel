@@ -31,11 +31,6 @@ pub struct State {
     pub mmu: rl3::State,
     pub os_ext: os_ext::State,
     pub core_states: Map<Core, CoreState>,
-    // history variables: writes, neg_writes
-    // TODO: invariant: No core holds lock ==> writes is empty && neg_writes is empty for all cores
-    //                  (and some aux inv to prove it, where shootdown acked ==> neg_writes empty
-    //                  for that core)
-    //
     /// `sound` is a history variable. It doesn't affect the behavior of the state machine but is
     /// used in the refinement.
     pub sound: bool,

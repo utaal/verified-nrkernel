@@ -2,7 +2,7 @@ use vstd::prelude::*;
 
 use crate::spec_t::os;
 use crate::spec_t::os_invariant;
-use crate::spec_t::mmu;
+use crate::spec_t::mmu::{ self };
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem };
@@ -30,6 +30,7 @@ pub enum OpArgs {
 pub struct WrappedTokenView {
     pub orig_st: os::State,
     pub args: OpArgs,
+    pub done: bool,
     pub regions: Map<MemRegion, Seq<usize>>,
     /// We also keep the flat memory directly because this is what the MMU's interpretation is
     /// defined on.
@@ -45,10 +46,11 @@ impl WrappedTokenView {
         self.pt_mem@
     }
 
-    pub open spec fn write(self, idx: usize, value: usize, r: MemRegion) -> WrappedTokenView {
+    pub open spec fn write(self, idx: usize, value: usize, r: MemRegion, change: bool) -> WrappedTokenView {
         WrappedTokenView {
             regions: self.regions.insert(r, self.regions[r].update(idx as int, value)),
             pt_mem: self.pt_mem.write(add(r.base as usize, mul(idx, 8)), value),
+            done: change,
             ..self
         }
     }
@@ -99,6 +101,7 @@ impl WrappedMapToken {
                     base: self.orig_st.core_states[self.tok.core()]->MapExecuting_vaddr as usize,
                     pte: self.orig_st.core_states[self.tok.core()]->MapExecuting_pte,
                 },
+            done: self.done,
             regions:
                 Map::new(
                     |r: MemRegion| self.regions.contains(r),
@@ -116,7 +119,7 @@ impl WrappedMapToken {
             tok.steps().len() > 0,
             !tok.on_first_step(),
             tok.progress() is Ready,
-            tok.st().mmu@.pending_maps === map![],
+            //tok.st().mmu@.pending_maps === map![],
             tok.st().inv(tok.consts()),
         ensures
             res.inv(),
@@ -134,22 +137,77 @@ impl WrappedMapToken {
         t
     }
 
-    pub proof fn destruct(tracked self) -> (tracked tok: Token)
+    pub exec fn finish_map_and_release_lock(Tracked(tok): Tracked<WrappedMapToken>) -> (rtok: Tracked<Token>)
         requires
-            self.inv(),
-            // TODO: more, specifically some sequencing so we can guarantee the posts
+            tok@.done,
+            tok.inv(),
         ensures
-            tok.progress() is Ready,
-            tok.steps() === seq![],
-            true, // TODO: more stuff
-            // TODO: is it okay to just have pending_maps be this thing? (I think so)
-            //tok.st().mmu@.pending_maps
-            //    == Map::new(
-            //        |k| self@.pt_mem@.contains_key(k) && !self@.orig_st.mmu@.pt_mem@.contains_key(k),
-            //        |k| self@.pt_mem@[k]),
+            rtok@.progress() is Unready,
+            rtok@.steps() === seq![],
+            true, // TODO: more stuff?
     {
-        admit();
-        self.tok
+        let ghost core = tok.tok.core();
+        let tracked mut tok = tok;
+        let ghost state1 = tok.tok.st();
+        let ghost vaddr = tok.tok.st().core_states[core]->MapDone_vaddr;
+        let ghost result = tok.tok.st().core_states[core]->MapDone_result;
+
+        let tracked mut mmu_tok = tok.tok.get_mmu_token();
+        proof {
+            mmu_tok.prophesy_barrier();
+            let post = os::State {
+                mmu: mmu_tok.post(),
+                ..tok.tok.st()
+            };
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(os::step_Barrier(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Barrier { core }, RLbl::Tau));
+            tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
+            os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
+        }
+
+        let res = mmu::rl3::code::barrier(Tracked(&mut mmu_tok));
+        let ghost state2 = tok.tok.st();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            assert(state1.os_ext.lock == Some(core));
+            tok.tok.return_mmu_token(mmu_tok);
+            let pidx = tok.tok.do_concurrent_trs();
+            lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+        }
+        let ghost state3 = tok.tok.st();
+
+        let tracked mut osext_tok = tok.tok.get_osext_token();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            osext_tok.prophesy_release_lock();
+            let post = os::State {
+                core_states: tok.tok.st().core_states.insert(core, os::CoreState::Idle),
+                os_ext: osext_tok.post(),
+                ..tok.tok.st()
+            };
+            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+            assume(tok.tok.st().mmu@.writes.tso === set![]);
+            let lbl = RLbl::MapEnd { thread_id: tok.tok.thread(), vaddr, result };
+            // TODO: Need some help here from the invariant and resolve the prophecy before we take
+            // the step
+            assume(lbl == tok.tok.steps()[0]);
+            assert(os::step_MapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapEnd { core }, lbl));
+            tok.tok.register_external_step_osext(&mut osext_tok, post);
+            os_invariant::next_preserves_inv(tok.tok.consts(), state3, tok.tok.st(), lbl);
+        }
+
+        os_ext::code::release_lock(Tracked(&mut osext_tok));
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            tok.tok.return_osext_token(osext_tok);
+            assume(tok.tok.steps() === seq![]);
+        }
+        Tracked(tok.tok)
     }
 
     pub closed spec fn inv(&self) -> bool {
@@ -159,17 +217,22 @@ impl WrappedMapToken {
         &&& !self.tok.on_first_step()
         &&& self.tok.consts().valid_core(self.tok.core())
         &&& self.tok.consts().valid_ult(self.tok.thread())
-        &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, ult_id }
-        &&& vaddr <= usize::MAX
-        &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
-        &&& self.tok.thread() == ult_id
         &&& self.tok.steps().len() > 0
         &&& self.tok.progress() is Ready
-        &&& self.tok.st().mmu@.pending_maps
-            == Map::new(
-                |k| self.tok.st().mmu@.pt_mem@.contains_key(k) && !self.orig_st.mmu@.pt_mem@.contains_key(k),
-                |k| self.tok.st().mmu@.pt_mem@[k])
         &&& self.inv_regions()
+        &&& if self.done {
+            &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapDone { vaddr, pte, ult_id, result }
+            &&& vaddr <= usize::MAX
+            &&& self.tok.thread() == ult_id
+            &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
+            //&&& self.tok.st().mmu@.pending_maps === if result is Ok { map![vaddr as usize => pte] } else { map![] }
+        } else {
+            &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, ult_id }
+            &&& self.tok.thread() == ult_id
+            &&& vaddr <= usize::MAX
+            &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
+            //&&& self.tok.st().mmu@.pending_maps === map![]
+        }
     }
 
     spec fn inv_regions(&self) -> bool {
@@ -204,7 +267,7 @@ impl WrappedMapToken {
             let read_result = mmu_tok.lbl()->Read_2;
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(os::step_ReadPTMem(tok.tok.consts(), tok.tok.st(), post, core, addr, read_result, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::ReadPTMem { core: core, paddr: addr, value: read_result }, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::ReadPTMem { core, paddr: addr, value: read_result }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
         }
@@ -224,20 +287,32 @@ impl WrappedMapToken {
         res & MASK_NEG_DIRTY_ACCESS
     }
 
-    pub exec fn write_stutter(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
+    pub exec fn write_stutter(
+        Tracked(tok): Tracked<&mut Self>,
+        pbase: usize,
+        idx: usize,
+        value: usize,
+        Ghost(r): Ghost<MemRegion>,
+        Ghost(root_pt1): Ghost<PTDir>,
+        Ghost(root_pt2): Ghost<PTDir>,
+    )
         requires
-            old(tok)@.regions.contains_key(r@),
-            r@.base == pbase,
+            !old(tok)@.done,
+            old(tok)@.regions.contains_key(r),
+            r.base == pbase,
             idx < 512,
             old(tok).inv(),
             value & 1 == 1,
-            old(tok)@.read(idx, r@) & 1 == 0,
+            old(tok)@.read(idx, r) & 1 == 0,
+            PT::inv(old(tok)@, root_pt1),
+            PT::inv(old(tok)@.write(idx, value, r, false), root_pt2),
+            PT::interp_to_l0(old(tok)@.write(idx, value, r, false), root_pt2) == PT::interp_to_l0(old(tok)@, root_pt1),
             // This precondition makes the abstraction kind of leaky but we want to use the MMU
             // interp here. Otherwise we'd have to take two PTDirs as arguments and also require
             // their preconditions just to express this.
-            old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp(),
+            //old(tok)@.write(idx, value, r, false).interp() == old(tok)@.interp(),
         ensures
-            tok@ == old(tok)@.write(idx, value, r@),
+            tok@ == old(tok)@.write(idx, value, r, false),
             tok.inv(),
     {
         assert(bit!(0usize) == 1) by (bit_vector);
@@ -248,6 +323,8 @@ impl WrappedMapToken {
         let ghost core = tok.tok.core();
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
+            old(tok)@.lemma_interps_match(root_pt1);
+            old(tok)@.write(idx, value, r, false).lemma_interps_match(root_pt2);
             broadcast use to_rl1::next_refines;
             assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
             mmu_tok.prophesy_write(addr, value);
@@ -256,7 +333,7 @@ impl WrappedMapToken {
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             assert(os::step_MapOpStutter(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpStutter { core: core, paddr: addr, value }, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpStutter { core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
         }
@@ -272,24 +349,36 @@ impl WrappedMapToken {
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
             assert(unchanged_state_during_concurrent_trs(state2, state3));
             assert(state2.mmu@.pt_mem == state1.mmu@.pt_mem.write(add(pbase, mul(idx, 8)), value));
-            assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps);
+            //assert(state3.mmu@.pending_maps === state2.mmu@.pending_maps);
+            //assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps) by {
+            //    // TODO: Annoying because of mismatch between nat/usize maps
+            //    admit();
+            //};
+            assert(tok.inv());
+            // unstable somehow
+            assume(tok.tok.st().core_states[core] == old(tok).tok.st().core_states[core]);
+            assert(tok@.regions[r] =~= old(tok)@.regions[r].update(idx as int, value));
+            assert forall|r2: MemRegion| r2 !== r implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
+                // TODO: This would require disjointness invariant in `inv_regions` which would be
+                // duplicated from the one we already have in the impl. Gotta find a better way of
+                // doing this.
+                admit();
+            };
+            assert(tok@.regions[r] == tok@.regions[r].update(idx as int, value));
+            assert(tok@.regions =~= old(tok)@.regions.insert(r, tok@.regions[r].update(idx as int, value)));
         }
-        assert(tok@.regions[r@] =~= old(tok)@.regions[r@].update(idx as int, value));
-        assert forall|r2: MemRegion| r2 !== r@ implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
-            // TODO: This would require disjointness invariant in `inv_regions` which would be
-            // duplicated from the one we already have in the impl. Gotta find a better way of
-            // doing this.
-            admit();
-        };
-        assume(tok@.regions[r@] == tok@.regions[r@].update(idx as int, value));
-        assert(tok@.regions =~= old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)));
-        assume(tok.tok.st().core_states[core] == old(tok).tok.st().core_states[core]);
-        // TODO: Need to add to lemma_concurrent_trs?
-        assume(tok@.args == old(tok)@.args);
     }
 
-    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, Ghost(r): Ghost<MemRegion>, Ghost(root_pt): Ghost<PTDir>)
+    pub exec fn write_change(
+        Tracked(tok): Tracked<&mut Self>,
+        pbase: usize,
+        idx: usize,
+        value: usize,
+        Ghost(r): Ghost<MemRegion>,
+        Ghost(root_pt): Ghost<PTDir>
+    )
         requires
+            !old(tok)@.done,
             old(tok)@.regions.contains_key(r),
             r.base == pbase,
             idx < 512,
@@ -302,12 +391,12 @@ impl WrappedMapToken {
                 old(tok)@.args->Map_pte
             ),
             PT::inv(old(tok)@, root_pt),
-            PT::inv(old(tok)@.write(idx, value, r), root_pt),
-            PT::interp_to_l0(old(tok)@.write(idx, value, r), root_pt)
+            PT::inv(old(tok)@.write(idx, value, r, true), root_pt),
+            PT::interp_to_l0(old(tok)@.write(idx, value, r, true), root_pt)
                 == PT::interp_to_l0(old(tok)@, root_pt).insert(old(tok)@.args->Map_base as nat, old(tok)@.args->Map_pte),
             //old(tok)@.write(idx, value, r).interp() == old(tok)@.interp().insert(old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
         ensures
-            tok@ == old(tok)@.write(idx, value, r),
+            tok@ == old(tok)@.write(idx, value, r, true),
             tok.inv(),
     {
         assert(bit!(0usize) == 1) by (bit_vector);
@@ -317,15 +406,15 @@ impl WrappedMapToken {
         let ghost state1 = tok.tok.st();
         let ghost core = tok.tok.core();
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
+        let ghost vaddr = tok@.args->Map_base;
+        let ghost pte = tok@.args->Map_pte;
         proof {
             broadcast use to_rl1::next_refines;
             assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
             mmu_tok.prophesy_write(addr, value);
-            let vaddr = tok@.args->Map_base as nat;
-            let pte = tok@.args->Map_pte;
             assert(tok.tok.st().core_states[core] is MapExecuting);
             assert(tok.tok.st().core_states[core] matches os::CoreState::MapExecuting { vaddr: v, pte: p, .. } && vaddr == v && pte == p);
-            let new_cs = os::CoreState::MapDone { ult_id: tok.tok.thread(), vaddr, pte, result: Ok(()) };
+            let new_cs = os::CoreState::MapDone { ult_id: tok.tok.thread(), vaddr: vaddr as nat, pte, result: Ok(()) };
             let post = os::State {
                 core_states: tok.tok.st().core_states.insert(core, new_cs),
                 mmu: mmu_tok.post(),
@@ -335,20 +424,20 @@ impl WrappedMapToken {
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             old(tok)@.lemma_interps_match(root_pt);
-            old(tok)@.write(idx, value, r).lemma_interps_match(root_pt);
+            old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
             //assert(PT::interp(old(tok)@, root_pt).interp().map == crate::spec_t::mmu::defs::nat_keys(old(tok)@.pt_mem@));
             //assert(crate::spec_t::mmu::defs::nat_keys(post.mmu@.pt_mem@) == post.interp_pt_mem());
             //assert(crate::spec_t::mmu::defs::nat_keys(tok@.pt_mem@) == tok.tok.st().interp_pt_mem());
             //assert(post.interp_pt_mem() == tok.tok.st().interp_pt_mem().insert(vaddr, pte));
             assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core: core, paddr: addr, value }, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
-            admit();
         }
 
         mmu::rl3::code::write(Tracked(&mut mmu_tok), addr, value);
         let ghost state2 = tok.tok.st();
+        proof { tok.done = true; }
 
         proof {
             assert(state1.os_ext.lock == Some(core));
@@ -358,7 +447,14 @@ impl WrappedMapToken {
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
             assert(unchanged_state_during_concurrent_trs(state2, state3));
             assert(state2.mmu@.pt_mem == state1.mmu@.pt_mem.write(add(pbase, mul(idx, 8)), value));
-            assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps);
+            //assert(state3.mmu@.pending_maps === state2.mmu@.pending_maps);
+            //assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps.insert(vaddr, pte)) by {
+            //    // TODO: Annoying because of mismatch between nat/usize maps
+            //    reveal(pt_mem::PTMem::view);
+            //    admit();
+            //};
+            //assert(tok.tok.st().mmu@.pending_maps.submap_of(map![vaddr => pte]));
+            assert(tok.inv());
         }
         assert(tok@.regions[r] =~= old(tok)@.regions[r].update(idx as int, value));
         assert forall|r2: MemRegion| r2 !== r implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
@@ -367,12 +463,14 @@ impl WrappedMapToken {
             // doing this.
             admit();
         };
-        assume(tok@.regions[r] == tok@.regions[r].update(idx as int, value));
-        assert(tok@.regions =~= old(tok)@.regions.insert(r, tok@.regions[r].update(idx as int, value)));
+        assert(tok@.pt_mem == old(tok)@.pt_mem.write(add(r.base as usize, mul(idx, 8)), value));
+        assert(tok@.regions =~= old(tok)@.regions.insert(r, old(tok)@.regions[r].update(idx as int, value)));
+        assert(tok@ =~= old(tok)@.write(idx, value, r, true));
     }
 
     pub exec fn allocate(Tracked(tok): Tracked<&mut Self>, layer: usize) -> (res: MemRegionExec)
         requires
+            !old(tok)@.done,
             old(tok).inv(),
         ensures
             true, // TODO: disjointness but disjoint from what?
@@ -386,6 +484,7 @@ impl WrappedMapToken {
             tok@.pt_mem == old(tok)@.pt_mem,
             tok@.args == old(tok)@.args,
             tok@.orig_st == old(tok)@.orig_st,
+            !tok@.done,
             tok.inv(),
     {
         let ghost state1 = tok.tok.st();
@@ -395,7 +494,7 @@ impl WrappedMapToken {
             osext_tok.prophesy_allocate();
             let post = os::State { os_ext: osext_tok.post(), ..tok.tok.st() };
             assert(os::step_Allocate(tok.tok.consts(), tok.tok.st(), post, core, osext_tok.lbl()->Allocate_res, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Allocate { core: core, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Allocate { core, res: osext_tok.lbl()->Allocate_res }, RLbl::Tau));
             tok.tok.register_internal_step_osext(&mut osext_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
         }
@@ -415,14 +514,50 @@ impl WrappedMapToken {
             tok.regions = tok.regions.insert(res@);
         }
         // TODO: We may have to zero the page ourselves or alternatively allow spontaneous writes
-        // to unallocated memory regions.
+        // to unallocated memory regions. (Or require zeroed pages when deallocating.)
         assume(tok@.regions[res@] === new_seq::<usize>(512nat, 0usize));
         assert(tok@.regions =~= old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)));
         res
     }
+
+    /// If there's an overlapping mapping we don't write anything but just do a MapNoOp step.
+    pub proof fn register_failed_map(tracked tok: &mut Self, root_pt: PTDir)
+        requires
+            !old(tok)@.done,
+            old(tok).inv(),
+            candidate_mapping_overlaps_existing_vmem(
+                PT::interp_to_l0(old(tok)@, root_pt),
+                old(tok)@.args->Map_base as nat,
+                old(tok)@.args->Map_pte
+            ),
+            PT::inv(old(tok)@, root_pt),
+        ensures
+            tok@ == (WrappedTokenView { done: true, ..old(tok)@ }),
+            tok.inv(),
+    {
+        tok@.lemma_interps_match(root_pt);
+        tok.done = true;
+
+        let ghost core = tok.tok.core();
+        let ghost vaddr = tok@.args->Map_base;
+        let ghost pte = tok@.args->Map_pte;
+        let new_cs = os::CoreState::MapDone { ult_id: tok.tok.thread(), vaddr: vaddr as nat, pte, result: Err(()) };
+        let post = os::State {
+            core_states: tok.tok.st().core_states.insert(core, new_cs),
+            ..tok.tok.st()
+        };
+
+        assert(os::step_MapNoOp(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+        assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapNoOp { core }, RLbl::Tau));
+        tok.tok.register_internal_step(post);
+        os_invariant::next_preserves_inv(tok.tok.consts(), old(tok).tok.st(), tok.tok.st(), RLbl::Tau);
+        let ghost state2 = tok.tok.st();
+        let pidx = tok.tok.do_concurrent_trs();
+        lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+    }
 }
 
-pub exec fn register_step_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(vaddr): Ghost<nat>, Ghost(pte): Ghost<PTE>)
+pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(vaddr): Ghost<nat>, Ghost(pte): Ghost<PTE>)
     requires
         os::step_Map_enabled(vaddr, pte),
         old(tok).consts().valid_ult(old(tok).thread()),
@@ -525,6 +660,7 @@ impl WrappedUnmapToken {
                 OpArgs::Unmap {
                     base: self.orig_st.core_states[self.tok.core()]->UnmapExecuting_vaddr as usize,
                 },
+            done: self.done,
             regions:
                 Map::new(
                     |r: MemRegion| self.regions.contains(r),

@@ -1,17 +1,17 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec, x86_arch_spec_upper_bound };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::MAX_BASE;
+use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE };
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken };
-use crate::impl_u::l2_impl::PT::{ map_frame, unmap };
+use crate::impl_u::l2_impl::PT::{ self, map_frame, unmap };
 
 verus! {
 
-pub struct PT {}
+pub struct PTImpl {}
 
-impl CodeVC for PT {
+impl CodeVC for PTImpl {
     exec fn sys_do_map(
         Tracked(tok): Tracked<Token>,
         pml4: usize,
@@ -23,25 +23,40 @@ impl CodeVC for PT {
         let tracked mut tok = tok;
         let tracked mut proph_res = proph_res;
 
-        // crate::impl_u::wrapped_token::register_step_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
-        proof { admit(); } // to avoid taking the lock for now..
-        // TODO: Needs an invariant
+        crate::impl_u::wrapped_token::start_map_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
+        // TODO: Needs an OS invariant
         assume(tok.st().mmu@.pending_maps === map![]);
         let tracked wtok = WrappedMapToken::new(tok);
         let mut pt = Ghost(arbitrary());
-        assume(crate::impl_u::l2_impl::PT::inv(wtok@, pt@));
-        assume(crate::impl_u::l2_impl::PT::interp(wtok@, pt@).inv(true));
+        assume(PT::inv(wtok@, pt@));
+        assume(PT::interp(wtok@, pt@).inv(true));
 
 
-        assume(vaddr < MAX_BASE); // TODO: We probably need to somehow get this out of the first transition?
+        proof {
+            x86_arch_spec_upper_bound();
+            assert(vaddr < MAX_BASE);
+        }
 
         let res = map_frame(Tracked(&mut wtok), &mut pt, pml4, vaddr, pte);
+        assume(res is Ok <==> wtok@.done);
+
+        if let Err(_) = res {
+            proof {
+                assume(candidate_mapping_overlaps_existing_vmem(
+                    PT::interp_to_l0(wtok@, pt@),
+                    wtok@.args->Map_base as nat,
+                    wtok@.args->Map_pte
+                ));
+                WrappedMapToken::register_failed_map(&mut wtok, pt@);
+            }
+        }
+        assert(wtok@.done);
 
         proof { proph_res.resolve(res); }
 
-        let tracked tok = wtok.destruct();
+        let tok = WrappedMapToken::finish_map_and_release_lock(Tracked(wtok));
 
-        (res, Tracked(tok))
+        (res, tok)
     }
 
     #[verifier(external_body)]

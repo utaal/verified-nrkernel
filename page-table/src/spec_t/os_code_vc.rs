@@ -371,6 +371,22 @@ impl Token {
 
 
     /// Register a step that corresponds to stutter in both mmu and os_ext.
+    pub proof fn register_internal_step(tracked &mut self, post: os::State)
+        requires
+            old(self).progress() is Ready,
+            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            post.os_ext == old(self).st().os_ext,
+            post.mmu == old(self).st().mmu,
+        ensures
+            !self.on_first_step(),
+            self.consts() == old(self).consts(),
+            self.thread() == old(self).thread(),
+            self.st() == post,
+            self.steps() == old(self).steps(),
+            self.progress() == Progress::Unready,
+    { admit(); } // axiom
+
+    /// Register a step that corresponds to stutter in both mmu and os_ext.
     pub proof fn register_external_step(tracked &mut self, post: os::State)
         requires
             old(self).progress() is Ready,
@@ -418,7 +434,7 @@ pub trait CodeVC {
         ensures
             res.0 == proph_res.value(),
             res.1@.steps() === seq![],
-            res.1@.progress() is Ready,
+            res.1@.progress() is Unready,
     ;
 
     /// This function returns the memory region that was unmapped but that value should be
@@ -441,15 +457,16 @@ pub trait CodeVC {
         ensures
             res.0 is Ok <==> proph_res.value() is Ok,
             res.1@.steps() === seq![],
-            res.1@.progress() is Ready,
+            res.1@.progress() is Unready,
     ;
 }
 
 pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os::State) -> bool {
-    &&& post.mmu@.happy        == pre.mmu@.happy
-    &&& post.mmu@.pt_mem       == pre.mmu@.pt_mem
-    &&& post.mmu@.writes       == pre.mmu@.writes
-    &&& post.mmu@.pending_maps == pre.mmu@.pending_maps
+    &&& post.mmu@.happy          == pre.mmu@.happy
+    &&& post.mmu@.pt_mem         == pre.mmu@.pt_mem
+    &&& post.mmu@.writes         == pre.mmu@.writes
+    &&& post.mmu@.pending_maps   == pre.mmu@.pending_maps
+    &&& post.mmu@.pending_unmaps == pre.mmu@.pending_unmaps
 }
 
 } // verus!

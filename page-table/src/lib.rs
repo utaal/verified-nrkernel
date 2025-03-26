@@ -56,7 +56,7 @@ pub extern "C" fn veros_map_frame(
     let token: Tracked<Token> = Tracked::assume_new();
     let proph_res = Tracked(Prophecy::new());
 
-    let (res, _tok) = impl_u::verified_impl::PT::sys_do_map(token, pml4, vaddr as usize, pte, proph_res);
+    let (res, _tok) = impl_u::verified_impl::PTImpl::sys_do_map(token, pml4, vaddr as usize, pte, proph_res);
     if res.is_ok() {
         return 0;
     } else {
@@ -79,7 +79,7 @@ pub extern "C" fn veros_unmap_frame(
     let token: Tracked<Token> = Tracked::assume_new();
     let proph_res = Tracked(Prophecy::new());
 
-    let (res, _tok) = impl_u::verified_impl::PT::sys_do_unmap(token, pml4, vaddr as usize, proph_res);
+    let (res, _tok) = impl_u::verified_impl::PTImpl::sys_do_unmap(token, pml4, vaddr as usize, proph_res);
     match res {
         Ok(frame) => {
             *ret_frame = frame;
