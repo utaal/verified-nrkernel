@@ -58,7 +58,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         } by { let _ = s1.core_states[core].is_in_crit_sect(); }
     };
     */
-    assert(s2.inflight_pte_above_zero_pte_result_consistent(c)) by {
+    assert(s2.inv_inflight_pte_above_zero_pte_result_consistent(c)) by {
         assert forall|core: Core| c.valid_core(core) implies
             match s2.core_states[core] {
                 os::CoreState::MapWaiting { vaddr, pte, .. }

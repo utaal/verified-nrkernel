@@ -858,7 +858,19 @@ impl State {
             }
     }
 
-    pub open spec fn inflight_pte_above_zero_pte_result_consistent(self, c: Constants) -> bool {
+    pub open spec fn inv_mappings_in_bound(self, c: Constants) -> bool {
+        &&& forall|core: Core| #![auto] c.valid_core(core) ==>
+                match self.core_states[core] {
+                    CoreState::MapWaiting { vaddr, pte, .. }
+                    | CoreState::MapExecuting { vaddr, pte, .. }
+                    | CoreState::MapDone { vaddr, pte, .. }
+                        => candidate_mapping_in_bounds(vaddr, pte),
+                    _ => true,
+                }
+        &&& forall|vaddr, pte| #![auto] self.interp_pt_mem().contains_pair(vaddr, pte) ==> candidate_mapping_in_bounds(vaddr, pte)
+    }
+
+    pub open spec fn inv_inflight_pte_above_zero_pte_result_consistent(self, c: Constants) -> bool {
         forall|core: Core| c.valid_core(core) ==>
             match self.core_states[core] {
                 CoreState::MapWaiting { vaddr, pte, .. }
@@ -915,6 +927,7 @@ impl State {
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
+        &&& self.valid_ids(c)
         &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
         &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])
         &&& forall|core: Core| c.valid_core(core) <==> #[trigger] self.core_states.contains_key(core)
@@ -927,9 +940,9 @@ impl State {
     pub open spec fn inv_basic(self, c: Constants) -> bool {
         &&& self.wf(c)
         &&& self.inv_mmu(c)
-        &&& self.valid_ids(c)
         &&& self.inv_mapped_ptes_above_zero()
-        &&& self.inflight_pte_above_zero_pte_result_consistent(c)
+        &&& self.inv_mappings_in_bound(c)
+        &&& self.inv_inflight_pte_above_zero_pte_result_consistent(c)
         &&& self.inv_successful_unmaps(c)
         &&& self.inv_successful_maps(c)
         &&& self.inv_overlap_of_mapped_maps(c)
