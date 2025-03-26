@@ -7,7 +7,7 @@ x86_arch_exec, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SI
 L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ between, aligned, new_seq, x86_arch_spec,
-axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem_usize, usize_keys };
+axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
 use crate::definitions_u::{ aligned_exec };
@@ -766,8 +766,8 @@ pub open spec fn interp(tok: WrappedTokenView, pt: PTDir) -> l1::Directory {
     interp_at(tok, pt, 0, tok.pt_mem.pml4, 0)
 }
 
-pub open spec fn interp_to_l0(tok: WrappedTokenView, pt: PTDir) -> Map<usize, PTE> {
-    usize_keys(interp(tok, pt).interp().map)
+pub open spec fn interp_to_l0(tok: WrappedTokenView, pt: PTDir) -> Map<nat, PTE> {
+    interp(tok, pt).interp().map
 }
 
 proof fn lemma_inv_at_different_memory(tok1: WrappedTokenView, tok2: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize)
@@ -1075,7 +1075,7 @@ fn map_frame_aux(
     proof {
         broadcast use lemma_bitvector_facts_simple;
         broadcast use lemma_union_empty;
-        broadcast use l1::lemma_inv_true_implies_inv_false;
+        //broadcast use l1::lemma_inv_true_implies_inv_false;
         lemma_interp_at_facts(tok@, pt, layer as nat, ptr, base as nat, true);
     }
     let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
@@ -1474,14 +1474,14 @@ fn map_frame_aux(
             }
             let new_page_entry = PDE::new_page_entry(layer, pte);
             let ghost pwtok = tok@;
+            // This is the token state we'll have after the write happened
+            let ghost tok_after_write = tok@.write(idx, new_page_entry.entry, pt.region);
 
             proof {
                 lemma_bitvector_facts();
                 assert(new_page_entry.entry & 1 == 1);
                 assert(tok@.read(idx, pt.region) & 1 == 0);
 
-                // This is the token state we'll have after the write happened
-                let tok_after_write = tok@.write(idx, new_page_entry.entry, pt.region);
 
                 // And that state will satisfy the invariant
                 assert(inv_at(tok_after_write, pt, layer as nat, ptr)) by {
@@ -1531,47 +1531,58 @@ fn map_frame_aux(
                         assert(Ok(new_interp) === interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
                     };
                 };
+            }
 
 
                 // The old and new interps match the MMU interp.
                 // We need this because the `write_change` precondition is expressed in terms of
                 // the MMU interp.
-                assert(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])) == old(tok)@.interp()) by {
+                //assert(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])) == crate::spec_t::mmu::defs::nat_keys(old(tok)@.interp())) by {
+                //    assert(builder_pre(old(tok)@, pt, old(tok)@, pt, layer as nat, ptr, set![]));
+                //    old(tok)@.lemma_interps_match(rebuild_root_pt(pt, set![]));
+                //};
+                //assert(interp_to_l0(tok_after_write, rebuild_root_pt(pt, set![])) == crate::spec_t::mmu::defs::nat_keys(tok_after_write.interp())) by {
+                //    tok_after_write.lemma_interps_match(rebuild_root_pt(pt, set![]));
+                //};
+            let ghost root_pt = rebuild_root_pt(pt, set![]);
+            proof {
+                assert(inv(old(tok)@, root_pt)) by {
                     assert(builder_pre(old(tok)@, pt, old(tok)@, pt, layer as nat, ptr, set![]));
-                    old(tok)@.lemma_interps_match(rebuild_root_pt(pt, set![]));
                 };
-                assert(interp_to_l0(tok_after_write, rebuild_root_pt(pt, set![])) == tok_after_write.interp()) by {
-                    tok_after_write.lemma_interps_match(rebuild_root_pt(pt, set![]));
-                };
+                assert(inv(tok_after_write, root_pt));
                 // TODO: These need to be part of the properties the builder provides i think
                 // Note after making l1 invariant non-emptiness conditional: This may be a bit
                 // trickier now because I'm not sure we can easily use the map_frame refinement to
                 // prove this. We may have to instead reason directly about the interpretation and
                 // change the map_frame condition.
-                assume(interp(old(tok)@, rebuild_root_pt(pt, set![])).inv(true));
-                assume(interp(old(tok)@, rebuild_root_pt(pt, set![])).accepted_mapping(vaddr as nat, pte@));
-                interp(old(tok)@, rebuild_root_pt(pt, set![])).lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
-                assume(interp(tok_after_write, rebuild_root_pt(pt, set![])).inv(true));
+                assume(interp(old(tok)@, root_pt).inv(true));
+                assume(interp(old(tok)@, root_pt).accepted_mapping(vaddr as nat, pte@));
+                interp(old(tok)@, root_pt).lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
+                assume(interp(tok_after_write, root_pt).inv(true));
                 //assume(interp(tok_new@, rebuild_root_pt(pt_new, new_regions)).accepted_mapping(vaddr as nat, pte@));
-                //interp(tok_after_write, rebuild_root_pt(pt, set![])).lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
+                //interp(tok_after_write, root_pt).lemma_map_frame_refines_map_frame(vaddr as nat, pte@);
 
-                //assert(Ok(interp(old(tok)@, rebuild_root_pt(pt, set![])).map_frame(vaddr as nat, pte@).get_Ok_0().interp())
-                //    === interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map_frame(vaddr as nat, pte@));
-                //assert(Ok(interp(tok_after_write, rebuild_root_pt(pt, set![])))
-                //         === interp(old(tok)@, rebuild_root_pt(pt, set![])).map_frame(vaddr as nat, pte@));
-                //assert(Ok(interp(tok_after_write, rebuild_root_pt(pt, set![])).interp())
-                //    === interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map_frame(vaddr as nat, pte@));
-                interp(old(tok)@, rebuild_root_pt(pt, set![])).lemma_accepted_mapping_implies_interp_accepted_mapping_manual(vaddr as nat, pte@, true);
-                //assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().accepted_mapping(vaddr as nat, pte@));
-                assert(interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().valid_mapping(vaddr as nat, pte@));
-                assert(!candidate_mapping_overlaps_existing_vmem_usize(tok@.interp(), vaddr, pte@));
-                //assert(
-                //    interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map_frame(vaddr as nat, pte@).get_Ok_0().map
-                //        === interp(old(tok)@, rebuild_root_pt(pt, set![])).interp().map.insert(vaddr as nat, pte@)
-                //);
-                assert(tok_after_write.interp() == tok@.interp().insert(vaddr, pte@));
+                assert(Ok(interp(old(tok)@, root_pt).map_frame(vaddr as nat, pte@).get_Ok_0().interp())
+                    === interp(old(tok)@, root_pt).interp().map_frame(vaddr as nat, pte@));
+                assert(Ok(interp(tok_after_write, root_pt))
+                         === interp(old(tok)@, root_pt).map_frame(vaddr as nat, pte@));
+                assert(Ok(interp(tok_after_write, root_pt).interp())
+                    === interp(old(tok)@, root_pt).interp().map_frame(vaddr as nat, pte@));
+                interp(old(tok)@, root_pt).lemma_accepted_mapping_implies_interp_accepted_mapping_manual(vaddr as nat, pte@, true);
+                assert(interp(old(tok)@, root_pt).interp().accepted_mapping(vaddr as nat, pte@));
+                assert(interp(old(tok)@, root_pt).interp().valid_mapping(vaddr as nat, pte@));
+                assert(!candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, root_pt), vaddr as nat, pte@));
+                assert(
+                    interp(old(tok)@, root_pt).interp().map_frame(vaddr as nat, pte@).get_Ok_0().map
+                        === interp(old(tok)@, root_pt).interp().map.insert(vaddr as nat, pte@)
+                );
+                //assume(tok_after_write.interp() == tok@.interp().insert(vaddr, pte@));
+                assert(inv(old(tok)@, root_pt));
+                assert(inv(tok_after_write, root_pt));
+                assert(interp(tok_after_write, root_pt).interp().map
+                          == interp(old(tok)@, root_pt).interp().map.insert(old(tok)@.args->Map_base as nat, old(tok)@.args->Map_pte));
             }
-            WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region));
+            WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region), Ghost(root_pt));
 
             // TODO: this is mostly a duplicate from the interp thing above. Can we get rid of the
             // corresponding postcondition? (We shouldn't need it anymore once this thing is fully

@@ -5,7 +5,7 @@ use crate::spec_t::os_invariant;
 use crate::spec_t::mmu;
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, new_seq, bit, usize_keys, candidate_mapping_overlaps_existing_vmem_usize };
+use crate::spec_t::mmu::defs::{ aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem };
 use crate::spec_t::mmu::defs::{ MemRegionExec, MemRegion, PTE, MAX_PHYADDR };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
 use crate::theorem::RLbl;
@@ -53,31 +53,31 @@ impl WrappedTokenView {
         }
     }
 
-    pub proof fn lemma_interps_match(self, pt: PTDir)
-        requires PT::inv(self, pt)
-        ensures usize_keys(PT::interp(self, pt).interp().map) == self.interp()
-    {
-        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
-        //assume(forall|k| PT::interp(self, pt).interp().map.contains_key(k) ==> k <= usize::MAX);
-        assert forall|va, pte| #[trigger] PT::interp(self, pt).interp().map.contains_pair(va as nat, pte)
-            implies self.pt_mem@.contains_pair(va, pte)
-        by {
-            admit();
-        };
-        assert forall|va, pte| self.pt_mem@.contains_pair(va, pte)
-            implies #[trigger] PT::interp(self, pt).interp().map.contains_pair(va as nat, pte)
-        by {
-            admit();
-        };
-        admit();
-        assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
-    }
+    //pub proof fn lemma_interps_match2(self, pt: PTDir)
+    //    requires PT::inv(self, pt)
+    //    ensures usize_keys(PT::interp(self, pt).interp().map) == self.interp()
+    //{
+    //    reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+    //    //assume(forall|k| PT::interp(self, pt).interp().map.contains_key(k) ==> k <= usize::MAX);
+    //    assert forall|va, pte| #[trigger] PT::interp(self, pt).interp().map.contains_pair(va as nat, pte)
+    //        implies self.pt_mem@.contains_pair(va, pte)
+    //    by {
+    //        admit();
+    //    };
+    //    assert forall|va, pte| self.pt_mem@.contains_pair(va, pte)
+    //        implies #[trigger] PT::interp(self, pt).interp().map.contains_pair(va as nat, pte)
+    //    by {
+    //        admit();
+    //    };
+    //    admit();
+    //    assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
+    //}
 
-    pub proof fn lemma_interps_match_2(self, pt: PTDir)
+    pub proof fn lemma_interps_match(self, pt: PTDir)
         requires PT::inv(self, pt)
         ensures PT::interp(self, pt).interp().map == crate::spec_t::mmu::defs::nat_keys(self.interp())
     {
-        self.lemma_interps_match(pt);
+        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
         assume(PT::interp(self, pt).interp().map =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
         //assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
     }
@@ -288,18 +288,26 @@ impl WrappedMapToken {
         assume(tok@.args == old(tok)@.args);
     }
 
-    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, r: Ghost<MemRegion>)
+    pub exec fn write_change(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, value: usize, Ghost(r): Ghost<MemRegion>, Ghost(root_pt): Ghost<PTDir>)
         requires
-            old(tok)@.regions.contains_key(r@),
-            r@.base == pbase,
+            old(tok)@.regions.contains_key(r),
+            r.base == pbase,
             idx < 512,
             old(tok).inv(),
             value & 1 == 1,
-            old(tok)@.read(idx, r@) & 1 == 0,
-            !candidate_mapping_overlaps_existing_vmem_usize(old(tok)@.interp(), old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
-            old(tok)@.write(idx, value, r@).interp() == old(tok)@.interp().insert(old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
+            old(tok)@.read(idx, r) & 1 == 0,
+            !candidate_mapping_overlaps_existing_vmem(
+                PT::interp_to_l0(old(tok)@, root_pt),
+                old(tok)@.args->Map_base as nat,
+                old(tok)@.args->Map_pte
+            ),
+            PT::inv(old(tok)@, root_pt),
+            PT::inv(old(tok)@.write(idx, value, r), root_pt),
+            PT::interp_to_l0(old(tok)@.write(idx, value, r), root_pt)
+                == PT::interp_to_l0(old(tok)@, root_pt).insert(old(tok)@.args->Map_base as nat, old(tok)@.args->Map_pte),
+            //old(tok)@.write(idx, value, r).interp() == old(tok)@.interp().insert(old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
         ensures
-            tok@ == old(tok)@.write(idx, value, r@),
+            tok@ == old(tok)@.write(idx, value, r),
             tok.inv(),
     {
         assert(bit!(0usize) == 1) by (bit_vector);
@@ -326,7 +334,12 @@ impl WrappedMapToken {
 
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
-            admit();
+            old(tok)@.lemma_interps_match(root_pt);
+            old(tok)@.write(idx, value, r).lemma_interps_match(root_pt);
+            //assert(PT::interp(old(tok)@, root_pt).interp().map == crate::spec_t::mmu::defs::nat_keys(old(tok)@.pt_mem@));
+            //assert(crate::spec_t::mmu::defs::nat_keys(post.mmu@.pt_mem@) == post.interp_pt_mem());
+            //assert(crate::spec_t::mmu::defs::nat_keys(tok@.pt_mem@) == tok.tok.st().interp_pt_mem());
+            //assert(post.interp_pt_mem() == tok.tok.st().interp_pt_mem().insert(vaddr, pte));
             assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core: core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -347,15 +360,15 @@ impl WrappedMapToken {
             assert(state2.mmu@.pt_mem == state1.mmu@.pt_mem.write(add(pbase, mul(idx, 8)), value));
             assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps);
         }
-        assert(tok@.regions[r@] =~= old(tok)@.regions[r@].update(idx as int, value));
-        assert forall|r2: MemRegion| r2 !== r@ implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
+        assert(tok@.regions[r] =~= old(tok)@.regions[r].update(idx as int, value));
+        assert forall|r2: MemRegion| r2 !== r implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
             // TODO: This would require disjointness invariant in `inv_regions` which would be
             // duplicated from the one we already have in the impl. Gotta find a better way of
             // doing this.
             admit();
         };
-        assume(tok@.regions[r@] == tok@.regions[r@].update(idx as int, value));
-        assert(tok@.regions =~= old(tok)@.regions.insert(r@, tok@.regions[r@].update(idx as int, value)));
+        assume(tok@.regions[r] == tok@.regions[r].update(idx as int, value));
+        assert(tok@.regions =~= old(tok)@.regions.insert(r, tok@.regions[r].update(idx as int, value)));
     }
 
     pub exec fn allocate(Tracked(tok): Tracked<&mut Self>, layer: usize) -> (res: MemRegionExec)
