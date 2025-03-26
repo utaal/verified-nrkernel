@@ -14,7 +14,7 @@ use vstd::prelude::verus;
 // #[cfg(feature="linuxmodule")]
 use vstd::prelude::Tracked;
 // #[cfg(feature="linuxmodule")]
-use crate::spec_t::mmu::defs::{ Core, PageTableEntryExec, MemRegionExec, Flags};
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec };
 // #[cfg(feature="linuxmodule")]
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 verus!{
@@ -44,6 +44,7 @@ pub extern "C" fn veros_init() -> i64 {
 /// Entry point from the linux kernel to map a region of memory
 // #[cfg(feature="linuxmodule")]
 // #[used(linker)]
+#[verifier(external_body)]
 #[no_mangle]
 pub extern "C" fn veros_map_frame(
     pt_ptr: u64,
@@ -67,6 +68,7 @@ pub extern "C" fn veros_map_frame(
 
 // #[cfg(feature="linuxmodule")]
 // #[used(linker)]
+#[verifier(external_body)]
 #[no_mangle]
 pub extern "C" fn veros_unmap_frame(
     pt_ptr: u64,
@@ -87,7 +89,7 @@ pub extern "C" fn veros_unmap_frame(
             return -1;
         }
     }
-    0 // return 0 to indicate success
+    //0 // return 0 to indicate success
 }
 
 
