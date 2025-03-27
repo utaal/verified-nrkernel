@@ -25,8 +25,8 @@ impl CodeVC for PTImpl {
 
         crate::impl_u::wrapped_token::start_map_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
         // TODO: Needs an OS invariant
-        assume(tok.st().mmu@.pending_maps === map![]);
-        let tracked wtok = WrappedMapToken::new(tok);
+        //assume(tok.st().mmu@.pending_maps === map![]);
+        let tracked wtok = WrappedMapToken::new(tok); //, proph_res.value());
         let mut pt = Ghost(arbitrary());
         assume(PT::inv(wtok@, pt@));
         assume(PT::interp(wtok@, pt@).inv(true));
@@ -37,12 +37,14 @@ impl CodeVC for PTImpl {
             assert(vaddr < MAX_BASE);
         }
 
+        let ghost wtok_before = wtok@;
+        assert(!wtok_before.done);
+
         let res = map_frame(Tracked(&mut wtok), &mut pt, pml4, vaddr, pte);
-        assume(res is Ok <==> wtok@.done);
 
         if let Err(_) = res {
             proof {
-                assume(candidate_mapping_overlaps_existing_vmem(
+                assert(candidate_mapping_overlaps_existing_vmem(
                     PT::interp_to_l0(wtok@, pt@),
                     wtok@.args->Map_base as nat,
                     wtok@.args->Map_pte

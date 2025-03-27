@@ -77,10 +77,10 @@ impl WrappedTokenView {
 
     pub proof fn lemma_interps_match(self, pt: PTDir)
         requires PT::inv(self, pt)
-        ensures PT::interp(self, pt).interp().map == crate::spec_t::mmu::defs::nat_keys(self.interp())
+        ensures PT::interp(self, pt).interp() == crate::spec_t::mmu::defs::nat_keys(self.interp())
     {
         reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
-        assume(PT::interp(self, pt).interp().map =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
+        assume(PT::interp(self, pt).interp() =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
         //assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
     }
 }
@@ -90,6 +90,7 @@ pub tracked struct WrappedMapToken {
     ghost done: bool,
     ghost orig_st: os::State,
     ghost regions: Set<MemRegion>,
+    //ghost prophesied_result: Result<(),()>,
 }
 
 impl WrappedMapToken {
@@ -112,11 +113,18 @@ impl WrappedMapToken {
 
     pub proof fn new(tracked tok: Token) -> (tracked res: WrappedMapToken)
         requires
+            //proph_res.may_resolve(),
             tok.consts().valid_ult(tok.thread()),
             tok.st().core_states[tok.core()] is MapExecuting,
             tok.thread() == tok.st().core_states[tok.core()]->MapExecuting_ult_id,
             tok.st().core_states[tok.core()]->MapExecuting_vaddr <= usize::MAX,
-            tok.steps().len() > 0,
+            tok.steps().len() == 1,
+            //tok.steps() ===
+            //    seq![RLbl::MapEnd {
+            //        thread_id: tok.thread(),
+            //        vaddr: tok.st().core_states[tok.core()]->MapExecuting_vaddr,
+            //        result: prophesied_result,
+            //    }],
             !tok.on_first_step(),
             tok.progress() is Ready,
             //tok.st().mmu@.pending_maps === map![],
@@ -127,6 +135,7 @@ impl WrappedMapToken {
             res@.pt_mem == tok.st().mmu@.pt_mem,
             tok.st().core_states[tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, .. }
                 && res@.args == (OpArgs::Map { base: vaddr as usize, pte }),
+            !res@.done,
     {
         let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st(), regions: arbitrary() };
         assume(t.inv_regions());
@@ -137,79 +146,6 @@ impl WrappedMapToken {
         t
     }
 
-    pub exec fn finish_map_and_release_lock(Tracked(tok): Tracked<WrappedMapToken>) -> (rtok: Tracked<Token>)
-        requires
-            tok@.done,
-            tok.inv(),
-        ensures
-            rtok@.progress() is Unready,
-            rtok@.steps() === seq![],
-            true, // TODO: more stuff?
-    {
-        let ghost core = tok.tok.core();
-        let tracked mut tok = tok;
-        let ghost state1 = tok.tok.st();
-        let ghost vaddr = tok.tok.st().core_states[core]->MapDone_vaddr;
-        let ghost result = tok.tok.st().core_states[core]->MapDone_result;
-
-        let tracked mut mmu_tok = tok.tok.get_mmu_token();
-        proof {
-            mmu_tok.prophesy_barrier();
-            let post = os::State {
-                mmu: mmu_tok.post(),
-                ..tok.tok.st()
-            };
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(os::step_Barrier(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Barrier { core }, RLbl::Tau));
-            tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
-            os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
-        }
-
-        let res = mmu::rl3::code::barrier(Tracked(&mut mmu_tok));
-        let ghost state2 = tok.tok.st();
-
-        proof {
-            broadcast use to_rl1::next_refines;
-            assert(state1.os_ext.lock == Some(core));
-            tok.tok.return_mmu_token(mmu_tok);
-            let pidx = tok.tok.do_concurrent_trs();
-            lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
-        }
-        let ghost state3 = tok.tok.st();
-
-        let tracked mut osext_tok = tok.tok.get_osext_token();
-
-        proof {
-            broadcast use to_rl1::next_refines;
-            osext_tok.prophesy_release_lock();
-            let post = os::State {
-                core_states: tok.tok.st().core_states.insert(core, os::CoreState::Idle),
-                os_ext: osext_tok.post(),
-                ..tok.tok.st()
-            };
-            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
-            assume(tok.tok.st().mmu@.writes.tso === set![]);
-            let lbl = RLbl::MapEnd { thread_id: tok.tok.thread(), vaddr, result };
-            // TODO: Need some help here from the invariant and resolve the prophecy before we take
-            // the step
-            assume(lbl == tok.tok.steps()[0]);
-            assert(os::step_MapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapEnd { core }, lbl));
-            tok.tok.register_external_step_osext(&mut osext_tok, post);
-            os_invariant::next_preserves_inv(tok.tok.consts(), state3, tok.tok.st(), lbl);
-        }
-
-        os_ext::code::release_lock(Tracked(&mut osext_tok));
-
-        proof {
-            broadcast use to_rl1::next_refines;
-            tok.tok.return_osext_token(osext_tok);
-            assume(tok.tok.steps() === seq![]);
-        }
-        Tracked(tok.tok)
-    }
-
     pub closed spec fn inv(&self) -> bool {
         // OSSM invariant
         &&& self.tok.st().inv(self.tok.consts())
@@ -217,9 +153,9 @@ impl WrappedMapToken {
         &&& !self.tok.on_first_step()
         &&& self.tok.consts().valid_core(self.tok.core())
         &&& self.tok.consts().valid_ult(self.tok.thread())
-        &&& self.tok.steps().len() > 0
         &&& self.tok.progress() is Ready
         &&& self.inv_regions()
+        &&& self.tok.steps().len() == 1
         &&& if self.done {
             &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapDone { vaddr, pte, ult_id, result }
             &&& vaddr <= usize::MAX
@@ -231,6 +167,8 @@ impl WrappedMapToken {
             &&& self.tok.thread() == ult_id
             &&& vaddr <= usize::MAX
             &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
+            //&&& self.proph_res.may_resolve()
+            //&&& self.tok.steps() === seq![RLbl::MapEnd { thread_id: self.tok.thread(), vaddr, result: self.proph_res.value() }]
             //&&& self.tok.st().mmu@.pending_maps === map![]
         }
     }
@@ -554,6 +492,89 @@ impl WrappedMapToken {
         let ghost state2 = tok.tok.st();
         let pidx = tok.tok.do_concurrent_trs();
         lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+    }
+
+    pub exec fn finish_map_and_release_lock(
+        Tracked(tok): Tracked<WrappedMapToken>,
+        //Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
+    ) -> (rtok: Tracked<Token>)
+        requires
+            tok@.done,
+            tok.inv(),
+            //proph_res.may_resolve(),
+            //tok.tok.steps() ===
+            //    seq![RLbl::MapEnd {
+            //       thread_id: tok.tok.thread(),
+            //       vaddr: tok.tok.st().core_states[tok.tok.core()]->MapDone_vaddr,
+            //       result: proph_res.value()
+            //    }],
+        ensures
+            //proph_res.value() == arbitrary()
+            rtok@.progress() is Unready,
+            rtok@.steps() === seq![],
+            true, // TODO: more stuff?
+    {
+        let ghost core = tok.tok.core();
+        let tracked mut tok = tok;
+        let ghost state1 = tok.tok.st();
+        let ghost vaddr = tok.tok.st().core_states[core]->MapDone_vaddr;
+        let ghost result = tok.tok.st().core_states[core]->MapDone_result;
+
+        let tracked mut mmu_tok = tok.tok.get_mmu_token();
+        proof {
+            mmu_tok.prophesy_barrier();
+            let post = os::State {
+                mmu: mmu_tok.post(),
+                ..tok.tok.st()
+            };
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(os::step_Barrier(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Barrier { core }, RLbl::Tau));
+            tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
+            os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
+        }
+
+        let res = mmu::rl3::code::barrier(Tracked(&mut mmu_tok));
+        let ghost state2 = tok.tok.st();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            assert(state1.os_ext.lock == Some(core));
+            tok.tok.return_mmu_token(mmu_tok);
+            let pidx = tok.tok.do_concurrent_trs();
+            lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+        }
+        let ghost state3 = tok.tok.st();
+
+        let tracked mut osext_tok = tok.tok.get_osext_token();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            osext_tok.prophesy_release_lock();
+            let post = os::State {
+                core_states: tok.tok.st().core_states.insert(core, os::CoreState::Idle),
+                os_ext: osext_tok.post(),
+                ..tok.tok.st()
+            };
+            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+            let lbl = RLbl::MapEnd { thread_id: tok.tok.thread(), vaddr, result };
+            // TODO: Need some help here from the invariant and resolve the prophecy before we take
+            // the step. Prophecy is actually problematic here.
+            assume(lbl == tok.tok.steps()[0]);
+            assert(os::step_MapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapEnd { core }, lbl));
+            tok.tok.register_external_step_osext(&mut osext_tok, post);
+            os_invariant::next_preserves_inv(tok.tok.consts(), state3, tok.tok.st(), lbl);
+        }
+
+        os_ext::code::release_lock(Tracked(&mut osext_tok));
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            tok.tok.return_osext_token(osext_tok);
+            assert(tok.tok.steps() === seq![]);
+        }
+        Tracked(tok.tok)
     }
 }
 

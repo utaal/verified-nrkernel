@@ -49,6 +49,7 @@ pub proof fn lemma_entry_base_from_index(base: nat, idx: nat, entry_size: nat)
     requires
         0 < entry_size,
     ensures
+        entry_base_from_index(base, idx, entry_size) < next_entry_base_from_index(base, idx, entry_size),
         forall|idx2: nat|
             #![trigger entry_base_from_index(base, idx, entry_size), entry_base_from_index(base, idx2, entry_size)]
             idx < idx2 ==> entry_base_from_index(base, idx, entry_size) < entry_base_from_index(base, idx2, entry_size),
