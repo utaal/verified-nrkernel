@@ -127,6 +127,70 @@ proof fn lemma_concurrent_trs_induct(pre: os::State, post: os::State, c: os::Con
     }
 }
 
+/// "What do we know about how concurrent transitions can change the state if we're *not* holding
+/// the lock?"
+pub proof fn lemma_concurrent_trs_no_lock(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat)
+    requires
+        concurrent_trs(pre, post, c, core, pidx),
+        pre.inv(c),
+        //c.valid_core(core),
+    ensures
+        //unchanged_state_during_concurrent_trs(pre, post),
+        post.mmu@.pt_mem.pml4 == pre.mmu@.pt_mem.pml4,
+        post.core_states[core] == pre.core_states[core],
+        post.inv(c),
+{
+    let pred = |pre: os::State, post: os::State|
+        pre.inv(c) ==> {
+            //&&& unchanged_state_during_concurrent_trs(pre, post)
+            &&& post.mmu@.pt_mem.pml4 == pre.mmu@.pt_mem.pml4
+            &&& post.core_states[core] == pre.core_states[core]
+            &&& post.inv(c)
+        };
+    assert forall|s| #[trigger] pred(s, s) by {};
+    assert forall|pre, mid, pidx, step, lbl, post|
+        pred(pre, mid)
+        && concurrent_trs(pre, mid, c, core, pidx)
+        && os::next_step(c, mid, post, step, lbl)
+        && !step.is_actor_step(core)
+        implies pred(pre, post)
+    by {
+        if pre.inv(c) {
+            os_invariant::next_preserves_inv(c, mid, post, lbl);
+            broadcast use to_rl1::next_refines;
+            //assert(unchanged_state_during_concurrent_trs(pre, mid));
+            //match step {
+            //    os::Step::MMU                                          => admit(),
+            //    os::Step::MemOp { core }                               => admit(),
+            //    os::Step::ReadPTMem { core, paddr, value }             => admit(),
+            //    os::Step::Barrier { core }                             => {
+            //        admit();
+            //    },
+            //    os::Step::Invlpg { core, vaddr }                       => {
+            //        admit();
+            //    },
+            //    os::Step::MapStart { core }                            => admit(),
+            //    os::Step::MapOpStart { core }                          => admit(),
+            //    os::Step::Allocate { core, res }                       => admit(),
+            //    os::Step::MapOpStutter { core, paddr, value }          => admit(),
+            //    os::Step::MapNoOp { core }      => admit(),
+            //    os::Step::MapEnd { core }                              => admit(),
+            //    os::Step::UnmapStart { core }                          => admit(),
+            //    os::Step::UnmapOpStart { core }                        => admit(),
+            //    os::Step::Deallocate { core, reg }                     => admit(),
+            //    os::Step::UnmapOpChange { core, paddr, value } => admit(),
+            //    os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
+            //    os::Step::UnmapOpFail { core }                          => admit(),
+            //    os::Step::UnmapInitiateShootdown { core }              => admit(),
+            //    os::Step::AckShootdownIPI { core }                     => admit(),
+            //    os::Step::UnmapEnd { core }                            => admit(),
+            //    _ => { admit(); },
+            //}
+        }
+    };
+    lemma_concurrent_trs_induct(pre, post, c, core, pidx, pred);
+}
+
 /// "What do we know about how concurrent transitions can change the state if we're holding the
 /// lock?"
 pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat)

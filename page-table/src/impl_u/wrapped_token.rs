@@ -12,7 +12,7 @@ use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::os_code_vc::Token;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, unchanged_state_during_concurrent_trs };
+use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, unchanged_state_during_concurrent_trs, lemma_concurrent_trs_no_lock };
 use crate::impl_u::l2_impl::{ PT, PTDir };
 
 verus! {
@@ -603,14 +603,9 @@ pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(
     let ghost state1 = tok.st();
     let ghost core = tok.core();
     let ghost pidx = tok.do_concurrent_trs();
+    let ghost state2 = tok.st();
     proof {
-        // TODO: Need something similar to lemma_concurrent_trs to prove this even when we don't
-        // hold the lock
-        assume(tok.st().core_states[core] == state1.core_states[core]);
-        assume(tok.st().inv(tok.consts()));
-        assume(tok.st().mmu@.pt_mem.pml4 == old(tok).st().mmu@.pt_mem.pml4);
-        //lemma_concurrent_trs(state1, tok.st(), tok.consts(), tok.core(), pidx);
-        let state2 = tok.st();
+        lemma_concurrent_trs_no_lock(state1, state2, tok.consts(), core, pidx);
         let new_cs = os::CoreState::MapWaiting { ult_id: tok.thread(), vaddr, pte };
         let new_sound = tok.st().sound && os::step_Map_sound(tok.st().interp_pt_mem(), tok.st().core_states.values(), vaddr, pte);
         let post = os::State {
@@ -624,12 +619,9 @@ pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(
         tok.register_external_step(post);
         let state3 = tok.st();
         os_invariant::next_preserves_inv(tok.consts(), state2, state3, lbl);
-        tok.do_concurrent_trs();
+        let ghost pidx = tok.do_concurrent_trs();
         let state4 = tok.st();
-        //lemma_concurrent_trs(state3, state4, tok.consts(), tok.core(), pidx);
-        assume(state4.core_states[core] == state3.core_states[core]);
-        assume(state4.inv(tok.consts()));
-        assume(state4.mmu@.pt_mem.pml4 == state3.mmu@.pt_mem.pml4);
+        lemma_concurrent_trs_no_lock(state3, state4, tok.consts(), core, pidx);
     }
 
 
