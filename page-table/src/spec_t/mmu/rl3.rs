@@ -892,7 +892,7 @@ pub mod code {
                 self.lbl()->Read_1 == addr,
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_write(tracked &mut self, addr: usize, value: usize)
@@ -903,7 +903,7 @@ pub mod code {
                 self.lbl() == mmu::Lbl::Write(self.core(), addr, value),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_barrier(tracked &mut self)
@@ -913,7 +913,7 @@ pub mod code {
                 self.lbl() == mmu::Lbl::Barrier(self.core()),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_invlpg(tracked &mut self, addr: usize)
@@ -923,7 +923,7 @@ pub mod code {
                 self.lbl() == mmu::Lbl::Invlpg(self.core(), addr),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
     }
 

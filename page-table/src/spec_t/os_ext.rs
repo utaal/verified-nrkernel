@@ -246,7 +246,7 @@ pub mod code {
                 self.lbl() == (os_ext::Lbl::AcquireLock { core: self.core() }),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         // TODO: Requiring that we hold the lock here is a bit weird because in the
@@ -270,7 +270,7 @@ pub mod code {
                 self.lbl() == (os_ext::Lbl::ReleaseLock { core: self.core() }),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_init_shootdown(tracked &mut self, vaddr: usize)
@@ -280,7 +280,7 @@ pub mod code {
                 self.lbl() == (os_ext::Lbl::InitShootdown { core: self.core(), vaddr: vaddr as nat }),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_ack_shootdown(tracked &mut self)
@@ -290,7 +290,7 @@ pub mod code {
                 self.lbl() == (os_ext::Lbl::AckShootdown { core: self.core() }),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_allocate(tracked &mut self)
@@ -301,7 +301,7 @@ pub mod code {
                 self.lbl()->Allocate_core == self.core(),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
 
         pub proof fn prophesy_deallocate(tracked &mut self, reg: MemRegionExec)
@@ -312,7 +312,7 @@ pub mod code {
                 self.lbl() == (os_ext::Lbl::Deallocate { core: self.core(), reg: reg@ }),
                 old(self).prophesied_step(*self),
         {
-            admit();
+            admit(); // axiom
         }
     }
 

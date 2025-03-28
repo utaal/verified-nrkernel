@@ -2002,7 +2002,7 @@ proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core:
         crate::spec_t::mmu::translation::lemma_bit_indices_less_512(va);
     };
     admit();
-    // TODO: This broke because auto apparently can't select tuples as triggers anymore and now this
+    // TODO: This proof broke because auto apparently can't select tuples as triggers anymore and now this
     // thing has no valid triggers.
     //assert(forall|i,a,v:GPDE| #![auto] 0 <= i < path.len() && path[i] == (a, v)
     //    ==> !state.writer_sbuf().contains_fst(a));
