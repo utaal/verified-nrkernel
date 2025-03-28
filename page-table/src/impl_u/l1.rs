@@ -613,20 +613,20 @@ impl Directory {
         }
     }
 
-    //pub proof fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat, ne: bool)
-    //    requires
-    //         self.inv(ne),
-    //         j < self.entries.len(),
-    //    ensures
-    //        forall|va: nat| #![auto] self.interp_of_entry(j).map.contains_key(va) ==> self.interp().map.contains_key(va),
-    //        forall|va: nat, pte: PTE| #![auto] self.interp_of_entry(j).map.contains_pair(va, pte) ==> self.interp().map.contains_pair(va, pte),
-    //        forall|va: nat| #![auto]
-    //            between(va, self.entry_base(j), self.entry_base(j+1)) && !self.interp_of_entry(j).map.contains_key(va)
-    //            ==> !self.interp().map.contains_key(va),
-    //{
-    //    self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j, ne);
-    //}
-    //
+    pub proof fn lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(self, j: nat, ne: bool)
+        requires
+             self.inv(ne),
+             j < self.entries.len(),
+        ensures
+            forall|va: nat| #![auto] self.interp_of_entry(j).contains_key(va) ==> self.interp().contains_key(va),
+            forall|va: nat, pte: PTE| #![auto] self.interp_of_entry(j).contains_pair(va, pte) ==> self.interp().contains_pair(va, pte),
+            //forall|va: nat| #![auto]
+            //    self.entry_base(j) <= va < self.entry_base(j+1) && !self.interp_of_entry(j).contains_key(va)
+            //    ==> !self.interp().contains_key(va),
+    {
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_aux_contains_mapping(0, j, ne);
+    }
+
     ////// TODO restore spec(checked) when recommends_by is fixed
     ////pub open spec fn resolve(self, vaddr: nat) -> Result<(nat, PTE),()>
     ////    recommends

@@ -1362,31 +1362,50 @@ fn map_frame_aux(
                                 MemRegion { base: b, size: interp_now_outer.interp()[b].frame.size },
                             )
                         };
-                        let b_pte = interp_now_outer.interp()[b];
-                        assert(interp_now_outer.interp().contains_pair(b, b_pte));
+                        let ppte = interp_now_outer.interp()[b];
+                        assert(interp_now_outer.interp().contains_pair(b, ppte));
                         assert(entry_base <= vaddr < next_entry_base);
-                        assume(entry_base < vaddr + pte@.frame.size <= next_entry_base);
+                        assert(pte@.frame.size <= x86_arch_spec.entry_size(layer as nat));
+                        assert(entry_base < vaddr + pte@.frame.size <= next_entry_base) by (nonlinear_arith)
+                            requires
+                                x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < next_entry_base,
+                                aligned(vaddr as nat, pte@.frame.size as nat),
+                                idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                                //aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
+                                //aligned(vaddr as nat, pte.frame.size as nat),
+                                //x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
+                                //idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                        {
+                            // TODO: running verus with --expand-errors gives the "failed even
+                            // though all sub-assertions succeeded" message. So we must have all
+                            // the stuff we need to prove this, just have to find it and add it to
+                            // the requires clause.
+                            admit();
+                        }
                         interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains(false);
-                        let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, b_pte);
-                        interp_now_outer.lemma_interp_of_entry_between(i, b, b_pte, false);
+                        let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, ppte);
+                        interp_now_outer.lemma_interp_of_entry_between(i, b, ppte, false);
                         assert(i == idx) by (nonlinear_arith)
                             requires
                                 overlap(
                                     MemRegion { base: vaddr as nat, size: pte@.frame.size },
-                                    MemRegion { base: b, size: b_pte.frame.size },
+                                    MemRegion { base: b, size: ppte.frame.size },
                                 ),
                                 x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= b < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
-                                x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) < b + b_pte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                                x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) < b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
                                 x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
                                 x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) < vaddr + pte@.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
-                        {
-                        };
+                        {};
 
-                        assert(interp_now_inner.interp().contains_pair(b, b_pte));
+                        assert(interp_now_inner.interp().contains_pair(b, ppte));
                         assert(candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@));
                     }
                     if !candidate_mapping_overlaps_existing_vmem(interp_now_outer.interp(), vaddr as nat, pte@) {
-                        assume(forall|base, pte| interp_now_inner.interp().contains_pair(base, pte) ==> interp_now_outer.interp().contains_pair(base, pte));
+                        assert forall|base, pte| interp_now_inner.interp().contains_pair(base, pte)
+                                implies interp_now_outer.interp().contains_pair(base, pte)
+                        by {
+                            interp_now_outer.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(idx as nat, false);
+                        };
                         assert_by_contradiction!(!candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@), {
                             let b = choose|b: nat| #![auto] {
                                 &&& interp_now_inner.interp().contains_key(b)
@@ -1403,7 +1422,11 @@ fn map_frame_aux(
 
 
 
-                assume(aligned(entry_base as nat, x86_arch_spec.entry_size((layer + 1) as nat)));
+                assert(aligned(entry_base as nat, x86_arch_spec.entry_size((layer + 1) as nat))) by (nonlinear_arith)
+                    requires
+                        layer < 3,
+                        aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
+                        entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat);
                 assert(accepted_mapping(vaddr as nat, pte@, (layer + 1) as nat, entry_base as nat)) by {
                     assert(vaddr + pte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat)) by (nonlinear_arith)
                         requires
@@ -1474,22 +1497,26 @@ fn map_frame_aux(
                 }
             }
         } else {
-            //let ghost p = PTE {
-            //        frame: MemRegion { base: entry@->Page_addr as nat, size: x86_arch_spec.entry_size(layer as nat) },
-            //        flags: Flags {
-            //            is_writable:     entry@->Page_RW,
-            //            is_supervisor:   !entry@->Page_US,
-            //            disable_execute: entry@->Page_XD,
-            //        },
-            //    };
-            //assert(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat) == l1::NodeEntry::Page(p));
-            assume(candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@));
-            assert(candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
-            //assert(Err(interp_at(tok@, pt, layer as nat, ptr, base as nat)) === interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
+            assert(candidate_mapping_overlaps_existing_vmem(interp_at(tok@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)) by {
+                let interp_now = interp_at(tok@, pt, layer as nat, ptr, base as nat);
+                let interp_entry = interp_at_entry(tok@, pt, layer as nat, ptr, base as nat, idx as nat);
+                interp_now.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(idx as nat, false);
+                assert(interp_entry is Page);
+                let ghost ppte = interp_entry->Page_0;
+                assert(interp_entry.interp(entry_base as nat).contains_pair(entry_base as nat, ppte));
+                assert(overlap(
+                        MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                        MemRegion { base: entry_base as nat, size: ppte.frame.size },
+                ));
+                assert(interp_now.interp().contains_pair(entry_base as nat, ppte));
+            };
+            assert(candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
             Err(())
         }
     } else {
         if x86_arch_exec.entry_size(layer) == pte.frame.size {
+            let ghost root_pt = rebuild_root_pt(pt, set![]);
+
             proof {
                 assert_by_contradiction!(layer > 0, {
                     let iprime = choose|i: nat| 0 < i && i < X86_NUM_LAYERS && #[trigger] x86_arch_spec.entry_size(i) == pte.frame.size;
@@ -1509,6 +1536,40 @@ fn map_frame_aux(
                     lemma_aligned_addr_mask_facts(pte.frame.base);
                 };
             }
+
+            // Nothing is mapped here, so there are no overlapping mappings
+            assert(!candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, root_pt), vaddr as nat, pte@)) by {
+                assert_by_contradiction!(!candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@), {
+                    let interp_old = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
+                    let interp_entry_old = interp_at_entry(old(tok)@, pt, layer as nat, ptr, base as nat, idx as nat);
+                    let b = choose|b: nat| #![auto] {
+                        &&& interp_old.interp().contains_key(b)
+                        &&& overlap(
+                            MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                            MemRegion { base: b, size: interp_old.interp()[b].frame.size },
+                        )
+                    };
+                    let ppte = interp_old.interp()[b];
+                    assert(interp_old.interp().contains_pair(b, ppte));
+
+                    interp_old.lemma_interp_contains_implies_interp_of_entry_contains(false);
+                    let i = choose|i: nat| #![auto] i < interp_old.num_entries() && interp_old.interp_of_entry(i).contains_pair(b, ppte);
+                    interp_old.lemma_interp_of_entry_between(i, b, ppte, false);
+                    assert(i == idx) by (nonlinear_arith)
+                        requires
+                            overlap(
+                                MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                                MemRegion { base: b, size: ppte.frame.size },
+                            ),
+                            x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= b < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                            b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                            x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) == vaddr,
+                            vaddr + pte@.frame.size == x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                    {};
+                });
+            };
+
+
             let new_page_entry = PDE::new_page_entry(layer, pte);
             let ghost pwtok = tok@;
             // This is the token state we'll have after the write happened
@@ -1580,22 +1641,19 @@ fn map_frame_aux(
                     assert(pre_interp.interp().insert(vaddr, pte) == pre_interp.update(idx, l1::NodeEntry::Page(pte)).interp());
                     assert(post_interp.interp() === pre_interp.interp().insert(vaddr as nat, pte));
                 };
-            }
 
-            let ghost root_pt = rebuild_root_pt(pt, set![]);
-            proof {
+
                 assert(inv(old(tok)@, root_pt)) by {
                     assert(builder_pre(old(tok)@, pt, old(tok)@, pt, layer as nat, ptr, set![]));
                 };
                 assert(inv(tok_after_write, root_pt));
-                // TODO: Needs l1 lemmas as well (lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping, or a variant, need to show that mappings do not exist)
-                assume(!candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@));
-                assert(!candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, root_pt), vaddr as nat, pte@));
+
                 assert(inv(old(tok)@, root_pt));
                 assert(inv(tok_after_write, root_pt));
+
+                assert(interp_to_l0(tok_after_write, root_pt) == interp_to_l0(tok@, root_pt).insert(vaddr as nat, pte@));
             }
 
-            assert(interp_to_l0(tok_after_write, root_pt) == interp_to_l0(tok@, root_pt).insert(vaddr as nat, pte@));
             WrappedMapToken::write_change(Tracked(tok), ptr, idx, new_page_entry.entry, Ghost(pt.region), Ghost(root_pt));
 
             // posts
@@ -1616,18 +1674,9 @@ fn map_frame_aux(
                     <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok_with_empty, rebuild_root_pt_inner(new_dir_pt, set![])), vaddr as nat, pte@));
             assert(aligned(entry_base as nat, x86_arch_spec.entry_size((layer + 1) as nat))) by (nonlinear_arith)
                 requires
-                    base <= vaddr,
-                    vaddr + pte.frame.size <= x86_arch_spec.upper_vaddr(layer as nat, base as nat),
+                    layer < 3,
                     aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
-                    aligned(vaddr as nat, pte.frame.size as nat),
-                    x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
-                    entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
-                    idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-            {
-                admit();
-                //indexing::lemma_entry_base_from_index(base as nat, idx as nat, x86_arch_spec.entry_size(layer as nat));
-                //indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
-            };
+                    entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat);
             assert(accepted_mapping(vaddr as nat, pte@, (layer + 1) as nat, entry_base as nat)) by {
                 assert(vaddr + pte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat)) by (nonlinear_arith)
                     requires
