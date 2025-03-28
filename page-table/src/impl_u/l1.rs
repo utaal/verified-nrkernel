@@ -509,35 +509,35 @@ impl Directory {
     //        }
     //    }
     //}
-    //
-    //pub proof fn lemma_empty_implies_interp_aux_empty(self, i: nat, ne: bool)
-    //    requires
-    //         self.inv(ne),
-    //         self.empty(),
-    //    ensures
-    //        equal(self.interp_aux(i).map, Map::empty()),
-    //        equal(self.interp_aux(i).map.dom(), Set::empty()),
-    //    decreases self.arch.layers.len() - self.layer, self.num_entries() - i
-    //{
-    //    if i >= self.entries.len() {
-    //    } else {
-    //        let rem = self.interp_aux(i + 1);
-    //        let entry_i = self.interp_of_entry(i);
-    //        self.lemma_empty_implies_interp_aux_empty(i + 1, ne);
-    //        assert(rem.map.union_prefer_right(entry_i.map) =~= Map::empty());
-    //    }
-    //}
-    //
-    //proof fn lemma_empty_implies_interp_empty(self, ne: bool)
-    //    requires
-    //         self.inv(ne),
-    //         self.empty()
-    //    ensures
-    //        equal(self.interp().map, Map::empty()),
-    //        equal(self.interp().map.dom(), Set::empty())
-    //{
-    //    self.lemma_empty_implies_interp_aux_empty(0, ne);
-    //}
+
+    pub proof fn lemma_empty_implies_interp_aux_empty(self, i: nat, ne: bool)
+        requires
+             self.inv(ne),
+             self.empty(),
+        ensures
+            self.interp_aux(i) === Map::empty(),
+            self.interp_aux(i).dom() === Set::empty(),
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
+    {
+        if i >= self.entries.len() {
+        } else {
+            let rem = self.interp_aux(i + 1);
+            let entry_i = self.interp_of_entry(i);
+            self.lemma_empty_implies_interp_aux_empty(i + 1, ne);
+            assert(rem.union_prefer_right(entry_i) =~= Map::empty());
+        }
+    }
+
+    pub proof fn lemma_empty_implies_interp_empty(self, ne: bool)
+        requires
+             self.inv(ne),
+             self.empty()
+        ensures
+            self.interp() === Map::empty(),
+            self.interp().dom() === Set::empty()
+    {
+        self.lemma_empty_implies_interp_aux_empty(0, ne);
+    }
 
     //proof fn lemma_ranges_disjoint_interp_aux_interp_of_entry(self, ne: bool)
     //    requires
@@ -1236,7 +1236,7 @@ impl Directory {
                 assert(self.interp_aux(i) == self.interp_aux(i + 1).union_prefer_right(self.interp_of_entry(i)));
 
                 assert(self.interp_of_entry(i).insert(base, pte) == nself.interp_of_entry(i));
-                self.lemma_entries_equal_implies_interp_aux_equal(nself, i+1, ne);
+                self.lemma_entries_interp_equal_implies_interp_aux_equal(nself, i+1, ne);
             } else {
                 assert(i < j);
                 assert(self.directories_obey_invariant(ne));
@@ -1789,15 +1789,15 @@ impl Directory {
     //    }
     //}
 
-    proof fn lemma_entries_equal_implies_interp_aux_equal(self, other: Directory, i: nat, ne: bool)
+    proof fn lemma_entries_interp_equal_implies_interp_aux_equal(self, other: Directory, i: nat, ne: bool)
         requires
             self.inv(ne),
             other.inv(ne),
-            equal(self.arch, other.arch),
-            equal(self.layer, other.layer),
-            equal(self.base_vaddr, other.base_vaddr),
-            equal(self.num_entries(), other.num_entries()),
-            forall|j: int| i <= j && j < self.entries.len() ==> equal(self.entries.index(j), other.entries.index(j)),
+            self.arch == other.arch,
+            self.layer == other.layer,
+            self.base_vaddr == other.base_vaddr,
+            forall|j: nat| i <= j && j < self.entries.len()
+                ==> (#[trigger] self.entries[j as int]).interp(self.entry_base(j)) == other.entries[j as int].interp(self.entry_base(j)),
         ensures
             self.interp_aux(i) === other.interp_aux(i),
         decreases self.arch.layers.len() - self.layer, self.num_entries() - i
@@ -1809,10 +1809,51 @@ impl Directory {
             let rem2 = other.interp_aux(i + 1);
             let entry_i1 = self.interp_of_entry(i);
             let entry_i2 = other.interp_of_entry(i);
-            self.lemma_entries_equal_implies_interp_aux_equal(other, i + 1, ne);
+            self.lemma_entries_interp_equal_implies_interp_aux_equal(other, i + 1, ne);
             assert(rem1.union_prefer_right(entry_i1) =~= rem2.union_prefer_right(entry_i2));
         }
     }
+
+    pub proof fn lemma_entries_interp_equal_implies_interp_equal(self, other: Directory, ne: bool)
+        requires
+            self.inv(ne),
+            other.inv(ne),
+            self.arch == other.arch,
+            self.layer == other.layer,
+            self.base_vaddr == other.base_vaddr,
+            forall|j: nat| j < self.entries.len()
+                ==> (#[trigger] self.entries[j as int]).interp(self.entry_base(j))
+                            == other.entries[j as int].interp(self.entry_base(j)),
+        ensures
+            self.interp() === other.interp(),
+    {
+        self.lemma_entries_interp_equal_implies_interp_aux_equal(other, 0, ne);
+    }
+
+    //proof fn lemma_entries_equal_implies_interp_aux_equal(self, other: Directory, i: nat, ne: bool)
+    //    requires
+    //        self.inv(ne),
+    //        other.inv(ne),
+    //        equal(self.arch, other.arch),
+    //        equal(self.layer, other.layer),
+    //        equal(self.base_vaddr, other.base_vaddr),
+    //        equal(self.num_entries(), other.num_entries()),
+    //        forall|j: int| i <= j && j < self.entries.len() ==> equal(self.entries.index(j), other.entries.index(j)),
+    //    ensures
+    //        self.interp_aux(i) === other.interp_aux(i),
+    //    decreases self.arch.layers.len() - self.layer, self.num_entries() - i
+    //{
+    //    broadcast use lemma_inv_true_implies_inv_false;
+    //    if i >= self.entries.len() {
+    //    } else {
+    //        let rem1 = self.interp_aux(i + 1);
+    //        let rem2 = other.interp_aux(i + 1);
+    //        let entry_i1 = self.interp_of_entry(i);
+    //        let entry_i2 = other.interp_of_entry(i);
+    //        self.lemma_entries_equal_implies_interp_aux_equal(other, i + 1, ne);
+    //        assert(rem1.union_prefer_right(entry_i1) =~= rem2.union_prefer_right(entry_i2));
+    //    }
+    //}
 
     //proof fn lemma_remove_from_interp_of_entry_implies_remove_from_interp_aux(self, j: nat, i: nat, vaddr: nat, n: NodeEntry, ne: bool)
     //    requires
