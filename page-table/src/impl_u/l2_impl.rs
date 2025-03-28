@@ -1140,6 +1140,7 @@ fn map_frame_aux(
                 // If error, unchanged
                 &&& tok@ === old(tok)@
                 &&& candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@)
+                &&& candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)
             },
         },
         // Refinement of l1
@@ -1748,8 +1749,13 @@ fn map_frame_aux(
                 },
                 Err(e) => {
                     proof {
-                        admit();
-                        indexing::lemma_index_from_base_and_addr(entry_base as nat, vaddr as nat, x86_arch_spec.entry_size((layer + 1) as nat), X86_NUM_ENTRIES as nat);
+                        lemma_interp_at_aux_facts(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat, seq![]);
+                        let interp_new_dir = interp_at(tok_with_empty, new_dir_pt, layer as nat + 1, new_dir_addr, entry_base as nat);
+                        let interp_outer = interp_at(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat);
+                        assert(candidate_mapping_overlaps_existing_vmem(interp_new_dir.interp(), vaddr as nat, pte@));
+                        interp_new_dir.lemma_empty_implies_interp_empty(false);
+                        assert(interp_new_dir.interp() =~= map![]);
+                        interp_outer.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(idx as nat, false);
                         assert(false); // We always successfully insert into an empty directory
                     }
                     Err(e)
@@ -2018,6 +2024,7 @@ fn insert_empty_directory(
            &&& entry_at_spec(tok@, pt_with_empty, layer as nat, ptr, idx as nat)@ is Directory
            &&& entry_at_spec(tok@, pt_with_empty, layer as nat, ptr, idx as nat)@->Directory_addr == new_dir_region.base
            &&& new_dir_interp == interp.new_empty_dir(idx as nat)
+           &&& new_dir_interp.empty()
            &&& new_dir_interp.inv(true)
            &&& pt_with_empty.region == pt.region
            &&& pt_with_empty.entries == pt.entries.update(idx as int, Some(new_dir_pt))
