@@ -115,12 +115,12 @@ pub open spec fn candidate_mapping_overlaps_existing_vmem(
     pte: PTE,
 ) -> bool {
     exists|b: nat| #![auto] {
-            &&& mappings.dom().contains(b)
-            &&& overlap(
-                MemRegion { base: base, size: pte.frame.size },
-                MemRegion { base: b, size: mappings[b].frame.size },
-            )
-        }
+        &&& mappings.contains_key(b)
+        &&& overlap(
+            MemRegion { base: base, size: pte.frame.size },
+            MemRegion { base: b, size: mappings[b].frame.size },
+        )
+    }
 }
 
 pub open spec fn candidate_mapping_overlaps_existing_pmem(mappings: Map<nat, PTE>, pte: PTE) -> bool {

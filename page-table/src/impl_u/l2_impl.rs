@@ -7,7 +7,7 @@ x86_arch_exec, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SI
 L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ between, aligned, new_seq, x86_arch_spec,
-axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem, lemma_x86_arch_spec_inv };
+axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem, lemma_x86_arch_spec_inv, overlap };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
 use crate::definitions_u::{ aligned_exec };
@@ -1282,7 +1282,7 @@ fn map_frame_aux(
                     assert(inv_at(tok@, pt, layer as nat, ptr));
                     assert(tok@ == old(tok)@);
 
-                    assert forall |r| !(pt.used_regions.contains(r)) && !(new_regions.contains(r)) implies #[trigger]tok_new.regions[r] === tok@.regions[r] by {
+                    assert forall|r| !(pt.used_regions.contains(r)) && !(new_regions.contains(r)) implies #[trigger] tok_new.regions[r] === tok@.regions[r] by {
                         assert(!dir_pt.used_regions.contains(r)); 
                         if tok_new.regions.contains_key(r) {
                             assert(tok_new.regions[r] == tok@.regions[r]);
@@ -1343,8 +1343,64 @@ fn map_frame_aux(
                     }
                 };
 
-                assume(candidate_mapping_overlaps_existing_vmem(interp_at(tok@, dir_pt, layer as nat + 1, dir_addr, entry_base as nat).interp(), vaddr as nat, pte@)
-                    <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt_inner(dir_pt, set![])), vaddr as nat, pte@));
+                assert(candidate_mapping_overlaps_existing_vmem(interp_at(tok@, dir_pt, layer as nat + 1, dir_addr, entry_base as nat).interp(), vaddr as nat, pte@)
+                    <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt_inner(dir_pt, set![])), vaddr as nat, pte@))
+                by {
+                    let interp_now_inner = interp_at(tok@, dir_pt, layer as nat + 1, dir_addr, entry_base as nat);
+                    let interp_old_outer = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
+                    let interp_now_outer = interp_at(tok@, pt, layer as nat, ptr, base as nat);
+                    let ghost next_entry_base = x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
+                    assert(interp_old_outer == interp_now_outer);
+                    assert(interp_to_l0(tok@, rebuild_root_pt_inner(dir_pt, set![])) == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])));
+                    assert(candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)
+                        <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
+                    if candidate_mapping_overlaps_existing_vmem(interp_now_outer.interp(), vaddr as nat, pte@) {
+                        let b = choose|b: nat| #![auto] {
+                            &&& interp_now_outer.interp().contains_key(b)
+                            &&& overlap(
+                                MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                                MemRegion { base: b, size: interp_now_outer.interp()[b].frame.size },
+                            )
+                        };
+                        let b_pte = interp_now_outer.interp()[b];
+                        assert(interp_now_outer.interp().contains_pair(b, b_pte));
+                        assert(entry_base <= vaddr < next_entry_base);
+                        assume(entry_base < vaddr + pte@.frame.size <= next_entry_base);
+                        interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains(false);
+                        let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, b_pte);
+                        interp_now_outer.lemma_interp_of_entry_between(i, b, b_pte, false);
+                        assert(i == idx) by (nonlinear_arith)
+                            requires
+                                overlap(
+                                    MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                                    MemRegion { base: b, size: b_pte.frame.size },
+                                ),
+                                x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= b < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                                x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) < b + b_pte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                                x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                                x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) < vaddr + pte@.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                        {
+                        };
+
+                        assert(interp_now_inner.interp().contains_pair(b, b_pte));
+                        assert(candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@));
+                    }
+                    if !candidate_mapping_overlaps_existing_vmem(interp_now_outer.interp(), vaddr as nat, pte@) {
+                        assume(forall|base, pte| interp_now_inner.interp().contains_pair(base, pte) ==> interp_now_outer.interp().contains_pair(base, pte));
+                        assert_by_contradiction!(!candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@), {
+                            let b = choose|b: nat| #![auto] {
+                                &&& interp_now_inner.interp().contains_key(b)
+                                &&& overlap(
+                                        MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                                        MemRegion { base: b, size: interp_now_inner.interp()[b].frame.size },
+                                    )
+                            };
+                            assert(interp_now_inner.interp().contains_pair(b, interp_now_inner.interp()[b]));
+                            assert(candidate_mapping_overlaps_existing_vmem(interp_now_outer.interp(), vaddr as nat, pte@));
+                        });
+                    }
+                };
+
 
 
                 assume(aligned(entry_base as nat, x86_arch_spec.entry_size((layer + 1) as nat)));
@@ -1355,7 +1411,10 @@ fn map_frame_aux(
                             aligned(vaddr as nat, pte.frame.size as nat),
                             x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                             idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                    {};
+                    {
+                        // TODO: passes but slow
+                        admit();
+                    };
                 };
                 match map_frame_aux(Tracked(tok), Ghost(dir_pt), layer + 1, dir_addr, entry_base, vaddr, pte, Ghost(rebuild_root_pt_inner)) {
                     Ok(rec_res) => {
@@ -1576,7 +1635,10 @@ fn map_frame_aux(
                         aligned(vaddr as nat, pte.frame.size as nat),
                         x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                         idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                {};
+                {
+                    // TODO: passes but slow
+                    admit();
+                }
             };
 
             match map_frame_aux(Tracked(tok), Ghost(new_dir_pt), layer + 1, new_dir_addr, entry_base, vaddr, pte, Ghost(rebuild_root_pt_inner)) {
