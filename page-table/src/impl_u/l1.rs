@@ -337,8 +337,6 @@ impl Directory {
         match self.entries[i as int] {
             NodeEntry::Page(p)      => {},
             NodeEntry::Directory(d) => {
-                assert(d.entry_base(0) == self.entry_base(i)) by (compute);
-                assume(d.upper_vaddr() == self.next_entry_base(i));
                 d.lemma_interp_aux_between(0, va, ne);
             },
             NodeEntry::Invalid      => {},

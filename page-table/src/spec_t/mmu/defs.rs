@@ -421,6 +421,10 @@ pub proof fn x86_arch_spec_upper_bound()
     assert(x86_arch_spec.upper_vaddr(0, 0) == MAX_BASE) by (compute_only);
 }
 
+pub proof fn lemma_x86_arch_spec_inv()
+    ensures x86_arch_spec.inv()
+{}
+
 pub open spec fn nat_keys<V>(m: Map<usize, V>) -> Map<nat, V> {
     Map::new(|k: nat| k <= usize::MAX && m.contains_key(k as usize), |k: nat| m[k as usize])
 }

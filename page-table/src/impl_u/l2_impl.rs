@@ -7,7 +7,7 @@ x86_arch_exec, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR, MAX_PHYADDR_WIDTH, L1_ENTRY_SI
 L3_ENTRY_SIZE, X86_NUM_LAYERS, X86_NUM_ENTRIES, bit, bitmask_inc };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ between, aligned, new_seq, x86_arch_spec,
-axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem };
+axiom_max_phyaddr_width_facts, MAX_BASE, candidate_mapping_overlaps_existing_vmem, lemma_x86_arch_spec_inv };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
 use crate::definitions_u::{ aligned_exec };
@@ -1165,8 +1165,8 @@ fn map_frame_aux(
         broadcast use l1::lemma_inv_true_implies_inv_false;
         broadcast use lemma_inv_implies_interp_inv;
         lemma_interp_at_facts(tok@, pt, layer as nat, ptr, base as nat);
+        lemma_x86_arch_spec_inv();
     }
-    assume(x86_arch_spec.inv());
     let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
     proof {
         assert({
