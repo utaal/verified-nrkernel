@@ -86,6 +86,24 @@ impl WrappedTokenView {
         admit();
         
         // TODO(andrea): this is a sketch
+        // MB: Some lemmas that may be useful:
+        // * spec_t::mmu::rl2::lemma_pt_walk_result_vbase_equal
+        // * spec_t::mmu::rl2::lemma_pt_walk_with_indexing_bits_match
+        // * spec_t::mmu::rl2::lemma_indexing_bits_match_len_decrease
+        // * spec_t::mmu::rl2::lemma_pt_walk_result_vaddr_indexing_bits_match
+        // * spec_t::mmu::rl2::lemma_bits_align_to_usize
+        // * spec_t::mmu::pt_mem::lemma_pt_walk
+        // * spec_t::mmu::pt_mem::lemma_pt_walk_agrees_in_frame
+        //
+        // These may help with going from PT::interp(..) to PT::interp(..).interp()
+        // (But probably only necessary with the alternative strategy)
+        // * impl_u::l1::lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping
+        // * impl_u::l1::lemma_interp_aux_contains_implies_interp_of_entry_contains
+        // * impl_u::l1::lemma_interp_contains_implies_interp_of_entry_contains
+        //
+        // For the alternative strategy I mentioned on Zulip:
+        // (I think your current strategy is probably easier if it works though)
+        // * lemma_iter_walk_equals_pt_walk
 
         reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
         reveal_with_fuel(PT::interp_at, 10);
