@@ -1,5 +1,6 @@
 use vstd::prelude::*;
 
+use crate::spec_t::mmu::WalkResult;
 use crate::spec_t::os;
 use crate::spec_t::os_invariant;
 use crate::spec_t::mmu::{ self };
@@ -14,6 +15,9 @@ use crate::spec_t::os_code_vc::Token;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, unchanged_state_during_concurrent_trs, lemma_concurrent_trs_no_lock };
 use crate::impl_u::l2_impl::{ PT, PTDir };
+
+use super::l1;
+use super::l1::Directory;
 
 verus! {
 
@@ -79,9 +83,73 @@ impl WrappedTokenView {
         requires PT::inv(self, pt)
         ensures PT::interp(self, pt).interp() == crate::spec_t::mmu::defs::nat_keys(self.interp())
     {
+        admit();
+        
+        // TODO(andrea): this is a sketch
+
         reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
-        assume(PT::interp(self, pt).interp() =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
-        //assert(usize_keys(PT::interp(self, pt).interp().map) =~= self.pt_mem@);
+        reveal_with_fuel(PT::interp_at, 10);
+        reveal_with_fuel(PT::interp_at_aux, 10);
+        reveal_with_fuel(PT::interp_at_entry, 10);
+        reveal_with_fuel(PT::inv_at, 10);
+        
+        let root_dir = crate::impl_u::l1::Directory {
+            entries: PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]),
+            layer: 0,
+            base_vaddr: 0,
+            arch: mmu::defs::x86_arch_spec,
+        };
+
+        assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0) == root_dir);
+        
+        assert(PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]) == 
+            {
+                let entry = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, 0 /* init.len() */);
+                PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![].push(entry))
+            });
+
+        assert forall|k: nat| k <= usize::MAX implies (
+            self.pt_mem@.contains_key(k as usize) == root_dir.interp().contains_key(k)) by {
+            
+            let walk = self.pt_mem.pt_walk(k as usize);
+            assert(walk.complete);
+            if self.pt_mem@.contains_key(k as usize) {
+                assert(walk.path.last().1 is Page);
+                if walk.path.len() == 1 {
+                    assert(false);
+                } else if walk.path.len() == 2 {
+                    let l1_pt_entry = PT::entry_at_spec(self, pt, 0, self.pt_mem.pml4, walk.path[0].0 as nat);
+                    assert(walk.path[0].1 == l1_pt_entry@);
+                    assert(l1_pt_entry@ is Directory);
+                    let l1_pt = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, walk.path[0].0 as nat);
+                    assert(PT::inv_at(self, pt, 0, self.pt_mem.pml4));
+                    assert(l1_pt is Directory);
+                    let l2_pt_entry = PT::entry_at_spec(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, self.pt_mem.pml4, walk.path[1].0 as nat);
+                    assert(walk.path[1].1 == l2_pt_entry@);
+                    let l2_pt = PT::interp_at_entry(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, self.pt_mem.pml4, l1_pt_entry@->Directory_addr as nat, walk.path[1].0 as nat);
+                    assert(root_dir.interp().contains_key(k));
+                } else if walk.path.len() == 3 {
+                    assert(root_dir.interp().contains_key(k));
+                } else if walk.path.len() == 4 {
+                    assert(root_dir.interp().contains_key(k));
+                }
+                assert(self.pt_mem@.contains_key(k as usize) == root_dir.interp().contains_key(k));
+            } else {
+                assert(!root_dir.interp().contains_key(k));
+            }
+
+            // WalkResult::Valid { vbase, pte } => {}
+            // WalkResult::Invalid { vaddr } => {}
+        }
+
+        assert forall|k: nat| k <= usize::MAX && #[trigger] self.pt_mem@.contains_key(k as usize) implies PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp().contains_pair(k, self.pt_mem@[k as usize]) by {
+            admit();
+        }
+
+        assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp() == 
+            Map::new(|k: nat| k <= usize::MAX && self.pt_mem@.contains_key(k as usize), |k: nat| self.pt_mem@[k as usize]));
+
+        assert(PT::interp(self, pt).interp() =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
     }
 }
 
