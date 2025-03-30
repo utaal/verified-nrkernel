@@ -83,8 +83,6 @@ impl WrappedTokenView {
         requires PT::inv(self, pt)
         ensures PT::interp(self, pt).interp() == crate::spec_t::mmu::defs::nat_keys(self.interp())
     {
-        admit();
-        
         // TODO(andrea): this is a sketch
         // MB: Some lemmas that may be useful:
         // * spec_t::mmu::rl2::lemma_pt_walk_result_vbase_equal
@@ -106,10 +104,10 @@ impl WrappedTokenView {
         // * lemma_iter_walk_equals_pt_walk
 
         reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
-        reveal_with_fuel(PT::interp_at, 10);
-        reveal_with_fuel(PT::interp_at_aux, 10);
-        reveal_with_fuel(PT::interp_at_entry, 10);
-        reveal_with_fuel(PT::inv_at, 10);
+        reveal_with_fuel(PT::interp_at, 5);
+        reveal_with_fuel(PT::interp_at_aux, 5);
+        reveal_with_fuel(PT::interp_at_entry, 5);
+        reveal_with_fuel(PT::inv_at, 5);
         
         let root_dir = crate::impl_u::l1::Directory {
             entries: PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]),
@@ -126,41 +124,74 @@ impl WrappedTokenView {
                 PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![].push(entry))
             });
 
-        assert forall|k: nat| k <= usize::MAX implies (
-            self.pt_mem@.contains_key(k as usize) == root_dir.interp().contains_key(k)) by {
-            
-            let walk = self.pt_mem.pt_walk(k as usize);
-            assert(walk.complete);
-            if self.pt_mem@.contains_key(k as usize) {
-                assert(walk.path.last().1 is Page);
-                if walk.path.len() == 1 {
-                    assert(false);
-                } else if walk.path.len() == 2 {
-                    let l1_pt_entry = PT::entry_at_spec(self, pt, 0, self.pt_mem.pml4, walk.path[0].0 as nat);
-                    assert(walk.path[0].1 == l1_pt_entry@);
-                    assert(l1_pt_entry@ is Directory);
-                    let l1_pt = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, walk.path[0].0 as nat);
-                    assert(PT::inv_at(self, pt, 0, self.pt_mem.pml4));
-                    assert(l1_pt is Directory);
-                    let l2_pt_entry = PT::entry_at_spec(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, self.pt_mem.pml4, walk.path[1].0 as nat);
-                    assert(walk.path[1].1 == l2_pt_entry@);
-                    let l2_pt = PT::interp_at_entry(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, self.pt_mem.pml4, l1_pt_entry@->Directory_addr as nat, walk.path[1].0 as nat);
-                    assert(root_dir.interp().contains_key(k));
-                } else if walk.path.len() == 3 {
-                    assert(root_dir.interp().contains_key(k));
-                } else if walk.path.len() == 4 {
-                    assert(root_dir.interp().contains_key(k));
-                }
-                assert(self.pt_mem@.contains_key(k as usize) == root_dir.interp().contains_key(k));
-            } else {
-                assert(!root_dir.interp().contains_key(k));
-            }
+        assert(root_dir.interp().dom() =~= self.pt_mem@.dom().map(|k| k as nat)) by {
+            assert forall|k: nat| ({
+                &&& root_dir.interp().dom().contains(k) == self.pt_mem@.dom().map(|k| k as nat).contains(k)
+                &&& root_dir.interp().contains_key(k) ==> k <= usize::MAX
+            }) by {
+                
+                assert(root_dir.interp().contains_key(k as nat) == root_dir.interp().dom().contains(k as nat));
+                
+                if k <= usize::MAX {
+                
+                    let walk = self.pt_mem.pt_walk(k as usize);
+                    assert(walk.complete);
+                    let mem = self.pt_mem;
+                    mmu::pt_mem::PTMem::lemma_pt_walk(mem, k as usize);
+                    mmu::rl2::lemma_pt_walk_result_vbase_equal(mem, k as usize);
+                    if mem@.contains_key(k as usize) {
+                        assert(walk.path.last().1 is Page);
+                        if walk.path.len() == 1 {
+                            assert(false);
+                        } else if walk.path.len() == 2 {
+                            let l1_pt_entry = PT::entry_at_spec(self, pt, 0, mem.pml4, walk.path[0].0 as nat);
+                            assert(
+                                walk.path[0].1 ==
+                                (mmu::translation::PDE {
+                                    entry: mem.read(mem.pt_walk(k as usize).path[0].0),
+                                    layer: Ghost(0),
+                                }@)
+                            );
+                            // TODO(andrea) next
+                            assume(mem.read(mem.pt_walk(k as usize).path[0].0) == self.read(walk.path[0].0, pt.region));
+                            assert(l1_pt_entry == 
+                                (mmu::translation::PDE {
+                                    entry: self.read(walk.path[0].0, pt.region),
+                                    layer: Ghost(0),
+                                })
+                            );
+                            assert(walk.path[0].1 == l1_pt_entry@);
+                            assert(l1_pt_entry@ is Directory);
+                            let l1_pt = PT::interp_at_entry(self, pt, 0, mem.pml4, 0, walk.path[0].0 as nat);
+                            assert(PT::inv_at(self, pt, 0, mem.pml4));
+                            assert(l1_pt is Directory);
+                            admit();
+                            let l2_pt_entry = PT::entry_at_spec(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, mem.pml4, walk.path[1].0 as nat);
+                            assert(walk.path[1].1 == l2_pt_entry@);
+                            let l2_pt = PT::interp_at_entry(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, mem.pml4, l1_pt_entry@->Directory_addr as nat, walk.path[1].0 as nat);
+                            assume(root_dir.interp().contains_key(k));
+                        } else if walk.path.len() == 3 {
+                            assume(root_dir.interp().contains_key(k));
+                        } else if walk.path.len() == 4 {
+                            assume(root_dir.interp().contains_key(k));
+                        }
+                        assert(mem@.contains_key(k as usize) == root_dir.interp().contains_key(k));
+                    } else {
+                        assume(!root_dir.interp().contains_key(k));
+                    }
 
-            // WalkResult::Valid { vbase, pte } => {}
-            // WalkResult::Invalid { vaddr } => {}
+                } else {
+
+                    assume(!root_dir.interp().contains_key(k));
+
+                }
+
+                // WalkResult::Valid { vbase, pte } => {}
+                // WalkResult::Invalid { vaddr } => {}
+            }
         }
 
-        assert forall|k: nat| k <= usize::MAX && #[trigger] self.pt_mem@.contains_key(k as usize) implies PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp().contains_pair(k, self.pt_mem@[k as usize]) by {
+        assert forall|k: nat| k <= usize::MAX && #[trigger] self.pt_mem@.contains_key(k as usize) implies root_dir.interp().contains_pair(k, self.pt_mem@[k as usize]) by {
             admit();
         }
 

@@ -2169,7 +2169,7 @@ proof fn lemma_iter_walk_result_vbase_equal_aux2(mem: PTMem, vaddr: usize)
     broadcast use lemma_bits_align_to_usize;
 }
 
-proof fn lemma_pt_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
+pub proof fn lemma_pt_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
     ensures
         mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).path     == mem.pt_walk(vaddr).path,
         mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).result() == mem.pt_walk(vaddr).result(),
