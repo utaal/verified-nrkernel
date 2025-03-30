@@ -139,14 +139,14 @@ impl Directory {
             ==> (#[trigger] self.entries.index(i as int)->Directory_0.arch) == self.arch
     }
 
-    pub open spec fn directories_are_nonempty(&self) -> bool
-        recommends
-            self.well_formed(),
-            self.directories_are_in_next_layer(),
-            self.directories_match_arch(),
+    pub open spec fn no_empty_directories(&self) -> bool
+        decreases self
     {
-        forall|i: nat| i < self.entries.len() && self.entries.index(i as int) is Directory
-            ==> !(#[trigger] self.entries.index(i as int)->Directory_0.empty())
+        forall|i: nat| i < self.entries.len() ==>
+            (#[trigger] self.entries[i as int] matches NodeEntry::Directory(d) ==> {
+                &&& !d.empty()
+                &&& d.no_empty_directories()
+            })
     }
 
     pub open spec(checked) fn frames_aligned(&self) -> bool
@@ -1318,34 +1318,33 @@ impl Directory {
     //    self.lemma_insert_interp_of_entry_implies_insert_interp_aux(0, j, base, n, pte);
     //}
 
-    //proof fn lemma_nonempty_implies_exists_interp_dom_contains(self)
-    //    requires
-    //        self.inv(),
-    //        !self.empty()
-    //    ensures
-    //        exists|b: nat| self.interp().map.contains_key(b)
-    //    decreases self.arch.layers.len() - self.layer
-    //{
-    //    broadcast use group_ambient;
-    //    ambient_lemmas2();
-    //
-    //    assert(exists|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Invalid));
-    //    let i = choose|i: nat| i < self.num_entries() && !(self.entries.index(i as int) is Invalid);
-    //    assert(i < self.num_entries());
-    //    assert(!(self.entries.index(i as int) is Invalid));
-    //    self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(i, true);
-    //    match self.entries.index(i as int) {
-    //        NodeEntry::Page(p)      => {
-    //            assert(self.interp().map.contains_key(self.entry_base(i)));
-    //        },
-    //        NodeEntry::Directory(d) => {
-    //            d.lemma_nonempty_implies_exists_interp_dom_contains();
-    //            let b = choose|b: nat| d.interp().map.contains_key(b);
-    //            assert(self.interp().map.contains_key(b));
-    //        },
-    //        NodeEntry::Invalid      => (),
-    //    }
-    //}
+    pub proof fn lemma_nonempty_implies_interp_contains(self)
+        requires
+            self.inv(),
+            self.no_empty_directories(),
+            !self.empty(),
+        ensures
+            exists|b: nat, pte: PTE|
+                self.interp().contains_pair(b, pte)
+                && self.arch.contains_entry_size_at_index_atleast(pte.frame.size, self.layer)
+        decreases self.arch.layers.len() - self.layer
+    {
+        let i = choose|i: nat| i < self.num_entries() && self.entries[i as int] !is Invalid;
+        self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(i);
+        match self.entries[i as int] {
+            NodeEntry::Page(pte) => {
+                assert(self.interp().contains_pair(self.entry_base(i), pte));
+            },
+            NodeEntry::Directory(d) => {
+                d.lemma_nonempty_implies_interp_contains();
+                let (b, pte) = choose|b: nat, pte: PTE|
+                    d.interp().contains_pair(b, pte)
+                    && d.arch.contains_entry_size_at_index_atleast(pte.frame.size, d.layer);
+                assert(self.interp().contains_pair(b, pte));
+            },
+            NodeEntry::Invalid => {},
+        }
+    }
 
     //pub proof fn lemma_map_frame_structure_assertions(self, base: nat, pte: PTE, idx: nat)
     //    requires
@@ -1459,7 +1458,7 @@ impl Directory {
     //            assert(d.inv());
     //            if self.entry_size() == pte.frame.size {
     //                assert(self.map_frame(base, pte).is_Err());
-    //                d.lemma_nonempty_implies_exists_interp_dom_contains();
+    //                d.lemma_nonempty_implies_interp_contains();
     //                let b = choose|b: nat| d.interp().map.contains_key(b);
     //                assert(self.interp().map.contains_key(b));
     //                self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(entry, true);

@@ -841,61 +841,6 @@ broadcast proof fn lemma_inv_implies_interp_inv(tok: WrappedTokenView, pt: PTDir
     assert(interp.directories_obey_invariant());
 }
 
-//proof fn lemma_interp_at_entry_equal_implies_interp_equal(
-//    tok1: WrappedTokenView,
-//    pt1: PTDir,
-//    tok2: WrappedTokenView,
-//    pt2: PTDir,
-//    layer: nat,
-//    ptr: usize,
-//    base: nat,
-//)
-//    requires
-//        //idx < X86_NUM_ENTRIES,
-//        pt2.region == pt1.region,
-//        //pt2.entries[idx as int] == pt1.entries[idx as int],
-//        inv_at(tok1, pt1, layer, ptr),
-//        inv_at(tok2, pt2, layer, ptr),
-//        forall|idx: nat| idx < X86_NUM_ENTRIES ==>
-//            interp_at_entry(tok1, pt1, layer, ptr, base, idx)
-//                == interp_at_entry(tok2, pt2, layer, ptr, base, idx),
-//        forall|r: MemRegion| pt1.used_regions.contains(r) ==> #[trigger] tok1.regions[r] == tok2.regions[r],
-//        forall|r: MemRegion| pt2.used_regions.contains(r) ==> #[trigger] tok1.regions[r] == tok2.regions[r],
-//    ensures
-//        interp_at(tok1, pt1, layer, ptr, base) == interp_at(tok2, pt2, layer, ptr, base),
-//{
-//}
-
-//proof fn lemma_interp_at_entry_insert_implies_interp_insert(
-//    tok1: WrappedTokenView,
-//    pt1: PTDir,
-//    tok2: WrappedTokenView,
-//    pt2: PTDir,
-//    layer: nat,
-//    ptr: usize,
-//    base: nat,
-//    idx: nat,
-//    vaddr: nat,
-//    pte: PTE,
-//)
-//    requires
-//        idx < X86_NUM_ENTRIES,
-//        pt2.region == pt1.region,
-//        //pt2.entries[idx as int] == pt1.entries[idx as int],
-//        inv_at(tok1, pt1, layer, ptr),
-//        inv_at(tok2, pt2, layer, ptr),
-//        interp_at_entry(tok2, pt2, layer, ptr, base, idx).interp().map
-//            == interp_at_entry(tok1, pt1, layer, ptr, base, idx).interp().map.insert(vaddr, pte),
-//        forall|idxp: nat| idxp < X86_NUM_ENTRIES && idxp != idx ==>
-//            interp_at_entry(tok1, pt1, layer, ptr, base, idxp)
-//                == interp_at_entry(tok2, pt2, layer, ptr, base, idxp),
-//        forall|r: MemRegion| pt1.used_regions.contains(r) ==> #[trigger] tok1.regions[r] == tok2.regions[r],
-//        forall|r: MemRegion| pt2.used_regions.contains(r) ==> #[trigger] tok1.regions[r] == tok2.regions[r],
-//    ensures
-//        interp_at(tok1, pt1, layer, ptr, base) == interp_at(tok2, pt2, layer, ptr, base),
-//{
-//}
-
 /// The token has changed but the relevant views are unchanged.
 proof fn lemma_no_empty_directories_with_changed_tok(tok1: WrappedTokenView, pt1: PTDir, tok2: WrappedTokenView, pt2: PTDir, layer: nat, ptr: usize, base: nat)
     requires
@@ -1065,22 +1010,22 @@ broadcast proof fn lemma_interp_at_entry_changed_tok(tok1: WrappedTokenView, pt1
     }
 }
 
-pub proof fn lemma_interp_at_facts(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat)
+pub proof fn lemma_interp_at_facts(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
     requires
         inv_at(tok, pt, layer, ptr),
-        //interp_at(tok, pt, layer, ptr, base_vaddr).inv(ne),
+        //interp_at(tok, pt, layer, ptr, base).inv(ne),
     ensures
-        interp_at(tok, pt, layer, ptr, base_vaddr).base_vaddr     == base_vaddr,
-        interp_at(tok, pt, layer, ptr, base_vaddr).upper_vaddr()  == x86_arch_spec.upper_vaddr(layer, base_vaddr),
-        interp_at(tok, pt, layer, ptr, base_vaddr).entries.len()  == X86_NUM_ENTRIES,
-        //interp_at(tok, pt, layer, ptr, base_vaddr).interp().lower == base_vaddr,
-        //interp_at(tok, pt, layer, ptr, base_vaddr).interp().upper == x86_arch_spec.upper_vaddr(layer, base_vaddr),
-        ({ let res = interp_at(tok, pt, layer, ptr, base_vaddr);
-           forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] interp_at_entry(tok, pt, layer, ptr, base_vaddr, j)
+        interp_at(tok, pt, layer, ptr, base).base_vaddr     == base,
+        interp_at(tok, pt, layer, ptr, base).upper_vaddr()  == x86_arch_spec.upper_vaddr(layer, base),
+        interp_at(tok, pt, layer, ptr, base).entries.len()  == X86_NUM_ENTRIES,
+        //interp_at(tok, pt, layer, ptr, base).interp().lower == base,
+        //interp_at(tok, pt, layer, ptr, base).interp().upper == x86_arch_spec.upper_vaddr(layer, base),
+        ({ let res = interp_at(tok, pt, layer, ptr, base);
+           forall|j: nat| j < res.entries.len() ==> res.entries[j as int] === #[trigger] interp_at_entry(tok, pt, layer, ptr, base, j)
         }),
 {
-    lemma_interp_at_aux_facts(tok, pt, layer, ptr, base_vaddr, seq![]);
-    let res = interp_at(tok, pt, layer, ptr, base_vaddr);
+    lemma_interp_at_aux_facts(tok, pt, layer, ptr, base, seq![]);
+    let res = interp_at(tok, pt, layer, ptr, base);
     //assert(res.pages_match_entry_size());
     //assert(res.directories_are_in_next_layer());
     //assert(res.directories_match_arch());
@@ -1090,33 +1035,57 @@ pub proof fn lemma_interp_at_facts(tok: WrappedTokenView, pt: PTDir, layer: nat,
     //res.lemma_inv_implies_interp_inv(ne);
 }
 
-proof fn lemma_interp_at_aux_facts(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base_vaddr: nat, init: Seq<l1::NodeEntry>)
+proof fn lemma_interp_at_aux_facts(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat, init: Seq<l1::NodeEntry>)
     requires inv_at(tok, pt, layer, ptr),
     ensures
-        interp_at_aux(tok, pt, layer, ptr, base_vaddr, init).len() == if init.len() > X86_NUM_ENTRIES { init.len() } else { X86_NUM_ENTRIES as nat },
-        forall|j: nat| j < init.len() ==> #[trigger] interp_at_aux(tok, pt, layer, ptr, base_vaddr, init)[j as int] == init[j as int],
-        ({ let res = interp_at_aux(tok, pt, layer, ptr, base_vaddr, init);
+        interp_at_aux(tok, pt, layer, ptr, base, init).len() == if init.len() > X86_NUM_ENTRIES { init.len() } else { X86_NUM_ENTRIES as nat },
+        forall|j: nat| j < init.len() ==> #[trigger] interp_at_aux(tok, pt, layer, ptr, base, init)[j as int] == init[j as int],
+        ({ let res = interp_at_aux(tok, pt, layer, ptr, base, init);
             &&& (forall|j: nat|
                 #![trigger res[j as int]]
                 init.len() <= j && j < res.len() ==>
                 match entry_at_spec(tok, pt, layer, ptr, j)@ {
                     GPDE::Directory { addr: dir_addr, .. }  => {
                         &&& res[j as int] is Directory
-                        &&& res[j as int]->Directory_0 == interp_at(tok, pt.entries[j as int].get_Some_0(), (layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base_vaddr, j))
+                        &&& res[j as int]->Directory_0 == interp_at(tok, pt.entries[j as int].get_Some_0(), (layer + 1) as nat, dir_addr, x86_arch_spec.entry_base(layer, base, j))
                     },
                     GPDE::Page { addr, .. } => res[j as int] is Page && res[j as int]->Page_0.frame.base == addr,
                     GPDE::Invalid             => res[j as int] is Invalid,
                 })
-            &&& (forall|j: nat| init.len() <= j && j < res.len() ==> res[j as int] == #[trigger] interp_at_entry(tok, pt, layer, ptr, base_vaddr, j))
+            &&& (forall|j: nat| init.len() <= j && j < res.len() ==> res[j as int] == #[trigger] interp_at_entry(tok, pt, layer, ptr, base, j))
         }),
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
 {
     if init.len() >= X86_NUM_ENTRIES as nat {
     } else {
         assert(directories_obey_invariant_at(tok, pt, layer, ptr));
-        let entry = interp_at_entry(tok, pt, layer, ptr, base_vaddr, init.len());
-        lemma_interp_at_aux_facts(tok, pt, layer, ptr, base_vaddr, init.push(entry));
+        let entry = interp_at_entry(tok, pt, layer, ptr, base, init.len());
+        lemma_interp_at_aux_facts(tok, pt, layer, ptr, base, init.push(entry));
     }
+}
+
+proof fn lemma_no_empty_directories_implies_interp_at_no_empty_directories(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
+    requires
+        inv_at(tok, pt, layer, ptr),
+        no_empty_directories(tok, pt, layer, ptr),
+    ensures
+        interp_at(tok, pt, layer, ptr, base).no_empty_directories()
+    decreases X86_NUM_LAYERS - layer, 0nat
+{
+    let intrp = interp_at(tok, pt, layer, ptr, base);
+    lemma_interp_at_aux_facts(tok, pt, layer, ptr, base, seq![]);
+    assert forall|i: nat| i < X86_NUM_ENTRIES && #[trigger] entry_at_spec(tok, pt, layer, ptr, i)@ is Directory
+        implies {
+            &&& !interp_at_entry(tok, pt, layer, ptr, base, i)->Directory_0.empty()
+            &&& interp_at_entry(tok, pt, layer, ptr, base, i)->Directory_0.no_empty_directories()
+        }
+    by {
+        let dir_addr = entry_at_spec(tok, pt, layer, ptr, i)@->Directory_addr;
+        let dir_base = x86_arch_spec.entry_base(layer, base, i);
+        let dir_pt = pt.entries[i as int]->Some_0;
+        lemma_not_empty_at_implies_interp_at_not_empty(tok, dir_pt, layer + 1, dir_addr, dir_base);
+        lemma_no_empty_directories_implies_interp_at_no_empty_directories(tok, dir_pt, layer + 1, dir_addr, dir_base);
+    };
 }
 
 //fn resolve_aux(mem: &mem::PageTableMemory, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, base: usize, vaddr: usize) -> (res: Result<(usize, PageTableEntryExec), ()>)
@@ -1331,17 +1300,39 @@ fn map_frame_aux(
     if entry.is_present() {
         if entry.is_dir(layer) {
             if x86_arch_exec.entry_size(layer) == pte.frame.size {
-                // TODO: Need to know that this directory is nonempty. But we dont want it as part
-                // of the invariant because then we couldn't obtain the invariant for the whole
-                // thing through the builder.
-                // Alternative: Have a recursive predicate that only asserts the non-emptiness of
-                // directories. Add it as precondition to this function but don't make it part of
-                // the invariant.
-                //
-                // Could also just use the ne flag on the interp inv. But then I have to add that
-                // back as a precondition. And inv doesn't imply interp(..).inv().
-                assume(candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
-                //assert(Err(interp_at(tok@, pt, layer as nat, ptr, base as nat)) === interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).map_frame(vaddr as nat, pte@));
+                // A directory is mapped here. We know that mapped directories are non-empty so
+                // there must be an overlapping mapping and this operation should fail.
+                assert(candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)) by {
+                    let ghost dir_pt = pt.entries[idx as int]->Some_0;
+                    let dir_addr = entry@->Directory_addr;
+                    let interp_old = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
+                    let interp_entry = interp_at(old(tok)@, dir_pt, layer as nat + 1, dir_addr, entry_base as nat);
+                    assert(!empty_at(old(tok)@, dir_pt, layer as nat + 1, dir_addr));
+                    lemma_no_empty_directories_implies_interp_at_no_empty_directories(old(tok)@, pt, layer as nat, ptr, base as nat);
+                    interp_entry.lemma_nonempty_implies_interp_contains();
+                    let (b, ppte): (nat, PTE) =
+                        choose|b, ppte| #[trigger] interp_entry.interp().contains_pair(b, ppte)
+                            && interp_entry.arch.contains_entry_size_at_index_atleast(ppte.frame.size as nat, interp_entry.layer);
+                    assert(interp_entry.interp().contains_pair(b, ppte));
+                    lemma_interp_at_aux_facts(old(tok)@, dir_pt, layer as nat + 1, dir_addr, entry_base as nat, seq![]);
+                    interp_old.lemma_interp_of_entry_between(idx as nat, b, ppte);
+
+                    assert(interp_old.interp().contains_pair(b, ppte)) by {
+                        interp_old.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(idx as nat);
+                    };
+                    assert(x86_arch_spec.contains_entry_size_at_index_atleast(ppte.frame.size, layer as nat));
+                    assert(overlap(
+                            MemRegion { base: b, size: ppte.frame.size },
+                            MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                        )) by (nonlinear_arith)
+                        requires
+                            x86_arch_spec.contains_entry_size_at_index_atleast(ppte.frame.size, layer as nat),
+                            pte@.frame.size == x86_arch_spec.entry_size(layer as nat),
+                            vaddr == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
+                            x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= b,
+                            b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
+                };
+                assert(candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
                 Err(())
             } else {
                 let dir_addr = entry.address();
@@ -2429,6 +2420,7 @@ fn insert_empty_directory(
 
 
         assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
+            // TODO: unstable, prove an invariant framing lemma and use that instead
             assert forall|i: nat| i < X86_NUM_ENTRIES implies {
                 (#[trigger] entry_at_spec(tok_new, pt_new, layer as nat, ptr, i))@ matches GPDE::Directory { addr, ..}
                 ==> inv_at(tok_new, pt_new.entries[i as int].get_Some_0(), layer as nat + 1, addr)

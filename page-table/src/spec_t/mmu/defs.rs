@@ -343,7 +343,7 @@ impl Arch {
         min_idx: nat,
     ) -> bool {
         exists|i: nat|
-            min_idx <= i && i < self.layers.len() && #[trigger] self.entry_size(i) == entry_size
+            min_idx <= i < self.layers.len() && #[trigger] self.entry_size(i) == entry_size
     }
 
     pub open spec(checked) fn contains_entry_size(&self, entry_size: nat) -> bool {
