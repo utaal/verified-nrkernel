@@ -28,8 +28,8 @@ impl CodeVC for PTImpl {
         //assume(tok.st().mmu@.pending_maps === map![]);
         let tracked wtok = WrappedMapToken::new(tok); //, proph_res.value());
         let mut pt = Ghost(arbitrary());
-        assume(PT::inv(wtok@, pt@));
-        assume(PT::interp(wtok@, pt@).inv(true));
+        assume(PT::inv_and_nonempty(wtok@, pt@));
+        assume(PT::interp(wtok@, pt@).inv());
 
 
         proof {
@@ -38,7 +38,7 @@ impl CodeVC for PTImpl {
         }
 
         let ghost wtok_before = wtok@;
-        assert(!wtok_before.done);
+        let ghost pt_before = pt@;
 
         let res = map_frame(Tracked(&mut wtok), &mut pt, pml4, vaddr, pte);
 
