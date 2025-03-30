@@ -153,7 +153,7 @@ impl WrappedTokenView {
                                 }@)
                             );
                             // TODO(andrea) next
-                            assume(mem.read(mem.pt_walk(k as usize).path[0].0) == self.read(walk.path[0].0, pt.region));
+                            assume(mem.read(walk.path[0].0) == self.read(walk.path[0].0, pt.region));
                             assert(l1_pt_entry == 
                                 (mmu::translation::PDE {
                                     entry: self.read(walk.path[0].0, pt.region),
@@ -164,10 +164,12 @@ impl WrappedTokenView {
                             assert(l1_pt_entry@ is Directory);
                             let l1_pt = PT::interp_at_entry(self, pt, 0, mem.pml4, 0, walk.path[0].0 as nat);
                             assert(PT::inv_at(self, pt, 0, mem.pml4));
+                            assert(PT::directories_obey_invariant_at(self, pt, 0, mem.pml4));
+                            assume(mem.read(walk.path[1].0) == self.read(walk.path[1].0, pt.region));
                             assert(l1_pt is Directory);
-                            admit();
+                            assume((walk.path[0].0 as int) < mmu::defs::X86_NUM_ENTRIES);
                             let l2_pt_entry = PT::entry_at_spec(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, mem.pml4, walk.path[1].0 as nat);
-                            assert(walk.path[1].1 == l2_pt_entry@);
+                            assume(walk.path[1].1 == l2_pt_entry@);
                             let l2_pt = PT::interp_at_entry(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, mem.pml4, l1_pt_entry@->Directory_addr as nat, walk.path[1].0 as nat);
                             assume(root_dir.interp().contains_key(k));
                         } else if walk.path.len() == 3 {
