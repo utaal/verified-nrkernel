@@ -6,9 +6,14 @@ use crate::spec_t::os_invariant;
 use crate::spec_t::mmu::{ self };
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem };
+use crate::spec_t::mmu::defs::{
+    aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem, PAGE_SIZE, WORD_SIZE,
+    bitmask_inc
+};
 use crate::spec_t::mmu::defs::{ MemRegionExec, MemRegion, PTE, MAX_PHYADDR };
-use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
+use crate::spec_t::mmu::translation::{
+    MASK_NEG_DIRTY_ACCESS, l0_bits, l1_bits, l2_bits, l3_bits
+};
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::os_code_vc::Token;
@@ -59,6 +64,10 @@ impl WrappedTokenView {
         }
     }
 
+    pub open spec fn regions_derived_from_view(self) -> bool {
+        forall|r, s| self.regions.contains_pair(r, s) ==> s == Seq::new(512, |i: int| self.pt_mem.mem[(r.base + i * 8) as usize])
+    }
+
     //pub proof fn lemma_interps_match2(self, pt: PTDir)
     //    requires PT::inv(self, pt)
     //    ensures usize_keys(PT::interp(self, pt).interp().map) == self.interp()
@@ -80,7 +89,9 @@ impl WrappedTokenView {
     //}
 
     pub proof fn lemma_interps_match(self, pt: PTDir)
-        requires PT::inv(self, pt)
+        requires
+            PT::inv(self, pt),
+            self.regions_derived_from_view(),
         ensures PT::interp(self, pt).interp() == crate::spec_t::mmu::defs::nat_keys(self.interp())
     {
         // TODO(andrea): this is a sketch
@@ -133,6 +144,13 @@ impl WrappedTokenView {
                 assert(root_dir.interp().contains_key(k as nat) == root_dir.interp().dom().contains(k as nat));
                 
                 if k <= usize::MAX {
+
+                    crate::spec_t::mmu::translation::lemma_bit_indices_less_512(k as usize);
+                    // TODO(MB):
+                    // Take a look at this lemma, it should be quite useful to abstract away the
+                    // recursion in interp_aux
+                    // (There's also the slightly stronger impl_u::l2_impl::lemma_interp_at_aux_facts but I don't think you need that)
+                    crate::impl_u::l2_impl::PT::lemma_interp_at_facts(self, pt, 0, self.pt_mem.pml4, 0);
                 
                     let walk = self.pt_mem.pt_walk(k as usize);
                     assert(walk.complete);
@@ -144,25 +162,61 @@ impl WrappedTokenView {
                         if walk.path.len() == 1 {
                             assert(false);
                         } else if walk.path.len() == 2 {
-                            let l1_pt_entry = PT::entry_at_spec(self, pt, 0, mem.pml4, walk.path[0].0 as nat);
+                            let walk_path_0_addr = self.pt_mem.pt_walk(k as usize).path[0].0;
+                            let k_usize = k as usize;
+                            let l0_idx = l0_bits!(k_usize) as nat;
+                            assert(l0_idx < 512);
+                            assert(walk_path_0_addr == mem.pml4 + l0_idx * WORD_SIZE);
+                            // TODO(MB): Why is this named l1_pt_entry? Isn't this l0?
+                            let l1_pt_entry = PT::entry_at_spec(self, pt, 0, mem.pml4, l0_idx);
                             assert(
                                 walk.path[0].1 ==
                                 (mmu::translation::PDE {
-                                    entry: mem.read(mem.pt_walk(k as usize).path[0].0),
+                                    entry: mem.read(walk_path_0_addr),
                                     layer: Ghost(0),
                                 }@)
                             );
+
+                            assert(pt.region.base == mem.pml4);
+                            //assert(pt.region.base <= walk_path_0_addr < pt.region.base + PAGE_SIZE) by {
+                            //    // TODO(MB): Probably needs some nonlinear and maybe bitvector
+                            //    // (This assertion may not actually be necessary, unsure)
+                            //    admit();
+                            //};
+                            assert(self.regions[pt.region] == Seq::new(512, |i: int| self.pt_mem.mem[(pt.region.base + i * 8) as usize])) by {
+                                let _trigger = self.regions.contains_pair(pt.region, self.regions[pt.region]);
+                            };
+                            // TODO(MB):
+                            // You'll probably want to prove a lemma like this one to relate reads
+                            // on the two memories:
+                            // requires
+                            //     self.regions_derived_from_view()
+                            //     self.regions.contains_key(pt.region)
+                            // ensures
+                            //     self.pt_mem.read(add(pt.region, mul(idx, WORD_SIZE))) & MASK_NEG_DIRTY_ACCESS == self.read(idx, pt.region)
+
                             // TODO(andrea) next
-                            assume(mem.read(walk.path[0].0) == self.read(walk.path[0].0, pt.region));
+                            assume(self.pt_mem.read(walk_path_0_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bits!(k_usize), pt.region));
                             assert(l1_pt_entry == 
                                 (mmu::translation::PDE {
-                                    entry: self.read(walk.path[0].0, pt.region),
+                                    entry: self.read(l0_bits!(k_usize), pt.region),
                                     layer: Ghost(0),
-                                })
-                            );
-                            assert(walk.path[0].1 == l1_pt_entry@);
+                                }));
+                            assert(walk.path[0].1 == l1_pt_entry@) by {
+                                //assert(self.read(l0_bits!(k_usize), pt.region) & MASK_NEG_DIRTY_ACCESS
+                                assert(forall|x: usize, b: usize| x & b & b == x & b) by (bit_vector);
+                                //assert(self.read(l0_bits!(k_usize), pt.region) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bits!(k_usize), pt.region));
+                                // TODO(MB)
+                                // MB: This lemma here is useful to show that the views don't
+                                // depend on the dirty/accessed bits
+                                l1_pt_entry.lemma_view_unchanged_dirty_access(
+                                    mmu::translation::PDE {
+                                        entry: mem.read(walk_path_0_addr),
+                                        layer: Ghost(0),
+                                    });
+                            };
                             assert(l1_pt_entry@ is Directory);
-                            let l1_pt = PT::interp_at_entry(self, pt, 0, mem.pml4, 0, walk.path[0].0 as nat);
+                            let l1_pt = PT::interp_at_entry(self, pt, 0, mem.pml4, 0, l0_idx);
                             assert(PT::inv_at(self, pt, 0, mem.pml4));
                             assert(PT::directories_obey_invariant_at(self, pt, 0, mem.pml4));
                             assume(mem.read(walk.path[1].0) == self.read(walk.path[1].0, pt.region));
@@ -296,6 +350,13 @@ impl WrappedMapToken {
         &&& forall|r| #[trigger] self.regions.contains(r) ==> aligned(r.base, 4096) && r.size == 4096
     }
 
+    //spec fn regions_disjoint(self) -> bool {
+    //    forall|i: nat, j: nat|
+    //        i != j && i < pt.entries.len() && j < pt.entries.len()
+    //        && #[trigger] pt.entries[j as int] is Some && #[trigger] pt.entries[i as int] is Some
+    //        ==> pt.entries[i as int]->Some_0.used_regions.disjoint(pt.entries[j as int]->Some_0.used_regions)
+    //}
+
     pub exec fn read(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, r: Ghost<MemRegion>) -> (res: usize)
         requires
             old(tok)@.regions.contains_key(r@),
@@ -381,6 +442,7 @@ impl WrappedMapToken {
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
             old(tok)@.lemma_interps_match(root_pt1);
+            assume(old(tok)@.write(idx, value, r, false).regions_derived_from_view());
             old(tok)@.write(idx, value, r, false).lemma_interps_match(root_pt2);
             broadcast use to_rl1::next_refines;
             assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
@@ -481,6 +543,7 @@ impl WrappedMapToken {
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             old(tok)@.lemma_interps_match(root_pt);
+            assume(old(tok)@.write(idx, value, r, true).regions_derived_from_view());
             old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
             //assert(PT::interp(old(tok)@, root_pt).interp().map == crate::spec_t::mmu::defs::nat_keys(old(tok)@.pt_mem@));
             //assert(crate::spec_t::mmu::defs::nat_keys(post.mmu@.pt_mem@) == post.interp_pt_mem());
