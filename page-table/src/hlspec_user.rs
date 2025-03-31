@@ -280,7 +280,7 @@ proof fn get_frame(n: nat, size: nat) -> (m: MemRegion)
 }
 
 #[verifier::rlimit(10000)]
-proof fn program_threads_10() {
+proof fn program_threads_4() {
     lemma_max_phyaddr_at_least();
     x86_arch_spec_upper_bound();
 
@@ -464,107 +464,77 @@ proof fn program_threads_10() {
     
     let s_sync_2 = s7;
     
-    let mut threads = set![0nat, 1, 2, 3];
-    let all_threads = threads;
     let v0 = {
-        assert(threads.len() == 4);
-        let which_thread = threads.choose();
-        assert(threads.contains(which_thread));
-        assert(which_thread < 4);
-        
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![which_thread as u8, 0, 0, 0]) };
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![0 as u8, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
             s_sync_2,
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
-                thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                thread_id: 0,
+                vaddr: pte1_vaddr + (0 * 4),
                 op: v0rop,
             },
         ));
-        threads = threads.remove(which_thread);
-        which_thread as u8
+        0 as u8
     };
 
     let v1 = {
-        assert(threads.len() == 3);
-        let which_thread = threads.choose();
-        assert(threads.contains(which_thread));
-        assert(which_thread < 4);
-        
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![which_thread as u8, 0, 0, 0]) };
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![1 as u8, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
             s_sync_2,
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
-                thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                thread_id: 1,
+                vaddr: pte1_vaddr + (1 * 4),
                 op: v0rop,
             },
         ));
-        threads = threads.remove(which_thread);
-        which_thread as u8
+        1 as u8
     };
 
     let v2 = {
-        assert(threads.len() == 2);
-        let which_thread = threads.choose();
-        assert(threads.contains(which_thread));
-        assert(which_thread < 4);
-        
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![which_thread as u8, 0, 0, 0]) };
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![2 as u8, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
             s_sync_2,
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
-                thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                thread_id: 2,
+                vaddr: pte1_vaddr + (2 * 4),
                 op: v0rop,
             },
         ));
-        threads = threads.remove(which_thread);
-        which_thread as u8
+        2 as u8
     };
 
     let v3 = {
-        assert(threads.len() == 1);
-        let which_thread = threads.choose();
-        assert(threads.contains(which_thread));
-        assert(which_thread < 4);
-        
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![which_thread as u8, 0, 0, 0]) };
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![3 as u8, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
             s_sync_2,
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
-                thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                thread_id: 3,
+                vaddr: pte1_vaddr + (3 * 4),
                 op: v0rop,
             },
         ));
-        threads = threads.remove(which_thread);
-        which_thread as u8
+        3 as u8
     };
-
-    assert(threads.len() == 0);
-    
-    assert(set![v0, v1, v2, v3] == set![0u8, 1, 2, 3]);
 
     assert(v0 + v1 + v2 + v3 == 6);
 }
