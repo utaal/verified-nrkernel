@@ -324,7 +324,13 @@ impl Directory {
         match self.entries[i as int] {
             NodeEntry::Page(p)      => {},
             NodeEntry::Directory(d) => {
-                assume(self.next_entry_base(i) == d.upper_vaddr());
+                assert(self.next_entry_base(i) == d.upper_vaddr()) by {
+                    assert(self.directories_obey_invariant());
+                    assert(self.arch.num_entries(self.layer + 1) * self.arch.entry_size(self.layer + 1) == self.arch.entry_size(self.layer)) by (nonlinear_arith)
+                        requires
+                            self.arch.inv(),
+                            self.layer + 1 < self.arch.layers.len();
+                };
                 d.lemma_interp_aux_between(0, va, pte);
             },
             NodeEntry::Invalid      => {},

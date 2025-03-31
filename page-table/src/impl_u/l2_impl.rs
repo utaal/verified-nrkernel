@@ -1820,8 +1820,6 @@ fn map_frame_aux(
             let new_dir_addr = new_dir_region.base;
             assert(inv_at(tok_with_empty, pt_with_empty, layer as nat, ptr));
 
-            assume(candidate_mapping_overlaps_existing_vmem(interp_at(tok_with_empty, new_dir_pt, layer as nat + 1, new_dir_addr, entry_base as nat).interp(), vaddr as nat, pte@)
-                    <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok_with_empty, rebuild_root_pt_inner(new_dir_pt, set![])), vaddr as nat, pte@));
             assert(aligned(entry_base as nat, x86_arch_spec.entry_size((layer + 1) as nat))) by (nonlinear_arith)
                 requires
                     layer < 3,
@@ -2127,6 +2125,8 @@ fn insert_empty_directory(
         old(tok).inv(),
         inv_at(old(tok)@, pt, layer as nat, ptr),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(),
+        accepted_mapping(vaddr as nat, pte@, layer as nat, base as nat),
+        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
         //old(tok)@.alloc_available_pages() > 0,
         layer < 3,
         idx < X86_NUM_ENTRIES,
@@ -2143,7 +2143,9 @@ fn insert_empty_directory(
                            === interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().insert(vaddr as nat, pte@)
                         ==> interp_to_l0(tok_new, rebuild_root_pt(pt_new, new_regions))
                                 === interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).insert(vaddr as nat, pte@)
-        }
+        },
+        candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)
+                    <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@),
     ensures
         tok.inv(),
         !tok@.done,
@@ -2187,6 +2189,8 @@ fn insert_empty_directory(
                                === interp_to_l0(tok@, rebuild_root_pt_inner(new_dir_pt, set![])).insert(vaddr as nat, pte@)
            }
            &&& interp_to_l0(tok@, rebuild_root_pt_inner(new_dir_pt, set![])) == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![]))
+           &&& candidate_mapping_overlaps_existing_vmem(interp_at(tok@, new_dir_pt, layer as nat + 1, new_dir_region.base, entry_base as nat).interp(), vaddr as nat, pte@)
+               <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt_inner(new_dir_pt, set![])), vaddr as nat, pte@)
         }),
 {
     broadcast use
@@ -2514,6 +2518,88 @@ fn insert_empty_directory(
                     == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).insert(vaddr as nat, pte@));
             }
 
+        }
+    };
+
+    assert(candidate_mapping_overlaps_existing_vmem(interp_at(tok_with_empty, new_dir_pt, layer as nat + 1, new_dir_region.base, entry_base as nat).interp(), vaddr as nat, pte@)
+               <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok_with_empty, rebuild_root_pt_inner(new_dir_pt, set![])), vaddr as nat, pte@))
+    by {
+        let interp_now_inner = interp_at(tok_with_empty, new_dir_pt, layer as nat + 1, new_dir_addr, entry_base as nat);
+        let interp_old_outer = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
+        let interp_now_outer = interp_at(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat);
+        let ghost next_entry_base = x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
+        lemma_interp_at_aux_facts(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat, seq![]);
+        assert(interp_old_outer.interp() == interp_now_outer.interp());
+        assert(interp_to_l0(tok_with_empty, rebuild_root_pt_inner(new_dir_pt, set![])) == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])));
+        assert(candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)
+            <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
+        assert forall|base, pte| interp_now_inner.interp().contains_pair(base, pte)
+                implies interp_now_outer.interp().contains_pair(base, pte)
+        by {
+            interp_now_outer.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(idx as nat);
+        };
+        if candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@) {
+            let b = choose|b: nat| #![auto] {
+                &&& interp_now_inner.interp().contains_key(b)
+                &&& overlap(
+                    MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                    MemRegion { base: b, size: interp_now_inner.interp()[b].frame.size },
+                )
+            };
+            let ppte = interp_now_inner.interp()[b];
+            assert(interp_now_inner.interp().contains_pair(b, ppte));
+            assert(interp_now_outer.interp().contains_pair(vaddr as nat, pte@));
+            assert(candidate_mapping_overlaps_existing_vmem(interp_now_outer.interp(), vaddr as nat, pte@));
+        }
+        if !candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@) {
+            assert_by_contradiction!(!candidate_mapping_overlaps_existing_vmem(interp_now_outer.interp(), vaddr as nat, pte@), {
+                let b = choose|b: nat| #![auto] {
+                    &&& interp_now_outer.interp().contains_key(b)
+                    &&& overlap(
+                            MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                            MemRegion { base: b, size: interp_now_outer.interp()[b].frame.size },
+                        )
+                };
+                let ppte = interp_now_outer.interp()[b];
+                assert(interp_now_outer.interp().contains_pair(b, ppte));
+                assert(entry_base <= vaddr < next_entry_base) by {
+                    indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
+                };
+                assert(pte@.frame.size <= x86_arch_spec.entry_size(layer as nat));
+                assert(entry_base < vaddr + pte@.frame.size <= next_entry_base) by (nonlinear_arith)
+                    requires
+                        x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < next_entry_base,
+                        aligned(vaddr as nat, pte@.frame.size as nat),
+                        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                        //aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
+                        //aligned(vaddr as nat, pte.frame.size as nat),
+                        //x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
+                        //idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                {
+                    // TODO: running verus with --expand-errors gives the "failed even
+                    // though all sub-assertions succeeded" message. So we must have all
+                    // the stuff we need to prove this, just have to find it and add it to
+                    // the requires clause.
+                    admit();
+                }
+                interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains();
+                let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, ppte);
+                interp_now_outer.lemma_interp_of_entry_between(i, b, ppte);
+                assert(i == idx) by (nonlinear_arith)
+                    requires
+                        overlap(
+                            MemRegion { base: vaddr as nat, size: pte@.frame.size },
+                            MemRegion { base: b, size: ppte.frame.size },
+                        ),
+                        x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= b < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                        x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) < b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                        x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                        x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) < vaddr + pte@.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                {};
+
+                assert(interp_now_inner.interp().contains_pair(b, ppte));
+                assert(candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@));
+            });
         }
     };
 
