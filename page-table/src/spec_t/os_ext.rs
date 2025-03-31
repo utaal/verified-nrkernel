@@ -212,12 +212,12 @@ pub mod code {
     pub tracked struct Token {}
 
     impl Token {
-        pub spec fn consts(self) -> os_ext::Constants;
-        pub spec fn core(self) -> Core;
-        pub spec fn pre(self) -> os_ext::State;
-        pub spec fn post(self) -> os_ext::State;
-        pub spec fn lbl(self) -> os_ext::Lbl;
-        pub spec fn tstate(self) -> TokState;
+        pub uninterp spec fn consts(self) -> os_ext::Constants;
+        pub uninterp spec fn core(self) -> Core;
+        pub uninterp spec fn pre(self) -> os_ext::State;
+        pub uninterp spec fn post(self) -> os_ext::State;
+        pub uninterp spec fn lbl(self) -> os_ext::Lbl;
+        pub uninterp spec fn tstate(self) -> TokState;
 
         pub open spec fn set_valid(self, new: Token) -> bool {
             &&& new.consts() == self.consts()

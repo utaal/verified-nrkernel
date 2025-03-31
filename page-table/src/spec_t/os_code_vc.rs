@@ -17,9 +17,9 @@ pub tracked struct Prophecy<T> { _t: core::marker::PhantomData<T> }
 
 impl<T> Prophecy<T> {
     #[verifier::prophetic]
-    pub open spec fn value(&self) -> T;
+    pub uninterp spec fn value(&self) -> T;
 
-    pub open spec fn may_resolve(&self) -> bool;
+    pub uninterp spec fn may_resolve(&self) -> bool;
 
     #[verifier::external_body]
     pub proof fn new() -> (tracked s: Self)
@@ -262,12 +262,12 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
 
 impl Token {
     // User-space thread
-    pub spec fn thread(self) -> nat;
-    pub spec fn consts(self) -> os::Constants;
-    pub spec fn st(self) -> os::State;
-    pub spec fn steps(self) -> Seq<RLbl>;
-    pub spec fn progress(self) -> Progress;
-    pub spec fn on_first_step(self) -> bool;
+    pub uninterp spec fn thread(self) -> nat;
+    pub uninterp spec fn consts(self) -> os::Constants;
+    pub uninterp spec fn st(self) -> os::State;
+    pub uninterp spec fn steps(self) -> Seq<RLbl>;
+    pub uninterp spec fn progress(self) -> Progress;
+    pub uninterp spec fn on_first_step(self) -> bool;
 
     pub open spec fn core(self) -> Core {
         self.consts().ult2core[self.thread()]

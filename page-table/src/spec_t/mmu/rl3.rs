@@ -858,12 +858,12 @@ pub mod code {
     pub tracked struct Token {}
 
     impl Token {
-        pub spec fn consts(self) -> mmu::Constants;
-        pub spec fn core(self) -> Core;
-        pub spec fn pre(self) -> rl3::State;
-        pub spec fn post(self) -> rl3::State;
-        pub spec fn lbl(self) -> mmu::Lbl;
-        pub spec fn tstate(self) -> TokState;
+        pub uninterp spec fn consts(self) -> mmu::Constants;
+        pub uninterp spec fn core(self) -> Core;
+        pub uninterp spec fn pre(self) -> rl3::State;
+        pub uninterp spec fn post(self) -> rl3::State;
+        pub uninterp spec fn lbl(self) -> mmu::Lbl;
+        pub uninterp spec fn tstate(self) -> TokState;
 
         pub open spec fn set_validated(self, new: Token) -> bool {
             &&& new.consts() == self.consts()
