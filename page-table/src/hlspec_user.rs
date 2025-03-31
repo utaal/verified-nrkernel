@@ -284,7 +284,7 @@ proof fn program_threads_4() {
     lemma_max_phyaddr_at_least();
     x86_arch_spec_upper_bound();
 
-    let c = Constants { thread_no: 4, phys_mem_size: 8_192_000 };
+    let c = Constants { thread_no: 5, phys_mem_size: 8_192_000 };
 
     let s1 = State {
         mem: seq![arbitrary(); crate::spec_t::mmu::defs::MAX_BASE],
@@ -294,6 +294,7 @@ proof fn program_threads_4() {
             1 => ThreadState::Idle,
             2 => ThreadState::Idle,
             3 => ThreadState::Idle,
+            4 => ThreadState::Idle,
         ],
         mappings: Map::empty(),
         sound: true,
@@ -311,13 +312,13 @@ proof fn program_threads_4() {
     let pte1_vaddr = 549_755_813_888;
     let s2 = State {
         thread_state: s1.thread_state.insert(
-            1,
+            0,
             ThreadState::Map { vaddr: pte1_vaddr, pte: pte1 },
         ),
         ..s1
     };
 
-    let s1s2rlbl = RLbl::MapStart { thread_id: 1, vaddr: pte1_vaddr, pte: pte1 };
+    let s1s2rlbl = RLbl::MapStart { thread_id: 0, vaddr: pte1_vaddr, pte: pte1 };
     assert(next_step(
         c,
         s1,
@@ -328,7 +329,7 @@ proof fn program_threads_4() {
 
     let mem3 = s2.mem;
     let s3 = State {
-        thread_state: s2.thread_state.insert(1, ThreadState::Idle),
+        thread_state: s2.thread_state.insert(0, ThreadState::Idle),
         mappings: s2.mappings.insert(pte1_vaddr, pte1),
         mem: mem3,
         ..s2
@@ -336,21 +337,24 @@ proof fn program_threads_4() {
 
     assert(s3.mappings.contains_pair(pte1_vaddr, pte1));  // discharge exists in `mem_domain_from_mappings_contains`
 
-    let s2s3rlbl = RLbl::MapEnd { thread_id: 1, vaddr: pte1_vaddr, result: Ok(()) };
+    let s2s3rlbl = RLbl::MapEnd { thread_id: 0, vaddr: pte1_vaddr, result: Ok(()) };
     assert(next_step(c, s2, s3, Step::MapEnd, s2s3rlbl));
 
     // sync point
     
-    let mut threads = set![0nat, 1, 2, 3];
+    let mut threads = set![1nat, 2, 3, 4];
     let all_threads = threads;
-    assert(threads.contains(0));
+    assert(threads <= all_threads);
+    assert(forall|t| all_threads.contains(t) ==> t < 5);
     let s4 = {
+        assert(threads.len() == 4);
         let which_thread = threads.choose();
-        assert(which_thread < 4);
+        assert(threads.contains(which_thread));
+        assert(which_thread < 5);
         
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let s4 = State { mem: update_range(s3.mem, pte1_vaddr + (which_thread * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s3 };
+        let s4 = State { mem: update_range(s3.mem, pte1_vaddr + ((which_thread - 1) * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s3 };
 
         let s3s4op = MemOp::Store { new_value: seq![which_thread as u8, 0, 0, 0], result: StoreResult::Ok };
         assert(s3s4op.op_size() == 4);
@@ -361,13 +365,13 @@ proof fn program_threads_4() {
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
                 thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                vaddr: pte1_vaddr + ((which_thread - 1) * 4) as nat,
                 op: s3s4op,
             },
         ));
         threads = threads.remove(which_thread);
         assert(threads <= all_threads);
-        assert(forall|t| all_threads.contains(t) ==> t < 4);
+        assert(forall|t| all_threads.contains(t) ==> t < 5);
 
         s4
     };
@@ -376,11 +380,11 @@ proof fn program_threads_4() {
         assert(threads.len() == 3);
         let which_thread = threads.choose();
         assert(threads.contains(which_thread));
-        assert(which_thread < 4);
+        assert(which_thread < 5);
         
         assert(s4.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let s5 = State { mem: update_range(s4.mem, pte1_vaddr + (which_thread * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s4 };
+        let s5 = State { mem: update_range(s4.mem, pte1_vaddr + ((which_thread - 1) * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s4 };
 
         let s4s5op = MemOp::Store { new_value: seq![which_thread as u8, 0, 0, 0], result: StoreResult::Ok };
         assert(s4s5op.op_size() == 4);
@@ -391,7 +395,7 @@ proof fn program_threads_4() {
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
                 thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                vaddr: pte1_vaddr + ((which_thread - 1) * 4) as nat,
                 op: s4s5op,
             },
         ));
@@ -403,11 +407,11 @@ proof fn program_threads_4() {
         assert(threads.len() == 2);
         let which_thread = threads.choose();
         assert(threads.contains(which_thread));
-        assert(which_thread < 4);
+        assert(which_thread < 5);
         
         assert(s4.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let s6 = State { mem: update_range(s5.mem, pte1_vaddr + (which_thread * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s5 };
+        let s6 = State { mem: update_range(s5.mem, pte1_vaddr + ((which_thread - 1) * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s5 };
 
         let s5s6op = MemOp::Store { new_value: seq![which_thread as u8, 0, 0, 0], result: StoreResult::Ok };
         assert(s5s6op.op_size() == 4);
@@ -418,7 +422,7 @@ proof fn program_threads_4() {
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
                 thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                vaddr: pte1_vaddr + ((which_thread - 1) * 4) as nat,
                 op: s5s6op,
             },
         ));
@@ -430,11 +434,11 @@ proof fn program_threads_4() {
         assert(threads.len() == 1);
         let which_thread = threads.choose();
         assert(threads.contains(which_thread));
-        assert(which_thread < 4);
+        assert(which_thread < 5);
         
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let s7 = State { mem: update_range(s6.mem, pte1_vaddr + (which_thread * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s6 };
+        let s7 = State { mem: update_range(s6.mem, pte1_vaddr + ((which_thread - 1) * 4) as int, seq![which_thread as u8, 0, 0, 0]), ..s6 };
 
         let s6s7op = MemOp::Store { new_value: seq![which_thread as u8, 0, 0, 0], result: StoreResult::Ok };
         assert(s6s7op.op_size() == 4);
@@ -445,7 +449,7 @@ proof fn program_threads_4() {
             Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
             RLbl::MemOp {
                 thread_id: which_thread,
-                vaddr: pte1_vaddr + (which_thread * 4),
+                vaddr: pte1_vaddr + ((which_thread - 1) * 4) as nat,
                 op: s6s7op,
             },
         ));
@@ -457,17 +461,18 @@ proof fn program_threads_4() {
 
     // sync point
     
-    assert(s7.mem.subrange(pte1_vaddr + (0 * 4) as int, pte1_vaddr + (0 * 4) + 4 as int) == seq![0u8, 0, 0, 0]);
-    assert(s7.mem.subrange(pte1_vaddr + (1 * 4) as int, pte1_vaddr + (1 * 4) + 4 as int) == seq![1u8, 0, 0, 0]);
-    assert(s7.mem.subrange(pte1_vaddr + (2 * 4) as int, pte1_vaddr + (2 * 4) + 4 as int) == seq![2u8, 0, 0, 0]);
-    assert(s7.mem.subrange(pte1_vaddr + (3 * 4) as int, pte1_vaddr + (3 * 4) + 4 as int) == seq![3u8, 0, 0, 0]);
+    assert(s7.mem.subrange(pte1_vaddr + (0 * 4) as int, pte1_vaddr + (0 * 4) + 4 as int) == seq![1u8, 0, 0, 0]);
+    assert(s7.mem.subrange(pte1_vaddr + (1 * 4) as int, pte1_vaddr + (1 * 4) + 4 as int) == seq![2u8, 0, 0, 0]);
+    assert(s7.mem.subrange(pte1_vaddr + (2 * 4) as int, pte1_vaddr + (2 * 4) + 4 as int) == seq![3u8, 0, 0, 0]);
+    assert(s7.mem.subrange(pte1_vaddr + (3 * 4) as int, pte1_vaddr + (3 * 4) + 4 as int) == seq![4u8, 0, 0, 0]);
     
     let s_sync_2 = s7;
     
     let v0 = {
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![0 as u8, 0, 0, 0]) };
+        let v: u8 = 1;
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![v, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
@@ -479,13 +484,14 @@ proof fn program_threads_4() {
                 op: v0rop,
             },
         ));
-        0 as u8
+        v
     };
 
     let v1 = {
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![1 as u8, 0, 0, 0]) };
+        let v: u8 = 2;
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![v, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
@@ -497,13 +503,14 @@ proof fn program_threads_4() {
                 op: v0rop,
             },
         ));
-        1 as u8
+        v
     };
 
     let v2 = {
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![2 as u8, 0, 0, 0]) };
+        let v: u8 = 3;
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![v, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
@@ -515,13 +522,14 @@ proof fn program_threads_4() {
                 op: v0rop,
             },
         ));
-        2 as u8
+        v
     };
 
     let v3 = {
         assert(s3.mappings.contains_pair(pte1_vaddr, pte1));
 
-        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![3 as u8, 0, 0, 0]) };
+        let v: u8 = 4;
+        let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![v, 0, 0, 0]) };
         assert(next_step(
             c,
             s_sync_2,
@@ -533,10 +541,10 @@ proof fn program_threads_4() {
                 op: v0rop,
             },
         ));
-        3 as u8
+        v
     };
 
-    assert(v0 + v1 + v2 + v3 == 6);
+    assert(v0 + v1 + v2 + v3 == 10);
 }
 
 } // verus!
