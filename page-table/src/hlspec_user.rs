@@ -664,6 +664,7 @@ mod program_two {
             if !pending.contains(MapTransition::T1MapEnd) { map![pte1_vaddr => pte1] } else { Map::empty() }.union_prefer_right(
             if !pending.contains(MapTransition::T2MapEnd) { map![pte2_vaddr => pte2] } else { Map::empty() })
         )
+        &&& s.mem.len() == crate::spec_t::mmu::defs::MAX_BASE
     }
     
     proof fn map_next_ensures(
@@ -825,10 +826,129 @@ mod program_two {
             pte1_vaddr => pte1,
             pte2_vaddr => pte2,
         ]);
-        // let s_t2s = State { thread_state: s1.thread_state.insert( 0, ThreadState::Map { vaddr: pte2_vaddr, pte: pte1 },), ..s1 };
-    
-        // let s1s_t2srlbl = RLbl::MapStart { thread_id: 0, vaddr: pte2_vaddr, pte: pte1 };
-        // assert(next_step(c, s1, s_t2s, Step::MapStart, s1s_t2srlbl,));
+        
+        // sync point
+
+        let mut threads = set![0nat, 1];
+        let all_threads = threads;
+        assert(threads <= all_threads);
+        assert(forall|t| all_threads.contains(t) ==> t < 2);
+        let s6 = {
+            assert(threads.len() == 2);
+            let which_thread = threads.choose();
+            assert(threads.contains(which_thread));
+            
+            assert(s5.mappings.contains_pair(pte1_vaddr, pte1));
+            assert(s5.mappings.contains_pair(pte2_vaddr, pte2));
+
+            let s6 = State {
+                mem: update_range(s5.mem, if which_thread == 0 { pte2_vaddr } else { pte1_vaddr } as int,
+                seq![if which_thread == 0 { 2u8 } else { 1u8 }, 0, 0, 0]),
+            ..s5 };
+
+            let s5s6op = MemOp::Store {
+                new_value: seq![if which_thread == 0 { 2u8 } else { 1u8 }, 0, 0, 0],
+                result: StoreResult::Ok
+            };
+            assert(s5s6op.op_size() == 4);
+            assert(next_step(
+                c,
+                s5,
+                s6,
+                Step::MemOp { pte: Some((
+                    if which_thread == 0 { pte2_vaddr } else { pte1_vaddr },
+                    if which_thread == 0 { pte2 } else { pte1 },
+                )) },
+                RLbl::MemOp {
+                    thread_id: which_thread,
+                    vaddr: if which_thread == 0 { pte2_vaddr } else { pte1_vaddr },
+                    op: s5s6op,
+                },
+            ));
+            threads = threads.remove(which_thread);
+            assert(threads <= all_threads);
+            assert(forall|t| all_threads.contains(t) ==> t < 2);
+
+            s6
+        };
+
+        let s7 = {
+            assert(threads.len() == 1);
+            let which_thread = threads.choose();
+            assert(threads.contains(which_thread));
+            
+            assert(s6.mappings.contains_pair(pte1_vaddr, pte1));
+            assert(s6.mappings.contains_pair(pte2_vaddr, pte2));
+
+            let s7 = State {
+                mem: update_range(s6.mem, if which_thread == 0 { pte2_vaddr } else { pte1_vaddr } as int,
+                seq![if which_thread == 0 { 2u8 } else { 1u8 }, 0, 0, 0]),
+            ..s6 };
+
+            let s5s6op = MemOp::Store {
+                new_value: seq![if which_thread == 0 { 2u8 } else { 1u8 }, 0, 0, 0],
+                result: StoreResult::Ok
+            };
+            assert(s5s6op.op_size() == 4);
+            assert(next_step(
+                c,
+                s6,
+                s7,
+                Step::MemOp { pte: Some((
+                    if which_thread == 0 { pte2_vaddr } else { pte1_vaddr },
+                    if which_thread == 0 { pte2 } else { pte1 },
+                )) },
+                RLbl::MemOp {
+                    thread_id: which_thread,
+                    vaddr: if which_thread == 0 { pte2_vaddr } else { pte1_vaddr },
+                    op: s5s6op,
+                },
+            ));
+            threads = threads.remove(which_thread);
+            assert(threads <= all_threads);
+            assert(forall|t| all_threads.contains(t) ==> t < 2);
+
+            s7
+        };
+
+        assert(threads.len() == 0);
+        let s_sync_2 = s7;
+        assert(s_sync_2.mem.subrange(pte1_vaddr as int, pte1_vaddr + 4 as int) == seq![1u8, 0, 0, 0]);
+        assert(s_sync_2.mem.subrange(pte2_vaddr as int, pte2_vaddr + 4 as int) == seq![2u8, 0, 0, 0]);
+
+        let v0 = {
+            assert(s_sync_2.mappings.contains_pair(pte1_vaddr, pte1));
+
+            let v: u8 = 1;
+            let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![v, 0, 0, 0]) };
+            assert(next_step(
+                c, s_sync_2, s_sync_2,
+                Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
+                RLbl::MemOp {
+                    thread_id: 0,
+                    vaddr: pte1_vaddr,
+                    op: v0rop,
+                },
+            ));
+            v
+        };
+
+        let v1 = {
+            assert(s_sync_2.mappings.contains_pair(pte2_vaddr, pte2));
+
+            let v: u8 = 2;
+            let v0rop = MemOp::Load { is_exec: false, size: 4, result: LoadResult::Value(seq![v, 0, 0, 0]) };
+            assert(next_step(
+                c, s_sync_2, s_sync_2,
+                Step::MemOp { pte: Some((pte2_vaddr, pte2)) },
+                RLbl::MemOp {
+                    thread_id: 1,
+                    vaddr: pte2_vaddr,
+                    op: v0rop,
+                },
+            ));
+            v
+        };
     }
 }
 
