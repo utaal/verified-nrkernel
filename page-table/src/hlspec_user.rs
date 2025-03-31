@@ -308,7 +308,7 @@ proof fn program_threads_4() {
         flags: Flags { is_writable: true, is_supervisor: false, disable_execute: true },
     };
 
-    let pte1_vaddr = 4_096_000;
+    let pte1_vaddr = 549_755_813_888;
     let s2 = State {
         thread_state: s1.thread_state.insert(
             1,
