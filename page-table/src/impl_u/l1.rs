@@ -288,16 +288,21 @@ impl Directory {
             self.inv(),
         ensures
             forall|va, pte| self.interp_of_entry(i).contains_pair(va, pte) ==> !self.interp_of_entry(j).contains_pair(va, pte),
+            forall|va| self.interp_of_entry(i).contains_key(va) ==> !self.interp_of_entry(j).contains_key(va),
             forall|va, pte| self.interp_of_entry(j).contains_pair(va, pte) ==> !self.interp_of_entry(i).contains_pair(va, pte),
+            forall|va| self.interp_of_entry(j).contains_key(va) ==> !self.interp_of_entry(i).contains_key(va),
     {
         indexing::lemma_entry_base_from_index(self.base_vaddr, i, self.entry_size());
         indexing::lemma_entry_base_from_index(self.base_vaddr, j, self.entry_size());
         assert forall|va, pte| self.interp_of_entry(i).contains_pair(va, pte) implies !self.interp_of_entry(j).contains_pair(va, pte) by {
             broadcast use Directory::lemma_interp_of_entry_between;
-            //self.lemma_interp_of_entry_between(i, va);
-            //assert_by_contradiction!(!self.interp_of_entry(j).contains_key(va), {
-            //    self.lemma_interp_of_entry_between(j, va);
-            //});
+        };
+        assert forall|va| self.interp_of_entry(i).contains_key(va) implies !self.interp_of_entry(j).contains_key(va) by {
+            broadcast use Directory::lemma_interp_of_entry_between;
+            assert(self.interp_of_entry(i).contains_pair(va, self.interp_of_entry(i)[va]));
+            assert_by_contradiction!(!self.interp_of_entry(j).contains_key(va), {
+                assert(self.interp_of_entry(j).contains_pair(va, self.interp_of_entry(j)[va]));
+            });
         };
     }
 
@@ -1829,6 +1834,66 @@ impl Directory {
             self.interp() === other.interp(),
     {
         self.lemma_entries_interp_equal_implies_interp_aux_equal(other, 0);
+    }
+
+    pub proof fn lemma_entries_interp_insert_implies_interp_insert(self, other: Directory, idx: nat, vaddr: nat, pte: PTE)
+        requires
+            idx < self.entries.len(),
+            self.inv(),
+            other.inv(),
+            self.arch == other.arch,
+            self.layer == other.layer,
+            self.base_vaddr == other.base_vaddr,
+            other.entries[idx as int].interp(self.entry_base(idx))
+                == self.entries[idx as int].interp(self.entry_base(idx)).insert(vaddr, pte),
+            forall|j: nat| j < self.entries.len() && j != idx
+                ==> (#[trigger] self.entries[j as int]).interp(self.entry_base(j))
+                            == other.entries[j as int].interp(self.entry_base(j)),
+        ensures
+            other.interp() === self.interp().insert(vaddr, pte),
+    {
+        self.lemma_entries_interp_insert_implies_interp_aux_insert(other, idx, vaddr, pte, 0);
+    }
+
+    proof fn lemma_entries_interp_insert_implies_interp_aux_insert(self, other: Directory, idx: nat, vaddr: nat, pte: PTE, i: nat)
+        requires
+            idx < self.entries.len(),
+            self.inv(),
+            other.inv(),
+            self.arch == other.arch,
+            self.layer == other.layer,
+            self.base_vaddr == other.base_vaddr,
+            other.entries[idx as int].interp(self.entry_base(idx))
+                == self.entries[idx as int].interp(self.entry_base(idx)).insert(vaddr, pte),
+            forall|j: nat| i <= j < self.entries.len() && j != idx
+                ==> (#[trigger] self.entries[j as int]).interp(self.entry_base(j))
+                            == other.entries[j as int].interp(self.entry_base(j)),
+        ensures
+            if idx < i {
+                other.interp_aux(i) === self.interp_aux(i)
+            } else {
+                other.interp_aux(i) === self.interp_aux(i).insert(vaddr, pte)
+            }
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
+    {
+        if i >= self.entries.len() {
+        } else {
+            let rem1 = self.interp_aux(i + 1);
+            let rem2 = other.interp_aux(i + 1);
+            let entry_i1 = self.interp_of_entry(i);
+            let entry_i2 = other.interp_of_entry(i);
+            if idx < i {
+                self.lemma_entries_interp_insert_implies_interp_aux_insert(other, idx, vaddr, pte, i + 1);
+                assert(rem1.union_prefer_right(entry_i1) =~= rem2.union_prefer_right(entry_i2));
+            } else if idx == i {
+                self.lemma_entries_interp_insert_implies_interp_aux_insert(other, idx, vaddr, pte, i + 1);
+                assert(rem2.union_prefer_right(entry_i2) =~= rem1.union_prefer_right(entry_i1).insert(vaddr, pte));
+            } else {
+                self.lemma_entries_interp_insert_implies_interp_aux_insert(other, idx, vaddr, pte, i + 1);
+                other.lemma_interp_of_entry_disjoint_mappings(i, idx);
+                assert(rem2.union_prefer_right(entry_i2) =~= rem1.union_prefer_right(entry_i1).insert(vaddr, pte));
+            }
+        }
     }
 
     //proof fn lemma_entries_equal_implies_interp_aux_equal(self, other: Directory, i: nat)

@@ -30,8 +30,8 @@ broadcast proof fn lemma_union_empty<A>(s: Set<A>)
 }
 
 
-broadcast proof fn lemma_bitvector_facts_simple()
-    ensures #![trigger]
+proof fn lemma_bitvector_facts_simple()
+    ensures
         bit!(0usize) == 1,
         0 & MASK_NEG_DIRTY_ACCESS == 0,
         1usize << 0 == 1,
@@ -183,7 +183,7 @@ impl PDE {
             self@ is Invalid,
             self.all_mb0_bits_are_zero(),
     {
-        broadcast use lemma_bitvector_facts_simple;
+        lemma_bitvector_facts_simple();
         reveal(PDE::all_mb0_bits_are_zero);
         let e = self.entry;
         axiom_max_phyaddr_width_facts();
@@ -715,6 +715,7 @@ pub open spec fn hp_pat_is_zero(tok: WrappedTokenView, pt: PTDir, layer: nat, pt
 }
 
 // TODO: should I move some of these ghost_pt things in a invariant defined on PTDir?
+#[verifier(opaque)] // hide the bad triggers
 pub open spec fn ghost_pt_used_regions_pairwise_disjoint(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
     forall|i: nat, j: nat|
         i != j && i < pt.entries.len() && j < pt.entries.len()
@@ -803,6 +804,7 @@ proof fn lemma_inv_at_changed_tok(tok1: WrappedTokenView, tok2: WrappedTokenView
     ensures inv_at(tok2, pt, layer, ptr),
     decreases X86_NUM_LAYERS - layer
 {
+    reveal(ghost_pt_used_regions_pairwise_disjoint);
     assert forall|i: nat| i < X86_NUM_ENTRIES implies
         entry_at_spec(tok2, pt, layer, ptr, i) == entry_at_spec(tok1, pt, layer, ptr, i) by { };
 
@@ -1316,9 +1318,9 @@ fn map_frame_aux(
 {
     proof {
         broadcast use
-            lemma_bitvector_facts_simple,
             lemma_union_empty,
             lemma_inv_implies_interp_inv;
+        lemma_bitvector_facts_simple();
         lemma_interp_at_facts(tok@, pt, layer as nat, ptr, base as nat);
         lemma_x86_arch_spec_inv();
     }
@@ -1433,6 +1435,7 @@ fn map_frame_aux(
                         #[trigger] entry_at_spec(tok_new, pt_new, layer as nat, ptr, i) == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i) by { };
 
                     assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
+                        reveal(ghost_pt_used_regions_pairwise_disjoint);
                         lemma_directories_obey_invariant_at_framing(tok@, pt, tok_new, pt_new, layer as nat as nat, ptr, idx as nat);
                     };
 
@@ -1463,6 +1466,7 @@ fn map_frame_aux(
                                     interp_at(tok_new, pt_new, layer as nat, ptr, base as nat).entries[i as int]
                                     === #[trigger] interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).entries[i as int]
                             by {
+                                reveal(ghost_pt_used_regions_pairwise_disjoint);
                                 lemma_interp_at_entry_changed_tok(old(tok)@, pt, tok_new, pt_new, layer as nat, ptr, base as nat, i);
                             };
                             interp_at(tok_new, pt_new, layer as nat, ptr, base as nat)
@@ -1486,6 +1490,7 @@ fn map_frame_aux(
                                 interp_at(tok_new, pt_new, layer as nat, ptr, base as nat).entries[i as int]
                                 === #[trigger] interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).entries[i as int]
                             by {
+                                reveal(ghost_pt_used_regions_pairwise_disjoint);
                                 lemma_interp_at_entry_changed_tok(old(tok)@, pt, tok_new, pt_new, layer as nat, ptr, base as nat, i);
                             };
                             assert(interp_new.entries[idx as int].interp(entry_base as nat)
@@ -1614,9 +1619,13 @@ fn map_frame_aux(
 
                         // None of the entries at this level change
                         assert forall|i: nat| i < X86_NUM_ENTRIES implies
-                            entry_at_spec(tok@, pt_res, layer as nat, ptr, i) == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i) by { };
+                            entry_at_spec(tok@, pt_res, layer as nat, ptr, i) == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i)
+                        by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
+                        };
 
                         assert(inv_at(tok@, pt_res, layer as nat, ptr)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
                             lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok@, pt_res, layer as nat as nat, ptr, idx as nat);
                         };
 
@@ -1629,7 +1638,11 @@ fn map_frame_aux(
                         assert(pt_res.region === pt.region);
                         assert(!empty_at(tok@, pt_res, layer as nat, ptr));
                         assert(no_empty_directories(tok@, pt_res, layer as nat, ptr)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
                             lemma_no_empty_directories_framing(old(tok)@, pt, tok@, pt_res, layer as nat, ptr, base as nat, idx as nat);
+                        };
+                        assert(!empty_at(tok@, pt_res, layer as nat, ptr)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
                         };
 
                         Ok(Ghost((pt_res,new_regions)))
@@ -1724,6 +1737,7 @@ fn map_frame_aux(
 
                 // And that state will satisfy the invariant
                 assert(inv_at(tok_after_write, pt, layer as nat, ptr)) by {
+                    reveal(ghost_pt_used_regions_pairwise_disjoint);
                     lemma_bitvector_facts();
                     assert(tok_after_write.regions[pt.region] === pwtok.regions[pt.region].update(idx as int, new_page_entry.entry));
 
@@ -1793,6 +1807,9 @@ fn map_frame_aux(
             assert(forall|r: MemRegion| !pt.used_regions.contains(r) ==> #[trigger] tok@.regions[r] === old(tok)@.regions[r]);
             assert(tok@.regions.dom() =~= old(tok)@.regions.dom().union(set![]));
             assert(pt.used_regions.union(set![]) =~= pt.used_regions);
+            assert(!empty_at(tok@, pt, layer as nat, ptr)) by {
+                reveal(ghost_pt_used_regions_pairwise_disjoint);
+            };
 
             Ok(Ghost((pt, set![])))
         } else {
@@ -1836,12 +1853,18 @@ fn map_frame_aux(
                     let ghost new_regions = rec_res@.1.insert(new_dir_region@);
                     proof {
                         //assert(!dir_new_regions.contains(pt_final.region));
-                        assert(!new_dir_pt.used_regions.contains(pt_final.region));
+                        assert(!new_dir_pt.used_regions.contains(pt_final.region)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
+                        };
 
                         assert forall|i: nat| i < X86_NUM_ENTRIES implies
                             #[trigger] entry_at_spec(tok@, pt_final, layer as nat, ptr, i)
-                            == if i == idx { new_dir_entry } else { entry_at_spec(tok_with_empty, pt_with_empty, layer as nat, ptr, i) } by { };
+                            == if i == idx { new_dir_entry } else { entry_at_spec(tok_with_empty, pt_with_empty, layer as nat, ptr, i) }
+                        by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
+                        };
                         assert(inv_at(tok@, pt_final, layer as nat, ptr)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
                             lemma_directories_obey_invariant_at_framing(tok_with_empty, pt_with_empty, tok@, pt_final, layer as nat as nat, ptr, idx as nat);
                         };
 
@@ -1850,6 +1873,7 @@ fn map_frame_aux(
                         assert(!candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
 
                         assert(no_empty_directories(tok@, pt_final, layer as nat, ptr)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
                             lemma_no_empty_directories_framing(old(tok)@, pt, tok@, pt_final, layer as nat, ptr, base as nat, idx as nat);
                         };
                         // posts
@@ -1867,6 +1891,9 @@ fn map_frame_aux(
                             assert(tok@.regions[r] === tok_with_empty.regions[r]);
                         };
                         assert(forall|r: MemRegion| new_regions.contains(r) ==> !(#[trigger] pt.used_regions.contains(r)));
+                        assert(!empty_at(tok@, pt_final, layer as nat, ptr)) by {
+                            reveal(ghost_pt_used_regions_pairwise_disjoint);
+                        };
                     }
                     Ok(Ghost((pt_final, new_regions)))
                 },
@@ -1908,7 +1935,8 @@ pub proof fn lemma_zeroed_page_implies_empty_at(tok: WrappedTokenView, pt: PTDir
         empty_at(tok, pt, layer, ptr),
         inv_at(tok, pt, layer, ptr),
 {
-    broadcast use lemma_bitvector_facts_simple;
+    reveal(ghost_pt_used_regions_pairwise_disjoint);
+    lemma_bitvector_facts_simple();
     lemma_bitvector_facts();
     assert forall|i: nat| #![auto] i < X86_NUM_ENTRIES implies
         entry_at_spec(tok, pt, layer, ptr, i)@ is Invalid
@@ -2165,6 +2193,7 @@ fn insert_empty_directory(
         lemma_union_empty,
         lemma_inv_implies_interp_inv;
 
+
     // Allocate a new directory
     let ghost root_pt0 = rebuild_root_pt(pt, set![]);
     let new_dir_region = WrappedMapToken::allocate(Tracked(tok), layer);
@@ -2185,14 +2214,14 @@ fn insert_empty_directory(
         #[trigger] entry_at_spec(tok_with_alloc, pt, layer as nat, ptr, i)
             == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i) by { };
     proof {
-        broadcast use lemma_bitvector_facts_simple;
-        lemma_bitvector_facts();
+        lemma_bitvector_facts_simple();
     }
 
     assert(tok_with_alloc.regions.dom() =~= old(tok)@.regions.dom().union(set![new_dir_region@]));
 
     // After allocation, the invariant still holds and the interpretation is unchanged
     assert(inv_at(tok_with_alloc, pt, layer as nat, ptr)) by {
+        reveal(ghost_pt_used_regions_pairwise_disjoint);
         lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_with_alloc, pt, layer as nat as nat, ptr, idx as nat);
     };
 
@@ -2242,7 +2271,11 @@ fn insert_empty_directory(
 
         assert forall|i: nat| i < X86_NUM_ENTRIES implies
             #[trigger] entry_at_spec(tok_with_empty, pt_with_empty, layer as nat, ptr, i)
-            == if i == idx { new_dir_entry } else { entry_at_spec(tok_with_alloc, pt, layer as nat, ptr, i) } by { };
+            == if i == idx { new_dir_entry } else { entry_at_spec(tok_with_alloc, pt, layer as nat, ptr, i) }
+        by {
+            lemma_bitvector_facts();
+            reveal(ghost_pt_used_regions_pairwise_disjoint);
+        };
         lemma_new_seq::<u64>(512nat, 0u64);
         lemma_new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None);
         lemma_zeroed_page_implies_empty_at(tok_with_empty, new_dir_pt, (layer + 1) as nat, new_dir_addr);
@@ -2264,6 +2297,7 @@ fn insert_empty_directory(
         //assert(tok_with_empty.regions =~= old(tok)@.regions.insert(new_dir_region@, new_seq(512, 0)));
 
         assert(inv_at(tok_with_empty, pt_with_empty, layer as nat, ptr)) by {
+            reveal(ghost_pt_used_regions_pairwise_disjoint);
             lemma_directories_obey_invariant_at_framing(tok_with_alloc, pt, tok_with_empty, pt_with_empty, layer as nat as nat, ptr, idx as nat);
         };
 
@@ -2306,6 +2340,9 @@ fn insert_empty_directory(
     assert(interp_to_l0(tok_with_empty, root_pt2) == interp_to_l0(old(tok)@, root_pt0));
     assert(interp_to_l0(tok_with_empty, root_pt2) == interp_to_l0(tok_with_alloc, root_pt1));
 
+    assert(tok@.read(idx, pt.region) & 1 == 0) by {
+        lemma_bitvector_facts();
+    };
     WrappedMapToken::write_stutter(Tracked(tok), ptr, idx, new_dir_entry.entry, Ghost(pt.region), Ghost(root_pt1), Ghost(root_pt2));
     assert(tok@ == tok_with_empty);
 
@@ -2336,7 +2373,6 @@ fn insert_empty_directory(
     }.entries);
     //assert(set![].union(set![new_dir_region@]) =~= set![new_dir_region@]);
     assert(rebuild_root_pt_inner(new_dir_pt, set![]) =~= rebuild_root_pt(pt_with_empty, set![new_dir_region@])) by {
-        admit(); // TODO: this passes but is stupidly slow (16+ seconds)
         let all_new_regions = set![].union(set![new_dir_region@]);
         let pt_new = PTDir {
             entries: pt.entries.update(idx as int, Some(new_dir_pt)),
@@ -2347,8 +2383,6 @@ fn insert_empty_directory(
         assert(all_new_regions =~= set![new_dir_region@]);
         assert(rebuild_root_pt_inner(new_dir_pt, set![]) == rebuild_root_pt(pt_new, all_new_regions));
     };
-
-    broadcast use lemma_union_empty;
 
     assert forall|tok_new, pt_new_inner, new_regions|
        #[trigger] builder_pre(tok_with_empty, new_dir_pt, tok_new, pt_new_inner, layer as nat + 1, new_dir_addr, new_regions)
@@ -2382,6 +2416,7 @@ fn insert_empty_directory(
 
 
         assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
+            reveal(ghost_pt_used_regions_pairwise_disjoint);
             lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_new, pt_new, layer as nat as nat, ptr, idx as nat);
         }
 
@@ -2428,6 +2463,7 @@ fn insert_empty_directory(
                             interp_at(tok_new, pt_new, layer as nat, ptr, base as nat).entries[i as int]
                             === #[trigger] interp_at(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat).entries[i as int]
                     by {
+                        reveal(ghost_pt_used_regions_pairwise_disjoint);
                         lemma_interp_at_entry_changed_tok(tok_with_empty, pt_with_empty, tok_new, pt_new, layer as nat, ptr, base as nat, i);
                     };
                     interp_at(tok_new, pt_new, layer as nat, ptr, base as nat)
@@ -2446,8 +2482,38 @@ fn insert_empty_directory(
         if interp_at(tok_new, pt_new_inner, layer as nat + 1, new_dir_addr, entry_base as nat).interp()
                    === interp_at(tok_with_empty, new_dir_pt, layer as nat + 1, new_dir_addr, entry_base as nat).interp().insert(vaddr as nat, pte@)
         {
-            assume(interp_to_l0(tok_new, rebuild_root_pt_inner(pt_new_inner, new_regions))
-                === interp_to_l0(tok_with_empty, rebuild_root_pt_inner(new_dir_pt, set![])).insert(vaddr as nat, pte@));
+            assert forall|i: nat| i < X86_NUM_ENTRIES && i != idx implies
+                #[trigger] entry_at_spec(tok_new, pt_new, layer as nat, ptr, i) == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i)
+            by { reveal(ghost_pt_used_regions_pairwise_disjoint); };
+            assert(interp_to_l0(tok_new, rebuild_root_pt_inner(pt_new_inner, new_regions))
+                === interp_to_l0(tok_with_empty, rebuild_root_pt_inner(new_dir_pt, set![])).insert(vaddr as nat, pte@))
+            by {
+                lemma_interp_at_aux_facts(tok_new, pt_new, layer as nat, ptr, base as nat, seq![]);
+                lemma_interp_at_aux_facts(old(tok)@, pt, layer as nat, ptr, base as nat, seq![]);
+
+                assert(interp_at(tok_new, pt_new, layer as nat, ptr, base as nat).interp()
+                    == interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().insert(vaddr as nat, pte@))
+                by {
+                    assert forall|i: nat| i < X86_NUM_ENTRIES && i != idx implies
+                        interp_at(tok_new, pt_new, layer as nat, ptr, base as nat).entries[i as int]
+                            === #[trigger] interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).entries[i as int]
+                    by {
+                        reveal(ghost_pt_used_regions_pairwise_disjoint);
+                        lemma_interp_at_entry_changed_tok(old(tok)@, pt, tok_new, pt_new, layer as nat, ptr, base as nat, i);
+                    };
+                    interp_at(old(tok)@, pt, layer as nat, ptr, base as nat)
+                        .lemma_entries_interp_insert_implies_interp_insert(
+                            interp_at(tok_new, pt_new, layer as nat, ptr, base as nat),
+                            idx as nat, vaddr as nat, pte@
+                        );
+                };
+
+                assert(interp_to_l0(tok_new, rebuild_root_pt(pt_new, all_new_regions))
+                    == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).insert(vaddr as nat, pte@));
+                assert(interp_to_l0(tok_new, rebuild_root_pt_inner(pt_new_inner, new_regions))
+                    == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).insert(vaddr as nat, pte@));
+            }
+
         }
     };
 
