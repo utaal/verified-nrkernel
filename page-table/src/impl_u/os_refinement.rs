@@ -454,25 +454,22 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(d.valid_thread(thread_id));
             assert(t1.thread_state.dom().contains(thread_id));
             assert(t1.thread_state[thread_id] is Idle);
-            //assert(!mem_domain_from_mappings(d.phys_mem_size, t1.mappings).contains(vmem_idx)) by {
-            //    //reveal(PTMem::view);
-            //    let vaddr2 = vmem_idx * WORD_SIZE as nat;
-            //    assert(vaddr == vaddr2);
-            //    assert forall|base: nat, pte: PTE|
-            //      #[trigger] t1.mappings.contains_pair(base, pte)
-            //       && mem_domain_from_entry_contains(d.phys_mem_size, vaddr, base, pte)
-            //       implies false
-            //    by {
-            //        assert(s1.interp_pt_mem().dom().contains(base));
-            //        reveal(PTMem::view);
-            //        assert(s1.mmu@.pt_mem.pt_walk(base as usize).result() is Valid);
-            //        assert(s1.mmu@.pt_mem.pt_walk(vaddr as usize).result() is Invalid);
-            //        s1.mmu@.pt_mem.lemma_pt_walk_agrees_in_frame(base as usize, vaddr as usize);
-            //        assert(false);
-            //    }
-            //    assert(!mem_domain_from_mappings_contains(d.phys_mem_size, vmem_idx, t1.mappings));
-            //}
-            assume(!is_in_mapped_region(c.mmu.phys_mem_size, t1.mappings, vaddr));
+            assert(!is_in_mapped_region(c.mmu.phys_mem_size, t1.mappings, vaddr)) by {
+                reveal(PTMem::view);
+                assert forall|base: nat, pte: PTE|
+                  #[trigger] t1.mappings.contains_pair(base, pte)
+                   && between(vaddr, base, base + pte.frame.size)
+                   && pte.frame.base + (vaddr - base) < c.mmu.phys_mem_size
+                   implies false
+                by {
+                    assert(s1.interp_pt_mem().dom().contains(base));
+                    reveal(PTMem::view);
+                    assert(s1.mmu@.pt_mem.pt_walk(base as usize).result() is Valid);
+                    assert(s1.mmu@.pt_mem.pt_walk(vaddr as usize).result() is Invalid);
+                    s1.mmu@.pt_mem.lemma_pt_walk_agrees_in_frame(base as usize, vaddr as usize);
+                    assert(false);
+                }
+            }
             assert(hlspec::step_MemOp(c.interp(), s1.interp(c), s2.interp(c), None, lbl));
         },
         rl1::Step::MemOpNoTrNA { .. } => {
