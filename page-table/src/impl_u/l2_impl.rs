@@ -820,6 +820,48 @@ proof fn lemma_inv_at_changed_tok(tok1: WrappedTokenView, tok2: WrappedTokenView
     };
 }
 
+/// We changed one entry and it satisfies the invariant. Thus we have
+/// `directories_obey_invariant_at`.
+proof fn lemma_directories_obey_invariant_at_framing(tok1: WrappedTokenView, pt1: PTDir, tok2: WrappedTokenView, pt2: PTDir, layer: nat, ptr: usize, idx: nat)
+    requires
+        pt1.entries.len() == X86_NUM_ENTRIES,
+        pt2.entries.len() == X86_NUM_ENTRIES,
+        idx < X86_NUM_ENTRIES,
+        pt2.region == pt1.region,
+        pt2.used_regions.subset_of(tok2.regions.dom()),
+        inv_at(tok1, pt1, layer, ptr),
+        ghost_pt_used_regions_rtrancl(tok2, pt2, layer, ptr),
+        forall|i: nat| i < X86_NUM_ENTRIES && i != idx ==> {
+            &&& #[trigger] entry_at_spec(tok1, pt1, layer, ptr, i)@ == entry_at_spec(tok2, pt2, layer, ptr, i)@
+            &&& pt2.entries[i as int] == pt1.entries[i as int]
+            &&& pt2.entries[i as int] is Some ==> (forall|r: MemRegion| #[trigger] pt2.entries[i as int]->Some_0.used_regions.contains(r)
+                    ==> tok1.regions[r] == tok2.regions[r])
+        },
+        (entry_at_spec(tok2, pt2, layer, ptr, idx))@ matches GPDE::Directory { addr, ..}
+            ==> inv_at(tok2, pt2.entries[idx as int]->Some_0, layer + 1, addr)
+    ensures
+        directories_obey_invariant_at(tok2, pt2, layer, ptr),
+    decreases X86_NUM_LAYERS - layer
+{
+    assert forall|i: nat| i < X86_NUM_ENTRIES implies {
+        (#[trigger] entry_at_spec(tok2, pt2, layer, ptr, i))@ matches GPDE::Directory { addr, ..}
+            ==> inv_at(tok2, pt2.entries[i as int]->Some_0, layer + 1, addr)
+    } by {
+        if i == idx {
+        } else {
+            assert(entry_at_spec(tok2, pt2, layer, ptr, i)@ == entry_at_spec(tok1, pt1, layer, ptr, i)@);
+            match entry_at_spec(tok2, pt2, layer, ptr, i)@ {
+                GPDE::Directory { addr: dir_addr, .. } => {
+                    let dir_pt2 = pt2.entries[i as int]->Some_0;
+                    assert(directories_obey_invariant_at(tok1, pt1, layer, ptr));
+                    lemma_inv_at_changed_tok(tok1, tok2, dir_pt2, layer + 1, dir_addr);
+                },
+                _ => {},
+            }
+        }
+    };
+}
+
 broadcast proof fn lemma_inv_implies_interp_inv(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
     requires
         inv_at(tok, pt, layer, ptr),
@@ -1391,25 +1433,7 @@ fn map_frame_aux(
                         #[trigger] entry_at_spec(tok_new, pt_new, layer as nat, ptr, i) == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i) by { };
 
                     assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
-                        assert(ghost_pt_matches_structure(tok_new, pt_new, layer as nat, ptr));
-
-                        assert(ghost_pt_used_regions_rtrancl(tok_new, pt_new, layer as nat, ptr));
-                        assert(ghost_pt_region_notin_used_regions(tok_new, pt_new, layer as nat, ptr));
-                        assert(ghost_pt_used_regions_pairwise_disjoint(tok_new, pt_new, layer as nat, ptr));
-
-                        assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                            let entry = #[trigger] entry_at_spec(tok_new, pt_new, layer as nat, ptr, i)@;
-                            entry is Directory ==> {
-                                &&& inv_at(tok_new, pt_new.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr)
-                            }
-                        } by {
-                            let entry = entry_at_spec(tok_new, pt_new, layer as nat, ptr, i)@;
-                            if i != idx && entry is Directory {
-                                lemma_inv_at_changed_tok(tok@, tok_new, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr);
-                            }
-                        };
-                        assert(directories_obey_invariant_at(tok_new, pt_new, layer as nat, ptr));
-                        assert(inv_at(tok_new, pt_new, layer as nat, ptr));
+                        lemma_directories_obey_invariant_at_framing(tok@, pt, tok_new, pt_new, layer as nat as nat, ptr, idx as nat);
                     };
 
                     assert(inv_at(tok@, pt, layer as nat, ptr));
@@ -1593,26 +1617,7 @@ fn map_frame_aux(
                             entry_at_spec(tok@, pt_res, layer as nat, ptr, i) == entry_at_spec(old(tok)@, pt, layer as nat, ptr, i) by { };
 
                         assert(inv_at(tok@, pt_res, layer as nat, ptr)) by {
-                            assert(ghost_pt_matches_structure(tok@, pt_res, layer as nat, ptr));
-
-                            assert(ghost_pt_used_regions_rtrancl(tok@, pt_res, layer as nat, ptr));
-                            assert(ghost_pt_region_notin_used_regions(tok@, pt_res, layer as nat, ptr));
-                            assert(ghost_pt_used_regions_pairwise_disjoint(tok@, pt_res, layer as nat, ptr));
-
-                            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                                let entry = #[trigger] entry_at_spec(tok@, pt_res, layer as nat, ptr, i)@;
-                                entry is Directory ==> {
-                                    &&& inv_at(tok@, pt_res.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr)
-                                }
-                            }
-                            by {
-                                let entry = entry_at_spec(tok@, pt_res, layer as nat, ptr, i)@;
-                                if i != idx && entry is Directory {
-                                    lemma_inv_at_changed_tok(old(tok)@, tok@, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr);
-                                }
-                            };
-                            assert(directories_obey_invariant_at(tok@, pt_res, layer as nat, ptr));
-                            assert(inv_at(tok@, pt_res, layer as nat, ptr));
+                            lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok@, pt_res, layer as nat as nat, ptr, idx as nat);
                         };
 
                         // posts
@@ -1726,19 +1731,7 @@ fn map_frame_aux(
                         entry_at_spec(tok_after_write, pt, layer as nat, ptr, i)@
                         == if i == idx { new_page_entry@ } else { entry_at_spec(old(tok)@, pt, layer as nat, ptr, i)@ } by { };
 
-                    assert(directories_obey_invariant_at(tok_after_write, pt, layer as nat, ptr)) by {
-                        assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                            let entry = #[trigger] entry_at_spec(tok_after_write, pt, layer as nat, ptr, i)@;
-                            entry is Directory ==>
-                                inv_at(tok_after_write, pt.entries[i as int]->Some_0, (layer + 1) as nat, entry->Directory_addr)
-                        } by {
-                            let entry = entry_at_spec(tok_after_write, pt, layer as nat, ptr, i)@;
-                            assert(directories_obey_invariant_at(old(tok)@, pt, layer as nat, ptr));
-                            if i != idx && entry is Directory {
-                                lemma_inv_at_changed_tok(old(tok)@, tok_after_write, pt.entries[i as int]->Some_0, (layer + 1) as nat, entry->Directory_addr);
-                            }
-                        };
-                    };
+                    lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_after_write, pt, layer as nat as nat, ptr, idx as nat);
                 }
 
                 assert(tok_after_write.regions.dom() == tok@.regions.dom().union(set![]));
@@ -1849,19 +1842,7 @@ fn map_frame_aux(
                             #[trigger] entry_at_spec(tok@, pt_final, layer as nat, ptr, i)
                             == if i == idx { new_dir_entry } else { entry_at_spec(tok_with_empty, pt_with_empty, layer as nat, ptr, i) } by { };
                         assert(inv_at(tok@, pt_final, layer as nat, ptr)) by {
-                            assert(directories_obey_invariant_at(tok@, pt_final, layer as nat, ptr)) by {
-                                assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                                    let entry = #[trigger] entry_at_spec(tok@, pt_final, layer as nat, ptr, i)@;
-                                    entry is Directory
-                                        ==> inv_at(tok@, pt_final.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr)
-                                } by {
-                                    let entry = entry_at_spec(tok@, pt_final, layer as nat, ptr, i)@;
-                                    assert(directories_obey_invariant_at(tok_with_empty, pt_with_empty, layer as nat, ptr));
-                                    if i != idx && entry is Directory {
-                                        lemma_inv_at_changed_tok(tok_with_empty, tok@, pt_with_empty.entries[i as int]->Some_0, (layer + 1) as nat, entry->Directory_addr);
-                                    }
-                                };
-                            };
+                            lemma_directories_obey_invariant_at_framing(tok_with_empty, pt_with_empty, tok@, pt_final, layer as nat as nat, ptr, idx as nat);
                         };
 
                         // From insert_empty_directory's post
@@ -2212,16 +2193,7 @@ fn insert_empty_directory(
 
     // After allocation, the invariant still holds and the interpretation is unchanged
     assert(inv_at(tok_with_alloc, pt, layer as nat, ptr)) by {
-        assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-            let entry = #[trigger] entry_at_spec(tok_with_alloc, pt, layer as nat, ptr, i)@;
-            entry is Directory
-                ==> inv_at(tok_with_alloc, pt.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr)
-        } by {
-            let entry = entry_at_spec(tok_with_alloc, pt, layer as nat, ptr, i)@;
-            if i != idx && entry is Directory {
-                lemma_inv_at_changed_tok(old(tok)@, tok_with_alloc, pt.entries[i as int]->Some_0, (layer + 1) as nat, entry->Directory_addr);
-            }
-        };
+        lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_with_alloc, pt, layer as nat as nat, ptr, idx as nat);
     };
 
     assert(interp_at(tok_with_alloc, pt, layer as nat, ptr, base as nat)
@@ -2292,17 +2264,7 @@ fn insert_empty_directory(
         //assert(tok_with_empty.regions =~= old(tok)@.regions.insert(new_dir_region@, new_seq(512, 0)));
 
         assert(inv_at(tok_with_empty, pt_with_empty, layer as nat, ptr)) by {
-            assert(directories_obey_invariant_at(tok_with_alloc, pt, layer as nat, ptr));
-            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                let entry = #[trigger] entry_at_spec(tok_with_empty, pt_with_empty, layer as nat, ptr, i)@;
-                entry is Directory
-                    ==> inv_at(tok_with_empty, pt_with_empty.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr)
-            } by {
-                let entry = entry_at_spec(tok_with_empty, pt_with_empty, layer as nat, ptr, i)@;
-                if i != idx && entry is Directory {
-                    lemma_inv_at_changed_tok(tok_with_alloc, tok_with_empty, pt_with_empty.entries[i as int]->Some_0, (layer + 1) as nat, entry->Directory_addr);
-                }
-            };
+            lemma_directories_obey_invariant_at_framing(tok_with_alloc, pt, tok_with_empty, pt_with_empty, layer as nat as nat, ptr, idx as nat);
         };
 
         lemma_empty_at_interp_at_equal_l1_empty_dir(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat, idx as nat);
@@ -2420,17 +2382,7 @@ fn insert_empty_directory(
 
 
         assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
-            // TODO: unstable, prove an invariant framing lemma and use that instead
-            assert forall|i: nat| i < X86_NUM_ENTRIES implies {
-                (#[trigger] entry_at_spec(tok_new, pt_new, layer as nat, ptr, i))@ matches GPDE::Directory { addr, ..}
-                ==> inv_at(tok_new, pt_new.entries[i as int].get_Some_0(), layer as nat + 1, addr)
-            } by {
-                let entry = entry_at_spec(tok_new, pt_new, layer as nat, ptr, i)@;
-                if i != idx && entry is Directory {
-                    lemma_inv_at_changed_tok(tok_with_empty, tok_new, pt_new.entries[i as int].get_Some_0(), (layer + 1) as nat, entry->Directory_addr);
-                }
-            }
-            assert(directories_obey_invariant_at(tok_new, pt_new, layer as nat, ptr));
+            lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_new, pt_new, layer as nat as nat, ptr, idx as nat);
         }
 
         assert(builder_pre(tok_with_empty, pt_with_empty, tok_new, pt_new, layer as nat, ptr, new_regions)) by {
