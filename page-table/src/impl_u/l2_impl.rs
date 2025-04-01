@@ -1595,10 +1595,7 @@ fn map_frame_aux(
                             aligned(vaddr as nat, pte.frame.size as nat),
                             x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                             idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                    {
-                        // TODO: passes but slow
-                        admit();
-                    };
+                    {};
                 };
                 match map_frame_aux(Tracked(tok), Ghost(dir_pt), layer + 1, dir_addr, entry_base, vaddr, pte, Ghost(rebuild_root_pt_inner)) {
                     Ok(rec_res) => {
@@ -1832,10 +1829,7 @@ fn map_frame_aux(
                         aligned(vaddr as nat, pte.frame.size as nat),
                         x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                         idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                {
-                    // TODO: passes but slow
-                    admit();
-                }
+                {}
             };
 
             match map_frame_aux(Tracked(tok), Ghost(new_dir_pt), layer + 1, new_dir_addr, entry_base, vaddr, pte, Ghost(rebuild_root_pt_inner)) {
