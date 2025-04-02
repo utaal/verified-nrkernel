@@ -795,7 +795,7 @@ pub open spec fn interp_to_l0(tok: WrappedTokenView, pt: PTDir) -> Map<nat, PTE>
     interp(tok, pt).interp()
 }
 
-proof fn lemma_inv_at_changed_tok(tok1: WrappedTokenView, tok2: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize)
+pub proof fn lemma_inv_at_changed_tok(tok1: WrappedTokenView, tok2: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize)
     requires
         inv_at(tok1, pt, layer, ptr),
         pt.used_regions.subset_of(tok2.regions.dom()),
@@ -886,7 +886,7 @@ broadcast proof fn lemma_inv_implies_interp_inv(tok: WrappedTokenView, pt: PTDir
 }
 
 /// The token has changed but the relevant views are unchanged.
-proof fn lemma_no_empty_directories_with_changed_tok(tok1: WrappedTokenView, pt1: PTDir, tok2: WrappedTokenView, pt2: PTDir, layer: nat, ptr: usize, base: nat)
+pub proof fn lemma_no_empty_directories_with_changed_tok(tok1: WrappedTokenView, pt1: PTDir, tok2: WrappedTokenView, pt2: PTDir, layer: nat, ptr: usize, base: nat)
     requires
         pt2.region == pt1.region,
         no_empty_directories(tok1, pt1, layer, ptr),
@@ -1436,7 +1436,7 @@ fn map_frame_aux(
 
                     assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
                         reveal(ghost_pt_used_regions_pairwise_disjoint);
-                        lemma_directories_obey_invariant_at_framing(tok@, pt, tok_new, pt_new, layer as nat as nat, ptr, idx as nat);
+                        lemma_directories_obey_invariant_at_framing(tok@, pt, tok_new, pt_new, layer as nat, ptr, idx as nat);
                     };
 
                     assert(inv_at(tok@, pt, layer as nat, ptr));
@@ -1624,7 +1624,7 @@ fn map_frame_aux(
 
                         assert(inv_at(tok@, pt_res, layer as nat, ptr)) by {
                             reveal(ghost_pt_used_regions_pairwise_disjoint);
-                            lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok@, pt_res, layer as nat as nat, ptr, idx as nat);
+                            lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok@, pt_res, layer as nat, ptr, idx as nat);
                         };
 
                         // posts
@@ -1743,7 +1743,7 @@ fn map_frame_aux(
                         entry_at_spec(tok_after_write, pt, layer as nat, ptr, i)@
                         == if i == idx { new_page_entry@ } else { entry_at_spec(old(tok)@, pt, layer as nat, ptr, i)@ } by { };
 
-                    lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_after_write, pt, layer as nat as nat, ptr, idx as nat);
+                    lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_after_write, pt, layer as nat, ptr, idx as nat);
                 }
 
                 assert(tok_after_write.regions.dom() == tok@.regions.dom().union(set![]));
@@ -1858,7 +1858,7 @@ fn map_frame_aux(
                         };
                         assert(inv_at(tok@, pt_final, layer as nat, ptr)) by {
                             reveal(ghost_pt_used_regions_pairwise_disjoint);
-                            lemma_directories_obey_invariant_at_framing(tok_with_empty, pt_with_empty, tok@, pt_final, layer as nat as nat, ptr, idx as nat);
+                            lemma_directories_obey_invariant_at_framing(tok_with_empty, pt_with_empty, tok@, pt_final, layer as nat, ptr, idx as nat);
                         };
 
                         // From insert_empty_directory's post
@@ -2220,7 +2220,7 @@ fn insert_empty_directory(
     // After allocation, the invariant still holds and the interpretation is unchanged
     assert(inv_at(tok_with_alloc, pt, layer as nat, ptr)) by {
         reveal(ghost_pt_used_regions_pairwise_disjoint);
-        lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_with_alloc, pt, layer as nat as nat, ptr, idx as nat);
+        lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_with_alloc, pt, layer as nat, ptr, idx as nat);
     };
 
     assert(interp_at(tok_with_alloc, pt, layer as nat, ptr, base as nat)
@@ -2296,7 +2296,7 @@ fn insert_empty_directory(
 
         assert(inv_at(tok_with_empty, pt_with_empty, layer as nat, ptr)) by {
             reveal(ghost_pt_used_regions_pairwise_disjoint);
-            lemma_directories_obey_invariant_at_framing(tok_with_alloc, pt, tok_with_empty, pt_with_empty, layer as nat as nat, ptr, idx as nat);
+            lemma_directories_obey_invariant_at_framing(tok_with_alloc, pt, tok_with_empty, pt_with_empty, layer as nat, ptr, idx as nat);
         };
 
         lemma_empty_at_interp_at_equal_l1_empty_dir(tok_with_empty, pt_with_empty, layer as nat, ptr, base as nat, idx as nat);
@@ -2415,7 +2415,7 @@ fn insert_empty_directory(
 
         assert(inv_at(tok_new, pt_new, layer as nat, ptr)) by {
             reveal(ghost_pt_used_regions_pairwise_disjoint);
-            lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_new, pt_new, layer as nat as nat, ptr, idx as nat);
+            lemma_directories_obey_invariant_at_framing(old(tok)@, pt, tok_new, pt_new, layer as nat, ptr, idx as nat);
         }
 
         assert(builder_pre(tok_with_empty, pt_with_empty, tok_new, pt_new, layer as nat, ptr, new_regions)) by {

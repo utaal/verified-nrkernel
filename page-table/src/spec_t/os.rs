@@ -942,6 +942,7 @@ impl State {
     pub open spec fn inv_basic(self, c: Constants) -> bool {
         &&& self.wf(c)
         &&& self.inv_mmu(c)
+        &&& self.inv_osext()
         &&& self.inv_mapped_ptes_above_zero()
         &&& self.inv_mappings_in_bound(c)
         &&& self.inv_inflight_pte_above_zero_pte_result_consistent(c)
@@ -955,6 +956,10 @@ impl State {
         &&& self.mmu.inv(c.mmu)
         &&& self.mmu.interp().inv(c.mmu)
         &&& self.mmu@.happy
+    }
+
+    pub open spec fn inv_osext(self) -> bool {
+        &&& forall|r| #[trigger] self.os_ext.allocated.contains(r) ==> aligned(r.base, 4096) && r.size == 4096
     }
 
     pub open spec fn inv_write_core(self, c: Constants) -> bool {

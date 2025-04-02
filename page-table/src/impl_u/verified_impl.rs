@@ -45,6 +45,17 @@ impl CodeVC for PTImpl {
         let ghost pt_before = pt@;
 
         let res = map_frame(Tracked(&mut wtok), &mut pt, pml4, vaddr, pte);
+        assert(PT::inv_and_nonempty(wtok@, pt@));
+        assert forall|wtokp: WrappedTokenView| ({
+            &&& wtokp.pt_mem == wtok@.pt_mem
+            &&& wtokp.regions.dom() == wtok@.regions.dom()
+            &&& #[trigger] wtokp.regions_derived_from_view()
+        }) implies exists|pt| PT::inv_and_nonempty(wtokp, pt) by {
+            wtok.lemma_regions_derived_from_view();
+            PT::lemma_inv_at_changed_tok(wtok@, wtokp, pt@, 0, pt@.region.base as usize);
+            PT::lemma_no_empty_directories_with_changed_tok(wtok@, pt@, wtokp, pt@, 0, pt@.region.base as usize, 0);
+            assert(PT::inv_and_nonempty(wtokp, pt@));
+        };
 
         if let Err(_) = res {
             proof {
