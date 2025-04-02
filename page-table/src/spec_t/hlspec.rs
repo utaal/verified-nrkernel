@@ -360,7 +360,7 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, lbl: RLbl) -> b
     } else {
         &&& result is Ok
         &&& s2.mappings === s1.mappings.insert(vaddr, pte)
-        &&& forall|vaddr: int| is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr as nat) ==> s2.mem[vaddr] === s1.mem[vaddr]
+        &&& forall|vaddr: nat|  #[trigger] is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr) ==> s2.mem[vaddr as int] === s1.mem[vaddr as int]
     }
 }
 
@@ -396,7 +396,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, lbl: RLbl) 
             &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Unmap { vaddr, pte })
             &&& s2.mappings == if pte is None { s1.mappings } else { s1.mappings.remove(vaddr) }
             &&& s2.sound == s1.sound
-            &&& forall|vaddr: int| is_in_mapped_region(c.phys_mem_size, s2.mappings, vaddr as nat) ==> s2.mem[vaddr] === s1.mem[vaddr]
+            &&& forall|vaddr: nat|  #[trigger] is_in_mapped_region(c.phys_mem_size, s2.mappings, vaddr) ==> s2.mem[vaddr as int] === s1.mem[vaddr as int]
         } else {
             unsound_state(s1, s2)
         }

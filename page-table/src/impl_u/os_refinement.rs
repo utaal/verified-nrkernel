@@ -2,6 +2,7 @@ use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
+    x86_arch_spec_upper_bound,
     candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap,
@@ -177,16 +178,6 @@ proof fn lemma_effective_mappings_unaffected_if_thread_state_constant(
         assert(s2.inflight_vaddr().contains(map_vaddr) && !s2.inflight_unmap_vaddr().contains(map_vaddr));
         assert(s2.inflight_vaddr() =~= s1.inflight_vaddr());
     }
-}
-
-proof fn lemma_in_bound_vaddr_smaller_than_MAXBASE(vaddr: int, base: nat, pte: PTE)
-    requires 
-        between(vaddr as nat, base, base + pte.frame.size),
-        candidate_mapping_in_bounds(base, pte),
-    ensures 
-        0 <= vaddr < MAX_BASE,
-{
-    admit();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -1107,20 +1098,20 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
         assert(hl_s2.mappings === hl_s1.mappings.insert(vaddr, pte));
 
         //proofgoal (4/4):  forall|vaddr: int| is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr as nat) ==> s2.mem[vaddr] === s1.mem[vaddr]
-        assert forall|mem_vaddr: int|
-            is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr as nat)
-        implies hl_s2.mem[mem_vaddr] === hl_s1.mem[mem_vaddr]
+        assert forall|mem_vaddr: nat| #![auto]
+            is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr)
+        implies hl_s2.mem[mem_vaddr as int] === hl_s1.mem[mem_vaddr as int]
         by {
-            let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr);
+            let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr as int);
             assert forall|page, entry|
                 hl_s2.mappings.contains_pair(page, entry) && between(
-                    mem_vaddr as nat,
+                    mem_vaddr,
                     page,
                     page + entry.frame.size,
                 ) implies (page == mem_base) && (entry == mem_pte)
             by {
                 if hl_s2.mappings.contains_pair(page, entry) && between(
-                    mem_vaddr as nat,
+                    mem_vaddr,
                     page,
                     page + entry.frame.size,
                 ) {
@@ -1140,7 +1131,7 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
             }
             assert forall|page, entry|
             hl_s1.mappings.contains_pair(page, entry) && between(
-                mem_vaddr as nat,
+                mem_vaddr,
                 page,
                 page + entry.frame.size,
             ) implies (page == mem_base) && (entry == mem_pte) by {
@@ -1149,7 +1140,7 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
                 ));
                 assert(hl_s1.mappings.submap_of(hl_s2.mappings));
                 assert(hl_s2.mappings.contains_pair(page, entry) && between(
-                    mem_vaddr as nat,
+                    mem_vaddr,
                     page,
                     page + entry.frame.size,
                 ));
@@ -1157,15 +1148,15 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
 
             assert(hl_s1.mappings.submap_of(hl_s2.mappings));
             assert(hl_s2.mappings.contains_pair(mem_base, mem_pte));
-            assert(is_in_mapped_region(c.mmu.phys_mem_size, hl_s2.mappings, mem_vaddr as nat));
-            let (mem_base2, mem_pte2) = os::State::base_and_pte_for_vaddr(s2.effective_mappings(), mem_vaddr);
+            assert(is_in_mapped_region(c.mmu.phys_mem_size, hl_s2.mappings, mem_vaddr));
+            let (mem_base2, mem_pte2) = os::State::base_and_pte_for_vaddr(s2.effective_mappings(), mem_vaddr as int);
             assert(mem_base2 == mem_base);
             assert(mem_pte2 == mem_pte);
 
             assert (s1.mmu@.phys_mem =~= s2.mmu@.phys_mem);
 
-            assert(candidate_mapping_in_bounds(mem_base as nat, mem_pte));
-            lemma_in_bound_vaddr_smaller_than_MAXBASE(mem_vaddr, mem_base, mem_pte);
+            assert(candidate_mapping_in_bounds(mem_base, mem_pte));
+            x86_arch_spec_upper_bound();
 
             assert(0 <= mem_vaddr < MAX_BASE);
             assert(s1.interp_vmem(c).len() == MAX_BASE );
@@ -1424,19 +1415,19 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
 
                 assert(hl_s1.mappings =~= hl_s2.mappings.insert(vaddr, hl_s1.mappings.index(vaddr)));
 
-                assert forall|mem_vaddr: int| is_in_mapped_region(c.mmu.phys_mem_size, hl_s2.mappings, mem_vaddr as nat) 
-                        implies (hl_s2.mem[mem_vaddr] === hl_s1.mem[mem_vaddr]) 
+                assert forall|mem_vaddr: nat| #![auto] is_in_mapped_region(c.mmu.phys_mem_size, hl_s2.mappings, mem_vaddr) 
+                        implies (hl_s2.mem[mem_vaddr as int] === hl_s1.mem[mem_vaddr as int]) 
                 by {
-                    let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s2.effective_mappings(), mem_vaddr);
+                    let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s2.effective_mappings(), mem_vaddr as int);
                     assert forall|page, entry|
                         hl_s1.mappings.contains_pair(page, entry) && between(
-                            mem_vaddr as nat,
+                            mem_vaddr,
                             page,
                             page + entry.frame.size,
                         ) implies (page == mem_base) && (entry == mem_pte)
                     by {
                         if hl_s1.mappings.contains_pair(page, entry) && between(
-                            mem_vaddr as nat,
+                            mem_vaddr,
                             page,
                             page + entry.frame.size,
                         ) {
@@ -1456,7 +1447,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
                     }
                     assert forall|page, entry|
                     hl_s2.mappings.contains_pair(page, entry) && between(
-                        mem_vaddr as nat,
+                        mem_vaddr,
                         page,
                         page + entry.frame.size,
                     ) implies (page == mem_base) && (entry == mem_pte) by {
@@ -1465,7 +1456,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
                         ));
                         assert(hl_s2.mappings.submap_of(hl_s1.mappings));
                         assert(hl_s1.mappings.contains_pair(page, entry) && between(
-                            mem_vaddr as nat,
+                            mem_vaddr,
                             page,
                             page + entry.frame.size,
                         ));
@@ -1473,15 +1464,14 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
         
                     assert(hl_s2.mappings.submap_of(hl_s1.mappings));
                     assert(hl_s1.mappings.contains_pair(mem_base, mem_pte));
-                    assert(is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr as nat));
-                    let (mem_base2, mem_pte2) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr);
+                    assert(is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr));
+                    let (mem_base2, mem_pte2) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr as int);
                     assert(mem_base2 == mem_base);
                     assert(mem_pte2 == mem_pte);
         
                     assert (s1.mmu@.phys_mem =~= s2.mmu@.phys_mem);
-        
-                    assert(candidate_mapping_in_bounds(mem_base as nat, mem_pte));
-                    lemma_in_bound_vaddr_smaller_than_MAXBASE(mem_vaddr, mem_base, mem_pte);
+                    assert(candidate_mapping_in_bounds(mem_base, mem_pte));
+                    x86_arch_spec_upper_bound();
                     assert(s1.interp_vmem(c).len() == MAX_BASE );
                 }
                 assert(hlspec::step_UnmapStart(c.interp(), s1.interp(c), s2.interp(c), lbl));
