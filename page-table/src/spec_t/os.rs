@@ -950,6 +950,24 @@ impl State {
         &&& self.inv_successful_maps(c)
         &&& self.inv_overlap_of_mapped_maps(c)
         &&& self.inv_lock(c)
+        &&& self.inv_pending_maps(c)
+    }
+
+    pub open spec fn inv_pending_maps(self, c: Constants) -> bool {
+        &&& forall |base| #[trigger] self.mmu@.pending_maps.dom().contains(base) ==>
+            exists |core| Self::is_pending_for_core(c, base, core,
+                self.core_states, self.mmu@.pending_maps)
+    }
+
+    pub open spec fn is_pending_for_core(c: Constants, base: usize, core: Core, core_states: Map<Core, CoreState>, pending_maps: Map<usize, PTE>) -> bool
+        recommends pending_maps.dom().contains(base)
+    {
+        core_states.dom().contains(core)
+            && match core_states[core] {
+                CoreState::MapDone { ult_id, vaddr, pte, result } =>
+                    pte == pending_maps[base],
+                _ => false,
+            }
     }
 
     pub open spec fn inv_mmu(self, c: Constants) -> bool {

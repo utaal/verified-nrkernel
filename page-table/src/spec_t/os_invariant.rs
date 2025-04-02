@@ -13,6 +13,7 @@ use crate::spec_t::mmu;
 use crate::theorem::RLbl;
 use crate::impl_u::wrapped_token;
 use crate::impl_u::l2_impl::{ PTDir, PT };
+use crate::spec_t::mmu::rl1;
 
 verus! {
 
@@ -145,6 +146,166 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
     next_step_preserves_inv_impl(c, s1, s2, step, lbl);
     next_step_preserves_inv_write_core(c, s1, s2, step, lbl);
+    next_step_preserves_inv_pending_maps(c, s1, s2, step, lbl);
+}
+
+pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+    requires
+        s1.inv(c),
+        os::next_step(c, s1, s2, step, lbl),
+    ensures
+        s2.inv_pending_maps(c),
+{
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
+    match step {
+        // Map steps
+        os::Step::MMU => {
+            assert(s2.inv_pending_maps(c));
+        }
+        os::Step::MemOp { core } => {
+            assert(s2.inv_pending_maps(c));
+        }
+        os::Step::ReadPTMem { core, paddr, value } => {
+            assert(s2.inv_pending_maps(c));
+        }
+        os::Step::Barrier { core } => {
+            assert(s2.inv_pending_maps(c));
+        }
+        os::Step::Invlpg { core, vaddr } => {
+            assert(s2.inv_pending_maps(c));
+        }
+
+        os::Step::MapStart { core } => {
+            assert forall |base| #[trigger] s2.mmu@.pending_maps.dom().contains(base) implies
+                exists |core| os::State::is_pending_for_core(c, base, core,
+                    s2.core_states, s2.mmu@.pending_maps)
+            by {
+                assert(s1.mmu@.pending_maps.dom().contains(base));
+                let core = choose |core| os::State::is_pending_for_core(c, base, core,
+                    s1.core_states, s1.mmu@.pending_maps);
+                assert(os::State::is_pending_for_core(c, base, core,
+                    s1.core_states, s1.mmu@.pending_maps));
+                assert(os::State::is_pending_for_core(c, base, core,
+                    s2.core_states, s2.mmu@.pending_maps));
+            }
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::MapOpStart { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::Allocate { core, res } => {
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::MapOpStutter { core, paddr, value }
+        | os::Step::UnmapOpChange { core, paddr, value }
+        | os::Step::UnmapOpStutter { core, paddr, value } => {
+            let mlbl = mmu::Lbl::Write(core, paddr, value);
+            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
+            assert(rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, mmu_step, mlbl));
+            match mmu_step {
+                rl1::Step::WriteNonneg => {
+                    assert forall |vbase| s2.mmu@.pt_mem@.contains_key(vbase) implies s1.mmu@.pt_mem@.contains_key(vbase)
+                    by {
+                        assert(s2.interp_pt_mem().dom().contains(vbase as nat));
+                        assert(s1.interp_pt_mem().dom().contains(vbase as nat));
+                    }
+                    assert(s1.mmu@.pending_maps =~= s2.mmu@.pending_maps);
+                    assert(s2.inv_pending_maps(c));
+                }
+                rl1::Step::WriteNonpos => {
+                    assert(s2.inv_pending_maps(c));
+                }
+                _ => {
+                    assert(false);
+                }
+            }
+        },
+        os::Step::MapOpChange { core, paddr, value } => {
+            let mlbl = mmu::Lbl::Write(core, paddr, value);
+            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
+            assert(rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, mmu_step, mlbl));
+            match mmu_step {
+                rl1::Step::WriteNonneg => {
+                    let vaddr = s1.core_states[core]->MapExecuting_vaddr;
+                    let pte = s1.core_states[core]->MapExecuting_pte;
+                    assert forall |base| #[trigger] s2.mmu@.pending_maps.dom().contains(base) implies
+                        exists |core1| os::State::is_pending_for_core(c, base, core1,
+                            s2.core_states, s2.mmu@.pending_maps)
+                    by {
+                        if base == vaddr {
+                            assert(s2.interp_pt_mem().dom().contains(base as nat));
+                            assert(s2.interp_pt_mem()[base as nat] == pte);
+                            assert(s2.mmu@.pending_maps.dom().contains(base));
+                            assert(s2.mmu@.pending_maps[base] == pte);
+                            assert(os::State::is_pending_for_core(c, base, core,
+                                s2.core_states, s2.mmu@.pending_maps));
+                        } else {
+                            assert(s2.interp_pt_mem().dom().contains(base as nat));
+                            assert(s1.interp_pt_mem().dom().contains(base as nat));
+                            assert(s1.mmu@.pending_maps.dom().contains(base));
+
+                            let core1 = choose |core1| os::State::is_pending_for_core(c, base, core1,
+                                s1.core_states, s1.mmu@.pending_maps);
+                            assert(os::State::is_pending_for_core(c, base, core1,
+                                s1.core_states, s1.mmu@.pending_maps));
+                            assert(os::State::is_pending_for_core(c, base, core1,
+                                s2.core_states, s2.mmu@.pending_maps));
+                        }
+                    }
+                    assert(s2.inv_pending_maps(c));
+                }
+                rl1::Step::WriteNonpos => {
+                    assert(s2.inv_pending_maps(c));
+                }
+                _ => {
+                    assert(false);
+                }
+            }
+        },
+        os::Step::MapNoOp { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::MapEnd { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
+
+        //Unmap steps
+        os::Step::UnmapStart { core } => {
+            assert forall |base| #[trigger] s2.mmu@.pending_maps.dom().contains(base) implies
+                exists |core| os::State::is_pending_for_core(c, base, core,
+                    s2.core_states, s2.mmu@.pending_maps)
+            by {
+                assert(s1.mmu@.pending_maps.dom().contains(base));
+                let core = choose |core| os::State::is_pending_for_core(c, base, core,
+                    s1.core_states, s1.mmu@.pending_maps);
+                assert(os::State::is_pending_for_core(c, base, core,
+                    s1.core_states, s1.mmu@.pending_maps));
+                assert(os::State::is_pending_for_core(c, base, core,
+                    s2.core_states, s2.mmu@.pending_maps));
+            }
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::UnmapOpStart { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::Deallocate { core: Core, reg: MemRegion } => {
+            assert(s2.inv_pending_maps(c));
+        }
+        os::Step::UnmapOpFail { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::UnmapInitiateShootdown { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
+        os::Step::AckShootdownIPI { core: Core } => {
+            assert(s2.inv_pending_maps(c));
+        }
+        os::Step::UnmapEnd { core: Core } => {
+            assert(s2.inv_pending_maps(c));
+        }
+    }
 }
 
 pub proof fn next_step_preserves_inv_impl(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)

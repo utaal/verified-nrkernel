@@ -475,7 +475,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             }
             assert(hlspec::step_MemOp(c.interp(), s1.interp(c), s2.interp(c), None, lbl));
         },
-        rl1::Step::MemOpNoTrNA { .. } => {
+        rl1::Step::MemOpNoTrNA { vbase } => {
             let t1 = s1.interp(c);
             let t2 = s2.interp(c);
             let d = c.interp();
@@ -485,9 +485,29 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             let pte = t1.vaddr_mapping_is_being_modified_choose(d, vaddr);
 
             // TODO: Needs an invariant about pending_maps
-            assume(t1.vaddr_mapping_is_being_modified(d, vaddr));
+
+            let core = choose |core| os::State::is_pending_for_core(c, vbase, core, s1.core_states, s1.mmu@.pending_maps);
+            assert(os::State::is_pending_for_core(c, vbase, core, s1.core_states, s1.mmu@.pending_maps));
+
+            let thread1 = s1.core_states[core]->MapDone_ult_id;
+            assert(d.valid_thread(thread1));
+            assert(match t1.thread_state[thread1] {
+                ThreadState::Map { vaddr: vaddr1, pte } => between(vaddr, vaddr1, vaddr1 + pte.frame.size),
+                _ => false,
+            });
+
             let thread = t1.vaddr_mapping_is_being_modified_choose_thread(d, vaddr);
-            assume(t1.thread_state[thread] is Map);
+
+            assert(match t1.thread_state[thread] {
+                ThreadState::Map { vaddr: vaddr1, pte } => between(vaddr, vaddr1, vaddr1 + pte.frame.size),
+                ThreadState::Unmap { vaddr: vaddr1, pte: Some(pte) } => between(vaddr, vaddr1, vaddr1 + pte.frame.size),
+                _ => false,
+            });
+
+            assume(thread == thread1);
+
+            assert(t1.vaddr_mapping_is_being_modified(d, vaddr));
+            assert(t1.thread_state[thread] is Map);
 
             assert(pte.is_none());
 
