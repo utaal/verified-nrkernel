@@ -45,6 +45,9 @@ pub struct WrappedTokenView {
     /// We also keep the flat memory directly because this is what the MMU's interpretation is
     /// defined on.
     pub pt_mem: mmu::pt_mem::PTMem,
+    pub steps: Seq<RLbl>,
+    pub result: Result<(),()>,
+    //pub proph_res: Result<(),()>,
 }
 
 impl WrappedTokenView {
@@ -61,6 +64,7 @@ impl WrappedTokenView {
             regions: self.regions.insert(r, self.regions[r].update(idx as int, value)),
             pt_mem: self.pt_mem.write(add(r.base as usize, mul(idx, 8)), value),
             done: change,
+            result: if change { Ok(()) } else { self.result },
             ..self
         }
     }
@@ -263,7 +267,8 @@ pub tracked struct WrappedMapToken {
     tracked tok: Token,
     ghost done: bool,
     ghost orig_st: os::State,
-    //ghost prophesied_result: Result<(),()>,
+    //ghost regions: Set<MemRegion>,
+    //tracked proph_res: crate::spec_t::os_code_vc::Prophecy<Result<(),()>>,
 }
 
 impl WrappedMapToken {
@@ -281,22 +286,27 @@ impl WrappedMapToken {
                     |r: MemRegion| self.tok.st().os_ext.allocated.contains(r),
                     |r: MemRegion| Seq::new(512, |i: int| self.tok.st().mmu@.pt_mem.mem[(r.base + i * 8) as usize])),
             pt_mem: self.tok.st().mmu@.pt_mem,
+            result: self.tok.st().core_states[self.tok.core()]->MapDone_result,
+            steps: self.tok.steps(),
+            //proph_res: self.proph_res.value(),
         }
     }
 
     pub proof fn new(tracked tok: Token) -> (tracked res: WrappedMapToken)
         requires
-            //proph_res.may_resolve(),
             tok.consts().valid_ult(tok.thread()),
             tok.st().core_states[tok.core()] is MapExecuting,
             tok.thread() == tok.st().core_states[tok.core()]->MapExecuting_ult_id,
             tok.st().core_states[tok.core()]->MapExecuting_vaddr <= usize::MAX,
             tok.steps().len() == 1,
+            tok.steps()[0] is MapEnd,
+            tok.steps()[0]->MapEnd_vaddr == tok.st().core_states[tok.core()]->MapExecuting_vaddr,
+            tok.steps()[0]->MapEnd_thread_id == tok.thread(),
             //tok.steps() ===
             //    seq![RLbl::MapEnd {
             //        thread_id: tok.thread(),
             //        vaddr: tok.st().core_states[tok.core()]->MapExecuting_vaddr,
-            //        result: prophesied_result,
+            //        result: proph_res.value(),
             //    }],
             !tok.on_first_step(),
             tok.progress() is Ready,
@@ -310,8 +320,14 @@ impl WrappedMapToken {
             tok.st().core_states[tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, .. }
                 && res@.args == (OpArgs::Map { base: vaddr as usize, pte }),
             !res@.done,
+            res@.steps == tok.steps(),
     {
-        let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st() };
+        let tracked t = WrappedMapToken {
+            tok,
+            done: false,
+            orig_st: tok.st(),
+            //prophesied_result: proph_res,
+        };
         assert(t@.regions.dom() =~= tok.st().os_ext.allocated);
         assert(Map::new(
                 |k| t.tok.st().mmu@.pt_mem@.contains_key(k) && !t@.orig_st.mmu@.pt_mem@.contains_key(k),
@@ -328,20 +344,24 @@ impl WrappedMapToken {
         // OSSM invariant
         &&& self.tok.st().inv(self.tok.consts())
         // Other stuff
-        &&& self@.regions_derived_from_view()
+        //&&& self@.regions_derived_from_view()
         &&& !self.tok.on_first_step()
         &&& self.tok.consts().valid_core(self.tok.core())
         &&& self.tok.consts().valid_ult(self.tok.thread())
         &&& self.tok.progress() is Ready
         &&& self.tok.steps().len() == 1
+        &&& self.tok.steps()[0] is MapEnd
+        &&& self.tok.steps()[0]->MapEnd_thread_id == self.tok.thread()
         &&& if self.done {
             &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapDone { vaddr, pte, ult_id, result }
+            &&& self.tok.steps()[0]->MapEnd_vaddr == vaddr
             &&& vaddr <= usize::MAX
             &&& self.tok.thread() == ult_id
             &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
             //&&& self.tok.st().mmu@.pending_maps === if result is Ok { map![vaddr as usize => pte] } else { map![] }
         } else {
             &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, ult_id }
+            &&& self.tok.steps()[0]->MapEnd_vaddr == vaddr
             &&& self.tok.thread() == ult_id
             &&& vaddr <= usize::MAX
             &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
@@ -521,6 +541,7 @@ impl WrappedMapToken {
                 == PT::interp_to_l0(old(tok)@, root_pt).insert(old(tok)@.args->Map_base as nat, old(tok)@.args->Map_pte),
             //old(tok)@.write(idx, value, r).interp() == old(tok)@.interp().insert(old(tok)@.args->Map_base, old(tok)@.args->Map_pte),
         ensures
+            tok@.result === Ok(()),
             tok@ == old(tok)@.write(idx, value, r, true),
             tok.inv(),
     {
@@ -610,6 +631,7 @@ impl WrappedMapToken {
             tok@.pt_mem == old(tok)@.pt_mem,
             tok@.args == old(tok)@.args,
             tok@.orig_st == old(tok)@.orig_st,
+            tok@.steps == old(tok)@.steps,
             !tok@.done,
             tok.inv(),
     {
@@ -658,7 +680,7 @@ impl WrappedMapToken {
             ),
             PT::inv(old(tok)@, root_pt),
         ensures
-            tok@ == (WrappedTokenView { done: true, ..old(tok)@ }),
+            tok@ == (WrappedTokenView { done: true, result: Err(()), ..old(tok)@ }),
             tok.inv(),
     {
         tok@.lemma_interps_match(root_pt);
@@ -684,7 +706,8 @@ impl WrappedMapToken {
 
     pub exec fn finish_map_and_release_lock(
         Tracked(tok): Tracked<WrappedMapToken>,
-        //Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
+        //Ghost(result): Ghost<Result<(),()>>,
+        //Tracked(proph_res): Tracked<crate::spec_t::os_code_vc::Prophecy<Result<(),()>>>
     ) -> (rtok: Tracked<Token>)
         requires
             tok@.done,
@@ -694,7 +717,7 @@ impl WrappedMapToken {
                 &&& wtok.regions.dom() == tok@.regions.dom()
                 &&& #[trigger] wtok.regions_derived_from_view()
             }) ==> exists|pt| PT::inv_and_nonempty(wtok, pt),
-            //proph_res.may_resolve(),
+            tok@.steps[0]->MapEnd_result == tok@.result,
             //tok.tok.steps() ===
             //    seq![RLbl::MapEnd {
             //       thread_id: tok.tok.thread(),
@@ -702,7 +725,6 @@ impl WrappedMapToken {
             //       result: proph_res.value()
             //    }],
         ensures
-            //proph_res.value() == arbitrary()
             rtok@.progress() is Unready,
             rtok@.steps() === seq![],
             //true, // TODO: more stuff?
@@ -753,7 +775,8 @@ impl WrappedMapToken {
             let lbl = RLbl::MapEnd { thread_id: tok.tok.thread(), vaddr, result };
             // TODO: Need some help here from the invariant and resolve the prophecy before we take
             // the step. Prophecy is actually problematic here.
-            assume(lbl == tok.tok.steps()[0]);
+
+            assert(lbl == tok.tok.steps()[0]);
             assert(post.inv_impl()) by {
                 assert(tok.tok.st().mmu@.pt_mem == tok@.pt_mem);
                 assert(tok.tok.st().os_ext.allocated == tok@.regions.dom());
@@ -882,6 +905,9 @@ impl WrappedUnmapToken {
                     |r: MemRegion| self.regions.contains(r),
                     |r: MemRegion| Seq::new(512, |i: int| self.tok.st().mmu@.pt_mem.mem[(r.base + i * 8) as usize])),
             pt_mem: self.tok.st().mmu@.pt_mem,
+            result: self.tok.st().core_states[self.tok.core()]->MapDone_result,
+            steps: self.tok.steps(),
+            //proph_res: arbitrary(),
         }
     }
 

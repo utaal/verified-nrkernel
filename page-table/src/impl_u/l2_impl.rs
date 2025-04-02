@@ -1285,6 +1285,7 @@ fn map_frame_aux(
                                 === interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).insert(vaddr as nat, pte@)
         }
     ensures
+        tok@.steps == old(tok)@.steps,
         match res {
             Ok(resv) => {
                 let (pt_res, new_regions) = resv@;
@@ -1304,6 +1305,7 @@ fn map_frame_aux(
                 &&& pt_res.region === pt.region
                 &&& !candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@)
                 &&& tok@.done
+                &&& tok@.result === Ok(())
             },
             Err(e) => {
                 // If error, unchanged
@@ -2043,9 +2045,11 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         old(tok)@.args == (OpArgs::Map { base: vaddr, pte: pte@ }),
     ensures
         inv_and_nonempty(tok@, pt@),
+        tok@.steps == old(tok)@.steps,
         match res {
             Ok(_) => {
                 &&& tok@.done
+                &&& tok@.result === Ok(())
                 //&&& !candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, old(pt)@), vaddr as nat, pte@)
             },
             Err(_) => {
@@ -2142,6 +2146,7 @@ fn insert_empty_directory(
                     <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@),
     ensures
         tok.inv(),
+        tok@.steps == old(tok)@.steps,
         !tok@.done,
         inv_at(tok@, res.0@, layer as nat, ptr),
         !old(tok)@.regions.contains_key(res.1@),

@@ -24,7 +24,7 @@ impl CodeVC for PTImpl {
         let tracked mut proph_res = proph_res;
 
         crate::impl_u::wrapped_token::start_map_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
-        let tracked wtok = WrappedMapToken::new(tok); //, proph_res.value());
+        let tracked wtok = WrappedMapToken::new(tok); //, tok.steps()[0]->MapEnd_result);
         proof {
             wtok.lemma_regions_derived_from_view();
         }
@@ -69,8 +69,23 @@ impl CodeVC for PTImpl {
         }
         assert(wtok@.done);
 
+        assert(wtok@.steps === tok.steps());
         proof { proph_res.resolve(res); }
 
+        assert(wtok@.result == proph_res.value()) by {
+            if let Ok(_) = res {
+                assert(wtok@.result === Ok(()));
+                assert(proph_res.value() is Ok);
+                assume(proph_res.value() === Ok(()));
+            }
+
+            if let Err(_) = res {
+                assert(wtok@.result === Err(()));
+                assert(proph_res.value() is Err);
+                assume(proph_res.value() === Err(()));
+            }
+        };
+        assert(wtok@.steps[0]->MapEnd_result == proph_res.value());
         let tok = WrappedMapToken::finish_map_and_release_lock(Tracked(wtok));
 
         (res, tok)
