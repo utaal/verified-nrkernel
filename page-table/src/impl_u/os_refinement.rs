@@ -16,6 +16,7 @@ use crate::spec_t::os_invariant::{
     lemma_candidate_mapping_inflight_vmem_overlap_hl_implies_os,
     lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl, next_step_preserves_inv,
     lemma_map_insert_values_equality, lemma_map_insert_value,
+    lemma_init_implies_empty_map,
 };
 use crate::spec_t::{hlspec, os};
 use crate::theorem::RLbl;
@@ -306,7 +307,9 @@ proof fn os_init_refines_hl_init(c: os::Constants, s: os::State)
         assert(s.core_states[core] === os::CoreState::Idle);  //nn
     };
     //assert(abs_s.mem === Map::empty());
-    assert(abs_s.mappings === Map::empty());
+    assert(abs_s.mappings =~= Map::empty()) by {
+        lemma_init_implies_empty_map(s, c);
+    };
 }
 
 proof fn os_next_refines_hl_next(c: os::Constants, s1: os::State, s2: os::State, lbl: RLbl)

@@ -1,28 +1,29 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mmu::WalkResult;
+//use crate::spec_t::mmu::WalkResult;
 use crate::spec_t::os;
 use crate::spec_t::os_invariant;
 use crate::spec_t::mmu::{ self };
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
-    aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem, PAGE_SIZE, WORD_SIZE,
+    aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem, WORD_SIZE,
     bitmask_inc
 };
 use crate::spec_t::mmu::defs::{ MemRegionExec, MemRegion, PTE, MAX_PHYADDR };
 use crate::spec_t::mmu::translation::{
-    MASK_NEG_DIRTY_ACCESS, l0_bits, l1_bits, l2_bits, l3_bits
+    MASK_NEG_DIRTY_ACCESS, l0_bits, //l1_bits, l2_bits, l3_bits
 };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 use crate::spec_t::os_code_vc::Token;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, unchanged_state_during_concurrent_trs, lemma_concurrent_trs_no_lock };
+use crate::impl_u::wrapped_token;
 use crate::impl_u::l2_impl::{ PT, PTDir };
 
-use super::l1;
-use super::l1::Directory;
+//use super::l1;
+//use super::l1::Directory;
 
 verus! {
 
@@ -65,7 +66,7 @@ impl WrappedTokenView {
     }
 
     pub open spec fn regions_derived_from_view(self) -> bool {
-        forall|r, s| self.regions.contains_pair(r, s) ==> s == Seq::new(512, |i: int| self.pt_mem.mem[(r.base + i * 8) as usize])
+        forall|r| self.regions.contains_key(r) ==> #[trigger] self.regions[r] == Seq::new(512, |i: int| self.pt_mem.mem[(r.base + i * 8) as usize])
     }
 
     //pub proof fn lemma_interps_match2(self, pt: PTDir)
@@ -306,11 +307,13 @@ impl WrappedMapToken {
             res.inv(),
             res@.orig_st == tok.st(),
             res@.pt_mem == tok.st().mmu@.pt_mem,
+            res@.regions.dom() == tok.st().os_ext.allocated,
             tok.st().core_states[tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, .. }
                 && res@.args == (OpArgs::Map { base: vaddr as usize, pte }),
             !res@.done,
     {
-        let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st(), regions: arbitrary() };
+        let tracked t = WrappedMapToken { tok, done: false, orig_st: tok.st(), regions: tok.st().os_ext.allocated };
+        assert(t@.regions.dom() =~= tok.st().os_ext.allocated);
         assume(t.inv_regions());
         assert(Map::new(
                 |k| t.tok.st().mmu@.pt_mem@.contains_key(k) && !t@.orig_st.mmu@.pt_mem@.contains_key(k),
@@ -323,6 +326,7 @@ impl WrappedMapToken {
         // OSSM invariant
         &&& self.tok.st().inv(self.tok.consts())
         // Other stuff
+        &&& self@.regions_derived_from_view()
         &&& !self.tok.on_first_step()
         &&& self.tok.consts().valid_core(self.tok.core())
         &&& self.tok.consts().valid_ult(self.tok.thread())
@@ -345,6 +349,11 @@ impl WrappedMapToken {
             //&&& self.tok.st().mmu@.pending_maps === map![]
         }
     }
+
+    pub proof fn lemma_regions_derived_from_view(self)
+        requires self.inv()
+        ensures self@.regions_derived_from_view()
+    {}
 
     spec fn inv_regions(&self) -> bool {
         &&& forall|r| #[trigger] self.regions.contains(r) ==> aligned(r.base, 4096) && r.size == 4096
@@ -694,7 +703,7 @@ impl WrappedMapToken {
             //proph_res.value() == arbitrary()
             rtok@.progress() is Unready,
             rtok@.steps() === seq![],
-            true, // TODO: more stuff?
+            //true, // TODO: more stuff?
     {
         let ghost core = tok.tok.core();
         let tracked mut tok = tok;
@@ -743,6 +752,7 @@ impl WrappedMapToken {
             // TODO: Need some help here from the invariant and resolve the prophecy before we take
             // the step. Prophecy is actually problematic here.
             assume(lbl == tok.tok.steps()[0]);
+            assume(post.inv_impl());
             assert(os::step_MapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapEnd { core }, lbl));
             tok.tok.register_external_step_osext(&mut osext_tok, post);
@@ -781,6 +791,12 @@ pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(
         tok.consts() == old(tok).consts(),
         tok.steps() == old(tok).steps().drop_first(),
         !tok.on_first_step(),
+        // From `inv_impl`:
+        forall|wtok: wrapped_token::WrappedTokenView| ({
+            &&& wtok.pt_mem == tok.st().mmu@.pt_mem
+            &&& wtok.regions.dom() == tok.st().os_ext.allocated
+            &&& #[trigger] wtok.regions_derived_from_view()
+        }) ==> exists|pt| PT::inv_and_nonempty(wtok, pt),
 {
     let ghost state1 = tok.st();
     let ghost core = tok.core();
@@ -825,6 +841,13 @@ pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(
         assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core: core }, RLbl::Tau));
         tok.register_internal_step_osext(&mut osext_tok, post);
         os_invariant::next_preserves_inv(tok.consts(), state5, tok.st(), RLbl::Tau);
+
+
+        assert forall|wtok: wrapped_token::WrappedTokenView| ({
+            &&& wtok.pt_mem == tok.st().mmu@.pt_mem
+            &&& wtok.regions.dom() == tok.st().os_ext.allocated
+            &&& #[trigger] wtok.regions_derived_from_view()
+        }) implies exists|pt| PT::inv_and_nonempty(wtok, pt) by {};
     }
 
     os_ext::code::acquire_lock(Tracked(&mut osext_tok));

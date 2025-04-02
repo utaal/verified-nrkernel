@@ -531,6 +531,7 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
     &&& post.mmu@.writes         == pre.mmu@.writes
     &&& post.mmu@.pending_maps   == pre.mmu@.pending_maps
     &&& post.mmu@.pending_unmaps == pre.mmu@.pending_unmaps
+    &&& post.os_ext.allocated    == pre.os_ext.allocated
 }
 
 } // verus!

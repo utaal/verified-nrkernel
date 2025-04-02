@@ -163,7 +163,9 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
 pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.lock === None
     &&& pre.shootdown_vec.open_requests === set![]
-    &&& pre.allocated === set![]
+    // The OS state machine specifies this field. We assume that we already start with one
+    // directory allocated for the PML4 directory.
+    //&&& pre.allocated === set![]
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {

@@ -30,7 +30,7 @@ broadcast proof fn lemma_union_empty<A>(s: Set<A>)
 }
 
 
-proof fn lemma_bitvector_facts_simple()
+pub proof fn lemma_bitvector_facts_simple()
     ensures
         bit!(0usize) == 1,
         0 & MASK_NEG_DIRTY_ACCESS == 0,
@@ -44,7 +44,7 @@ proof fn lemma_bitvector_facts_simple()
 }
 
 // TODO: Convert to individual broadcast maybe
-proof fn lemma_bitvector_facts()
+pub proof fn lemma_bitvector_facts()
     ensures
         forall|v: usize| v & bit!(5) == 0 && v & bit!(6) == 0 ==> #[trigger] (v & MASK_NEG_DIRTY_ACCESS) == v,
         forall|v: usize, i: usize| i < 64 ==> v & bit!(i) != bit!(i) <==> v & bit!(i) == 0,
@@ -1534,14 +1534,15 @@ fn map_frame_aux(
                                 idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
                                 //aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
                                 //aligned(vaddr as nat, pte.frame.size as nat),
-                                //x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
+                                x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                                 //idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
                         {
-                            // TODO: running verus with --expand-errors gives the "failed even
-                            // though all sub-assertions succeeded" message. So we must have all
-                            // the stuff we need to prove this, just have to find it and add it to
-                            // the requires clause.
+                            // TODO:
                             admit();
+                            assert(x86_arch_spec.entry_size(0) == crate::spec_t::mmu::defs::L0_ENTRY_SIZE);
+                            assert(x86_arch_spec.entry_size(1) == crate::spec_t::mmu::defs::L1_ENTRY_SIZE);
+                            assert(x86_arch_spec.entry_size(2) == crate::spec_t::mmu::defs::L2_ENTRY_SIZE);
+                            assert(x86_arch_spec.entry_size(3) == crate::spec_t::mmu::defs::L3_ENTRY_SIZE);
                         }
                         interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains();
                         let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, ppte);
@@ -2033,7 +2034,6 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
     requires
         !old(tok)@.done,
         inv_and_nonempty(old(tok)@, old(pt)@),
-        interp(old(tok)@, old(pt)@).inv(),
         old(tok).inv(),
         //old(tok)@.alloc_available_pages() >= 3,
         accepted_mapping(vaddr as nat, pte@, 0, 0),
@@ -2570,10 +2570,7 @@ fn insert_empty_directory(
                         //x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                         //idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
                 {
-                    // TODO: running verus with --expand-errors gives the "failed even
-                    // though all sub-assertions succeeded" message. So we must have all
-                    // the stuff we need to prove this, just have to find it and add it to
-                    // the requires clause.
+                    // TODO:
                     admit();
                 }
                 interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains();

@@ -299,7 +299,7 @@ impl Arch {
         recommends
             layer < self.layers.len(),
     {
-        self.layers.index(layer as int).entry_size
+        self.layers[layer as int].entry_size
     }
 
     pub open spec(checked) fn num_entries(self, layer: nat) -> nat

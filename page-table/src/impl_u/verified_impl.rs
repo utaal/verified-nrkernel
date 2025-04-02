@@ -2,9 +2,9 @@ use vstd::prelude::*;
 
 use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec, x86_arch_spec_upper_bound };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE };
+use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE, x86_arch_spec };
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
-use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken };
+use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken, WrappedTokenView };
 use crate::impl_u::l2_impl::PT::{ self, map_frame, unmap };
 
 verus! {
@@ -24,17 +24,21 @@ impl CodeVC for PTImpl {
         let tracked mut proph_res = proph_res;
 
         crate::impl_u::wrapped_token::start_map_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
-        // TODO: Needs an OS invariant
-        //assume(tok.st().mmu@.pending_maps === map![]);
         let tracked wtok = WrappedMapToken::new(tok); //, proph_res.value());
-        let mut pt = Ghost(arbitrary());
-        assume(PT::inv_and_nonempty(wtok@, pt@));
-        assume(PT::interp(wtok@, pt@).inv());
-
+        proof {
+            wtok.lemma_regions_derived_from_view();
+        }
+        let mut pt = Ghost(choose|pt| PT::inv_and_nonempty(wtok@, pt));
+        assert(PT::inv_and_nonempty(wtok@, pt@));
 
         proof {
             x86_arch_spec_upper_bound();
             assert(vaddr < MAX_BASE);
+            assert(x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, 1)) by {
+                assert(x86_arch_spec.entry_size(1) == crate::spec_t::mmu::defs::L1_ENTRY_SIZE);
+                assert(x86_arch_spec.entry_size(2) == crate::spec_t::mmu::defs::L2_ENTRY_SIZE);
+                assert(x86_arch_spec.entry_size(3) == crate::spec_t::mmu::defs::L3_ENTRY_SIZE);
+            };
         }
 
         let ghost wtok_before = wtok@;

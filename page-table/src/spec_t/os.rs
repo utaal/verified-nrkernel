@@ -16,6 +16,7 @@ use crate::spec_t::mmu::defs::{
 };
 use crate::theorem::RLbl;
 use crate::spec_t::os_ext;
+use crate::impl_u::{ wrapped_token, l2_impl::PT };
 
 verus! {
 
@@ -386,6 +387,7 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl
     &&& thread_id == ult_id && vaddr == vaddr2 && result == result2
     &&& s1.mmu@.writes.tso === set![]
     &&& s1.mmu@.pending_maps === map![]
+    &&& s2.inv_impl() // impl invariant is re-established
 
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
@@ -448,7 +450,7 @@ pub open spec fn step_Deallocate(c: Constants, s1: State, s2: State, core: Core,
     &&& lbl is Tau
 
     &&& c.valid_core(core)
-    //&&& s1.core_states[core] is UnmapExecuting
+    &&& s1.core_states[core] is UnmapExecuting
 
     //mmu statemachine steps
     &&& s2.mmu == s1.mmu
@@ -581,6 +583,7 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
         },
         _ => false,
     }
+    &&& s2.inv_impl() // impl invariant is re-established
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::ReleaseLock { core })
@@ -623,9 +626,13 @@ pub open spec fn next(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
 
 pub open spec fn init(c: Constants, s: State) -> bool {
     // hardware stuff
-    &&& s.interp_pt_mem() === Map::empty()
+    //&&& s.interp_pt_mem() === Map::empty()
     &&& rl3::init(s.mmu, c.mmu)
     &&& os_ext::init(s.os_ext, c.os_ext())
+    // We start with a single directory already allocated for PML4
+    &&& s.os_ext.allocated === set![MemRegion { base: s.mmu@.pt_mem.pml4 as nat, size: 4096 }]
+    // and that directory is empty
+    &&& forall|i: usize| 0 <= i < 512 ==> #[trigger] s.mmu@.pt_mem.read(add(s.mmu@.pt_mem.pml4, mul(i, 8))) == 0
     //wf of ult2core mapping
     &&& forall|id: nat| #[trigger] c.valid_ult(id) <==> c.ult2core.contains_key(id)
     &&& forall|id: nat| c.valid_ult(id) ==> #[trigger] c.valid_core(c.ult2core[id])
@@ -929,7 +936,7 @@ impl State {
     }
 
     pub open spec fn inv_mapped_ptes_above_zero(self) -> bool {
-        forall|vaddr|  #[trigger] self.interp_pt_mem().dom().contains(vaddr) ==> self.interp_pt_mem()[vaddr].frame.size > 0
+        forall|vaddr| #[trigger] self.interp_pt_mem().dom().contains(vaddr) ==> self.interp_pt_mem()[vaddr].frame.size > 0
     }
 
     pub open spec fn inv_basic(self, c: Constants) -> bool {
@@ -958,8 +965,22 @@ impl State {
                 ==> self.mmu@.writes.core == core
     }
 
+    /// This invariant isn't particularly meaningful in the OS state machine. It's trivially
+    /// preserved when no thread holds the lock, and its preservation when the lock is held is
+    /// ensured by the implementation, via enabling conditions on the corresponding transitions.
+    /// The only tricky part is proving it from `init`.
+    pub open spec fn inv_impl(self) -> bool {
+        self.os_ext.lock is None ==>
+            forall|wtok: wrapped_token::WrappedTokenView| ({
+                &&& wtok.pt_mem == self.mmu@.pt_mem
+                &&& wtok.regions.dom() == self.os_ext.allocated
+                &&& #[trigger] wtok.regions_derived_from_view()
+            }) ==> exists|pt| PT::inv_and_nonempty(wtok, pt)
+    }
+
     pub open spec fn inv(self, c: Constants) -> bool {
         &&& self.inv_basic(c)
+        &&& self.inv_impl()
         &&& self.inv_write_core(c)
         //&&& self.tlb_inv(c)
         &&& self.overlapping_vmem_inv(c)

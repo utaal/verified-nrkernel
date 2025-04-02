@@ -3,13 +3,30 @@ use vstd::prelude::*;
 //use crate::impl_u::spec_pt;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
-    candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core
+    candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core, X86_NUM_ENTRIES, new_seq
 };
+#[cfg(verus_keep_ghost)]
+use crate::definitions_u::{ lemma_new_seq };
 use crate::spec_t::{hlspec, os};
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
+use crate::spec_t::mmu;
 use crate::theorem::RLbl;
+use crate::impl_u::wrapped_token;
+use crate::impl_u::l2_impl::{ PTDir, PT };
 
 verus! {
+
+pub proof fn lemma_init_implies_empty_map(s: os::State, c: os::Constants)
+    requires os::init(c, s),
+    ensures s.interp_pt_mem() === map![]
+{
+    reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+    assert forall|vaddr| #[trigger] s.mmu@.pt_mem.pt_walk(vaddr).result() is Invalid by {
+        crate::impl_u::l2_impl::lemma_bitvector_facts_simple();
+        crate::spec_t::mmu::translation::lemma_bit_indices_less_512(vaddr);
+    };
+    assert(s.interp_pt_mem() =~= map![]);
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Proof of Invariant
@@ -20,6 +37,32 @@ pub proof fn init_implies_inv(c: os::Constants, s: os::State)
 {
     to_rl1::init_implies_inv(s.mmu, c.mmu);
     to_rl1::init_refines(s.mmu, c.mmu);
+    assert(s.inv_impl()) by {
+        assert forall|wtok: wrapped_token::WrappedTokenView| ({
+            &&& wtok.pt_mem == s.mmu@.pt_mem
+            &&& wtok.regions.dom() == s.os_ext.allocated
+            &&& #[trigger] wtok.regions_derived_from_view()
+        })
+            implies exists|pt| PT::inv_and_nonempty(wtok, pt)
+        by {
+            let pml4 = s.mmu@.pt_mem.pml4;
+            let region = MemRegion { base: pml4 as nat, size: 4096 };
+            let pt =
+                PTDir {
+                    region,
+                    entries: new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None),
+                    used_regions: set![region],
+                };
+            lemma_new_seq::<Option<PTDir>>(X86_NUM_ENTRIES as nat, None);
+            assert forall|i: usize| 0 <= i < 512 implies wtok.regions[region][i as int] == 0 by {
+                assert(s.mmu@.pt_mem.read(add(pml4, mul(i, 8))) == 0);
+            };
+            PT::lemma_zeroed_page_implies_empty_at(wtok, pt, 0, pml4);
+            assert(PT::inv_and_nonempty(wtok, pt));
+        };
+    };
+
+    lemma_init_implies_empty_map(s, c);
     assert(s.inv_basic(c));
     init_implies_tlb_inv(c, s);
 }
@@ -100,7 +143,22 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     assert(s2.inv_basic(c));
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
+    next_step_preserves_inv_impl(c, s1, s2, step, lbl);
     next_step_preserves_inv_write_core(c, s1, s2, step, lbl);
+}
+
+pub proof fn next_step_preserves_inv_impl(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+    requires
+        s1.inv_mmu(c),
+        s1.inv_lock(c),
+        s1.inv_impl(),
+        os::next_step(c, s1, s2, step, lbl),
+    ensures
+        s2.inv_impl(),
+{
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
 }
 
 pub proof fn next_step_preserves_inv_write_core(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
