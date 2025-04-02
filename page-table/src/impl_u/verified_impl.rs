@@ -75,14 +75,20 @@ impl CodeVC for PTImpl {
         assert(wtok@.result == proph_res.value()) by {
             if let Ok(_) = res {
                 assert(wtok@.result === Ok(()));
+                assert(res is Ok);
+                assert(res.get_Ok_0() == ());
+                assert(res == Ok::<(), ()>(()));
                 assert(proph_res.value() is Ok);
-                assume(proph_res.value() === Ok(()));
+                assert(proph_res.value() == Ok::<(), ()>(()));
             }
 
             if let Err(_) = res {
                 assert(wtok@.result === Err(()));
+                assert(res is Err);
+                assert(res.get_Err_0() == ());
+                assert(res == Err::<(), ()>(()));
                 assert(proph_res.value() is Err);
-                assume(proph_res.value() === Err(()));
+                assert(proph_res.value() == Err::<(), ()>(()));
             }
         };
         assert(wtok@.steps[0]->MapEnd_result == proph_res.value());
