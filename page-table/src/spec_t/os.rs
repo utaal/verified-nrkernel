@@ -965,7 +965,8 @@ impl State {
         core_states.dom().contains(core)
             && match core_states[core] {
                 CoreState::MapDone { ult_id, vaddr, pte, result } =>
-                    pte == pending_maps[base],
+                    vaddr == base
+                     && pte == pending_maps[base],
                 _ => false,
             }
     }

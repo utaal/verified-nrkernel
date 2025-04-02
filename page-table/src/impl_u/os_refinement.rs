@@ -484,8 +484,6 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
 
             let pte = t1.vaddr_mapping_is_being_modified_choose(d, vaddr);
 
-            // TODO: Needs an invariant about pending_maps
-
             let core = choose |core| os::State::is_pending_for_core(c, vbase, core, s1.core_states, s1.mmu@.pending_maps);
             assert(os::State::is_pending_for_core(c, vbase, core, s1.core_states, s1.mmu@.pending_maps));
 
