@@ -142,6 +142,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     };
 
     assert(s2.inv_basic(c));
+    next_step_preserves_inv_osext(c, s1, s2, step, lbl);
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
     next_step_preserves_inv_impl(c, s1, s2, step, lbl);
@@ -306,6 +307,18 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
             assert(s2.inv_pending_maps(c));
         }
     }
+}
+
+pub proof fn next_step_preserves_inv_osext(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+    requires
+        s1.inv(c),
+        os::next_step(c, s1, s2, step, lbl),
+    ensures
+        s2.inv_osext(),
+{
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
 }
 
 pub proof fn next_step_preserves_inv_impl(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)

@@ -942,7 +942,6 @@ impl State {
     pub open spec fn inv_basic(self, c: Constants) -> bool {
         &&& self.wf(c)
         &&& self.inv_mmu(c)
-        &&& self.inv_osext()
         &&& self.inv_mapped_ptes_above_zero()
         &&& self.inv_mappings_in_bound(c)
         &&& self.inv_inflight_pte_above_zero_pte_result_consistent(c)
@@ -950,7 +949,6 @@ impl State {
         &&& self.inv_successful_maps(c)
         &&& self.inv_overlap_of_mapped_maps(c)
         &&& self.inv_lock(c)
-        &&& self.inv_pending_maps(c)
     }
 
     pub open spec fn inv_pending_maps(self, c: Constants) -> bool {
@@ -1006,8 +1004,10 @@ impl State {
         &&& self.inv_basic(c)
         &&& self.inv_impl()
         &&& self.inv_write_core(c)
+        &&& self.inv_osext()
         //&&& self.tlb_inv(c)
         &&& self.overlapping_vmem_inv(c)
+        &&& self.inv_pending_maps(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
