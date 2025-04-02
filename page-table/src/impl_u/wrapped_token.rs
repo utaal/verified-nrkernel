@@ -124,7 +124,7 @@ impl WrappedTokenView {
         reveal_with_fuel(PT::interp_at_aux, 5);
         reveal_with_fuel(PT::interp_at_entry, 5);
         reveal_with_fuel(PT::inv_at, 5);
-        
+
         let root_dir = crate::impl_u::l1::Directory {
             entries: PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]),
             layer: 0,
@@ -133,8 +133,8 @@ impl WrappedTokenView {
         };
 
         assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0) == root_dir);
-        
-        assert(PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]) == 
+
+        assert(PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]) ==
             {
                 let entry = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, 0 /* init.len() */);
                 PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![].push(entry))
@@ -145,9 +145,9 @@ impl WrappedTokenView {
                 &&& root_dir.interp().dom().contains(k) == self.pt_mem@.dom().map(|k| k as nat).contains(k)
                 &&& root_dir.interp().contains_key(k) ==> k <= usize::MAX
             }) by {
-                
+
                 assert(root_dir.interp().contains_key(k as nat) == root_dir.interp().dom().contains(k as nat));
-                
+
                 if k <= usize::MAX {
 
                     crate::spec_t::mmu::translation::lemma_bit_indices_less_512(k as usize);
@@ -156,7 +156,7 @@ impl WrappedTokenView {
                     // recursion in interp_aux
                     // (There's also the slightly stronger impl_u::l2_impl::lemma_interp_at_aux_facts but I don't think you need that)
                     crate::impl_u::l2_impl::PT::lemma_interp_at_facts(self, pt, 0, self.pt_mem.pml4, 0);
-                
+
                     let walk = self.pt_mem.pt_walk(k as usize);
                     assert(walk.complete);
                     let mem = self.pt_mem;
@@ -202,7 +202,7 @@ impl WrappedTokenView {
 
                             // TODO(andrea) next
                             assume(self.pt_mem.read(walk_path_0_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bits!(k_usize), pt.region));
-                            assert(l1_pt_entry == 
+                            assert(l1_pt_entry ==
                                 (mmu::translation::PDE {
                                     entry: self.read(l0_bits!(k_usize), pt.region),
                                     layer: Ghost(0),
@@ -256,7 +256,7 @@ impl WrappedTokenView {
             admit();
         }
 
-        assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp() == 
+        assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp() ==
             Map::new(|k: nat| k <= usize::MAX && self.pt_mem@.contains_key(k as usize), |k: nat| self.pt_mem@[k as usize]));
 
         assert(PT::interp(self, pt).interp() =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
@@ -451,10 +451,6 @@ impl WrappedMapToken {
             PT::inv(old(tok)@, root_pt1),
             PT::inv(old(tok)@.write(idx, value, r, false), root_pt2),
             PT::interp_to_l0(old(tok)@.write(idx, value, r, false), root_pt2) == PT::interp_to_l0(old(tok)@, root_pt1),
-            // This precondition makes the abstraction kind of leaky but we want to use the MMU
-            // interp here. Otherwise we'd have to take two PTDirs as arguments and also require
-            // their preconditions just to express this.
-            //old(tok)@.write(idx, value, r, false).interp() == old(tok)@.interp(),
         ensures
             tok@ == old(tok)@.write(idx, value, r, false),
             tok.inv(),
@@ -468,7 +464,7 @@ impl WrappedMapToken {
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
             old(tok)@.lemma_interps_match(root_pt1);
-            assume(old(tok)@.write(idx, value, r, false).regions_derived_from_view());
+            old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, false);
             old(tok)@.write(idx, value, r, false).lemma_interps_match(root_pt2);
             broadcast use to_rl1::next_refines;
             assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
@@ -494,21 +490,9 @@ impl WrappedMapToken {
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
             assert(unchanged_state_during_concurrent_trs(state2, state3));
             assert(state2.mmu@.pt_mem == state1.mmu@.pt_mem.write(add(pbase, mul(idx, 8)), value));
-            //assert(state3.mmu@.pending_maps === state2.mmu@.pending_maps);
-            //assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps) by {
-            //    // TODO: Annoying because of mismatch between nat/usize maps
-            //    admit();
-            //};
             assert(tok.inv());
-            // unstable somehow
-            assume(tok.tok.st().core_states[core] == old(tok).tok.st().core_states[core]);
+            assert(tok.tok.st().core_states[core] == old(tok).tok.st().core_states[core]);
             assert(tok@.regions[r] =~= old(tok)@.regions[r].update(idx as int, value));
-            assert forall|r2: MemRegion| r2 !== r implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
-                // TODO: This would require disjointness invariant in `inv_regions` which would be
-                // duplicated from the one we already have in the impl. Gotta find a better way of
-                // doing this.
-                admit();
-            };
             assert(tok@.regions[r] == tok@.regions[r].update(idx as int, value));
             assert(tok@.regions =~= old(tok)@.regions.insert(r, tok@.regions[r].update(idx as int, value)));
         }
@@ -570,7 +554,7 @@ impl WrappedMapToken {
             assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
             assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             old(tok)@.lemma_interps_match(root_pt);
-            assume(old(tok)@.write(idx, value, r, true).regions_derived_from_view());
+            old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, true);
             old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
             //assert(PT::interp(old(tok)@, root_pt).interp().map == crate::spec_t::mmu::defs::nat_keys(old(tok)@.pt_mem@));
             //assert(crate::spec_t::mmu::defs::nat_keys(post.mmu@.pt_mem@) == post.interp_pt_mem());
@@ -594,22 +578,9 @@ impl WrappedMapToken {
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
             assert(unchanged_state_during_concurrent_trs(state2, state3));
             assert(state2.mmu@.pt_mem == state1.mmu@.pt_mem.write(add(pbase, mul(idx, 8)), value));
-            //assert(state3.mmu@.pending_maps === state2.mmu@.pending_maps);
-            //assert(state3.mmu@.pending_maps === state1.mmu@.pending_maps.insert(vaddr, pte)) by {
-            //    // TODO: Annoying because of mismatch between nat/usize maps
-            //    reveal(pt_mem::PTMem::view);
-            //    admit();
-            //};
-            //assert(tok.tok.st().mmu@.pending_maps.submap_of(map![vaddr => pte]));
             assert(tok.inv());
         }
         assert(tok@.regions[r] =~= old(tok)@.regions[r].update(idx as int, value));
-        assert forall|r2: MemRegion| r2 !== r implies tok@.regions[r2] =~= old(tok)@.regions[r2] by {
-            // TODO: This would require disjointness invariant in `inv_regions` which would be
-            // duplicated from the one we already have in the impl. Gotta find a better way of
-            // doing this.
-            admit();
-        };
         assert(tok@.pt_mem == old(tok)@.pt_mem.write(add(r.base as usize, mul(idx, 8)), value));
         assert(tok@.regions =~= old(tok)@.regions.insert(r, old(tok)@.regions[r].update(idx as int, value)));
         assert(tok@ =~= old(tok)@.write(idx, value, r, true));
@@ -620,13 +591,10 @@ impl WrappedMapToken {
             !old(tok)@.done,
             old(tok).inv(),
         ensures
-            true, // TODO: disjointness but disjoint from what?
             aligned(res.base as nat, 4096),
             res.size == 4096,
-            res.base + 4096 <= MAX_PHYADDR, // TODO: unnecessary?
-            !old(tok)@.regions.contains_key(res@), // TODO: This is weird. It's weak and should be
-                                                   // subsumed by disjointness? (which isn't
-                                                   // currently here but should be)
+            res.base + 4096 <= MAX_PHYADDR,
+            !old(tok)@.regions.contains_key(res@),
             tok@.regions === old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)),
             tok@.pt_mem == old(tok)@.pt_mem,
             tok@.args == old(tok)@.args,
@@ -656,11 +624,7 @@ impl WrappedMapToken {
             let ghost state3 = tok.tok.st();
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
         }
-        assume(res.base + 4096 <= MAX_PHYADDR);
-        assume(!old(tok)@.regions.contains_key(res@));
-        //proof {
-        //    tok.regions = tok.regions.insert(res@);
-        //}
+        assert(!old(tok)@.regions.contains_key(res@));
         // TODO: We may have to zero the page ourselves or alternatively allow spontaneous writes
         // to unallocated memory regions. (Or require zeroed pages when deallocating.)
         assume(tok@.regions[res@] === new_seq::<usize>(512nat, 0usize));
@@ -796,6 +760,23 @@ impl WrappedMapToken {
         }
         Tracked(tok.tok)
     }
+
+    pub proof fn lemma_regions_derived_from_view_after_write(self, r: MemRegion, idx: usize, value: usize, change: bool)
+        requires
+            self.inv(),
+            self@.regions.contains_key(r),
+            idx < 512,
+        ensures
+            self@.write(idx, value, r, change).regions_derived_from_view()
+    {
+        let self_write = self@.write(idx, value, r, change);
+        assert forall|r2| self_write.regions.contains_key(r2)
+            implies
+            #[trigger] self_write.regions[r2] =~= Seq::new(512, |i: int| self_write.pt_mem.mem[(r2.base + i * 8) as usize])
+        by {
+        };
+    }
+
 }
 
 pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(vaddr): Ghost<nat>, Ghost(pte): Ghost<PTE>)

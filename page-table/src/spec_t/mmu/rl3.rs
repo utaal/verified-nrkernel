@@ -7,7 +7,7 @@ use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, update_range };
+use crate::spec_t::mmu::defs::{ aligned, update_range, MAX_PHYADDR };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
@@ -511,7 +511,7 @@ pub closed spec fn init(pre: State, c: Constants) -> bool {
     &&& c.valid_core(pre.hist.writes.core)
     &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
     &&& aligned(pre.pt_mem.pml4 as nat, 4096)
-    &&& pre.pt_mem.pml4 <= u64::MAX - 4096
+    &&& pre.pt_mem.pml4 + 4096 <= MAX_PHYADDR
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {

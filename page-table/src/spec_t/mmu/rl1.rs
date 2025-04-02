@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, LoadResult, update_range };
+use crate::spec_t::mmu::defs::{ aligned, LoadResult, update_range, MAX_PHYADDR };
 use crate::spec_t::mmu::defs::{ PTE, Core };
 use crate::spec_t::mmu::rl3::{ Writes };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
@@ -370,7 +370,7 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& c.valid_core(pre.writes.core)
     &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
     &&& aligned(pre.pt_mem.pml4 as nat, 4096)
-    &&& pre.pt_mem.pml4 <= u64::MAX - 4096
+    &&& pre.pt_mem.pml4 + 4096 <= MAX_PHYADDR
 }
 
 //proof fn init_implies_inv(pre: State, c: Constants)

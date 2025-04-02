@@ -973,10 +973,26 @@ impl State {
         &&& self.mmu.inv(c.mmu)
         &&& self.mmu.interp().inv(c.mmu)
         &&& self.mmu@.happy
+        &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.mmu@.pt_mem.mem.contains_key(va)
+        &&& aligned(self.mmu@.pt_mem.pml4 as nat, 4096)
+        &&& self.mmu@.pt_mem.pml4 <= u64::MAX - 4096
     }
 
     pub open spec fn inv_osext(self) -> bool {
-        &&& forall|r| #[trigger] self.os_ext.allocated.contains(r) ==> aligned(r.base, 4096) && r.size == 4096
+        &&& forall|r| #[trigger] self.os_ext.allocated.contains(r) ==> {
+            &&& aligned(r.base, 4096)
+            &&& r.base + 4096 <= MAX_PHYADDR
+            &&& r.size == 4096
+        }
+        &&& self.allocated_regions_disjoint()
+    }
+
+    pub open spec fn allocated_regions_disjoint(self) -> bool {
+        forall|r1, r2|
+            self.os_ext.allocated.contains(r1)
+            && self.os_ext.allocated.contains(r2)
+            && r1 != r2
+            ==> !(#[trigger] overlap(r1, r2))
     }
 
     pub open spec fn inv_write_core(self, c: Constants) -> bool {

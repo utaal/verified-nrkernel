@@ -1,7 +1,7 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{ Core, MemRegion };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ overlap, aligned };
+use crate::spec_t::mmu::defs::{ overlap, aligned, MAX_PHYADDR };
 
 
 verus! {
@@ -117,13 +117,14 @@ pub open spec fn step_AckShootdown(pre: State, post: State, c: Constants, lbl: L
     }
 }
 
-// TODO: Hardcoding 4k allocations for now. Should fix that to support large mappings.
+// TODO: Hardcoding 4k allocations for now. Should fix that to support large mappings. (MB: ???)
 pub open spec fn step_Allocate(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Allocate { core, res }
 
     &&& c.valid_core(core)
     &&& pre.disjoint_from_allocations(res)
     &&& aligned(res.base, 4096)
+    &&& res.base + 4096 <= MAX_PHYADDR
     &&& res.size == 4096
 
     &&& post == State {
