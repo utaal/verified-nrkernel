@@ -975,7 +975,7 @@ impl State {
         &&& self.mmu@.happy
         &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.mmu@.pt_mem.mem.contains_key(va)
         &&& aligned(self.mmu@.pt_mem.pml4 as nat, 4096)
-        &&& self.mmu@.pt_mem.pml4 <= u64::MAX - 4096
+        &&& self.mmu@.pt_mem.pml4 + 4096 <= MAX_PHYADDR
     }
 
     pub open spec fn inv_osext(self) -> bool {
