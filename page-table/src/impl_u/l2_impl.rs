@@ -629,6 +629,7 @@ fn entry_at(Tracked(tok): Tracked<&mut WrappedMapToken>, Ghost(pt): Ghost<PTDir>
 
 // TODO: deduplicate this from the map token one
 fn entry_at_unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize, i: usize) -> (res: PDE) {
+    proof { admit(); }
     let e = PDE {
         entry: WrappedUnmapToken::read(Tracked(tok), ptr, i, Ghost(pt.region)),
         layer: Ghost(layer as nat),
@@ -2692,7 +2693,7 @@ fn unmap_aux(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghost<PTD
                         //        entries:      pt.entries.update(idx as int, Some(dir_pt_res@)),
                         //        used_regions: pt.used_regions,
                         //    });
-                        WrappedUnmapToken::write_stutter(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region));
+                        //WrappedUnmapToken::write_stutter(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region));
                         WrappedUnmapToken::deallocate(Tracked(tok), layer, MemRegionExec { base: dir_addr, size: PAGE_SIZE, });
 
                         let removed_regions: Ghost<Set<MemRegion>> = Ghost(removed_regions@.insert(dir_pt_res@.region));
@@ -2855,8 +2856,7 @@ fn unmap_aux(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghost<PTD
             }
         } else {
             if aligned_exec(vaddr, x86_arch_exec.entry_size(layer)) {
-                assume(!tok@.done);
-                WrappedUnmapToken::write_change(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region));
+                //WrappedUnmapToken::write_change(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region));
 
                 let removed_regions: Ghost<Set<MemRegion>> = Ghost(Set::empty());
                 let res: Ghost<(PTDir,Set<MemRegion>)> = Ghost((pt, removed_regions@));

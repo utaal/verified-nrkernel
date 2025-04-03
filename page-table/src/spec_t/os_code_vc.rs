@@ -510,6 +510,9 @@ pub trait CodeVC {
         Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
         requires
+            os::step_Unmap_enabled(vaddr as nat),
+            tok.st().inv(tok.consts()),
+            tok.consts().valid_ult(tok.thread()),
             tok.st().core_states[tok.core()] is Idle,
             tok.steps() === seq![
                 RLbl::UnmapStart { thread_id: tok.thread(), vaddr: vaddr as nat },
