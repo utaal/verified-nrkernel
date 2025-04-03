@@ -357,6 +357,18 @@ impl Directory {
         }
     }
 
+    pub broadcast proof fn lemma_interp_of_entry_key_between(self, i: nat, va: nat)
+        requires
+            i < self.entries.len(),
+            #[trigger] self.interp_of_entry(i).contains_key(va),
+            #[trigger] self.inv(),
+        ensures
+            self.entry_base(i) <= va < self.next_entry_base(i),
+        decreases self, self.entries.len() - i, 0nat
+    {
+        self.lemma_interp_of_entry_between(i, va, self.interp_of_entry(i)[va]);
+    }
+
     //pub proof fn lemma_inv_implies_interp_inv(self)
     //    requires
     //        self.inv(),
@@ -672,10 +684,10 @@ impl Directory {
         ensures
             forall|base: nat, pte: PTE|
                 self.interp_aux(j).contains_pair(base, pte) ==>
-                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).contains_pair(base, pte),
+                exists|i: nat| #![auto] j <= i < self.num_entries() && self.interp_of_entry(i).contains_pair(base, pte),
             forall|base: nat|
                 self.interp_aux(j).contains_key(base) ==>
-                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).contains_key(base)
+                exists|i: nat| #![auto] j <= i < self.num_entries() && self.interp_of_entry(i).contains_key(base)
         decreases self.arch.layers.len() - self.layer, self.num_entries() - j
     {
         if j >= self.entries.len() {
@@ -684,12 +696,12 @@ impl Directory {
             self.lemma_interp_aux_contains_implies_interp_of_entry_contains(j+1);
             assert forall|base: nat, pte: PTE| #![auto]
                 self.interp_aux(j).contains_pair(base, pte) implies
-                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).contains_pair(base, pte) by {
+                exists|i: nat| #![auto] j <= i < self.num_entries() && self.interp_of_entry(i).contains_pair(base, pte) by {
                 if self.interp_aux(j+1).contains_pair(base, pte) { } else { }
             };
             assert forall|base: nat| #![auto]
                 self.interp_aux(j).contains_key(base) implies
-                exists|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).contains_key(base) by {
+                exists|i: nat| #![auto] j <= i < self.num_entries() && self.interp_of_entry(i).contains_key(base) by {
                 if self.interp_aux(j+1).contains_key(base) { } else { }
             };
         }
@@ -1306,6 +1318,96 @@ impl Directory {
             self.interp().insert(base, pte) == self.update(j, NodeEntry::Page(pte)).interp(),
     {
         self.lemma_interp_of_entry_insert_implies_interp_aux_insert(0, j, base, NodeEntry::Page(pte), pte);
+    }
+
+    pub proof fn lemma_interp_entries_remove_implies_interp_remove(self, other: Directory, idx: nat, vaddr: nat)
+        requires
+            self.inv(),
+            other.inv(),
+            self.arch == other.arch,
+            self.layer == other.layer,
+            self.base_vaddr == other.base_vaddr,
+            self.entry_base(idx) <= vaddr < self.next_entry_base(idx),
+            idx < self.num_entries(),
+            other.entries[idx as int].interp(self.entry_base(idx)) == self.entries[idx as int].interp(self.entry_base(idx)).remove(vaddr),
+            forall|i| 0 <= i < self.num_entries() && i != idx ==> other.entries[i] == self.entries[i],
+        ensures
+            other.interp() == self.interp().remove(vaddr),
+    {
+        if self.entries[idx as int].interp(self.entry_base(idx)).contains_key(vaddr) {
+            self.lemma_entries_interp_remove_implies_interp_aux_remove(other, idx, vaddr, 0);
+        } else {
+            assert(self.entries[idx as int].interp(self.entry_base(idx)) =~= other.entries[idx as int].interp(self.entry_base(idx)));
+            self.lemma_entries_interp_equal_implies_interp_equal(other);
+            assert_by_contradiction!(!self.interp().contains_key(vaddr), {
+                self.lemma_interp_contains_implies_interp_of_entry_contains();
+                assert(exists|j: nat| #![auto] j < self.num_entries() && self.interp_of_entry(j).contains_key(vaddr));
+                let j = choose|j: nat| #![auto] j < self.num_entries() && self.interp_of_entry(j).contains_key(vaddr);
+                self.lemma_interp_of_entry_key_between(j, vaddr);
+                assert(j == idx) by (nonlinear_arith)
+                    requires
+                        self.entry_base(j) <= vaddr < self.next_entry_base(j),
+                        self.entry_base(idx) <= vaddr < self.next_entry_base(idx),
+                {};
+            });
+            assert(other.interp() =~= self.interp().remove(vaddr));
+        }
+    }
+
+    proof fn lemma_entries_interp_remove_implies_interp_aux_remove(self, other: Directory, idx: nat, vaddr: nat, i: nat)
+        requires
+            idx < self.entries.len(),
+            self.inv(),
+            other.inv(),
+            self.arch == other.arch,
+            self.layer == other.layer,
+            self.base_vaddr == other.base_vaddr,
+            // This precondition isn't really necessary
+            self.entries[idx as int].interp(self.entry_base(idx)).contains_key(vaddr),
+            other.entries[idx as int].interp(self.entry_base(idx)) == self.entries[idx as int].interp(self.entry_base(idx)).remove(vaddr),
+            forall|j: nat| i <= j < self.entries.len() && j != idx
+                ==> (#[trigger] self.entries[j as int]).interp(self.entry_base(j))
+                            == other.entries[j as int].interp(self.entry_base(j)),
+        ensures
+            if idx < i {
+                other.interp_aux(i) === self.interp_aux(i)
+            } else {
+                other.interp_aux(i) === self.interp_aux(i).remove(vaddr)
+            }
+        decreases self.arch.layers.len() - self.layer, self.num_entries() - i
+    {
+        self.lemma_interp_of_entry_key_between(idx, vaddr);
+        assert(self.entry_base(idx) <= vaddr < self.next_entry_base(idx));
+        indexing::lemma_entry_base_from_index(self.base_vaddr, idx, self.entry_size());
+        if i >= self.entries.len() {
+        } else {
+            let rem1 = self.interp_aux(i + 1);
+            let rem2 = other.interp_aux(i + 1);
+            let entry_i1 = self.interp_of_entry(i);
+            let entry_i2 = other.interp_of_entry(i);
+            if idx < i {
+                self.lemma_entries_interp_remove_implies_interp_aux_remove(other, idx, vaddr, i + 1);
+                assert(rem1.union_prefer_right(entry_i1) =~= rem2.union_prefer_right(entry_i2));
+            } else if idx == i {
+                self.lemma_entries_interp_remove_implies_interp_aux_remove(other, idx, vaddr, i + 1);
+                assert_by_contradiction!(!rem2.contains_key(vaddr), {
+                    self.lemma_interp_aux_contains_implies_interp_of_entry_contains(i + 1);
+                    assert(exists|j: nat| #![auto] i + 1 <= j < self.num_entries() && self.interp_of_entry(j).contains_key(vaddr));
+                    let j = choose|j: nat| #![auto] i + 1 <= j < self.num_entries() && self.interp_of_entry(j).contains_key(vaddr);
+                    self.lemma_interp_of_entry_key_between(j, vaddr);
+                    assert(self.entry_base(j) <= vaddr < self.next_entry_base(j));
+                });
+                assert(rem2.union_prefer_right(entry_i2) =~= rem1.union_prefer_right(entry_i1).remove(vaddr));
+            } else {
+                self.lemma_entries_interp_remove_implies_interp_aux_remove(other, idx, vaddr, i + 1);
+                assert_by_contradiction!(!entry_i1.contains_key(vaddr), {
+                    self.lemma_interp_of_entry_key_between(i, vaddr);
+                    assert(self.entry_base(i) <= vaddr < self.next_entry_base(i));
+                    indexing::lemma_entry_base_from_index(self.base_vaddr, i, self.entry_size());
+                });
+                assert(rem2.union_prefer_right(entry_i2) =~= rem1.union_prefer_right(entry_i1).remove(vaddr));
+            }
+        }
     }
 
     //proof fn lemma_insert_interp_of_entry_implies_insert_interp(self, j: nat, base: nat, n: NodeEntry, pte: PTE)
