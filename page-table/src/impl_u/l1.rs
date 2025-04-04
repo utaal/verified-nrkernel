@@ -169,12 +169,7 @@ impl Directory {
     }
 
     pub open spec(checked) fn interp(self) -> Map<nat, PTE> {
-        //l0::PageTableContents {
         self.interp_aux(0)
-        //    arch: self.arch,
-        //    lower: 0,
-        //    upper: self.upper_vaddr(),
-        //}
     }
 
     pub open spec(checked) fn upper_vaddr(self) -> nat
