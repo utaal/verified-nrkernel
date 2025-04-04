@@ -2642,11 +2642,12 @@ spec fn unmap_builder_pre(tok_old: WrappedTokenView, pt_old: PTDir, tok_new: Wra
     &&& pt_new.region === pt_old.region
 }
 
-pub open spec fn accepted_unmap(vaddr: nat) -> bool {
+pub open spec fn accepted_unmap(vaddr: nat, layer: nat, base: nat) -> bool {
     &&& exists|size: nat|
         #![trigger x86_arch_spec.contains_entry_size(size)]
         #![trigger aligned(vaddr, size)]
         x86_arch_spec.contains_entry_size(size) && aligned(vaddr, size)
+    &&& vaddr < x86_arch_spec.upper_vaddr(layer as nat, base as nat)
 }
 
 fn unmap_aux(
@@ -2664,7 +2665,7 @@ fn unmap_aux(
         old(tok)@.args == (OpArgs::Unmap { base: vaddr }),
         inv_at(old(tok)@, pt, layer as nat, ptr),
         no_empty_directories(old(tok)@, pt, layer as nat, ptr),
-        accepted_unmap(vaddr as nat),
+        accepted_unmap(vaddr as nat, layer as nat, base as nat),
         base <= vaddr < MAX_BASE,
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
             <==> interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).contains_key(vaddr as nat),
@@ -2728,8 +2729,6 @@ fn unmap_aux(
         assert(unmap_builder_pre(old(tok)@, pt, old(tok)@, pt, layer as nat, ptr, set![]));
     };
     let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
-    // TODO: goes in accepted_unmap
-    assume(vaddr < x86_arch_spec.upper_vaddr(layer as nat, base as nat));
     proof { indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat); }
     let entry = entry_at_unmap(Tracked(tok), Ghost(pt), layer, ptr, idx);
     let entry_base: usize = x86_arch_exec.entry_base(layer, base, idx);
@@ -3141,7 +3140,7 @@ pub fn unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, pt: &mut Ghost<PTDir
         !old(tok)@.change_made,
         inv_and_nonempty(old(tok)@, old(pt)@),
         old(tok).inv(),
-        accepted_unmap(vaddr as nat),
+        accepted_unmap(vaddr as nat, 0, 0),
         vaddr < MAX_BASE,
         pml4 == old(tok)@.pt_mem.pml4,
         old(tok)@.args == (OpArgs::Unmap { base: vaddr }),

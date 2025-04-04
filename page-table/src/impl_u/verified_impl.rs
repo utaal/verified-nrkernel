@@ -118,18 +118,14 @@ impl CodeVC for PTImpl {
         proof {
             x86_arch_spec_upper_bound();
             assert(vaddr < MAX_BASE);
-            //assert(x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, 1)) by {
-            //    assert(x86_arch_spec.entry_size(1) == crate::spec_t::mmu::defs::L1_ENTRY_SIZE);
-            //    assert(x86_arch_spec.entry_size(2) == crate::spec_t::mmu::defs::L2_ENTRY_SIZE);
-            //    assert(x86_arch_spec.entry_size(3) == crate::spec_t::mmu::defs::L3_ENTRY_SIZE);
-            //};
+            assert(x86_arch_spec.entry_size(1) == crate::spec_t::mmu::defs::L1_ENTRY_SIZE);
+            assert(x86_arch_spec.entry_size(2) == crate::spec_t::mmu::defs::L2_ENTRY_SIZE);
+            assert(x86_arch_spec.entry_size(3) == crate::spec_t::mmu::defs::L3_ENTRY_SIZE);
         }
 
         let ghost wtok_before = wtok@;
         let ghost pt_before = pt@;
 
-        assume(PT::accepted_unmap(vaddr as nat));
-        assume(pml4 == wtok@.pt_mem.pml4);
         let res = unmap(Tracked(&mut wtok), &mut pt, pml4, vaddr);
         assert(PT::inv_and_nonempty(wtok@, pt@));
         assert forall|wtokp: WrappedTokenView| ({

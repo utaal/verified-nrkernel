@@ -520,7 +520,9 @@ pub trait CodeVC {
             ],
             tok.on_first_step(),
             tok.progress() is Unready,
+            // Caller preconditions
             proph_res.may_resolve(),
+            pml4 == tok.st().mmu@.pt_mem.pml4,
         ensures
             res.0 is Ok <==> proph_res.value() is Ok,
             res.1@.steps() === seq![],
