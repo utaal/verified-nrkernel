@@ -728,13 +728,10 @@ proof fn next_step_preserves_inv(pre: State, post: State, c: Constants, step: St
                 reveal(State::inv_unmapping__notin_nonpos);
                 assert(pre.inv_mapping__inflight_walks(c));
             }
-            // TODO: Need an argument here that we only add things (pre is submap of post)
-            // (already have this somewhere?)
-            // Note: We could just sidestep this by making the writes constrained based on the
-            // interp exactly the way we use it in the impl.
-            // Submap proofs for unmapping turned out to be easy so doing this one as well is
-            // probably easier than pushing more VCs on the impl.
-            assume(pre.writer_mem()@.submap_of(post.writer_mem()@));
+            assert(pre.writer_mem()@.submap_of(post.writer_mem()@)) by {
+                broadcast use lemma_mapping__pt_walk_valid_in_pre_unchanged;
+                reveal(PTMem::view);
+            };
             assert(post.hist.pending_unmaps =~= map![]);
             assert(post.writes.tso === set![] ==> post.hist.pending_maps === map![]) by {
                 match step {
@@ -870,6 +867,32 @@ proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, 
         },
         _ => assert(post.inv_unmapping__valid_walk(c)),
     }
+}
+
+broadcast proof fn lemma_mapping__pt_walk_valid_in_pre_unchanged(pre: State, post: State, c: Constants, step: Step, lbl: Lbl, va: usize)
+    requires
+        pre.happy,
+        post.happy,
+        post.polarity is Mapping,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        #[trigger] pre.writer_mem().pt_walk(va).result() is Valid,
+        #[trigger] next_step(pre, post, c, step, lbl),
+    ensures
+        post.writer_mem().pt_walk(va).result() == pre.writer_mem().pt_walk(va).result()
+{
+    broadcast use group_ambient;
+    reveal(pt_mem::PTMem::view);
+    match step {
+        rl2::Step::WriteNonneg => {
+            lemma_mem_view_after_step_write(pre, post, c, lbl);
+        },
+        rl2::Step::Writeback { core } => {
+            lemma_step_Writeback_preserves_writer_mem(pre, post, c, core, lbl);
+        },
+        _ => {},
+    }
+    assert(bit!(0usize) == 1) by (bit_vector);
 }
 
 broadcast proof fn lemma_unmapping__pt_walk_valid_in_post_unchanged(pre: State, post: State, c: Constants, step: Step, lbl: Lbl, va: usize)
