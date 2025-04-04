@@ -985,6 +985,7 @@ proof fn next_step_preserves_inv_unmapping__inflight_walks(pre: State, post: Sta
 
 /// Structure of this lemma is very similar to
 /// `step_Writeback_preserves_inv_unmapping__inflight_walks`.
+#[verifier(spinoff_prover)]
 proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         step is WriteNonpos,
@@ -1000,6 +1001,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
     ensures post.inv_unmapping__inflight_walks(c)
 {
     broadcast use group_ambient;
+    assert(bit!(0usize) == 1) by (bit_vector);
     let (wrcore, wraddr, value) =
         if let Lbl::Write(core, addr, value) = lbl {
             (core, addr, value)
@@ -1066,7 +1068,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         //assert(pre_walk_na.path[i].0 == wraddr);
                         //assert(forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
                         assert(post_walk_na.result() is Invalid) by {
-                            lemma_finish_iter_walk_valid_with_write_addr_in_path(pre.writer_mem(), c, walk, wraddr, value, i as nat);
+                            lemma_finish_iter_walk_valid_with_nonpos_write_in_path(pre.writer_mem(), c, walk, wraddr, value, i as nat);
                         };
                     } else {
                         reveal(rl2::walk_next);
@@ -1095,16 +1097,15 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                     //    by { reveal(rl2::walk_next); };
                     let i = choose|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr
                                 && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
-                    //assert(pre_walk_na.path[i].0 == wraddr);
+                    assert(pre_walk_na.path[i].0 == wraddr);
                     //assert(forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
-                    // TODO: easy
-                    assert(post_walk_a.result() is Invalid) by {
-                        //assume(post_walk_a.path.len() == 1 && post_walk_a.path[0].0 == wraddr);
-                        admit();
-                    };
                     assert(post_walk_na.result() is Invalid) by {
-                        lemma_finish_iter_walk_valid_with_write_addr_in_path(pre.writer_mem(), c, walk, wraddr, value, i as nat);
+                        lemma_finish_iter_walk_valid_with_nonpos_write_in_path(pre.writer_mem(), c, walk, wraddr, value, i as nat);
                     };
+                    assert_by_contradiction!(post_walk_a.result() is Invalid, {
+                        lemma_step_WriteNonpos_post_valid_pt_walk_not_wraddr_in_path(pre, post, c, lbl, walk.vaddr);
+                        assert(pre_walk_na.path[i].0 != wraddr);
+                    });
                 } else {
                     // The write didn't modify the locations the non-atomic walk will still
                     // visit, so the walk after completion is unchanged.
@@ -1116,7 +1117,10 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         // The write was to a location that was used in the prefix
                         // `walk.path` that we already computed so far. I.e. the atomic
                         // walk becomes invalid due to this write.
-                        assume(post_walk_a.result() is Invalid);
+                        assert_by_contradiction!(post_walk_a.result() is Invalid, {
+                            reveal(rl2::walk_next);
+                            lemma_step_WriteNonpos_post_valid_pt_walk_not_wraddr_in_path(pre, post, c, lbl, walk.vaddr);
+                        });
                         let vbase = pre_walk_a.result()->Valid_vbase;
                         let pte = pre_walk_a.result()->Valid_pte;
                         lemma_pt_walk_result_vbase_equal(pre.core_mem(core), walk.vaddr);
@@ -1125,19 +1129,9 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         //lemma_iter_walk_equals_pt_walk(post.core_mem(core), vbase);
                         assert(pre.writer_mem().is_base_pt_walk(vbase));
                         assert(post.writer_mem().pt_walk(walk.vaddr).result() is Invalid);
-                        assert(post.writer_mem().pt_walk(vbase).result() is Invalid) by {
-                            lemma_pt_walk_result_vaddr_indexing_bits_match(pre.writer_mem(), walk.vaddr);
-                            //assert(indexing_bits_match(walk.vaddr, vbase, pre_walk_a.path.len()));
-                            // TODO: Walks should only ever decrease in length. Either prove this
-                            // generally or here specifically.
-                            assume(post_walk_a.path.len() <= pre_walk_a.path.len());
-                            lemma_indexing_bits_match_len_decrease(walk.vaddr, vbase, pre_walk_a.path.len(), post_walk_a.path.len());
-                            lemma_pt_walk_with_indexing_bits_match(post.writer_mem(), walk.vaddr, vbase);
-                            assert(post.writer_mem().pt_walk(walk.vaddr).result() is Invalid
-                                <==> post.writer_mem().pt_walk(vbase).result() is Invalid);
-                            //broadcast use lemma_bits_align_to_usize;
-                            //reveal(rl2::walk_next);
-                        };
+                        assert_by_contradiction!(post.writer_mem().pt_walk(vbase).result() is Invalid, {
+                            lemma_step_WriteNonpos_post_valid_pt_walk_not_wraddr_in_path(pre, post, c, lbl, vbase);
+                        });
                         assert(post.hist.pending_unmaps.contains_pair(vbase, pte)) by {
                             reveal(PTMem::view);
                             assert(pre.writer_mem()@.contains_key(vbase));
@@ -1146,8 +1140,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                     } else {
                         reveal(rl2::walk_next);
                         assert(post_walk_a == pre_walk_a) by {
-                            // TODO: works but slow
-                            admit();
+                            lemma_unmapping__pt_walk_valid_in_post_unchanged(pre, post, c, step, lbl, walk.vaddr);
                         };
                     }
                 }
@@ -1156,7 +1149,47 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
     };
 }
 
-proof fn lemma_finish_iter_walk_valid_with_write_addr_in_path(mem: PTMem, c: Constants, walk: Walk, wraddr: usize, value: usize, idx: nat)
+proof fn lemma_step_Writeback_post_valid_pt_walk_not_wraddr_in_path(pre: State, post: State, c: Constants, lbl: Lbl, core: Core, vaddr: usize)
+    requires
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        pre.writer_sbuf_entries_have_P_bit_0(),
+        c.valid_core(core),
+        core != pre.writes.core,
+        post.core_mem(core).pt_walk(vaddr).result() is Valid,
+        step_Writeback(pre, post, c, pre.writes.core, lbl),
+    ensures
+        forall|i:nat| 0 <= i < pre.core_mem(core).pt_walk(vaddr).path.len()
+            ==> #[trigger] pre.core_mem(core).pt_walk(vaddr).path[i as int].0 != pre.sbuf[pre.writes.core][0].0
+{
+    assert(bit!(0usize) == 1) by (bit_vector);
+    lemma_step_Writeback_post_valid_walk_unchanged(pre, post, c, lbl, pre.writes.core, core, vaddr);
+}
+
+
+proof fn lemma_step_WriteNonpos_post_valid_pt_walk_not_wraddr_in_path(pre: State, post: State, c: Constants, lbl: Lbl, vaddr: usize)
+    requires
+        pre.happy,
+        post.happy,
+        post.polarity is Unmapping,
+        pre.wf(c),
+        pre.inv_sbuf_facts(c),
+        post.writer_mem().pt_walk(vaddr).result() is Valid,
+        step_WriteNonpos(pre, post, c, lbl),
+    ensures
+        forall|i:nat| 0 <= i < pre.writer_mem().pt_walk(vaddr).path.len()
+            ==> #[trigger] pre.writer_mem().pt_walk(vaddr).path[i as int].0 != lbl->Write_1
+{
+    assert(bit!(0usize) == 1) by (bit_vector);
+    assert(next_step(pre, post, c, Step::WriteNonpos, lbl));
+    lemma_unmapping__pt_walk_valid_in_post_unchanged(pre, post, c, Step::WriteNonpos, lbl, vaddr);
+}
+
+
+proof fn lemma_finish_iter_walk_valid_with_nonpos_write_in_path(mem: PTMem, c: Constants, walk: Walk, wraddr: usize, value: usize, idx: nat)
     requires
         walk.path.len() <= idx < finish_iter_walk(mem, walk).path.len(),
         finish_iter_walk(mem, walk).path[idx as int].0 == wraddr,
@@ -1186,6 +1219,7 @@ proof fn lemma_finish_iter_walk_invalid_after_nonpos_write(mem: PTMem, c: Consta
 
 /// Structure of this lemma is very similar to
 /// `step_WriteNonpos_preserves_inv_unmapping__inflight_walks`.
+#[verifier::rlimit(100)] #[verifier(spinoff_prover)]
 proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         step is Writeback,
@@ -1249,6 +1283,16 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                 assert(post_walk_a.result() is Invalid) by {
                     lemma_step_writeback_invalid_walk_unchanged(pre, post, c, lbl, wrcore, core, walk.vaddr);
                 };
+                assert(pre.core_mem(core).read(wraddr) & 1 == 1) by {
+                    // TODO: Hilariously, this passes because it accidentally gets the
+                    // information from the fact that it's in a path and it knows more about
+                    // the bits in paths. But it's true generally.
+                    reveal(State::inv_unmapping__core_vs_writer_reads);
+                    if pre_walk_na.result() is Valid && exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr {
+                    } else {
+                        admit();
+                    }
+                };
                 if pre_walk_na.result() is Valid {
                     if exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr {
                         // The write was to a location that the completion of the
@@ -1262,17 +1306,12 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                         assert(pre_walk_na.path[i as int].0 == wraddr);
                         assert(forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
                         assert(post_walk_na.result() is Invalid) by {
-                            assert(pre.core_mem(core).read(wraddr) & 1 == 1);
-                            lemma_finish_iter_walk_valid_with_write_addr_in_path(pre.core_mem(core), c, walk, wraddr, value, i as nat);
+                            lemma_finish_iter_walk_valid_with_nonpos_write_in_path(pre.core_mem(core), c, walk, wraddr, value, i as nat);
                         };
                     } else {
                     }
                 } else {
                     assert(post_walk_na.result() is Invalid) by {
-                        // TODO: ??? How does this exact assertion pass in the branch just above but not
-                        // here? wtf?
-                        assume(pre.core_mem(core).read(wraddr) & 1 == 1);
-                        assert(value & 1 == 0);
                         lemma_finish_iter_walk_invalid_after_nonpos_write(pre.core_mem(core), c, walk, wraddr, value);
                     };
                 }
@@ -1298,8 +1337,9 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                     assert(post_walk_na.result() is Invalid) by {
                         reveal(rl2::walk_next);
                     };
-                    // TODO: easy
-                    assume(post_walk_a.result() is Invalid);
+                    assert_by_contradiction!(post_walk_a.result() is Invalid, {
+                        lemma_step_Writeback_post_valid_pt_walk_not_wraddr_in_path(pre, post, c, lbl, core, walk.vaddr);
+                    });
                 } else {
                     // The write didn't modify the locations the non-atomic walk will still
                     // visit, so the walk after completion is unchanged.
@@ -1310,7 +1350,10 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                         // The write was to a location that was used in the prefix
                         // `walk.path` that we already computed so far. I.e. the atomic
                         // walk becomes invalid due to this write.
-                        assume(post_walk_a.result() is Invalid);
+                        assert_by_contradiction!(post_walk_a.result() is Invalid, {
+                            reveal(walk_next);
+                            lemma_step_Writeback_post_valid_pt_walk_not_wraddr_in_path(pre, post, c, lbl, core, walk.vaddr);
+                        });
                         let vbase = pre_walk_a.result()->Valid_vbase;
                         let pte = pre_walk_a.result()->Valid_pte;
                         lemma_pt_walk_result_vbase_equal(pre.core_mem(core), walk.vaddr);
@@ -1324,8 +1367,7 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                         });
                     } else {
                         reveal(rl2::walk_next);
-                        // TODO: easy
-                        assume(post_walk_a == pre_walk_a);
+                        assert(post_walk_a == pre_walk_a);
                     }
                 }
             }
@@ -1719,6 +1761,22 @@ broadcast proof fn lemma_step_writenonpos_invalid_walk_unchanged(pre: State, pos
     pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
     post.pt_mem.lemma_write_seq(post.writer_sbuf());
     lemma_mem_view_after_step_write(pre, post, c, lbl);
+}
+
+broadcast proof fn lemma_step_Writeback_post_valid_walk_unchanged(pre: State, post: State, c: Constants, lbl: Lbl, wrcore: Core, core: Core, va: usize)
+    requires
+        pre.happy,
+        post.happy,
+        pre.inv_sbuf_facts(c),
+        pre.writer_sbuf_entries_have_P_bit_0(),
+        #[trigger] step_Writeback(pre, post, c, wrcore, lbl),
+        c.valid_core(core),
+        post.core_mem(core).pt_walk(va).result() is Valid,
+    ensures
+        #[trigger] post.core_mem(core).pt_walk(va) == pre.core_mem(core).pt_walk(va)
+{
+    lemma_step_Writeback_preserves_writer_mem(pre, post, c, wrcore, lbl);
+    assert(bit!(0usize) == 1) by (bit_vector);
 }
 
 broadcast proof fn lemma_step_writeback_invalid_walk_unchanged(pre: State, post: State, c: Constants, lbl: Lbl, wrcore: Core, core: Core, va: usize)
