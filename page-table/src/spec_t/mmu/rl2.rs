@@ -249,30 +249,6 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
     &&& post.hist.pending_unmaps == pre.hist.pending_unmaps
 }
 
-// This thing has to be opaque because the iterated if makes Z3 explode, especially but not only
-// with how we use this function in `iter_walk`.
-#[verifier(opaque)]
-pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
-    let Walk { vaddr, path, .. } = walk;
-    let addr = if path.len() == 0 {
-        add(mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
-    } else if path.len() == 1 {
-        add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
-    } else if path.len() == 2 {
-        add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
-    } else if path.len() == 3 {
-        add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
-    } else { arbitrary() };
-
-    let entry = PDE { entry: mem.read(addr), layer: Ghost(path.len()) }@;
-    let walk = Walk {
-        vaddr,
-        path: path.push((addr, entry)),
-        complete: !(entry is Directory),
-    };
-    walk
-}
-
 pub open spec fn step_WalkStep(
     pre: State,
     post: State,
@@ -1073,7 +1049,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                     lemma_step_writenonpos_invalid_walk_unchanged(pre, post, c, lbl, walk.vaddr);
                 };
                 if pre_walk_na.result() is Valid {
-                    if exists|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr {
+                    if exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr {
                         // The write was to a location that the completion of the
                         // non-atomic walk depends on. We'll reason about the first such
                         // location on the path.
@@ -1081,25 +1057,24 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         // A location appearing on the path more than once would mean
                         // there's a cycle. This usually shouldn't happen but it's hard to
                         // state that as an assumption (and then prove it in the impl).
-                        //assert(exists|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr
-                        //            && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr))
-                        //    by { reveal(rl2::walk_next); };
-                        let i = choose|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr
+                        assert(exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr
+                                    && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr))
+                            by { reveal(rl2::walk_next); };
+                        let i = choose|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr
                                     && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
+                        assert(walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr);
                         //assert(pre_walk_na.path[i].0 == wraddr);
                         //assert(forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
-                        // TODO: fairly easy?
                         assert(post_walk_na.result() is Invalid) by {
-                            admit();
-                            reveal(rl2::walk_next);
+                            lemma_finish_iter_walk_valid_with_write_addr_in_path(pre.writer_mem(), c, walk, wraddr, value, i as nat);
                         };
                     } else {
                         reveal(rl2::walk_next);
                     }
                 } else {
-                    // TODO: easy: A walk cannot become more valid after a nonpositive write
                     assert(post_walk_na.result() is Invalid) by {
-                        admit();
+                        lemma_finish_iter_walk_invalid_after_nonpos_write(pre.writer_mem(), c, walk, wraddr, value);
+                        // not necessary but somehow makes this assert by more stable (i think?)
                         reveal(rl2::walk_next);
                     };
                 }
@@ -1110,7 +1085,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         lemma_finish_iter_walk_prefix_matches_iter_walk,
                         lemma_iter_walk_equals_pt_walk;
                 };
-                if exists|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr {
+                if exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr {
                     // The write was to a location that the completion of the non-atomic
                     // walk depends on.
                     // We reason about the least i where the address matches the write
@@ -1128,8 +1103,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         admit();
                     };
                     assert(post_walk_na.result() is Invalid) by {
-                        admit();
-                        reveal(rl2::walk_next);
+                        lemma_finish_iter_walk_valid_with_write_addr_in_path(pre.writer_mem(), c, walk, wraddr, value, i as nat);
                     };
                 } else {
                     // The write didn't modify the locations the non-atomic walk will still
@@ -1138,7 +1112,7 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
                         // TODO: slow
                         reveal(rl2::walk_next);
                     };
-                    if exists|i| #![auto] 0 <= i < walk.path.len() && walk.path[i].0 == wraddr {
+                    if exists|i:nat| #![auto] 0 <= i < walk.path.len() && walk.path[i as int].0 == wraddr {
                         // The write was to a location that was used in the prefix
                         // `walk.path` that we already computed so far. I.e. the atomic
                         // walk becomes invalid due to this write.
@@ -1182,6 +1156,34 @@ proof fn step_WriteNonpos_preserves_inv_unmapping__inflight_walks(pre: State, po
     };
 }
 
+proof fn lemma_finish_iter_walk_valid_with_write_addr_in_path(mem: PTMem, c: Constants, walk: Walk, wraddr: usize, value: usize, idx: nat)
+    requires
+        walk.path.len() <= idx < finish_iter_walk(mem, walk).path.len(),
+        finish_iter_walk(mem, walk).path[idx as int].0 == wraddr,
+        forall|j| #![auto] walk.path.len() <= j < idx ==> finish_iter_walk(mem, walk).path[j].0 != wraddr,
+        mem.read(wraddr) & 1 == 1,
+        value & 1 == 0,
+        finish_iter_walk(mem, walk).result() is Valid,
+    ensures
+        finish_iter_walk(mem.write(wraddr, value), walk).result() is Invalid,
+{
+    assert(bit!(0usize) == 1) by (bit_vector);
+    reveal(walk_next);
+}
+
+proof fn lemma_finish_iter_walk_invalid_after_nonpos_write(mem: PTMem, c: Constants, walk: Walk, wraddr: usize, value: usize)
+    requires
+        mem.read(wraddr) & 1 == 1,
+        value & 1 == 0,
+        finish_iter_walk(mem, walk).result() is Invalid,
+    ensures
+        finish_iter_walk(mem.write(wraddr, value), walk).result() is Invalid,
+{
+    assert(bit!(0usize) == 1) by (bit_vector);
+    reveal(walk_next);
+}
+
+
 /// Structure of this lemma is very similar to
 /// `step_WriteNonpos_preserves_inv_unmapping__inflight_walks`.
 proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
@@ -1202,6 +1204,7 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
     ensures post.inv_unmapping__inflight_walks(c)
 {
     broadcast use group_ambient;
+    assert(bit!(0usize) == 1) by (bit_vector);
     let wrcore = step->Writeback_core;
     let wraddr = pre.writer_sbuf()[0].0;
     let value = pre.writer_sbuf()[0].1;
@@ -1232,7 +1235,6 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
         } else {
             pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
             post.pt_mem.lemma_write_seq(post.writer_sbuf());
-            assert(bit!(0usize) == 1) by (bit_vector);
             assert(pre.core_mem(core) == pre.pt_mem);
             assert(post.core_mem(core) == post.pt_mem);
             //assert(forall|i| #![auto] 0 <= i < walk.path.len() ==> aligned(walk.path[i].0 as nat, 8)) by {
@@ -1248,21 +1250,31 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                     lemma_step_writeback_invalid_walk_unchanged(pre, post, c, lbl, wrcore, core, walk.vaddr);
                 };
                 if pre_walk_na.result() is Valid {
-                    if exists|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr {
+                    if exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr {
                         // The write was to a location that the completion of the
                         // non-atomic walk depends on. We'll reason about the first such
                         // location on the path.
-                        let i = choose|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr
+                        assert(exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr
+                                    && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr))
+                            by { reveal(rl2::walk_next); };
+                        let i = choose|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr
                                     && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
-                        assert(pre_walk_na.path[i].0 == wraddr);
+                        assert(pre_walk_na.path[i as int].0 == wraddr);
                         assert(forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
-                        // TODO: fairly easy?
-                        assume(post_walk_na.result() is Invalid);
+                        assert(post_walk_na.result() is Invalid) by {
+                            assert(pre.core_mem(core).read(wraddr) & 1 == 1);
+                            lemma_finish_iter_walk_valid_with_write_addr_in_path(pre.core_mem(core), c, walk, wraddr, value, i as nat);
+                        };
                     } else {
                     }
                 } else {
-                    // TODO: easy: A walk cannot become more valid after a writeback
-                    assume(post_walk_na.result() is Invalid);
+                    assert(post_walk_na.result() is Invalid) by {
+                        // TODO: ??? How does this exact assertion pass in the branch just above but not
+                        // here? wtf?
+                        assume(pre.core_mem(core).read(wraddr) & 1 == 1);
+                        assert(value & 1 == 0);
+                        lemma_finish_iter_walk_invalid_after_nonpos_write(pre.core_mem(core), c, walk, wraddr, value);
+                    };
                 }
             } else {
                 assert(pre_walk_a == pre_walk_na) by {
@@ -1271,14 +1283,17 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                         lemma_finish_iter_walk_prefix_matches_iter_walk,
                         lemma_iter_walk_equals_pt_walk;
                 };
-                if exists|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr {
+                if exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr {
                     // The write was to a location that the completion of the non-atomic
                     // walk depends on.
                     // We reason about the least i where the address matches the write
                     // address.
-                    let i = choose|i| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i].0 == wraddr
+                    //assert(exists|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr
+                    //            && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr))
+                    //    by { reveal(rl2::walk_next); };
+                    let i = choose|i:nat| #![auto] walk.path.len() <= i < pre_walk_na.path.len() && pre_walk_na.path[i as int].0 == wraddr
                                 && (forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
-                    assert(pre_walk_na.path[i].0 == wraddr);
+                    assert(pre_walk_na.path[i as int].0 == wraddr);
                     assert(forall|j| #![auto] walk.path.len() <= j < i ==> pre_walk_na.path[j].0 != wraddr);
                     assert(post_walk_na.result() is Invalid) by {
                         reveal(rl2::walk_next);
@@ -1291,7 +1306,7 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
                     assert(post_walk_na == pre_walk_na) by {
                         reveal(rl2::walk_next);
                     };
-                    if exists|i| #![auto] 0 <= i < walk.path.len() && walk.path[i].0 == wraddr {
+                    if exists|i:nat| #![auto] 0 <= i < walk.path.len() && walk.path[i as int].0 == wraddr {
                         // The write was to a location that was used in the prefix
                         // `walk.path` that we already computed so far. I.e. the atomic
                         // walk becomes invalid due to this write.
@@ -2039,6 +2054,45 @@ broadcast proof fn lemma_writes_tso_empty_implies_sbuf_empty(pre: State, c: Cons
             assert(pre.sbuf[core].contains(pre.sbuf[core][0]));
         });
     }
+}
+
+pub open spec fn walk_next_addr(mem: PTMem, walk: Walk) -> usize {
+    let Walk { vaddr, path, .. } = walk;
+    if path.len() == 0 {
+        add(mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
+    } else if path.len() == 1 {
+        add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
+    } else if path.len() == 2 {
+        add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
+    } else if path.len() == 3 {
+        add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
+    } else {
+        arbitrary()
+    }
+}
+
+// This thing has to be opaque because the iterated if makes Z3 explode, especially but not only
+// with how we use this function in `iter_walk`.
+#[verifier(opaque)]
+pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
+    let Walk { vaddr, path, .. } = walk;
+    let addr = if path.len() == 0 {
+        add(mem.pml4, mul(l0_bits!(vaddr), WORD_SIZE))
+    } else if path.len() == 1 {
+        add(path.last().1->Directory_addr, mul(l1_bits!(vaddr), WORD_SIZE))
+    } else if path.len() == 2 {
+        add(path.last().1->Directory_addr, mul(l2_bits!(vaddr), WORD_SIZE))
+    } else if path.len() == 3 {
+        add(path.last().1->Directory_addr, mul(l3_bits!(vaddr), WORD_SIZE))
+    } else { arbitrary() };
+
+    let entry = PDE { entry: mem.read(addr), layer: Ghost(path.len()) }@;
+    let walk = Walk {
+        vaddr,
+        path: path.push((addr, entry)),
+        complete: entry !is Directory,
+    };
+    walk
 }
 
 
