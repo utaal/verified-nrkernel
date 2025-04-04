@@ -40,14 +40,13 @@ pub enum OpArgs {
 pub struct WrappedTokenView {
     pub orig_st: os::State,
     pub args: OpArgs,
-    pub done: bool,
+    pub change_made: bool,
     pub regions: Map<MemRegion, Seq<usize>>,
     /// We also keep the flat memory directly because this is what the MMU's interpretation is
     /// defined on.
     pub pt_mem: mmu::pt_mem::PTMem,
     pub steps: Seq<RLbl>,
     pub result: Result<(),()>,
-    //pub proph_res: Result<(),()>,
 }
 
 impl WrappedTokenView {
@@ -63,7 +62,7 @@ impl WrappedTokenView {
         WrappedTokenView {
             regions: self.regions.insert(r, self.regions[r].update(idx as int, value)),
             pt_mem: self.pt_mem.write(add(r.base as usize, mul(idx, 8)), value),
-            done: change,
+            change_made: self.change_made || change,
             result: if change { Ok(()) } else { self.result },
             ..self
         }
@@ -265,10 +264,8 @@ impl WrappedTokenView {
 
 pub tracked struct WrappedMapToken {
     tracked tok: Token,
-    ghost done: bool,
+    ghost change_made: bool,
     ghost orig_st: os::State,
-    //ghost regions: Set<MemRegion>,
-    //tracked proph_res: crate::spec_t::os_code_vc::Prophecy<Result<(),()>>,
 }
 
 impl WrappedMapToken {
@@ -280,7 +277,7 @@ impl WrappedMapToken {
                     base: self.orig_st.core_states[self.tok.core()]->MapExecuting_vaddr as usize,
                     pte: self.orig_st.core_states[self.tok.core()]->MapExecuting_pte,
                 },
-            done: self.done,
+            change_made: self.change_made,
             regions:
                 Map::new(
                     |r: MemRegion| self.tok.st().os_ext.allocated.contains(r),
@@ -288,7 +285,6 @@ impl WrappedMapToken {
             pt_mem: self.tok.st().mmu@.pt_mem,
             result: self.tok.st().core_states[self.tok.core()]->MapDone_result,
             steps: self.tok.steps(),
-            //proph_res: self.proph_res.value(),
         }
     }
 
@@ -302,15 +298,8 @@ impl WrappedMapToken {
             tok.steps()[0] is MapEnd,
             tok.steps()[0]->MapEnd_vaddr == tok.st().core_states[tok.core()]->MapExecuting_vaddr,
             tok.steps()[0]->MapEnd_thread_id == tok.thread(),
-            //tok.steps() ===
-            //    seq![RLbl::MapEnd {
-            //        thread_id: tok.thread(),
-            //        vaddr: tok.st().core_states[tok.core()]->MapExecuting_vaddr,
-            //        result: proph_res.value(),
-            //    }],
             !tok.on_first_step(),
             tok.progress() is Ready,
-            //tok.st().mmu@.pending_maps === map![],
             tok.st().inv(tok.consts()),
         ensures
             res.inv(),
@@ -319,14 +308,13 @@ impl WrappedMapToken {
             res@.regions.dom() == tok.st().os_ext.allocated,
             tok.st().core_states[tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, .. }
                 && res@.args == (OpArgs::Map { base: vaddr as usize, pte }),
-            !res@.done,
+            !res@.change_made,
             res@.steps == tok.steps(),
     {
         let tracked t = WrappedMapToken {
             tok,
-            done: false,
+            change_made: false,
             orig_st: tok.st(),
-            //prophesied_result: proph_res,
         };
         assert(t@.regions.dom() =~= tok.st().os_ext.allocated);
         assert(Map::new(
@@ -347,11 +335,12 @@ impl WrappedMapToken {
         &&& self.tok.steps().len() == 1
         &&& self.tok.steps()[0] is MapEnd
         &&& self.tok.steps()[0]->MapEnd_thread_id == self.tok.thread()
-        &&& if self.done {
+        &&& if self.change_made {
             &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapDone { vaddr, pte, ult_id, result }
             &&& self.tok.steps()[0]->MapEnd_vaddr == vaddr
             &&& vaddr <= usize::MAX
             &&& self.tok.thread() == ult_id
+            // TODO: ??? This shouldn't be necessary, follows directly from the definition of view
             &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
         } else {
             &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, ult_id }
@@ -430,7 +419,7 @@ impl WrappedMapToken {
         Ghost(root_pt2): Ghost<PTDir>,
     )
         requires
-            !old(tok)@.done,
+            !old(tok)@.change_made,
             old(tok)@.regions.contains_key(r),
             r.base == pbase,
             idx < 512,
@@ -496,7 +485,7 @@ impl WrappedMapToken {
         Ghost(root_pt): Ghost<PTDir>
     )
         requires
-            !old(tok)@.done,
+            !old(tok)@.change_made,
             old(tok)@.regions.contains_key(r),
             r.base == pbase,
             idx < 512,
@@ -544,10 +533,6 @@ impl WrappedMapToken {
             old(tok)@.lemma_interps_match(root_pt);
             old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, true);
             old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
-            //assert(PT::interp(old(tok)@, root_pt).interp().map == crate::spec_t::mmu::defs::nat_keys(old(tok)@.pt_mem@));
-            //assert(crate::spec_t::mmu::defs::nat_keys(post.mmu@.pt_mem@) == post.interp_pt_mem());
-            //assert(crate::spec_t::mmu::defs::nat_keys(tok@.pt_mem@) == tok.tok.st().interp_pt_mem());
-            //assert(post.interp_pt_mem() == tok.tok.st().interp_pt_mem().insert(vaddr, pte));
             assert(os::step_MapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpChange { core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -556,7 +541,7 @@ impl WrappedMapToken {
 
         mmu::rl3::code::write(Tracked(&mut mmu_tok), addr, value);
         let ghost state2 = tok.tok.st();
-        proof { tok.done = true; }
+        proof { tok.change_made = true; }
 
         proof {
             assert(state1.os_ext.lock == Some(core));
@@ -576,7 +561,7 @@ impl WrappedMapToken {
 
     pub exec fn allocate(Tracked(tok): Tracked<&mut Self>, layer: usize) -> (res: MemRegionExec)
         requires
-            !old(tok)@.done,
+            !old(tok)@.change_made,
             old(tok).inv(),
         ensures
             aligned(res.base as nat, 4096),
@@ -589,7 +574,7 @@ impl WrappedMapToken {
             tok@.orig_st == old(tok)@.orig_st,
             tok@.steps == old(tok)@.steps,
             tok@.result == old(tok)@.result,
-            !tok@.done,
+            !tok@.change_made,
             tok.inv(),
     {
         let ghost state1 = tok.tok.st();
@@ -624,7 +609,7 @@ impl WrappedMapToken {
     /// If there's an overlapping mapping we don't write anything but just do a MapNoOp step.
     pub proof fn register_failed_map(tracked tok: &mut Self, root_pt: PTDir)
         requires
-            !old(tok)@.done,
+            !old(tok)@.change_made,
             old(tok).inv(),
             candidate_mapping_overlaps_existing_vmem(
                 PT::interp_to_l0(old(tok)@, root_pt),
@@ -633,11 +618,12 @@ impl WrappedMapToken {
             ),
             PT::inv(old(tok)@, root_pt),
         ensures
-            tok@ == (WrappedTokenView { done: true, result: Err(()), ..old(tok)@ }),
+            tok@ == (WrappedTokenView { change_made: true, result: Err(()), ..old(tok)@ }),
             tok.inv(),
     {
         tok@.lemma_interps_match(root_pt);
-        tok.done = true;
+        tok.change_made = true; // We didn't actually make a change but for mapping, this just
+                                // indicates whether or not we're "done".
 
         let ghost core = tok.tok.core();
         let ghost vaddr = tok@.args->Map_base;
@@ -657,13 +643,9 @@ impl WrappedMapToken {
         lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
     }
 
-    pub exec fn finish_map_and_release_lock(
-        Tracked(tok): Tracked<WrappedMapToken>,
-        //Ghost(result): Ghost<Result<(),()>>,
-        //Tracked(proph_res): Tracked<crate::spec_t::os_code_vc::Prophecy<Result<(),()>>>
-    ) -> (rtok: Tracked<Token>)
+    pub exec fn finish_map_and_release_lock(Tracked(tok): Tracked<WrappedMapToken>) -> (rtok: Tracked<Token>)
         requires
-            tok@.done,
+            tok@.change_made,
             tok.inv(),
             forall|wtok: WrappedTokenView| ({
                 &&& wtok.pt_mem == tok@.pt_mem
@@ -671,16 +653,9 @@ impl WrappedMapToken {
                 &&& #[trigger] wtok.regions_derived_from_view()
             }) ==> exists|pt| PT::inv_and_nonempty(wtok, pt),
             tok@.steps[0]->MapEnd_result == tok@.result,
-            //tok.tok.steps() ===
-            //    seq![RLbl::MapEnd {
-            //       thread_id: tok.tok.thread(),
-            //       vaddr: tok.tok.st().core_states[tok.tok.core()]->MapDone_vaddr,
-            //       result: proph_res.value()
-            //    }],
         ensures
             rtok@.progress() is Unready,
             rtok@.steps() === seq![],
-            //true, // TODO: more stuff?
     {
         let ghost core = tok.tok.core();
         let tracked mut tok = tok;
@@ -726,9 +701,6 @@ impl WrappedMapToken {
             };
             assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
             let lbl = RLbl::MapEnd { thread_id: tok.tok.thread(), vaddr, result };
-            // TODO: Need some help here from the invariant and resolve the prophecy before we take
-            // the step. Prophecy is actually problematic here.
-
             assert(lbl == tok.tok.steps()[0]);
             assert(post.inv_impl()) by {
                 assert(tok.tok.st().mmu@.pt_mem == tok@.pt_mem);
@@ -856,7 +828,7 @@ pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(
 
 pub tracked struct WrappedUnmapToken {
     tracked tok: Token,
-    ghost done: bool,
+    ghost change_made: bool,
     ghost orig_st: os::State,
 }
 
@@ -868,16 +840,14 @@ impl WrappedUnmapToken {
                 OpArgs::Unmap {
                     base: self.orig_st.core_states[self.tok.core()]->UnmapExecuting_vaddr as usize,
                 },
-            done: self.done,
+            change_made: self.change_made,
             regions:
                 Map::new(
                     |r: MemRegion| self.tok.st().os_ext.allocated.contains(r),
                     |r: MemRegion| Seq::new(512, |i: int| self.tok.st().mmu@.pt_mem.mem[(r.base + i * 8) as usize])),
             pt_mem: self.tok.st().mmu@.pt_mem,
-            // FIXME: This probably will need to account for shootdown
-            result: arbitrary(), // self.tok.st().core_states[self.tok.core()]->UnmapDone_result,
+            result: if self.tok.st().core_states[self.tok.core()]->UnmapExecuting_result->Some_0 is Ok { Ok(()) } else { Err(()) },
             steps: self.tok.steps(),
-            //proph_res: arbitrary(),
         }
     }
 
@@ -886,6 +856,7 @@ impl WrappedUnmapToken {
             tok.consts().valid_ult(tok.thread()),
             tok.st().core_states[tok.core()] is UnmapExecuting,
             tok.thread() == tok.st().core_states[tok.core()]->UnmapExecuting_ult_id,
+            tok.st().core_states[tok.core()]->UnmapExecuting_result is None,
             tok.st().core_states[tok.core()]->UnmapExecuting_vaddr <= usize::MAX,
             tok.steps().len() == 1,
             tok.steps()[0] is UnmapEnd,
@@ -901,14 +872,13 @@ impl WrappedUnmapToken {
             res@.regions.dom() == tok.st().os_ext.allocated,
             tok.st().core_states[tok.core()] matches os::CoreState::UnmapExecuting { vaddr, .. }
                 && res@.args == (OpArgs::Unmap { base: vaddr as usize }),
-            !res@.done,
+            !res@.change_made,
             res@.steps == tok.steps(),
     {
         let tracked t = WrappedUnmapToken {
             tok,
-            done: false,
+            change_made: false,
             orig_st: tok.st(),
-            //prophesied_result: proph_res,
         };
         assert(t@.regions.dom() =~= tok.st().os_ext.allocated);
         assert(Map::new(
@@ -929,26 +899,27 @@ impl WrappedUnmapToken {
         &&& self.tok.steps().len() == 1
         &&& self.tok.steps()[0] is UnmapEnd
         &&& self.tok.steps()[0]->UnmapEnd_thread_id == self.tok.thread()
-        //&&& if self.done {
-        //    // FIXME: This need to be sequenced differently
-        //    &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::UnmapOpDone { vaddr, ult_id, result }
-        //    //&&& self.tok.steps()[0]->UnmapEnd_vaddr == vaddr
-        //    //&&& vaddr <= usize::MAX
-        //    //&&& self.tok.thread() == ult_id
-        //    //&&& self@.args == OpArgs::Unmap { base: vaddr as usize, pte }
-        //} else {
-        //    &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::UnmapExecuting { vaddr, ult_id, result }
-        //    //&&& self.tok.steps()[0]->UnmapEnd_vaddr == vaddr
-        //    //&&& self.tok.thread() == ult_id
-        //    //&&& vaddr <= usize::MAX
-        //    //&&& self@.args == OpArgs::Unmap { base: vaddr as usize, pte }
-        //}
+        &&& self.tok.steps()[0]->UnmapEnd_vaddr <= usize::MAX
+        &&& self.orig_st.core_states[self.tok.core()]->UnmapExecuting_vaddr == self.tok.steps()[0]->UnmapEnd_vaddr
+        &&& if self.change_made {
+            &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::UnmapExecuting { vaddr, ult_id, result: Some(Ok(pte)) }
+            &&& vaddr == self.tok.steps()[0]->UnmapEnd_vaddr
+            &&& ult_id == self.tok.thread()
+            &&& pte == self.orig_st.interp_pt_mem()[vaddr]
+            //&&& self@.args == OpArgs::Unmap { base: vaddr as usize }
+        } else {
+            &&& self.tok.st().mmu@.pt_mem == self.orig_st.mmu@.pt_mem
+            &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::UnmapExecuting { vaddr, ult_id, result: None }
+            &&& vaddr == self.tok.steps()[0]->UnmapEnd_vaddr
+            &&& ult_id == self.tok.thread()
+            //&&& self@.args == OpArgs::Unmap { base: vaddr as usize }
+        }
     }
 
-    pub proof fn destruct(tracked self) -> (tracked tok: Token) {
-        admit();
-        self.tok
-    }
+    pub proof fn lemma_regions_derived_from_view(self)
+        requires self.inv()
+        ensures self@.regions_derived_from_view()
+    {}
 
     // TODO: This is 1:1 the same as read on WrappedMapToken. Can we deduplicate?
     pub exec fn read(Tracked(tok): Tracked<&mut Self>, pbase: usize, idx: usize, r: Ghost<MemRegion>) -> (res: usize)
@@ -969,8 +940,7 @@ impl WrappedUnmapToken {
         assert(tok.tok.consts().valid_core(core));
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
-            // TODO: needs more sequencing in the invariant
-            assume(tok.tok.st().core_states[core] is UnmapExecuting);
+            assert(tok.tok.st().core_states[core] is UnmapExecuting);
             mmu_tok.prophesy_read(addr);
             let post = os::State {
                 mmu: mmu_tok.post(),
@@ -995,6 +965,7 @@ impl WrappedUnmapToken {
             let pidx = tok.tok.do_concurrent_trs();
             let ghost state3 = tok.tok.st();
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
+            assert(tok.inv());
         }
         res & MASK_NEG_DIRTY_ACCESS
     }
@@ -1009,7 +980,7 @@ impl WrappedUnmapToken {
         Ghost(root_pt2): Ghost<PTDir>,
     )
         requires
-            !old(tok)@.done,
+            old(tok)@.change_made,
             old(tok)@.regions.contains_key(r),
             r.base == pbase,
             idx < 512,
@@ -1031,9 +1002,6 @@ impl WrappedUnmapToken {
         let ghost core = tok.tok.core();
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
         proof {
-            // TODO: needs more sequencing in the invariant
-            assume(tok.tok.st().core_states[core] is UnmapExecuting);
-            assume(tok.tok.st().core_states[core]->UnmapExecuting_result is Some);
             old(tok)@.lemma_interps_match(root_pt1);
             old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, false);
             old(tok)@.write(idx, value, r, false).lemma_interps_match(root_pt2);
@@ -1078,7 +1046,7 @@ impl WrappedUnmapToken {
         Ghost(root_pt): Ghost<PTDir>
     )
         requires
-            !old(tok)@.done,
+            !old(tok)@.change_made,
             old(tok)@.regions.contains_key(r),
             r.base == pbase,
             idx < 512,
@@ -1101,11 +1069,11 @@ impl WrappedUnmapToken {
         let ghost state1 = tok.tok.st();
         let ghost core = tok.tok.core();
         let tracked mut mmu_tok = tok.tok.get_mmu_token();
-        let ghost vaddr = tok@.args->Unmap_base;
+        //assert(core == tok.tok.core());
+        let ghost vaddr = tok.tok.st().core_states[core]->UnmapExecuting_vaddr as usize;
         let ghost pte = PT::interp_to_l0(tok@, root_pt)[old(tok)@.args->Unmap_base as nat];
         proof {
-            // TODO: needs more sequencing in the invariant
-            assume(tok.tok.st().core_states[core] == os::CoreState::UnmapExecuting { vaddr: vaddr as nat, ult_id: tok.tok.thread(), result: None });
+            assert(tok.tok.st().core_states[core] == os::CoreState::UnmapExecuting { vaddr: vaddr as nat, ult_id: tok.tok.thread(), result: None });
             broadcast use to_rl1::next_refines;
             assert(!state1.mmu@.writes.tso.is_empty() ==> core == state1.mmu@.writes.core);
             mmu_tok.prophesy_write(addr, value);
@@ -1121,6 +1089,7 @@ impl WrappedUnmapToken {
             old(tok)@.lemma_interps_match(root_pt);
             old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, true);
             old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
+            assert(pte == tok.orig_st.interp_pt_mem()[vaddr as nat]);
             assert(os::step_UnmapOpChange(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapOpChange { core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -1129,7 +1098,7 @@ impl WrappedUnmapToken {
 
         mmu::rl3::code::write(Tracked(&mut mmu_tok), addr, value);
         let ghost state2 = tok.tok.st();
-        proof { tok.done = true; }
+        proof { tok.change_made = true; }
 
         proof {
             assert(state1.os_ext.lock == Some(core));
@@ -1144,14 +1113,13 @@ impl WrappedUnmapToken {
         assert(tok@.regions[r] =~= old(tok)@.regions[r].update(idx as int, value));
         assert(tok@.pt_mem == old(tok)@.pt_mem.write(add(r.base as usize, mul(idx, 8)), value));
         assert(tok@.regions =~= old(tok)@.regions.insert(r, old(tok)@.regions[r].update(idx as int, value)));
-        // TODO: Needs sequencing
-        assume(tok@.result === Ok(()));
+        assert(tok@.result === Ok(()));
         assert(tok@ =~= old(tok)@.write(idx, value, r, true));
     }
 
     pub exec fn deallocate(Tracked(tok): Tracked<&mut Self>, layer: usize, region: MemRegionExec)
         requires
-            !old(tok)@.done,
+            //old(tok)@.change_made,
             old(tok)@.regions.contains_key(region@),
             old(tok).inv(),
         ensures
@@ -1160,15 +1128,13 @@ impl WrappedUnmapToken {
             tok@.args == old(tok)@.args,
             tok@.orig_st == old(tok)@.orig_st,
             tok@.steps == old(tok)@.steps,
-            !tok@.done,
+            tok@.change_made == old(tok)@.change_made,
             tok.inv(),
     {
         let ghost state1 = tok.tok.st();
         let ghost core = tok.tok.core();
         let tracked mut osext_tok = tok.tok.get_osext_token();
         proof {
-            // TODO: Needs sequencing
-            assume(tok.tok.st().core_states[core] is UnmapExecuting);
             osext_tok.prophesy_deallocate(region);
             let post = os::State { os_ext: osext_tok.post(), ..tok.tok.st() };
             assert(os::step_Deallocate(tok.tok.consts(), tok.tok.st(), post, core, osext_tok.lbl()->Deallocate_reg, RLbl::Tau));
@@ -1204,6 +1170,251 @@ impl WrappedUnmapToken {
             #[trigger] self_write.regions[r2] =~= Seq::new(512, |i: int| self_write.pt_mem.mem[(r2.base + i * 8) as usize])
         by {
         };
+    }
+
+    /// Completes the remaining unmap transitions and performs a shootdown if necessary.
+    pub exec fn finish_unmap_and_release_lock(Tracked(tok): Tracked<WrappedUnmapToken>, shootdown: DoShootdown, Ghost(root_pt): Ghost<PTDir>) -> (rtok: Tracked<Token>)
+        requires
+            (if shootdown is Yes {
+                &&& tok@.change_made
+                &&& shootdown->Yes_vaddr == tok@.args->Unmap_base
+                //&&& shootdown->Yes_vaddr == tok@.args->Unmap_base
+            } else {
+                &&& !tok@.change_made
+                &&& PT::inv(tok@, root_pt)
+                &&& !PT::interp_to_l0(tok@, root_pt).contains_key(tok@.args->Unmap_base as nat)
+            }),
+            tok.inv(),
+            forall|wtok: WrappedTokenView| ({
+                &&& wtok.pt_mem == tok@.pt_mem
+                &&& wtok.regions.dom() == tok@.regions.dom()
+                &&& #[trigger] wtok.regions_derived_from_view()
+            }) ==> exists|pt| PT::inv_and_nonempty(wtok, pt),
+            tok@.steps[0]->UnmapEnd_result == tok@.result,
+        ensures
+            rtok@.progress() is Unready,
+            rtok@.steps() === seq![],
+    {
+        let ghost core = tok.tok.core();
+        let tracked mut tok = tok;
+        let ghost state1 = tok.tok.st();
+        let ghost vaddr = tok.tok.st().core_states[core]->UnmapExecuting_vaddr;
+        let ghost result = tok.tok.st().core_states[core]->UnmapExecuting_result;
+
+        if let DoShootdown::Yes { vaddr, size } = shootdown {
+            assert(result matches Some(Ok(_)));
+
+            let tracked mut mmu_tok = tok.tok.get_mmu_token();
+            proof {
+                mmu_tok.prophesy_barrier();
+                let post = os::State {
+                    mmu: mmu_tok.post(),
+                    ..tok.tok.st()
+                };
+                assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+                assert(os::step_Barrier(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+                assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Barrier { core }, RLbl::Tau));
+                tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
+                os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
+            }
+
+            // Execute barrier to make writes globally visible
+            mmu::rl3::code::barrier(Tracked(&mut mmu_tok));
+            let ghost state2 = tok.tok.st();
+
+            proof {
+                broadcast use to_rl1::next_refines;
+                assert(state1.os_ext.lock == Some(core));
+                tok.tok.return_mmu_token(mmu_tok);
+                let pidx = tok.tok.do_concurrent_trs();
+                lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+            }
+            let ghost state3 = tok.tok.st();
+
+            let tracked mut osext_tok = tok.tok.get_osext_token();
+            proof {
+                osext_tok.prophesy_init_shootdown(vaddr);
+                let new_cs = os::CoreState::UnmapShootdownWaiting { ult_id: tok.tok.thread(), vaddr: vaddr as nat, result: result->Some_0 };
+                let post = os::State {
+                    core_states: tok.tok.st().core_states.insert(core, new_cs),
+                    os_ext: osext_tok.post(),
+                    ..tok.tok.st()
+                };
+                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+                assert(os::step_UnmapInitiateShootdown(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+                assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapInitiateShootdown { core }, RLbl::Tau));
+                tok.tok.register_internal_step_osext(&mut osext_tok, post);
+                os_invariant::next_preserves_inv(tok.tok.consts(), state3, tok.tok.st(), RLbl::Tau);
+            }
+
+            // Initiate shootdown
+            os_ext::code::init_shootdown(Tracked(&mut osext_tok), vaddr, size);
+            let ghost state4 = tok.tok.st();
+
+            proof {
+                broadcast use to_rl1::next_refines;
+                assert(state1.os_ext.lock == Some(core));
+                tok.tok.return_osext_token(osext_tok);
+                let pidx = tok.tok.do_concurrent_trs();
+                lemma_concurrent_trs(state4, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+            }
+
+            let ghost state5 = tok.tok.st();
+
+            // TODO: We need something we can call to wait until requests are empty, i.e. one more
+            // transition. Presumably we don't need to execute invlpg ourselves either on linux?
+            // But we may still have to do it here because our modeling doesn't allow the
+            // concurrent transitions to occur on our own core.
+            assume(state5.os_ext.shootdown_vec.open_requests.is_empty());
+        } else {
+            // register fail
+            assert(result is None);
+
+            proof {
+                tok@.lemma_interps_match(root_pt);
+                let new_cs = os::CoreState::UnmapOpDone { ult_id: tok.tok.thread(), vaddr: vaddr as nat, result: Err(()) };
+                let post = os::State {
+                    core_states: tok.tok.st().core_states.insert(core, new_cs),
+                    ..tok.tok.st()
+                };
+
+                assert(os::step_UnmapOpFail(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+                assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapOpFail { core }, RLbl::Tau));
+                tok.tok.register_internal_step(post);
+                os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
+                let ghost state2 = tok.tok.st();
+                let pidx = tok.tok.do_concurrent_trs();
+                lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+            }
+        }
+
+        let tracked mut osext_tok = tok.tok.get_osext_token();
+
+        proof {
+            let ghost statex1 = tok.tok.st();
+
+            let cs = tok.tok.st().core_states[core];
+            let result = if cs is UnmapShootdownWaiting { Ok(()) } else { Err(()) };
+
+            broadcast use to_rl1::next_refines;
+            osext_tok.prophesy_release_lock();
+            let post = os::State {
+                core_states: tok.tok.st().core_states.insert(core, os::CoreState::Idle),
+                os_ext: osext_tok.post(),
+                ..tok.tok.st()
+            };
+            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+            let lbl = RLbl::UnmapEnd { thread_id: tok.tok.thread(), vaddr, result };
+
+            assume(lbl == tok.tok.steps()[0]);
+            assert(post.inv_impl()) by {
+                assert(tok.tok.st().mmu@.pt_mem == tok@.pt_mem);
+                assert(tok.tok.st().os_ext.allocated == tok@.regions.dom());
+            };
+            assert(os::step_UnmapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapEnd { core }, lbl));
+            tok.tok.register_external_step_osext(&mut osext_tok, post);
+            os_invariant::next_preserves_inv(tok.tok.consts(), statex1, tok.tok.st(), lbl);
+        }
+
+        os_ext::code::release_lock(Tracked(&mut osext_tok));
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            tok.tok.return_osext_token(osext_tok);
+            assert(tok.tok.steps() === seq![]);
+        }
+
+        Tracked(tok.tok)
+    }
+}
+
+pub enum DoShootdown {
+    Yes { vaddr: usize, size: usize },
+    No,
+}
+
+pub exec fn start_unmap_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(vaddr): Ghost<nat>)
+    requires
+        os::step_Unmap_enabled(vaddr),
+        old(tok).consts().valid_ult(old(tok).thread()),
+        old(tok).consts().valid_core(old(tok).core()), // TODO: ??
+        old(tok).st().core_states[old(tok).core()] is Idle,
+        old(tok).steps().len() == 2,
+        old(tok).steps().first() == (RLbl::UnmapStart { thread_id: old(tok).thread(), vaddr }),
+        old(tok).progress() is Unready,
+        old(tok).st().inv(old(tok).consts()),
+    ensures
+        tok.core() == old(tok).core(),
+        tok.thread() == old(tok).thread(),
+        tok.st().core_states[tok.core()] == (os::CoreState::UnmapExecuting { ult_id: tok.thread(), vaddr, result: None }),
+        tok.progress() is Ready,
+        tok.st().os_ext.lock == Some(tok.core()),
+        tok.st().inv(tok.consts()),
+        tok.st().mmu@.pt_mem.pml4 == old(tok).st().mmu@.pt_mem.pml4,
+        tok.consts() == old(tok).consts(),
+        tok.steps() == old(tok).steps().drop_first(),
+        !tok.on_first_step(),
+        // From `inv_impl`:
+        forall|wtok: wrapped_token::WrappedTokenView| ({
+            &&& wtok.pt_mem == tok.st().mmu@.pt_mem
+            &&& wtok.regions.dom() == tok.st().os_ext.allocated
+            &&& #[trigger] wtok.regions_derived_from_view()
+        }) ==> exists|pt| PT::inv_and_nonempty(wtok, pt),
+{
+    let ghost state1 = tok.st();
+    let ghost core = tok.core();
+    let ghost pidx = tok.do_concurrent_trs();
+    let ghost state2 = tok.st();
+    proof {
+        lemma_concurrent_trs_no_lock(state1, state2, tok.consts(), core, pidx);
+        let new_cs = os::CoreState::UnmapWaiting { ult_id: tok.thread(), vaddr };
+        let pte_size = if state2.interp_pt_mem().contains_key(vaddr) { state2.interp_pt_mem()[vaddr].frame.size } else { 0 };
+        let new_sound = tok.st().sound && os::step_Unmap_sound(tok.st(), vaddr, pte_size);
+        let post = os::State {
+            core_states: tok.st().core_states.insert(core, new_cs),
+            sound: new_sound,
+            ..tok.st()
+        };
+        let lbl = RLbl::UnmapStart { thread_id: tok.thread(), vaddr };
+        assert(os::step_UnmapStart(tok.consts(), tok.st(), post, core, lbl));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::UnmapStart { core: core }, lbl));
+        tok.register_external_step(post);
+        let state3 = tok.st();
+        os_invariant::next_preserves_inv(tok.consts(), state2, state3, lbl);
+        let ghost pidx = tok.do_concurrent_trs();
+        let state4 = tok.st();
+        lemma_concurrent_trs_no_lock(state3, state4, tok.consts(), core, pidx);
+    }
+
+
+    let ghost state5 = tok.st();
+    assert(core == tok.consts().ult2core[tok.thread()]);
+    let tracked mut osext_tok = tok.get_osext_token();
+    proof {
+        osext_tok.prophesy_acquire_lock();
+        let vaddr = tok.st().core_states[core]->UnmapWaiting_vaddr;
+        let new_cs = os::CoreState::UnmapExecuting { ult_id: tok.thread(), vaddr, result: None };
+        let post = os::State {
+            core_states: tok.st().core_states.insert(core, new_cs),
+            os_ext: osext_tok.post(),
+            ..tok.st()
+        };
+        //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
+        assert(os::step_UnmapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
+        assert(os::next_step(tok.consts(), tok.st(), post, os::Step::UnmapOpStart { core: core }, RLbl::Tau));
+        tok.register_internal_step_osext(&mut osext_tok, post);
+        os_invariant::next_preserves_inv(tok.consts(), state5, tok.st(), RLbl::Tau);
+    }
+
+    os_ext::code::acquire_lock(Tracked(&mut osext_tok));
+    let ghost state6 = tok.st();
+
+    proof {
+        tok.return_osext_token(osext_tok);
+        let pidx = tok.do_concurrent_trs();
+        let state7 = tok.st();
+        lemma_concurrent_trs(state6, state7, tok.consts(), tok.core(), pidx);
     }
 }
 

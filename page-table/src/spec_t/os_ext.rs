@@ -393,6 +393,7 @@ pub mod code {
     /// initiates a shootdown for a given virtual page of a given size
     /// 
     /// this only covers tlb invalidations of a single page at `vaddr` with a page size of `size`
+    /// `size` is a hint, as it doesn't appear in the corresponding `InitShootdown` transition
     #[verifier(external_body)]
     pub exec fn init_shootdown(Tracked(tok): Tracked<&mut Token>, vaddr: usize, size: usize)
         requires

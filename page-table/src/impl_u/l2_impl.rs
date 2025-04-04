@@ -1294,7 +1294,7 @@ fn map_frame_aux(
 ) -> (res: Result<Ghost<(PTDir,Set<MemRegion>)>,()>)
     requires
         old(tok).inv(),
-        !old(tok)@.done,
+        !old(tok)@.change_made,
         old(tok)@.args == (OpArgs::Map { base: vaddr, pte: pte@ }),
         inv_at(old(tok)@, pt, layer as nat, ptr),
         no_empty_directories(old(tok)@, pt, layer as nat, ptr),
@@ -1338,7 +1338,7 @@ fn map_frame_aux(
                     ==> tok@.regions[r] === old(tok)@.regions[r])
                 &&& pt_res.region === pt.region
                 &&& !candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@)
-                &&& tok@.done
+                &&& tok@.change_made
                 &&& tok@.result === Ok(())
             },
             Err(e) => {
@@ -2066,7 +2066,7 @@ proof fn lemma_not_empty_at_implies_interp_at_not_empty(tok: WrappedTokenView, p
 
 pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTDir>, pml4: usize, vaddr: usize, pte: PageTableEntryExec) -> (res: Result<(),()>)
     requires
-        !old(tok)@.done,
+        !old(tok)@.change_made,
         inv_and_nonempty(old(tok)@, old(pt)@),
         old(tok).inv(),
         //old(tok)@.alloc_available_pages() >= 3,
@@ -2080,7 +2080,7 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         tok@.steps == old(tok)@.steps,
         match res {
             Ok(_) => {
-                &&& tok@.done
+                &&& tok@.change_made
                 &&& tok@.result === Ok(())
                 //&&& !candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, old(pt)@), vaddr as nat, pte@)
             },
@@ -2147,7 +2147,7 @@ fn insert_empty_directory(
             Ghost<spec_fn(PTDir, Set<MemRegion>) -> PTDir> // rebuild_root_pt_inner
             ))
     requires
-        !old(tok)@.done,
+        !old(tok)@.change_made,
         old(tok).inv(),
         inv_at(old(tok)@, pt, layer as nat, ptr),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(),
@@ -2175,7 +2175,7 @@ fn insert_empty_directory(
     ensures
         tok.inv(),
         tok@.steps == old(tok)@.steps,
-        !tok@.done,
+        !tok@.change_made,
         inv_at(tok@, res.0@, layer as nat, ptr),
         !old(tok)@.regions.contains_key(res.1@),
         tok@.regions.dom() == old(tok)@.regions.dom().insert(res.1@),
@@ -2660,12 +2660,10 @@ fn unmap_aux(
 ) -> (res: Result<(MemRegionExec, Ghost<(PTDir,Set<MemRegion>)>),()>)
     requires
         old(tok).inv(),
-        !old(tok)@.done,
+        !old(tok)@.change_made,
         old(tok)@.args == (OpArgs::Unmap { base: vaddr }),
         inv_at(old(tok)@, pt, layer as nat, ptr),
         no_empty_directories(old(tok)@, pt, layer as nat, ptr),
-        //interp_at(old(mem), pt, layer as nat, ptr, base as nat).inv(),
-        // TODO: do we even need this?
         accepted_unmap(vaddr as nat),
         base <= vaddr < MAX_BASE,
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
@@ -2700,16 +2698,19 @@ fn unmap_aux(
                 // Invariant preserved
                 &&& inv_at(tok@, pt_res, layer as nat, ptr)
                 &&& no_empty_directories(tok@, pt_res, layer as nat, ptr)
-                //&&& interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
+                &&& interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
                 // We only touch regions in pt.used_regions
                 &&& (forall|r: MemRegion|
                      !pt.used_regions.contains(r) ==>
                      #[trigger] tok@.regions[r] === old(tok)@.regions[r])
                 &&& pt_res.region === pt.region
+                &&& tok@.change_made
+                //&&& tok@.result is Ok
             },
             Err(e) => {
                 // If error, unchanged
                 &&& tok@ === old(tok)@
+                &&& !interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
             },
         },
     // decreases X86_NUM_LAYERS - layer
@@ -2976,7 +2977,6 @@ fn unmap_aux(
                                 assert(unmap_builder_pre(old(tok)@, pt, tok_after_write, pt_after_write, layer as nat, ptr, removed_regions));
                             };
                         }
-                        assume(!tok@.done);
                         assert(tok@.regions.contains_key(pt.region));
                         WrappedUnmapToken::write_stutter(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region), Ghost(root_pt_after_rec), Ghost(root_pt_after_write));
 
@@ -3049,6 +3049,7 @@ fn unmap_aux(
                     }
                 },
                 Err(e) => {
+                    assert(!interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat));
                     Err(e)
                 },
             }
@@ -3125,35 +3126,44 @@ fn unmap_aux(
                 let unmapped_region = MemRegionExec { base: vaddr, size: x86_arch_exec.entry_size(layer) };
                 Ok((unmapped_region, Ghost((pt, removed_regions))))
             } else {
+                assume(!interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat));
                 Err(())
             }
         }
     } else {
+        assume(!interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat));
         Err(())
     }
 }
 
 pub fn unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, pt: &mut Ghost<PTDir>, pml4: usize, vaddr: usize) -> (res: Result<MemRegionExec,()>)
-    //requires
-    //    inv(old(mem), old(pt)@),
-    //    interp(old(mem), old(pt)@).inv(),
-    //    old(mem).inv(),
-    //    interp(old(mem), old(pt)@).accepted_unmap(vaddr as nat),
-    //    vaddr < MAX_BASE,
-    //ensures
-    //    inv(mem, pt@),
-    //    interp(mem, pt@).inv(),
-    //    // Refinement of l0
-    //    match res {
-    //        Ok(_)  => Ok(interp(mem, pt@).interp()) === interp(old(mem), old(pt)@).interp().unmap(vaddr as nat),
-    //        Err(_) => Err(interp(mem, pt@).interp()) === interp(old(mem), old(pt)@).interp().unmap(vaddr as nat),
-    //    },
+    requires
+        !old(tok)@.change_made,
+        inv_and_nonempty(old(tok)@, old(pt)@),
+        old(tok).inv(),
+        accepted_unmap(vaddr as nat),
+        vaddr < MAX_BASE,
+        pml4 == old(tok)@.pt_mem.pml4,
+        old(tok)@.args == (OpArgs::Unmap { base: vaddr }),
+    ensures
+        inv_and_nonempty(tok@, pt@),
+        tok@.steps == old(tok)@.steps,
+        match res {
+            Ok(_) => {
+                &&& tok@.change_made
+                //&&& tok@.result is Ok
+                &&& interp_to_l0(old(tok)@, old(pt)@).contains_key(vaddr as nat)
+            },
+            Err(_) => {
+                &&& tok@ == old(tok)@
+                &&& !interp_to_l0(old(tok)@, pt@).contains_key(vaddr as nat)
+            },
+        },
+        tok.inv(),
 {
-    proof { admit(); }
-    //proof { interp(mem, pt@).lemma_unmap_refines_unmap(vaddr as nat); }
-    match unmap_aux(Tracked(tok), *pt, 0, pml4, 0, vaddr, Ghost(arbitrary())) {
+    let ghost rebuild_root_pt = |pt_new, removed_regions| pt_new;
+    match unmap_aux(Tracked(tok), *pt, 0, pml4, 0, vaddr, Ghost(rebuild_root_pt)) {
         Ok(res) => {
-            //proof { interp(old(mem), pt@).lemma_unmap_preserves_inv(vaddr as nat); }
             *pt = Ghost(res.1@.0);
             Ok(res.0)
         },
