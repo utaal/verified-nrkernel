@@ -1433,10 +1433,7 @@ proof fn next_step_preserves_inv_unmapping__core_vs_writer_reads(pre: State, pos
                 if wrcore != core {
                     assert(post.core_mem(core) == pre.core_mem(core));
                     if wraddr != addr {
-                        //pre.pt_mem.lemma_write_seq(pre.writer_sbuf());
-                        //post.pt_mem.lemma_write_seq(post.writer_sbuf());
-                        // TODO: easy
-                        assume(post.writer_mem().read(addr) == pre.writer_mem().read(addr));
+                        lemma_mem_view_after_step_write(pre, post, c, lbl);
                     }
                 }
             };
