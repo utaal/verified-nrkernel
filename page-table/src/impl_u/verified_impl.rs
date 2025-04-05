@@ -1,8 +1,8 @@
 use vstd::prelude::*;
 
-use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec, x86_arch_spec_upper_bound };
+use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE, x86_arch_spec };
+use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE, x86_arch_spec, x86_arch_spec_upper_bound };
 use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
 use crate::impl_u::wrapped_token::{ self, WrappedMapToken, WrappedUnmapToken, WrappedTokenView, DoShootdown };
 use crate::impl_u::l2_impl::PT::{ self, map_frame, unmap };

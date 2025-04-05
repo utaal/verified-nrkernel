@@ -1437,7 +1437,7 @@ impl Directory {
                 && self.arch.contains_entry_size_at_index_atleast(pte.frame.size, self.layer)
         decreases self.arch.layers.len() - self.layer
     {
-        let i = choose|i: nat| i < self.num_entries() && self.entries[i as int] !is Invalid;
+        let i = choose|i: nat| !(i < self.num_entries() && self.entries[i as int] is Invalid);
         self.lemma_interp_of_entry_contains_mapping_implies_interp_contains_mapping(i);
         match self.entries[i as int] {
             NodeEntry::Page(pte) => {

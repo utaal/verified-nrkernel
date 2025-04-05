@@ -2162,7 +2162,7 @@ pub open spec fn walk_next(mem: PTMem, walk: Walk) -> Walk {
     let walk = Walk {
         vaddr,
         path: path.push((addr, entry)),
-        complete: entry !is Directory,
+        complete: !(entry is Directory),
     };
     walk
 }

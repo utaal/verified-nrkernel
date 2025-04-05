@@ -2030,10 +2030,10 @@ proof fn lemma_not_empty_at_implies_interp_at_aux_not_empty(tok: WrappedTokenVie
     requires
         inv_at(tok, pt, layer, ptr),
         nonempty_idx < X86_NUM_ENTRIES,
-        entry_at_spec(tok, pt, layer, ptr, nonempty_idx)@ !is Invalid,
-        nonempty_idx < init.len() ==> init[nonempty_idx as int] !is Invalid
+        !(entry_at_spec(tok, pt, layer, ptr, nonempty_idx)@ is Invalid),
+        !(nonempty_idx < init.len() ==> init[nonempty_idx as int] is Invalid)
     ensures
-        interp_at_aux(tok, pt, layer, ptr, base, init)[nonempty_idx as int] !is Invalid
+        !(interp_at_aux(tok, pt, layer, ptr, base, init)[nonempty_idx as int] is Invalid)
     decreases X86_NUM_LAYERS - layer, X86_NUM_ENTRIES - init.len(), 0nat
 {
     if init.len() >= X86_NUM_ENTRIES as nat {
