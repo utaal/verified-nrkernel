@@ -2102,6 +2102,16 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
 }
 
 
+#[cfg(feature = "noreclaim")]
+#[verus::line_count::ignore]
+fn is_directory_empty(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize) -> (res: bool)
+    requires
+        false // make sure we cannot verify with this feature flag!
+{
+    return false;
+}
+
+#[cfg(not(feature = "noreclaim"))]
 fn is_directory_empty(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): Ghost<PTDir>, layer: usize, ptr: usize) -> (res: bool)
     requires
         old(tok).inv(),
