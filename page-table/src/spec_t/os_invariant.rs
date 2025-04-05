@@ -146,7 +146,8 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
     next_step_preserves_inv_impl(c, s1, s2, step, lbl);
-    next_step_preserves_inv_write_core(c, s1, s2, step, lbl);
+    next_step_preserves_inv_writes(c, s1, s2, step, lbl);
+    next_step_preserves_inv_shootdown(c, s1, s2, step, lbl);
     next_step_preserves_inv_pending_maps(c, s1, s2, step, lbl);
 }
 
@@ -335,19 +336,55 @@ pub proof fn next_step_preserves_inv_impl(c: os::Constants, s1: os::State, s2: o
         to_rl1::next_refines;
 }
 
-pub proof fn next_step_preserves_inv_write_core(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+pub proof fn next_step_preserves_inv_shootdown(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
     requires
         s1.inv(c),
         os::next_step(c, s1, s2, step, lbl),
     ensures
-        s2.inv_write_core(c),
+        s2.inv_shootdown(c),
 {
-    // TODO: Proving this probably requires the invariant to be a bit stronger so we know that
-    // writes.all is empty when no operation is in progress
+    reveal(crate::spec_t::os_ext::Constants::valid_core);
+    reveal(mmu::Constants::valid_core);
     broadcast use
         to_rl1::next_preserves_inv,
         to_rl1::next_refines;
-    admit();
+    match step {
+        os::Step::AckShootdownIPI { core } => {
+            // TODO: What to do about this one? Need to be careful about adding more enabling
+            // conditions on the acks because we don't implement that transition.
+            assert(s1.os_ext.shootdown_vec.open_requests.contains(core));
+            admit();
+
+        },
+        _ => {},
+    }
+}
+
+pub proof fn next_step_preserves_inv_writes(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+    requires
+        s1.inv(c),
+        os::next_step(c, s1, s2, step, lbl),
+    ensures
+        s2.inv_writes(c),
+{
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
+    match step {
+        os::Step::Invlpg { core, vaddr } => {
+            assert((s2.os_ext.lock matches Some(core) && s2.core_states[core].is_mapping())
+                ==> s2.mmu@.writes.nonpos === set![]);
+            assert(s2.os_ext.lock is None ==> {
+                &&& s2.mmu@.writes.tso === set![]
+                &&& s2.mmu@.writes.nonpos === set![]
+            });
+            assert(s2.inv_writes(c));
+        },
+        os::Step::UnmapOpChange { core, paddr, value } => {
+            // If I remove this match arm, Verus times out, wtf
+        },
+        _ => {},
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////

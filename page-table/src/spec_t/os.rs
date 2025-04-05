@@ -77,6 +77,14 @@ pub enum Step {
 }
 
 impl CoreState {
+    pub open spec fn is_mapping(self) -> bool {
+        match self {
+            CoreState::MapExecuting { .. }
+            | CoreState::MapDone { .. } => true,
+            _ => false,
+        }
+    }
+
     pub open spec fn is_in_crit_sect(self) -> bool {
         match self {
             CoreState::Idle
@@ -311,6 +319,7 @@ pub open spec fn step_MapOpStutter(
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] is MapExecuting
+    &&& value & 1 == 1
 
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
@@ -353,6 +362,7 @@ pub open spec fn step_MapOpChange(
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::MapExecuting { ult_id, vaddr, pte }
     &&& !candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte)
+    &&& value & 1 == 1
     &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
 
     // mmu statemachine steps
@@ -473,6 +483,7 @@ pub open spec fn step_UnmapOpChange(
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: None }
+    &&& value & 1 == 0
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
@@ -500,6 +511,7 @@ pub open spec fn step_UnmapOpStutter(
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(res) }
+    &&& value & 1 == 0
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
@@ -584,6 +596,9 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
         _ => false,
     }
     &&& s2.inv_impl() // impl invariant is re-established
+    &&& s1.mmu@.writes.tso === set![]
+    &&& s1.mmu@.writes.nonpos === set![]
+    &&& s1.mmu@.pending_unmaps === map![]
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::ReleaseLock { core })
@@ -971,6 +986,8 @@ impl State {
 
     pub open spec fn inv_mmu(self, c: Constants) -> bool {
         &&& self.mmu.inv(c.mmu)
+        // The rl3 invariant is closed, the rl2 one is not but maybe it should be. Keeping it open
+        // for now because it accidentally helps with some of the wrapped_token proofs.
         &&& self.mmu.interp().inv(c.mmu)
         &&& self.mmu@.happy
         &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.mmu@.pt_mem.mem.contains_key(va)
@@ -995,8 +1012,26 @@ impl State {
             ==> !(#[trigger] overlap(r1, r2))
     }
 
-    pub open spec fn inv_write_core(self, c: Constants) -> bool {
-        forall|core|
+    pub open spec fn inv_shootdown(self, c: Constants) -> bool {
+        &&& !(self.os_ext.lock matches Some(core) && self.core_states[core] is UnmapShootdownWaiting)
+            ==> self.os_ext.shootdown_vec.open_requests.is_empty()
+        &&& (self.os_ext.lock matches Some(core) && 
+            self.core_states[core] matches CoreState::UnmapShootdownWaiting { .. })
+            ==> self.mmu@.writes.nonpos.subset_of(self.os_ext.shootdown_vec.open_requests)
+    }
+
+    pub open spec fn inv_writes(self, c: Constants) -> bool {
+        &&& self.mmu@.writes.nonpos.subset_of(Set::new(|core| c.valid_core(core)))
+        &&& (self.os_ext.lock matches Some(core) && self.core_states[core].is_mapping())
+                ==> self.mmu@.writes.nonpos === set![]
+        &&& (self.os_ext.lock matches Some(core) && 
+            self.core_states[core] matches CoreState::UnmapExecuting { result: None, .. })
+                ==> self.mmu@.writes.tso === set![] && self.mmu@.writes.nonpos === set![]
+        &&& self.os_ext.lock is None ==> {
+            &&& self.mmu@.writes.tso === set![]
+            &&& self.mmu@.writes.nonpos === set![]
+        }
+        &&& forall|core|
             #[trigger] c.valid_core(core)
             && self.core_states[core].is_in_crit_sect()
             && self.mmu@.writes.tso !== set![]
@@ -1019,7 +1054,8 @@ impl State {
     pub open spec fn inv(self, c: Constants) -> bool {
         &&& self.inv_basic(c)
         &&& self.inv_impl()
-        &&& self.inv_write_core(c)
+        &&& self.inv_writes(c)
+        &&& self.inv_shootdown(c)
         &&& self.inv_osext()
         //&&& self.tlb_inv(c)
         &&& self.overlapping_vmem_inv(c)

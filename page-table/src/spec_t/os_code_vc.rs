@@ -135,14 +135,12 @@ pub proof fn lemma_concurrent_trs_no_lock(pre: os::State, post: os::State, c: os
         pre.inv(c),
         //c.valid_core(core),
     ensures
-        //unchanged_state_during_concurrent_trs(pre, post),
         post.mmu@.pt_mem.pml4 == pre.mmu@.pt_mem.pml4,
         post.core_states[core] == pre.core_states[core],
         post.inv(c),
 {
     let pred = |pre: os::State, post: os::State|
         pre.inv(c) ==> {
-            //&&& unchanged_state_during_concurrent_trs(pre, post)
             &&& post.mmu@.pt_mem.pml4 == pre.mmu@.pt_mem.pml4
             &&& post.core_states[core] == pre.core_states[core]
             &&& post.inv(c)
@@ -158,34 +156,6 @@ pub proof fn lemma_concurrent_trs_no_lock(pre: os::State, post: os::State, c: os
         if pre.inv(c) {
             os_invariant::next_preserves_inv(c, mid, post, lbl);
             broadcast use to_rl1::next_refines;
-            //assert(unchanged_state_during_concurrent_trs(pre, mid));
-            //match step {
-            //    os::Step::MMU                                          => admit(),
-            //    os::Step::MemOp { core }                               => admit(),
-            //    os::Step::ReadPTMem { core, paddr, value }             => admit(),
-            //    os::Step::Barrier { core }                             => {
-            //        admit();
-            //    },
-            //    os::Step::Invlpg { core, vaddr }                       => {
-            //        admit();
-            //    },
-            //    os::Step::MapStart { core }                            => admit(),
-            //    os::Step::MapOpStart { core }                          => admit(),
-            //    os::Step::Allocate { core, res }                       => admit(),
-            //    os::Step::MapOpStutter { core, paddr, value }          => admit(),
-            //    os::Step::MapNoOp { core }      => admit(),
-            //    os::Step::MapEnd { core }                              => admit(),
-            //    os::Step::UnmapStart { core }                          => admit(),
-            //    os::Step::UnmapOpStart { core }                        => admit(),
-            //    os::Step::Deallocate { core, reg }                     => admit(),
-            //    os::Step::UnmapOpChange { core, paddr, value } => admit(),
-            //    os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
-            //    os::Step::UnmapOpFail { core }                          => admit(),
-            //    os::Step::UnmapInitiateShootdown { core }              => admit(),
-            //    os::Step::AckShootdownIPI { core }                     => admit(),
-            //    os::Step::UnmapEnd { core }                            => admit(),
-            //    _ => { admit(); },
-            //}
         }
     };
     lemma_concurrent_trs_induct(pre, post, c, core, pidx, pred);
@@ -223,37 +193,29 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
             os_invariant::next_preserves_inv(c, mid, post, lbl);
             broadcast use to_rl1::next_refines;
             assert(unchanged_state_during_concurrent_trs(pre, mid));
-            match step {
-                //os::Step::MMU                                          => admit(),
-                //os::Step::MemOp { core }                               => admit(),
-                //os::Step::ReadPTMem { core, paddr, value }             => admit(),
-                os::Step::Barrier { core }                             => {
-                    // TODO: needs invariant that ties writes/pending_maps to lock
-                    assume(post.mmu@.writes       == mid.mmu@.writes);
-                    assume(post.mmu@.pending_maps == mid.mmu@.pending_maps);
-                },
-                os::Step::Invlpg { core, vaddr }                       => {
-                    // TODO: needs invariant that ties writes/pending_maps to lock
-                    assume(post.mmu@.writes       == mid.mmu@.writes);
-                    assume(post.mmu@.pending_maps == mid.mmu@.pending_maps);
-                },
-                //os::Step::MapStart { core }                            => admit(),
-                //os::Step::MapOpStart { core }                          => admit(),
-                //os::Step::Allocate { core, res }                       => admit(),
-                //os::Step::MapOpStutter { core, paddr, value }          => admit(),
-                //os::Step::MapOpEnd { core, paddr, value, result }      => admit(),
-                //os::Step::MapEnd { core }                              => admit(),
-                //os::Step::UnmapStart { core }                          => admit(),
-                //os::Step::UnmapOpStart { core }                        => admit(),
-                //os::Step::Deallocate { core, reg }                     => admit(),
-                //os::Step::UnmapOpChange { core, paddr, value, result } => admit(),
-                //os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
-                //os::Step::UnmapOpFail { core }                          => admit(),
-                //os::Step::UnmapInitiateShootdown { core }              => admit(),
-                //os::Step::AckShootdownIPI { core }                     => admit(),
-                //os::Step::UnmapEnd { core }                            => admit(),
-                _ => {},
-            }
+            //match step {
+            //    //os::Step::MMU                                          => admit(),
+            //    //os::Step::MemOp { core }                               => admit(),
+            //    //os::Step::ReadPTMem { core, paddr, value }             => admit(),
+            //    //os::Step::Barrier { core }                             => {},
+            //    //os::Step::Invlpg { core, vaddr }                       => {},
+            //    //os::Step::MapStart { core }                            => admit(),
+            //    //os::Step::MapOpStart { core }                          => admit(),
+            //    //os::Step::Allocate { core, res }                       => admit(),
+            //    //os::Step::MapOpStutter { core, paddr, value }          => admit(),
+            //    //os::Step::MapOpEnd { core, paddr, value, result }      => admit(),
+            //    //os::Step::MapEnd { core }                              => admit(),
+            //    //os::Step::UnmapStart { core }                          => admit(),
+            //    //os::Step::UnmapOpStart { core }                        => admit(),
+            //    //os::Step::Deallocate { core, reg }                     => admit(),
+            //    //os::Step::UnmapOpChange { core, paddr, value, result } => admit(),
+            //    //os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
+            //    //os::Step::UnmapOpFail { core }                          => admit(),
+            //    //os::Step::UnmapInitiateShootdown { core }              => admit(),
+            //    //os::Step::AckShootdownIPI { core }                     => admit(),
+            //    //os::Step::UnmapEnd { core }                            => admit(),
+            //    _ => {},
+            //}
         }
     };
     lemma_concurrent_trs_induct(pre, post, c, core, pidx, pred);
@@ -533,10 +495,11 @@ pub trait CodeVC {
 pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os::State) -> bool {
     &&& post.mmu@.happy          == pre.mmu@.happy
     &&& post.mmu@.pt_mem         == pre.mmu@.pt_mem
-    &&& post.mmu@.writes         == pre.mmu@.writes
-    &&& post.mmu@.pending_maps   == pre.mmu@.pending_maps
-    &&& post.mmu@.pending_unmaps == pre.mmu@.pending_unmaps
     &&& post.os_ext.allocated    == pre.os_ext.allocated
+    &&& post.mmu@.writes.tso.subset_of(pre.mmu@.writes.tso)
+    &&& post.mmu@.writes.nonpos.subset_of(pre.mmu@.writes.nonpos)
+    &&& post.mmu@.pending_maps.submap_of(pre.mmu@.pending_maps)
+    &&& post.mmu@.pending_unmaps.submap_of(pre.mmu@.pending_unmaps)
 }
 
 } // verus!

@@ -706,6 +706,8 @@ impl WrappedMapToken {
                 assert(tok.tok.st().mmu@.pt_mem == tok@.pt_mem);
                 assert(tok.tok.st().os_ext.allocated == tok@.regions.dom());
             };
+            assert(tok.tok.st().mmu@.pending_maps =~= map![]);
+            assert(tok.tok.st().mmu@.writes.tso =~= set![]);
             assert(os::step_MapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapEnd { core }, lbl));
             tok.tok.register_external_step_osext(&mut osext_tok, post);
@@ -1266,6 +1268,9 @@ impl WrappedUnmapToken {
             // But we may still have to do it here because our modeling doesn't allow the
             // concurrent transitions to occur on our own core.
             assume(state5.os_ext.shootdown_vec.open_requests.is_empty());
+            assert(tok.tok.st().mmu@.writes.tso === set![]);
+            assert(tok.tok.st().mmu@.writes.nonpos =~= set![]); // need shootdown invariant
+            //assert(tok.tok.st().mmu@.pending_unmaps === map![]);
         } else {
             // register fail
             assert(result is None);
@@ -1285,6 +1290,8 @@ impl WrappedUnmapToken {
                 let ghost state2 = tok.tok.st();
                 let pidx = tok.tok.do_concurrent_trs();
                 lemma_concurrent_trs(state2, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+                assert(tok.tok.st().mmu@.writes.tso === set![]);
+                assert(tok.tok.st().mmu@.writes.nonpos === set![]);
             }
         }
 
@@ -1311,6 +1318,7 @@ impl WrappedUnmapToken {
                 assert(tok.tok.st().mmu@.pt_mem == tok@.pt_mem);
                 assert(tok.tok.st().os_ext.allocated == tok@.regions.dom());
             };
+            assert(tok.tok.st().mmu@.pending_unmaps === map![]);
             assert(os::step_UnmapEnd(tok.tok.consts(), tok.tok.st(), post, core, lbl));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapEnd { core }, lbl));
             tok.tok.register_external_step_osext(&mut osext_tok, post);
