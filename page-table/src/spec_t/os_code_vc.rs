@@ -66,6 +66,7 @@ impl os::Step {
             os::Step::UnmapOpStutter { core, .. } |
             os::Step::UnmapOpFail { core, .. } |
             os::Step::UnmapInitiateShootdown { core, .. } |
+            os::Step::UnmapWaitShootdown { core } |
             os::Step::AckShootdownIPI { core, .. } |
             os::Step::UnmapEnd { core, .. } => core == c,
         }
@@ -500,6 +501,7 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
     &&& post.mmu@.writes.nonpos.subset_of(pre.mmu@.writes.nonpos)
     &&& post.mmu@.pending_maps.submap_of(pre.mmu@.pending_maps)
     &&& post.mmu@.pending_unmaps.submap_of(pre.mmu@.pending_unmaps)
+    &&& post.os_ext.shootdown_vec.open_requests.subset_of(pre.os_ext.shootdown_vec.open_requests)
 }
 
 } // verus!

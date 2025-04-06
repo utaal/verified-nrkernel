@@ -301,6 +301,9 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
         os::Step::UnmapInitiateShootdown { core } => {
             assert(s2.inv_pending_maps(c));
         },
+        os::Step::UnmapWaitShootdown { core } => {
+            assert(s2.inv_pending_maps(c));
+        },
         os::Step::AckShootdownIPI { core: Core } => {
             assert(s2.inv_pending_maps(c));
         }

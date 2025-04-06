@@ -340,7 +340,6 @@ impl WrappedMapToken {
             &&& self.tok.steps()[0]->MapEnd_vaddr == vaddr
             &&& vaddr <= usize::MAX
             &&& self.tok.thread() == ult_id
-            // TODO: ??? This shouldn't be necessary, follows directly from the definition of view
             &&& self@.args == OpArgs::Map { base: vaddr as usize, pte }
         } else {
             &&& self.tok.st().core_states[self.tok.core()] matches os::CoreState::MapExecuting { vaddr, pte, ult_id }
@@ -1208,20 +1207,20 @@ impl WrappedUnmapToken {
 
             let tracked mut mmu_tok = tok.tok.get_mmu_token();
             proof {
-                mmu_tok.prophesy_barrier();
+                mmu_tok.prophesy_invlpg(vaddr);
                 let post = os::State {
                     mmu: mmu_tok.post(),
                     ..tok.tok.st()
                 };
                 assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-                assert(os::step_Barrier(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
-                assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Barrier { core }, RLbl::Tau));
+                assert(os::step_Invlpg(tok.tok.consts(), tok.tok.st(), post, core, vaddr, RLbl::Tau));
+                assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Invlpg { core, vaddr }, RLbl::Tau));
                 tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
                 os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
             }
 
-            // Execute barrier to make writes globally visible
-            mmu::rl3::code::barrier(Tracked(&mut mmu_tok));
+            // Execute invlpg to make writes globally visible and evict from local TLB
+            mmu::rl3::code::invlpg(Tracked(&mut mmu_tok), vaddr);
             let ghost state2 = tok.tok.st();
 
             proof {
@@ -1263,14 +1262,30 @@ impl WrappedUnmapToken {
 
             let ghost state5 = tok.tok.st();
 
-            // TODO: We need something we can call to wait until requests are empty, i.e. one more
-            // transition. Presumably we don't need to execute invlpg ourselves either on linux?
-            // But we may still have to do it here because our modeling doesn't allow the
-            // concurrent transitions to occur on our own core.
-            assume(state5.os_ext.shootdown_vec.open_requests.is_empty());
+            let tracked mut osext_tok = tok.tok.get_osext_token();
+            proof {
+                osext_tok.prophesy_wait_shootdown();
+                let post = state5; // read-only step
+                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+                assert(os::step_UnmapWaitShootdown(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+                assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapWaitShootdown { core }, RLbl::Tau));
+                tok.tok.register_internal_step_osext(&mut osext_tok, post);
+            }
+
+            // Wait for completion of shootdown
+            os_ext::code::wait_shootdown(Tracked(&mut osext_tok));
+            let ghost state6 = tok.tok.st();
+
+            proof {
+                broadcast use to_rl1::next_refines;
+                tok.tok.return_osext_token(osext_tok);
+                let pidx = tok.tok.do_concurrent_trs();
+                lemma_concurrent_trs(state6, tok.tok.st(), tok.tok.consts(), tok.tok.core(), pidx);
+            }
+
+            assert(state6.os_ext.shootdown_vec.open_requests.is_empty());
             assert(tok.tok.st().mmu@.writes.tso === set![]);
-            assert(tok.tok.st().mmu@.writes.nonpos =~= set![]); // need shootdown invariant
-            //assert(tok.tok.st().mmu@.pending_unmaps === map![]);
+            assert(tok.tok.st().mmu@.writes.nonpos =~= set![]);
         } else {
             // register fail
             assert(result is None);

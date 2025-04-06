@@ -72,6 +72,7 @@ pub enum Step {
     UnmapOpStutter { core: Core, paddr: usize, value: usize },
     UnmapOpFail { core: Core },
     UnmapInitiateShootdown { core: Core },
+    UnmapWaitShootdown { core: Core },
     AckShootdownIPI { core: Core },
     UnmapEnd { core: Core },
 }
@@ -566,10 +567,30 @@ pub open spec fn step_UnmapInitiateShootdown(
 pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //enabling conditions
+    &&& c.valid_core(core)
     &&& !s1.mmu@.tlbs[core].contains_key(s1.os_ext.shootdown_vec.vaddr as usize)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AckShootdown { core })
+    //new state
+    &&& s2.core_states == s1.core_states
+    &&& s2.sound == s1.sound
+}
+
+pub open spec fn step_UnmapWaitShootdown(
+    c: Constants,
+    s1: State,
+    s2: State,
+    core: Core,
+    lbl: RLbl,
+) -> bool {
+    &&& lbl is Tau
+    //enabling conditions
+    &&& c.valid_core(core)
+    &&& s1.core_states[core] is UnmapShootdownWaiting
+    // mmu statemachine steps
+    &&& s2.mmu == s1.mmu
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::WaitShootdown { core })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -630,6 +651,7 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: 
         Step::UnmapOpStutter { core, paddr, value } => step_UnmapOpStutter(c, s1, s2, core, paddr, value, lbl),
         Step::UnmapOpFail { core }                  => step_UnmapOpFail(c, s1, s2, core, lbl),
         Step::UnmapInitiateShootdown { core }       => step_UnmapInitiateShootdown(c, s1, s2, core, lbl),
+        Step::UnmapWaitShootdown { core }           => step_UnmapWaitShootdown(c, s1, s2, core, lbl),
         Step::AckShootdownIPI { core }              => step_AckShootdownIPI(c, s1, s2, core, lbl),
         Step::UnmapEnd { core }                     => step_UnmapEnd(c, s1, s2, core, lbl),
     }

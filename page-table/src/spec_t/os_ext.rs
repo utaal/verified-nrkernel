@@ -14,6 +14,7 @@ pub enum Lbl {
     AcquireLock { core: Core },
     ReleaseLock { core: Core },
     InitShootdown { core: Core, vaddr: nat },
+    WaitShootdown { core: Core },
     AckShootdown { core: Core },
     Allocate { core: Core, res: MemRegion },
     Deallocate { core: Core, reg: MemRegion },
@@ -54,6 +55,7 @@ pub enum Step {
     AcquireLock,
     ReleaseLock,
     InitShootdown,
+    WaitShootdown,
     AckShootdown,
     Allocate,
     Deallocate
@@ -100,6 +102,16 @@ pub open spec fn step_InitShootdown(pre: State, post: State, c: Constants, lbl: 
         },
         ..pre
     }
+}
+
+/// Wait until all cores have acknowledged the shootdown request
+pub open spec fn step_WaitShootdown(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
+    &&& lbl matches Lbl::WaitShootdown { core }
+
+    &&& c.valid_core(core)
+    &&& pre.shootdown_vec.open_requests === set![]
+
+    &&& post == pre
 }
 
 pub open spec fn step_AckShootdown(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -155,6 +167,7 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
         Step::AcquireLock   => step_AcquireLock(pre, post, c, lbl),
         Step::ReleaseLock   => step_ReleaseLock(pre, post, c, lbl),
         Step::InitShootdown => step_InitShootdown(pre, post, c, lbl),
+        Step::WaitShootdown => step_WaitShootdown(pre, post, c, lbl),
         Step::AckShootdown  => step_AckShootdown(pre, post, c, lbl),
         Step::Allocate      => step_Allocate(pre, post, c, lbl),
         Step::Deallocate    => step_Deallocate(pre, post, c, lbl),
@@ -286,6 +299,16 @@ pub mod code {
             admit(); // axiom
         }
 
+        pub proof fn prophesy_wait_shootdown(tracked &mut self)
+            requires
+                old(self).tstate() is Init,
+            ensures
+                self.lbl() == (os_ext::Lbl::WaitShootdown { core: self.core() }),
+                old(self).prophesied_step(*self),
+        {
+            admit(); // axiom
+        }
+
         pub proof fn prophesy_ack_shootdown(tracked &mut self)
             requires
                 old(self).tstate() is Init,
@@ -408,6 +431,17 @@ pub mod code {
 
         // #[cfg(not(feature="linuxmodule"))]
         // implementation of the shootdown is not necessary if we run this as an standalone module
+    }
+
+    /// Waits for completion of an initiated shootdown.
+    #[verifier(external_body)]
+    pub exec fn wait_shootdown(Tracked(tok): Tracked<&mut Token>)
+        requires
+            old(tok).tstate() is Validated,
+            old(tok).lbl() == (os_ext::Lbl::WaitShootdown { core: old(tok).core() }),
+        ensures
+            tok.tstate() is Spent,
+    {
     }
 
     /// handles processing of the TLB shootdown on a core, acknowledging that the local invalidation has been completed
