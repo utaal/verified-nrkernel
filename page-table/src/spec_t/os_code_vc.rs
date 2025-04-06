@@ -10,30 +10,30 @@ use crate::spec_t::mmu::rl3::refinement::to_rl1;
 
 verus! {
 
-// TODO: This is from the verus test suite. Can we have it in vstd?
-#[verifier::external_body]
-#[verifier::reject_recursive_types_in_ground_variants(T)]
-pub tracked struct Prophecy<T> { _t: core::marker::PhantomData<T> }
-
-impl<T> Prophecy<T> {
-    #[verifier::prophetic]
-    pub uninterp spec fn value(&self) -> T;
-
-    pub uninterp spec fn may_resolve(&self) -> bool;
-
-    #[verifier::external_body]
-    pub proof fn new() -> (tracked s: Self)
-        ensures s.may_resolve()
-    { unimplemented!() }
-
-    #[verifier::external_body]
-    pub proof fn resolve(tracked &mut self, value: T)
-        requires old(self).may_resolve(),
-        ensures !self.may_resolve(),
-            self.value() == old(self).value(),
-            self.value() == value,
-    { unimplemented!() }
-}
+//// TODO: This is from the verus test suite. Can we have it in vstd?
+//#[verifier::external_body]
+//#[verifier::reject_recursive_types_in_ground_variants(T)]
+//pub tracked struct Prophecy<T> { _t: core::marker::PhantomData<T> }
+//
+//impl<T> Prophecy<T> {
+//    #[verifier::prophetic]
+//    pub uninterp spec fn value(&self) -> T;
+//
+//    pub uninterp spec fn may_resolve(&self) -> bool;
+//
+//    #[verifier::external_body]
+//    pub proof fn new() -> (tracked s: Self)
+//        ensures s.may_resolve()
+//    { unimplemented!() }
+//
+//    #[verifier::external_body]
+//    pub proof fn resolve(tracked &mut self, value: T)
+//        requires old(self).may_resolve(),
+//        ensures !self.may_resolve(),
+//            self.value() == old(self).value(),
+//            self.value() == value,
+//    { unimplemented!() }
+//}
 
 pub enum Progress {
     Unready,
@@ -229,6 +229,7 @@ impl Token {
     pub uninterp spec fn consts(self) -> os::Constants;
     pub uninterp spec fn st(self) -> os::State;
     pub uninterp spec fn steps(self) -> Seq<RLbl>;
+    pub uninterp spec fn steps_taken(self) -> Seq<RLbl>;
     pub uninterp spec fn progress(self) -> Progress;
     pub uninterp spec fn on_first_step(self) -> bool;
 
@@ -241,6 +242,7 @@ impl Token {
         &&& new.thread() == self.thread()
         &&& new.st() == self.st()
         &&& new.steps() == self.steps()
+        &&& new.steps_taken() == self.steps_taken()
         &&& new.progress() is TokenWithdrawn
         &&& new.on_first_step() == self.on_first_step()
     }
@@ -254,6 +256,7 @@ impl Token {
             self.consts() == old(self).consts(),
             self.thread() == old(self).thread(),
             self.steps() == old(self).steps(),
+            self.steps_taken() == old(self).steps_taken(),
             self.on_first_step() == old(self).on_first_step(),
             concurrent_trs(old(self).st(), self.st(), old(self).consts(), old(self).core(), pidx),
     { admit(); arbitrary() } // axiom
@@ -292,29 +295,34 @@ impl Token {
             self.thread() == old(self).thread(),
             self.st() == post,
             self.steps() == old(self).steps(),
+            self.steps_taken() == old(self).steps_taken(),
             self.progress() == old(self).progress(),
             old(tok).set_validated(*tok),
     { admit(); } // axiom
 
-    pub proof fn register_external_step_mmu(
-        tracked &mut self,
-        tracked tok: &mut mmu::rl3::code::Token,
-        post: os::State
-    )
-        requires
-            old(tok).tstate() is ProphecyMade,
-            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
-            post.os_ext == old(self).st().os_ext,
-            post.mmu == old(tok).post(),
-        ensures
-            self.on_first_step() == old(self).on_first_step(),
-            self.consts() == old(self).consts(),
-            self.thread() == old(self).thread(),
-            self.st() == post,
-            self.steps() == old(self).steps().drop_first(),
-            self.progress() == old(self).progress(),
-            old(tok).set_validated(*tok),
-    { admit(); } // axiom
+    // Not needed.
+    //pub proof fn register_external_step_mmu(
+    //    tracked &mut self,
+    //    tracked tok: &mut mmu::rl3::code::Token,
+    //    post: os::State,
+    //    lbl: RLbl,
+    //)
+    //    requires
+    //        old(tok).tstate() is ProphecyMade,
+    //        lbl.compatible_with(old(self).steps().first()),
+    //        os::next(old(self).consts(), old(self).st(), post, lbl),
+    //        post.os_ext == old(self).st().os_ext,
+    //        post.mmu == old(tok).post(),
+    //    ensures
+    //        self.on_first_step() == old(self).on_first_step(),
+    //        self.consts() == old(self).consts(),
+    //        self.thread() == old(self).thread(),
+    //        self.st() == post,
+    //        self.steps() == old(self).steps().drop_first(),
+    //        self.steps_taken() == old(self).steps_taken().push(lbl),
+    //        self.progress() == old(self).progress(),
+    //        old(tok).set_validated(*tok),
+    //{ admit(); } // axiom
 
     pub proof fn return_mmu_token(tracked &mut self, tracked tok: mmu::rl3::code::Token)
         requires tok.tstate() is Spent,
@@ -324,6 +332,7 @@ impl Token {
             self.consts() == old(self).consts(),
             self.st() == old(self).st(),
             self.steps() == old(self).steps(),
+            self.steps_taken() == old(self).steps_taken(),
             self.progress() is Unready,
     { admit(); } // axiom
 
@@ -361,6 +370,7 @@ impl Token {
             self.thread() == old(self).thread(),
             self.st() == post,
             self.steps() == old(self).steps(),
+            self.steps_taken() == old(self).steps_taken(),
             self.progress() == old(self).progress(),
             old(tok).set_valid(*tok),
     { admit(); } // axiom
@@ -368,11 +378,13 @@ impl Token {
     pub proof fn register_external_step_osext(
         tracked &mut self,
         tracked tok: &mut os_ext::code::Token,
-        post: os::State
+        post: os::State,
+        lbl: RLbl,
     )
         requires
             old(tok).tstate() is ProphecyMade,
-            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
+            lbl.compatible_with(old(self).steps().first()),
+            os::next(old(self).consts(), old(self).st(), post, lbl),
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
         ensures
@@ -381,6 +393,7 @@ impl Token {
             self.thread() == old(self).thread(),
             self.st() == post,
             self.steps() == old(self).steps().drop_first(),
+            self.steps_taken() == old(self).steps_taken().push(lbl),
             self.progress() == old(self).progress(),
             old(tok).set_valid(*tok),
     { admit(); } // axiom
@@ -393,6 +406,7 @@ impl Token {
             self.consts() == old(self).consts(),
             self.st() == old(self).st(),
             self.steps() == old(self).steps(),
+            self.steps_taken() == old(self).steps_taken(),
             self.progress() is Unready,
     { admit(); } // axiom
 
@@ -410,14 +424,16 @@ impl Token {
             self.thread() == old(self).thread(),
             self.st() == post,
             self.steps() == old(self).steps(),
+            self.steps_taken() == old(self).steps_taken(),
             self.progress() == Progress::Unready,
     { admit(); } // axiom
 
     /// Register a step that corresponds to stutter in both mmu and os_ext.
-    pub proof fn register_external_step(tracked &mut self, post: os::State)
+    pub proof fn register_external_step(tracked &mut self, post: os::State, lbl: RLbl)
         requires
             old(self).progress() is Ready,
-            os::next(old(self).consts(), old(self).st(), post, old(self).steps().first()),
+            lbl.compatible_with(old(self).steps().first()),
+            os::next(old(self).consts(), old(self).st(), post, lbl),
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(self).st().mmu,
         ensures
@@ -426,22 +442,21 @@ impl Token {
             self.thread() == old(self).thread(),
             self.st() == post,
             self.steps() == old(self).steps().drop_first(),
+            self.steps_taken() == old(self).steps_taken().push(lbl),
             self.progress() == Progress::Unready,
     { admit(); } // axiom
 }
 
 pub trait CodeVC {
-    // We specify the steps to be taken as labels. But the label for `MapEnd` includes the return
-    // value, which we want to be equal to the result returned by the function. But we can't
-    // specify this in the requires clause because we can't refer to the result there. Instead we
-    // use an additional prophetic argument, which carries the return value and to which we can
-    // refer in the requires clause.
+    /// We specify the steps to be taken as labels. Outputs (like `result`) in the prescribed
+    /// transitions are an arbitrary value, which may not match the actual output. The label of the
+    /// step that's actually taken agrees on all non-output fields and is recorded in the token's
+    /// `steps_taken`, which we can use to tie it to the return value.
     exec fn sys_do_map(
         Tracked(tok): Tracked<Token>,
         pml4: usize,
         vaddr: usize,
         pte: PageTableEntryExec,
-        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<(),()>, Tracked<Token>))
         requires
             // State machine VC preconditions
@@ -451,15 +466,15 @@ pub trait CodeVC {
             tok.st().core_states[tok.core()] is Idle,
             tok.steps() === seq![
                 RLbl::MapStart { thread_id: tok.thread(), vaddr: vaddr as nat, pte: pte@ },
-                RLbl::MapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: proph_res.value() }
+                RLbl::MapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: arbitrary() }
             ],
+            tok.steps_taken() === seq![],
             tok.on_first_step(),
             tok.progress() is Unready,
             // Caller preconditions
-            proph_res.may_resolve(),
             pml4 == tok.st().mmu@.pt_mem.pml4,
         ensures
-            res.0 == proph_res.value(),
+            res.0 == res.1@.steps_taken().last()->MapEnd_result,
             res.1@.steps() === seq![],
             res.1@.progress() is Unready,
     ;
@@ -470,7 +485,6 @@ pub trait CodeVC {
         Tracked(tok): Tracked<Token>,
         pml4: usize,
         vaddr: usize,
-        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
         requires
             os::step_Unmap_enabled(vaddr as nat),
@@ -479,15 +493,15 @@ pub trait CodeVC {
             tok.st().core_states[tok.core()] is Idle,
             tok.steps() === seq![
                 RLbl::UnmapStart { thread_id: tok.thread(), vaddr: vaddr as nat },
-                RLbl::UnmapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: proph_res.value() }
+                RLbl::UnmapEnd { thread_id: tok.thread(), vaddr: vaddr as nat, result: arbitrary() }
             ],
+            tok.steps_taken() === seq![],
             tok.on_first_step(),
             tok.progress() is Unready,
             // Caller preconditions
-            proph_res.may_resolve(),
             pml4 == tok.st().mmu@.pt_mem.pml4,
         ensures
-            res.0 is Ok <==> proph_res.value() is Ok,
+            res.0 is Ok <==> res.1@.steps_taken().last()->UnmapEnd_result is Ok,
             res.1@.steps() === seq![],
             res.1@.progress() is Unready,
     ;

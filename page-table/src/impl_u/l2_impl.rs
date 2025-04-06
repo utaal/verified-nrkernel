@@ -1318,7 +1318,6 @@ fn map_frame_aux(
         }
     ensures
         tok.inv(),
-        tok@.steps == old(tok)@.steps,
         tok@.pt_mem.pml4 == old(tok)@.pt_mem.pml4,
         match res {
             Ok(resv) => {
@@ -2077,7 +2076,6 @@ pub fn map_frame(Tracked(tok): Tracked<&mut WrappedMapToken>, pt: &mut Ghost<PTD
         old(tok)@.args == (OpArgs::Map { base: vaddr, pte: pte@ }),
     ensures
         inv_and_nonempty(tok@, pt@),
-        tok@.steps == old(tok)@.steps,
         match res {
             Ok(_) => {
                 &&& tok@.change_made
@@ -2184,7 +2182,6 @@ fn insert_empty_directory(
                     <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@),
     ensures
         tok.inv(),
-        tok@.steps == old(tok)@.steps,
         !tok@.change_made,
         inv_at(tok@, res.0@, layer as nat, ptr),
         !old(tok)@.regions.contains_key(res.1@),
@@ -2694,7 +2691,6 @@ fn unmap_aux(
         }
     ensures
         tok.inv(),
-        tok@.steps == old(tok)@.steps,
         tok@.pt_mem.pml4 == old(tok)@.pt_mem.pml4,
         match res {
             Ok(resv) => {
@@ -2716,7 +2712,7 @@ fn unmap_aux(
                      #[trigger] tok@.regions[r] === old(tok)@.regions[r])
                 &&& pt_res.region === pt.region
                 &&& tok@.change_made
-                //&&& tok@.result is Ok
+                &&& tok@.args == old(tok)@.args
             },
             Err(e) => {
                 // If error, unchanged
@@ -3156,11 +3152,10 @@ pub fn unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, pt: &mut Ghost<PTDir
         old(tok)@.args == (OpArgs::Unmap { base: vaddr }),
     ensures
         inv_and_nonempty(tok@, pt@),
-        tok@.steps == old(tok)@.steps,
         match res {
             Ok(_) => {
                 &&& tok@.change_made
-                //&&& tok@.result is Ok
+                &&& tok@.args == old(tok)@.args
                 &&& interp_to_l0(old(tok)@, old(pt)@).contains_key(vaddr as nat)
             },
             Err(_) => {
@@ -3179,41 +3174,6 @@ pub fn unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, pt: &mut Ghost<PTDir
         Err(e) => Err(()),
     }
 }
-
-//#[cfg(feature = "noreclaim")]
-//#[verus::line_count::ignore]
-//#[verifier(external_body)]
-//fn unmap_noreclaim_aux(mem: &mut mem::PageTableMemory, layer: usize, ptr: usize, base: usize, vaddr: usize)
-//    -> (res: Result<(),()>)
-//{
-//    let idx: usize = x86_arch_exec.index_for_vaddr(layer, base, vaddr);
-//    let entry = entry_at(mem, Ghost(pt), layer, ptr, idx);
-//    let entry_base: usize = x86_arch_exec.entry_base(layer, base, idx);
-//    if entry.is_mapping() {
-//        if entry.is_dir(layer) {
-//            let dir_addr = entry.address() as usize;
-//            unmap_noreclaim_aux(mem, layer + 1, dir_addr, entry_base, vaddr)
-//        } else {
-//            if aligned_exec(vaddr, x86_arch_exec.entry_size(layer)) {
-//                mem.write(ptr, idx, Ghost(pt.region), 0u64);
-//                Ok(())
-//            } else {
-//                Err(())
-//            }
-//        }
-//    } else {
-//        Err(())
-//    }
-//}
-
-///// An unverified version of the unmap function that doesn't reclaim empty directories. For
-///// benchmarking purposes.
-//#[cfg(feature = "noreclaim")]
-//#[verus::line_count::ignore]
-//#[verifier(external_body)]
-//pub fn unmap_noreclaim(mem: &mut mem::PageTableMemory, vaddr: usize) -> Result<(),()> {
-//    unmap_noreclaim_aux(mem, 0, mem.cr3().base, 0, vaddr)
-//}
 
 }
 

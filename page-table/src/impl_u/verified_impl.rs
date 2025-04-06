@@ -3,7 +3,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE, x86_arch_spec, x86_arch_spec_upper_bound };
-use crate::spec_t::os_code_vc::{ Prophecy, Token, CodeVC };
+use crate::spec_t::os_code_vc::{ Token, CodeVC };
 use crate::impl_u::wrapped_token::{ self, WrappedMapToken, WrappedUnmapToken, WrappedTokenView, DoShootdown };
 use crate::impl_u::l2_impl::PT::{ self, map_frame, unmap };
 
@@ -17,11 +17,9 @@ impl CodeVC for PTImpl {
         pml4: usize,
         vaddr: usize,
         pte: PageTableEntryExec,
-        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (Result<(),()>, Tracked<Token>)
     {
         let tracked mut tok = tok;
-        let tracked mut proph_res = proph_res;
 
         wrapped_token::start_map_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat), Ghost(pte@));
         let tracked wtok = WrappedMapToken::new(tok); //, tok.steps()[0]->MapEnd_result);
@@ -65,33 +63,17 @@ impl CodeVC for PTImpl {
                     wtok@.args->Map_pte
                 ));
                 WrappedMapToken::register_failed_map(&mut wtok, pt@);
+                assert(wtok@.result is Err);
             }
         }
         assert(wtok@.change_made);
 
-        assert(wtok@.steps === tok.steps());
-        proof { proph_res.resolve(res); }
-
-        assert(wtok@.result == proph_res.value()) by {
-            if let Ok(_) = res {
-                assert(wtok@.result === Ok(()));
-                assert(res is Ok);
-                assert(res.get_Ok_0() == ());
-                assert(res == Ok::<(), ()>(()));
-                assert(proph_res.value() is Ok);
-                assert(proph_res.value() == Ok::<(), ()>(()));
-            }
-
-            if let Err(_) = res {
-                assert(wtok@.result === Err(()));
-                assert(res is Err);
-                assert(res.get_Err_0() == ());
-                assert(res == Err::<(), ()>(()));
-                assert(proph_res.value() is Err);
-                assert(proph_res.value() == Err::<(), ()>(()));
+        assert(res == wtok@.result) by {
+            match res {
+                Ok(v) => assert(v == ()),
+                Err(v) => assert(v == ()),
             }
         };
-        assert(wtok@.steps[0]->MapEnd_result == proph_res.value());
         let tok = WrappedMapToken::finish_map_and_release_lock(Tracked(wtok));
 
         (res, tok)
@@ -101,11 +83,9 @@ impl CodeVC for PTImpl {
         Tracked(tok): Tracked<Token>,
         pml4: usize,
         vaddr: usize,
-        Tracked(proph_res): Tracked<Prophecy<Result<(),()>>>
     ) -> (res: (Result<MemRegionExec,()>, Tracked<Token>))
     {
         let tracked mut tok = tok;
-        let tracked mut proph_res = proph_res;
 
         wrapped_token::start_unmap_and_acquire_lock(Tracked(&mut tok), Ghost(vaddr as nat));
         let tracked wtok = WrappedUnmapToken::new(tok); //, tok.steps()[0]->MapEnd_result);
@@ -140,21 +120,12 @@ impl CodeVC for PTImpl {
         };
 
         let shootdown = if let Ok(pte) = res {
-            assume(wtok@.result is Ok);
-            assume(wtok@.steps[0]->UnmapEnd_result is Ok);
-            assume(wtok@.args->Unmap_base == vaddr);
             DoShootdown::Yes { vaddr, size: pte.size }
         } else {
-            assume(wtok@.result is Err);
-            assume(wtok@.steps[0]->UnmapEnd_result is Err);
-            assume(!PT::interp_to_l0(wtok@, pt@).contains_key(vaddr as nat));
             DoShootdown::No
         };
 
-        assume(wtok@.steps[0]->UnmapEnd_result == wtok@.result);
         let tok = WrappedUnmapToken::finish_unmap_and_release_lock(Tracked(wtok), shootdown, pt);
-
-        assume(res is Ok <==> proph_res.value() is Ok);
 
         (res, tok)
     }

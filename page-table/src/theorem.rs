@@ -23,6 +23,20 @@ pub enum RLbl {
     UnmapEnd   { thread_id: nat, vaddr: nat, result: Result<(), ()> },
 }
 
+impl RLbl {
+    /// When we prescribe steps to be taken that contain outputs, the outputs on the actual
+    /// transition may differ, since we don't know them ahead of time.
+    pub open spec fn compatible_with(self, other: RLbl) -> bool {
+        match (self, other) {
+            (RLbl::MapEnd { thread_id, vaddr, .. }, RLbl::MapEnd { thread_id: t2, vaddr: v2, .. })
+                => thread_id == t2 && vaddr == v2,
+            (RLbl::UnmapEnd { thread_id, vaddr, .. }, RLbl::UnmapEnd { thread_id: t2, vaddr: v2, .. })
+                => thread_id == t2 && vaddr == v2,
+            _ => other == self,
+        }
+    }
+}
+
 proof fn lemma1_init(c: os::Constants, pre: os::State)
     requires os::init(c, pre)
     ensures hlspec::init(c.interp(), pre.interp(c))
