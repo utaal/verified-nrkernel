@@ -351,16 +351,6 @@ pub proof fn next_step_preserves_inv_shootdown(c: os::Constants, s1: os::State, 
     broadcast use
         to_rl1::next_preserves_inv,
         to_rl1::next_refines;
-    match step {
-        os::Step::AckShootdownIPI { core } => {
-            // TODO: What to do about this one? Need to be careful about adding more enabling
-            // conditions on the acks because we don't implement that transition.
-            assert(s1.os_ext.shootdown_vec.open_requests.contains(core));
-            admit();
-
-        },
-        _ => {},
-    }
 }
 
 pub proof fn next_step_preserves_inv_writes(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
