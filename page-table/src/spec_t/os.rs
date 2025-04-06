@@ -568,7 +568,8 @@ pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: 
     &&& lbl is Tau
     //enabling conditions
     &&& c.valid_core(core)
-    &&& !s1.mmu@.tlbs[core].contains_key(s1.os_ext.shootdown_vec.vaddr as usize)
+    &&& !s1.mmu@.writes.nonpos.contains(core)
+    //&&& !s1.mmu@.tlbs[core].contains_key(s1.os_ext.shootdown_vec.vaddr as usize)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AckShootdown { core })

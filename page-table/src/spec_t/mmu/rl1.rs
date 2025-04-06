@@ -99,7 +99,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
             core: pre.writes.core,
             tso: if core == pre.writes.core { set![] } else { pre.writes.tso },
             nonpos:
-                if pre.writes.tso === set![] {
+                if post.writes.tso === set![] {
                     pre.writes.nonpos.remove(core)
                 } else { pre.writes.nonpos },
         },

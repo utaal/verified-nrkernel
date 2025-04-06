@@ -145,7 +145,7 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
                 core: pre.hist.writes.core,
                 tso: if core == pre.hist.writes.core { set![] } else { pre.hist.writes.tso },
                 nonpos:
-                    if pre.hist.writes.tso === set![] {
+                    if post.hist.writes.tso === set![] {
                         pre.hist.writes.nonpos.remove(core)
                     } else { pre.hist.writes.nonpos },
             },
