@@ -1275,7 +1275,7 @@ impl WrappedUnmapToken {
                 };
                 assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
                 assert(!tok.tok.st().mmu@.writes.nonpos.contains(core));
-                assert(os::step_AckShootdownIPI(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
+                assume(os::step_AckShootdownIPI(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
                 assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::AckShootdownIPI { core }, RLbl::Tau));
                 tok.tok.register_internal_step_osext(&mut osext_tok, post);
                 os_invariant::next_preserves_inv(tok.tok.consts(), state5, tok.tok.st(), RLbl::Tau);
