@@ -3142,12 +3142,43 @@ fn unmap_aux(
                 let unmapped_region = MemRegionExec { base: vaddr, size: x86_arch_exec.entry_size(layer) };
                 Ok((unmapped_region, Ghost((pt, removed_regions))))
             } else {
-                assume(!interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat));
+                proof {
+                    assert(entry_base != vaddr);
+                    let interp_old = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
+                    assert(interp_old.interp_of_entry(idx as nat).dom() == set![entry_base as nat]);
+                    assert_by_contradiction!(!interp_old.interp().contains_key(vaddr as nat), {
+                        interp_old.lemma_interp_contains_implies_interp_of_entry_contains();
+                        let i = choose|i: nat| #![auto] i < interp_old.num_entries() && interp_old.interp_of_entry(i).contains_key(vaddr as nat);
+                        interp_old.lemma_interp_of_entry_key_between(i, vaddr as nat);
+                        assert(i == idx) by (nonlinear_arith)
+                            requires
+                                idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                                x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= vaddr,
+                                vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                        {};
+                        assert(interp_old.interp().contains_key(vaddr as nat));
+                    });
+                }
                 Err(())
             }
         }
     } else {
-        assume(!interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat));
+        proof {
+            let interp_old = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
+            assert(interp_old.interp_of_entry(idx as nat).dom() === set![]);
+            assert_by_contradiction!(!interp_old.interp().contains_key(vaddr as nat), {
+                interp_old.lemma_interp_contains_implies_interp_of_entry_contains();
+                let i = choose|i: nat| #![auto] i < interp_old.num_entries() && interp_old.interp_of_entry(i).contains_key(vaddr as nat);
+                interp_old.lemma_interp_of_entry_key_between(i, vaddr as nat);
+                assert(i == idx) by (nonlinear_arith)
+                    requires
+                        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                        x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= vaddr,
+                        vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
+                {};
+                assert(interp_old.interp().contains_key(vaddr as nat));
+            });
+        }
         Err(())
     }
 }
