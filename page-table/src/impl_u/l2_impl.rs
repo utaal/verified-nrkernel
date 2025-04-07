@@ -2673,6 +2673,7 @@ fn unmap_aux(
         inv_at(old(tok)@, pt, layer as nat, ptr),
         no_empty_directories(old(tok)@, pt, layer as nat, ptr),
         accepted_unmap(vaddr as nat, layer as nat, base as nat),
+        aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
         base <= vaddr < MAX_BASE,
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
             <==> interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])).contains_key(vaddr as nat),
@@ -2869,10 +2870,13 @@ fn unmap_aux(
                     assert(i == idx) by (nonlinear_arith)
                         requires
                             x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
-                            x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
-                    {};
+                            x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
                     assert(interp_inner.interp().contains_key(vaddr as nat));
                 }
+            };
+
+            assert(aligned(entry_base as nat, x86_arch_spec.entry_size(layer as nat + 1))) by {
+                broadcast use vstd::arithmetic::div_mod::lemma_mod_mod, vstd::arithmetic::div_mod::lemma_mod_breakdown;
             };
 
             match unmap_aux(Tracked(tok), Ghost(dir_pt), layer + 1, dir_addr, entry_base, vaddr, Ghost(rebuild_root_pt_inner)) {
@@ -3060,7 +3064,14 @@ fn unmap_aux(
             }
         } else {
             if aligned_exec(vaddr, x86_arch_exec.entry_size(layer)) {
-                assume(entry_base == vaddr as nat);
+                assert(entry_base == vaddr as nat) by (nonlinear_arith)
+                    requires
+                        layer < 4,
+                        base <= vaddr,
+                        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                        entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
+                        aligned(vaddr as nat, x86_arch_spec.entry_size(layer as nat)),
+                        aligned(base as nat, x86_arch_spec.entry_size(layer as nat));
                 let ghost tok_after_write = old(tok)@.write(idx, 0usize, pt.region, true);
                 assert(PT::interp_to_l0(tok@, root_pt).contains_key(tok@.args->Unmap_base as nat)) by {
                     assert(interp_at(tok@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)) by {
