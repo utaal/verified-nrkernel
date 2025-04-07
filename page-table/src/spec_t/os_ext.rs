@@ -1,7 +1,8 @@
 use vstd::prelude::*;
+use crate::spec_t::mmu::Constants;
 use crate::spec_t::mmu::defs::{ Core, MemRegion };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ overlap, aligned, MAX_PHYADDR };
+use crate::spec_t::mmu::defs::{ overlap, aligned };
 
 
 verus! {
@@ -31,19 +32,19 @@ pub struct ShootdownVector {
     pub open_requests: Set<Core>,
 }
 
-pub struct Constants {
-    pub node_count: nat,
-    pub core_count: nat,
-}
-
-impl Constants {
-    // FIXME: This is duplicated in mmu constants. Can we somehow get rid of one of these?
-    #[verifier(opaque)]
-    pub open spec fn valid_core(self, core: Core) -> bool {
-        &&& core.node_id < self.node_count
-        &&& core.core_id < self.core_count
-    }
-}
+//pub struct Constants {
+//    pub node_count: nat,
+//    pub core_count: nat,
+//}
+//
+//impl Constants {
+//    // FIXME: This is duplicated in mmu constants. Can we somehow get rid of one of these?
+//    #[verifier(opaque)]
+//    pub open spec fn valid_core(self, core: Core) -> bool {
+//        &&& core.node_id < self.node_count
+//        &&& core.core_id < self.core_count
+//    }
+//}
 
 impl State {
     pub open spec fn disjoint_from_allocations(self, reg: MemRegion) -> bool {
@@ -129,14 +130,13 @@ pub open spec fn step_AckShootdown(pre: State, post: State, c: Constants, lbl: L
     }
 }
 
-// TODO: Hardcoding 4k allocations for now. Should fix that to support large mappings. (MB: ???)
 pub open spec fn step_Allocate(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
     &&& lbl matches Lbl::Allocate { core, res }
 
     &&& c.valid_core(core)
     &&& pre.disjoint_from_allocations(res)
     &&& aligned(res.base, 4096)
-    &&& res.base + 4096 <= MAX_PHYADDR
+    &&& c.in_ptmem_range(res.base, 4096)
     &&& res.size == 4096
 
     &&& post == State {
@@ -177,6 +177,7 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
 pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.lock === None
     &&& pre.shootdown_vec.open_requests === set![]
+    &&& c.memories_disjoint()
     // The OS state machine specifies this field. We assume that we already start with one
     // directory allocated for the PML4 directory.
     //&&& pre.allocated === set![]

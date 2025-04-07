@@ -2,7 +2,7 @@ use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, LoadResult, update_range, MAX_PHYADDR };
+use crate::spec_t::mmu::defs::{ aligned, LoadResult, update_range };
 use crate::spec_t::mmu::defs::{ PTE, Core };
 use crate::spec_t::mmu::rl3::{ Writes };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
@@ -239,6 +239,7 @@ pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lb
 
     &&& pre.happy
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Mapping)
     &&& pre.polarity is Mapping || pre.can_flip_polarity(c)
@@ -264,6 +265,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
 
     &&& pre.happy
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Unmapping)
     &&& pre.polarity is Unmapping || pre.can_flip_polarity(c)
@@ -289,6 +291,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
 
     &&& pre.happy
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
     &&& pre.is_tso_read_deterministic(core, addr)
             ==> value & MASK_NEG_DIRTY_ACCESS == pre.pt_mem.read(addr) & MASK_NEG_DIRTY_ACCESS
@@ -357,10 +360,8 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
 }
 
 pub open spec fn init(pre: State, c: Constants) -> bool {
-    //&&& pre.pt_mem == ..
     &&& pre.happy
     &&& pre.tlbs === Map::new(|core| c.valid_core(core), |core| map![])
-    //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
     &&& pre.writes.nonpos === set![]
     &&& pre.pending_maps === map![]
@@ -368,9 +369,11 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.polarity === Polarity::Mapping
 
     &&& c.valid_core(pre.writes.core)
-    &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
+    &&& pre.pt_mem.mem.dom() === Set::new(|va| aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8))
     &&& aligned(pre.pt_mem.pml4 as nat, 4096)
-    &&& pre.pt_mem.pml4 + 4096 <= MAX_PHYADDR
+    &&& c.memories_disjoint()
+    &&& pre.phys_mem.len() == c.range_mem.1
+    &&& c.in_ptmem_range(pre.pt_mem.pml4 as nat, 4096)
 }
 
 //proof fn init_implies_inv(pre: State, c: Constants)

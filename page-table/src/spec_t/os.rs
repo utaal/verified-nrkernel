@@ -21,7 +21,8 @@ use crate::impl_u::{ wrapped_token, l2_impl::PT };
 verus! {
 
 pub struct Constants {
-    pub mmu: mmu::Constants,
+    /// Constants for mmu and os_ext state machines
+    pub common: mmu::Constants,
     //maps User Level Thread to its assigned core
     pub ult2core: Map<nat, Core>,
     //highest thread_id
@@ -107,14 +108,7 @@ impl Constants {
     }
 
     pub open spec fn valid_core(self, core: Core) -> bool {
-        self.mmu.valid_core(core)
-    }
-
-    pub open spec fn os_ext(self) -> os_ext::Constants {
-        os_ext::Constants {
-            node_count: self.mmu.node_count,
-            core_count: self.mmu.core_count,
-        }
+        self.common.valid_core(core)
     }
 }
 
@@ -192,7 +186,7 @@ pub open spec fn candidate_mapping_overlaps_inflight_vmem(
 pub open spec fn step_MMU(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Tau)
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Tau)
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states
@@ -206,7 +200,7 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, core: Core, lbl:
     &&& c.valid_ult(thread_id)
     &&& s1.core_states[core] is Idle
     //mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::MemOp(core, vaddr as usize, op))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::MemOp(core, vaddr as usize, op))
     &&& s2.os_ext == s1.os_ext
     // FIXME(MB): This additional enabling condition here is kind of fishy
     &&& vaddr <= usize::MAX
@@ -220,7 +214,7 @@ pub open spec fn step_MemOp(c: Constants, s1: State, s2: State, core: Core, lbl:
 pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, paddr: usize, value: usize, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Read(core, paddr, value))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Read(core, paddr, value))
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states
@@ -231,7 +225,7 @@ pub open spec fn step_ReadPTMem(c: Constants, s1: State, s2: State, core: Core, 
 pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Barrier(core))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Barrier(core))
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states
@@ -242,7 +236,7 @@ pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core, lb
 pub open spec fn step_Invlpg(c: Constants, s1: State, s2: State, core: Core, vaddr: usize, lbl: RLbl) -> bool {
     &&& lbl is Tau
     //mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Invlpg(core, vaddr))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Invlpg(core, vaddr))
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states
@@ -300,7 +294,7 @@ pub open spec fn step_MapOpStart(c: Constants, s1: State, s2: State, core: Core,
 
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AcquireLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::AcquireLock { core })
 
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::MapExecuting { ult_id, vaddr, pte })
@@ -323,7 +317,7 @@ pub open spec fn step_MapOpStutter(
     &&& value & 1 == 1
 
     // mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
     &&& s2.interp_pt_mem() == s1.interp_pt_mem()
     &&& s2.os_ext == s1.os_ext
@@ -343,7 +337,7 @@ pub open spec fn step_Allocate(c: Constants, s1: State, s2: State, core: Core, r
 
     //mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::Allocate { core, res })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::Allocate { core, res })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -367,7 +361,7 @@ pub open spec fn step_MapOpChange(
     &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
 
     // mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
     &&& s2.os_ext == s1.os_ext
     //new state
@@ -402,7 +396,7 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, core: Core, lbl
 
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::ReleaseLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::ReleaseLock { core })
 
     // new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
@@ -451,7 +445,7 @@ pub open spec fn step_UnmapOpStart(c: Constants, s1: State, s2: State, core: Cor
     &&& s1.core_states[core] matches CoreState::UnmapWaiting { ult_id, vaddr }
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AcquireLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::AcquireLock { core })
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::UnmapExecuting { ult_id, vaddr, result: None })
     &&& s2.sound == s1.sound
@@ -465,7 +459,7 @@ pub open spec fn step_Deallocate(c: Constants, s1: State, s2: State, core: Core,
 
     //mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::Deallocate { core, reg })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::Deallocate { core, reg })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -486,7 +480,7 @@ pub open spec fn step_UnmapOpChange(
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: None }
     &&& value & 1 == 0
     // mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
     &&& s1.interp_pt_mem().contains_key(vaddr)
     &&& s2.interp_pt_mem() == s1.interp_pt_mem().remove(vaddr)
@@ -514,7 +508,7 @@ pub open spec fn step_UnmapOpStutter(
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(res) }
     &&& value & 1 == 0
     // mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.mmu, mmu::Lbl::Write(core, paddr, value))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
     &&& s2.os_ext == s1.os_ext
     &&& s2.interp_pt_mem() == s1.interp_pt_mem()
@@ -553,7 +547,7 @@ pub open spec fn step_UnmapInitiateShootdown(
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Ok(pte)) }
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::InitShootdown { core, vaddr })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::InitShootdown { core, vaddr })
     //new state
     &&& s2.core_states == s1.core_states.insert(
         core,
@@ -572,7 +566,7 @@ pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: 
     &&& !s1.mmu@.tlbs[core].contains_key(s1.os_ext.shootdown_vec.vaddr as usize)
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::AckShootdown { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::AckShootdown { core })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -591,7 +585,7 @@ pub open spec fn step_UnmapWaitShootdown(
     &&& s1.core_states[core] is UnmapShootdownWaiting
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::WaitShootdown { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::WaitShootdown { core })
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -623,7 +617,7 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, core: Core, l
     &&& s1.mmu@.pending_unmaps === map![]
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
-    &&& os_ext::next(s1.os_ext, s2.os_ext, c.os_ext(), os_ext::Lbl::ReleaseLock { core })
+    &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::ReleaseLock { core })
     //new state
     &&& s2.core_states == s1.core_states.insert(core, CoreState::Idle)
     &&& s1.sound == s2.sound
@@ -665,8 +659,8 @@ pub open spec fn next(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
 pub open spec fn init(c: Constants, s: State) -> bool {
     // hardware stuff
     //&&& s.interp_pt_mem() === Map::empty()
-    &&& rl3::init(s.mmu, c.mmu)
-    &&& os_ext::init(s.os_ext, c.os_ext())
+    &&& rl3::init(s.mmu, c.common)
+    &&& os_ext::init(s.os_ext, c.common)
     // We start with a single directory already allocated for PML4
     &&& s.os_ext.allocated === set![MemRegion { base: s.mmu@.pt_mem.pml4 as nat, size: 4096 }]
     // and that directory is empty
@@ -691,7 +685,7 @@ pub open spec fn init(c: Constants, s: State) -> bool {
 
 impl Constants {
     pub open spec fn interp(self) -> hlspec::Constants {
-        hlspec::Constants { thread_no: self.ult_no, phys_mem_size: self.mmu.phys_mem_size }
+        hlspec::Constants { thread_no: self.ult_no, phys_mem_size: self.common.phys_mem_size }
     }
 }
 
@@ -1008,20 +1002,25 @@ impl State {
     }
 
     pub open spec fn inv_mmu(self, c: Constants) -> bool {
-        &&& self.mmu.inv(c.mmu)
+        &&& self.mmu.inv(c.common)
         // The rl3 invariant is closed, the rl2 one is not but maybe it should be. Keeping it open
         // for now because it accidentally helps with some of the wrapped_token proofs.
-        &&& self.mmu.interp().inv(c.mmu)
+        &&& self.mmu.interp().inv(c.common)
         &&& self.mmu@.happy
-        &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.mmu@.pt_mem.mem.contains_key(va)
+
+        // Some of this is duplicated from rl2's invariant but we should close that definition
+        // probably.
+        &&& self.mmu@.pt_mem.mem.dom() === Set::new(|va| aligned(va as nat, 8) && c.common.in_ptmem_range(va as nat, 8))
         &&& aligned(self.mmu@.pt_mem.pml4 as nat, 4096)
-        &&& self.mmu@.pt_mem.pml4 + 4096 <= MAX_PHYADDR
+        &&& c.common.in_ptmem_range(self.mmu@.pt_mem.pml4 as nat, 4096)
+        &&& c.common.range_mem.0 < c.common.range_mem.1 < c.common.range_ptmem.0 < c.common.range_ptmem.1
+        &&& c.common.range_ptmem.1 <= MAX_PHYADDR
     }
 
-    pub open spec fn inv_osext(self) -> bool {
+    pub open spec fn inv_osext(self, c: Constants) -> bool {
         &&& forall|r| #[trigger] self.os_ext.allocated.contains(r) ==> {
             &&& aligned(r.base, 4096)
-            &&& r.base + 4096 <= MAX_PHYADDR
+            &&& c.common.in_ptmem_range(r.base, 4096)
             &&& r.size == 4096
         }
         &&& self.allocated_regions_disjoint()
@@ -1079,7 +1078,7 @@ impl State {
         &&& self.inv_impl()
         &&& self.inv_writes(c)
         &&& self.inv_shootdown(c)
-        &&& self.inv_osext()
+        &&& self.inv_osext(c)
         //&&& self.tlb_inv(c)
         &&& self.overlapping_vmem_inv(c)
         &&& self.inv_pending_maps(c)
@@ -1190,7 +1189,7 @@ impl Step {
                 let lbl = mmu::Lbl::MemOp(core, vaddr as usize, op);
                 // The transition is defined on rl3 but we're doing the case distinction on rl1
                 // because in the OS refinement proofs we're working with the rl1 transitions.
-                let mmu_step = choose|step| rl1::next_step(pre.mmu@, post.mmu@, c.mmu, step, lbl);
+                let mmu_step = choose|step| rl1::next_step(pre.mmu@, post.mmu@, c.common, step, lbl);
                 match mmu_step {
                     rl1::Step::MemOpNoTr => hlspec::Step::MemOp { pte: None },
                     rl1::Step::MemOpNoTrNA { .. } => hlspec::Step::MemOpNA,

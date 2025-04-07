@@ -5,7 +5,7 @@ use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, bit, WORD_SIZE, MAX_PHYADDR_WIDTH, axiom_max_phyaddr_width_facts, MemOp,
-    LoadResult, update_range, MAX_PHYADDR };
+    LoadResult, update_range };
 use crate::spec_t::mmu::defs::{ Core, PTE };
 use crate::spec_t::mmu::rl3::{ Writes };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
@@ -317,6 +317,7 @@ pub open spec fn step_WriteNonneg(pre: State, post: State, c: Constants, lbl: Lb
 
     &&& pre.happy
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Mapping)
     &&& pre.polarity is Mapping || pre.can_flip_polarity(c)
@@ -350,6 +351,7 @@ pub open spec fn step_WriteNonpos(pre: State, post: State, c: Constants, lbl: Lb
     &&& pre.happy
     &&& c.valid_core(core)
     &&& aligned(addr as nat, 8)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& pre.is_this_write_happy(core, addr, value, Polarity::Unmapping)
     &&& pre.polarity is Unmapping || pre.can_flip_polarity(c)
 
@@ -393,7 +395,6 @@ pub open spec fn step_Writeback(pre: State, post: State, c: Constants, core: Cor
     &&& post.polarity == pre.polarity
     &&& post.hist.pending_maps == pre.hist.pending_maps
     &&& post.hist.pending_unmaps == pre.hist.pending_unmaps
-    //&&& post.polarity == pre.polarity
 }
 
 pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -401,6 +402,7 @@ pub open spec fn step_Read(pre: State, post: State, c: Constants, lbl: Lbl) -> b
     &&& pre.happy
 
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
     &&& value & MASK_NEG_DIRTY_ACCESS == pre.read_from_mem_tso(core, addr) & MASK_NEG_DIRTY_ACCESS
 
@@ -472,22 +474,22 @@ pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
 }
 
 pub open spec fn init(pre: State, c: Constants) -> bool {
-    //&&& pre.pt_mem == ..
     &&& pre.tlbs  === Map::new(|core| c.valid_core(core), |core| Map::empty())
     &&& pre.walks === Map::new(|core| c.valid_core(core), |core| set![])
     &&& pre.sbuf  === Map::new(|core| c.valid_core(core), |core| seq![])
     &&& pre.happy == true
-    //&&& pre.writes.core == ..
     &&& pre.writes.tso === set![]
     &&& pre.writes.nonpos === set![]
     &&& pre.hist.pending_maps === map![]
     &&& pre.hist.pending_unmaps === map![]
     &&& pre.polarity === Polarity::Mapping
-
     &&& c.valid_core(pre.writes.core)
-    &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
+
+    &&& pre.pt_mem.mem.dom() === Set::new(|va| aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8))
     &&& aligned(pre.pt_mem.pml4 as nat, 4096)
-    &&& pre.pt_mem.pml4 + 4096 <= MAX_PHYADDR
+    &&& c.memories_disjoint()
+    &&& pre.phys_mem.len() == c.range_mem.1
+    &&& c.in_ptmem_range(pre.pt_mem.pml4 as nat, 4096)
 }
 
 
@@ -503,12 +505,25 @@ impl State {
         &&& self.writes.tso.finite()
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.walks.contains_key(core)
         &&& forall|core| #[trigger] c.valid_core(core) <==> self.sbuf.contains_key(core)
-        //&&& forall|core| #[trigger] c.valid_core(core) <==> self.writes.neg.contains_key(core)
         &&& forall|core| #[trigger] self.walks.contains_key(core) ==> self.walks[core].finite()
-        //&&& forall|core| #[trigger] self.writes.neg.contains_key(core) ==> self.writes.neg[core].finite()
-        &&& forall|va| aligned(va as nat, 8) ==> #[trigger] self.pt_mem.mem.contains_key(va)
+
         &&& aligned(self.pt_mem.pml4 as nat, 4096)
-        &&& self.pt_mem.pml4 <= u64::MAX - 4096
+        &&& c.in_ptmem_range(self.pt_mem.pml4 as nat, 4096)
+        &&& c.memories_disjoint()
+        //&&& self.phys_mem.len() == c.range_mem.1
+        &&& self.wf_ptmem_range(c)
+    }
+
+    // For some reason this causes issues in a few proofs, so making it opaque
+    #[verifier(opaque)]
+    pub open spec fn wf_ptmem_range(self, c: Constants) -> bool {
+        //self.pt_mem.mem.dom() === Set::new(|va| aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8))
+        &&& forall|va| #[trigger] self.pt_mem.mem.contains_key(va)
+            <==> aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8)
+        &&& forall|i| #![auto] 0 <= i < self.writer_sbuf().len() ==> {
+            &&& c.in_ptmem_range(self.writer_sbuf()[i].0 as nat, 8)
+            &&& aligned(self.writer_sbuf()[i].0 as nat as nat, 8)
+        }
     }
 
     pub open spec fn non_writer_sbufs_are_empty(self, c: Constants) -> bool {
@@ -701,7 +716,9 @@ impl State {
 pub proof fn init_implies_inv(pre: State, c: Constants)
     requires init(pre, c)
     ensures pre.inv(c)
-{}
+{
+    reveal(State::wf_ptmem_range);
+}
 
 pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
     requires
@@ -1265,6 +1282,7 @@ proof fn step_Writeback_preserves_inv_unmapping__inflight_walks(pre: State, post
         next_step(pre, post, c, step, lbl),
     ensures post.inv_unmapping__inflight_walks(c)
 {
+    reveal(State::wf_ptmem_range);
     broadcast use group_ambient;
     assert(bit!(0usize) == 1) by (bit_vector);
     let wrcore = step->Writeback_core;
@@ -1494,11 +1512,14 @@ proof fn next_step_preserves_inv_unmapping__core_vs_writer_reads(pre: State, pos
 
 proof fn next_step_preserves_wf(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
-        pre.wf(c),
+        pre.inv(c),
         post.happy,
         next_step(pre, post, c, step, lbl),
     ensures post.wf(c)
-{}
+{
+    reveal(State::wf_ptmem_range);
+    assert(post.pt_mem.mem.dom() =~= pre.pt_mem.mem.dom());
+}
 
 // unstable?
 proof fn next_step_preserves_inv_mapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
@@ -2043,9 +2064,9 @@ broadcast proof fn lemma_valid_implies_equal_reads(state: State, c: Constants, c
         core != state.writes.core,
         aligned(addr as nat, 8),
         state.core_mem(core).read(addr) & 1 == 1,
-        state.core_mem(core).mem.contains_key(addr),
     ensures #![auto] state.core_mem(core).read(addr) == state.writer_mem().read(addr)
 {
+    reveal(State::wf_ptmem_range);
     state.pt_mem.lemma_write_seq_idle(state.writer_sbuf(), addr);
     assert(state.core_mem(core).read(addr) == state.pt_mem.read(addr));
     assert(state.writer_mem().read(addr) == state.pt_mem.read(addr));
@@ -2064,14 +2085,21 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
         core_walk.result() is Valid ==> core_walk == writer_walk
     })
 {
-    state.pt_mem.lemma_write_seq(state.writer_sbuf());
-    assert(bit!(0usize) == 1) by (bit_vector);
-    axiom_max_phyaddr_width_facts();
-    let mw = MAX_PHYADDR_WIDTH;
-    assert(forall|v: usize| (v & bitmask_inc!(12usize, sub(mw, 1))) % 4096 == 0) by (bit_vector)
-        requires 32 <= mw <= 52;
-    crate::spec_t::mmu::translation::lemma_bit_indices_less_512(va);
-    broadcast use lemma_valid_implies_equal_reads;
+    let core_walk = state.core_mem(core).pt_walk(va);
+    let writer_walk = state.writer_mem().pt_walk(va);
+    if core_walk.result() is Valid {
+        //assert(forall|x:nat, y:nat| c.in_ptmem_range(x, 4096) && y < 512
+        //    ==> #[trigger] c.in_ptmem_range(x + (y * 8), 8)) by (nonlinear_arith);
+        state.pt_mem.lemma_write_seq(state.writer_sbuf());
+        assert(bit!(0usize) == 1) by (bit_vector);
+        axiom_max_phyaddr_width_facts();
+        let mw = MAX_PHYADDR_WIDTH;
+        assert(forall|v: usize| (v & bitmask_inc!(12usize, sub(mw, 1))) % 4096 == 0) by (bit_vector)
+            requires 32 <= mw <= 52;
+        crate::spec_t::mmu::translation::lemma_bit_indices_less_512(va);
+        broadcast use lemma_valid_implies_equal_reads;
+        assert(core_walk.path =~= writer_walk.path);
+    }
 }
 
 proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core: Core, va: usize)
@@ -2085,6 +2113,7 @@ proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core:
     ensures
         state.core_mem(core).pt_walk(va) == state.writer_mem().pt_walk(va)
 {
+    reveal(State::wf_ptmem_range);
     state.pt_mem.lemma_write_seq(state.writer_sbuf());
     let path = state.writer_mem().pt_walk(va).path;
     assert(forall|i| #![auto] 0 <= i < path.len() ==> aligned(path[i].0 as nat, 8)) by {

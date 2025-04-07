@@ -407,7 +407,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             let vaddr = lbl->MemOp_vaddr;
             let op = lbl->MemOp_op;
             let mlbl = mmu::Lbl::MemOp(core, vaddr as usize, op);
-            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
+            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.common, step, mlbl);
             match mmu_step {
                 rl1::Step::MemOpNoTr =>
                     hlspec::step_MemOp(c.interp(), s1.interp(c), s2.interp(c), None, lbl),
@@ -429,11 +429,11 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
     let vaddr = lbl->MemOp_vaddr;
     let op = lbl->MemOp_op;
     let mlbl = mmu::Lbl::MemOp(core, vaddr as usize, op);
-    let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
-    assert(rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, mmu_step, mlbl));
+    let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.common, step, mlbl);
+    assert(rl1::next_step(s1.mmu@, s2.mmu@, c.common, mmu_step, mlbl));
     match mmu_step {
         rl1::Step::MemOpNoTr { .. } => {
-            assert(rl1::step_MemOpNoTr(s1.mmu@, s2.mmu@, c.mmu, mlbl));
+            assert(rl1::step_MemOpNoTr(s1.mmu@, s2.mmu@, c.common, mlbl));
             let t1 = s1.interp(c);
             let t2 = s2.interp(c);
             let d = c.interp();
@@ -448,12 +448,12 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(d.valid_thread(thread_id));
             assert(t1.thread_state.dom().contains(thread_id));
             assert(t1.thread_state[thread_id] is Idle);
-            assert(!is_in_mapped_region(c.mmu.phys_mem_size, t1.mappings, vaddr)) by {
+            assert(!is_in_mapped_region(c.common.phys_mem_size, t1.mappings, vaddr)) by {
                 reveal(PTMem::view);
                 assert forall|base: nat, pte: PTE|
                   #[trigger] t1.mappings.contains_pair(base, pte)
                    && between(vaddr, base, base + pte.frame.size)
-                   && pte.frame.base + (vaddr - base) < c.mmu.phys_mem_size
+                   && pte.frame.base + (vaddr - base) < c.common.phys_mem_size
                    implies false
                 by {
                     assert(s1.interp_pt_mem().dom().contains(base));
@@ -1099,7 +1099,7 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
 
         //proofgoal (4/4):  forall|vaddr: int| is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr as nat) ==> s2.mem[vaddr] === s1.mem[vaddr]
         assert forall|mem_vaddr: nat| #![auto]
-            is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr)
+            is_in_mapped_region(c.common.phys_mem_size, hl_s1.mappings, mem_vaddr)
         implies hl_s2.mem[mem_vaddr as int] === hl_s1.mem[mem_vaddr as int]
         by {
             let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr as int);
@@ -1148,7 +1148,7 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
 
             assert(hl_s1.mappings.submap_of(hl_s2.mappings));
             assert(hl_s2.mappings.contains_pair(mem_base, mem_pte));
-            assert(is_in_mapped_region(c.mmu.phys_mem_size, hl_s2.mappings, mem_vaddr));
+            assert(is_in_mapped_region(c.common.phys_mem_size, hl_s2.mappings, mem_vaddr));
             let (mem_base2, mem_pte2) = os::State::base_and_pte_for_vaddr(s2.effective_mappings(), mem_vaddr as int);
             assert(mem_base2 == mem_base);
             assert(mem_pte2 == mem_pte);
@@ -1415,7 +1415,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
 
                 assert(hl_s1.mappings =~= hl_s2.mappings.insert(vaddr, hl_s1.mappings.index(vaddr)));
 
-                assert forall|mem_vaddr: nat| #![auto] is_in_mapped_region(c.mmu.phys_mem_size, hl_s2.mappings, mem_vaddr) 
+                assert forall|mem_vaddr: nat| #![auto] is_in_mapped_region(c.common.phys_mem_size, hl_s2.mappings, mem_vaddr) 
                         implies (hl_s2.mem[mem_vaddr as int] === hl_s1.mem[mem_vaddr as int]) 
                 by {
                     let (mem_base, mem_pte) = os::State::base_and_pte_for_vaddr(s2.effective_mappings(), mem_vaddr as int);
@@ -1464,7 +1464,7 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
         
                     assert(hl_s2.mappings.submap_of(hl_s1.mappings));
                     assert(hl_s1.mappings.contains_pair(mem_base, mem_pte));
-                    assert(is_in_mapped_region(c.mmu.phys_mem_size, hl_s1.mappings, mem_vaddr));
+                    assert(is_in_mapped_region(c.common.phys_mem_size, hl_s1.mappings, mem_vaddr));
                     let (mem_base2, mem_pte2) = os::State::base_and_pte_for_vaddr(s1.effective_mappings(), mem_vaddr as int);
                     assert(mem_base2 == mem_base);
                     assert(mem_pte2 == mem_pte);

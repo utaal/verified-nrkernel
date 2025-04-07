@@ -384,7 +384,7 @@ impl WrappedMapToken {
                 ..tok.tok.st()
             };
             let read_result = mmu_tok.lbl()->Read_2;
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
             assert(os::step_ReadPTMem(tok.tok.consts(), tok.tok.st(), post, core, addr, read_result, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::ReadPTMem { core, paddr: addr, value: read_result }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -446,8 +446,8 @@ impl WrappedMapToken {
             mmu_tok.prophesy_write(addr, value);
             let post = os::State { mmu: mmu_tok.post(), ..tok.tok.st() };
 
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
+            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().common, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             assert(os::step_MapOpStutter(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::MapOpStutter { core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -525,8 +525,8 @@ impl WrappedMapToken {
                 ..tok.tok.st()
             };
 
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
+            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().common, mmu::rl1::Step::WriteNonneg, mmu_tok.lbl()));
             old(tok)@.lemma_interps_match(root_pt);
             old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, true);
             old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
@@ -666,7 +666,7 @@ impl WrappedMapToken {
                 mmu: mmu_tok.post(),
                 ..tok.tok.st()
             };
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
             assert(os::step_Barrier(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Barrier { core }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -695,7 +695,7 @@ impl WrappedMapToken {
                 os_ext: osext_tok.post(),
                 ..tok.tok.st()
             };
-            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().common, osext_tok.lbl()));
             let lbl = RLbl::MapEnd { thread_id: tok.tok.thread(), vaddr, result };
             assert(post.inv_impl()) by {
                 assert(tok.tok.st().mmu@.pt_mem == tok@.pt_mem);
@@ -805,7 +805,7 @@ pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(
             os_ext: osext_tok.post(),
             ..tok.st()
         };
-        //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
+        //assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().common, osext_tok.lbl()));
         assert(os::step_MapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
         assert(os::next_step(tok.consts(), tok.st(), post, os::Step::MapOpStart { core }, RLbl::Tau));
         tok.register_internal_step_osext(&mut osext_tok, post);
@@ -947,7 +947,7 @@ impl WrappedUnmapToken {
                 ..tok.tok.st()
             };
             let read_result = mmu_tok.lbl()->Read_2;
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
             assert(os::step_ReadPTMem(tok.tok.consts(), tok.tok.st(), post, core, addr, read_result, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::ReadPTMem { core, paddr: addr, value: read_result }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -1010,8 +1010,8 @@ impl WrappedUnmapToken {
             mmu_tok.prophesy_write(addr, value);
             let post = os::State { mmu: mmu_tok.post(), ..tok.tok.st() };
 
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonpos, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
+            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().common, mmu::rl1::Step::WriteNonpos, mmu_tok.lbl()));
             assert(os::step_UnmapOpStutter(tok.tok.consts(), tok.tok.st(), post, core, addr, value, RLbl::Tau));
             assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapOpStutter { core, paddr: addr, value }, RLbl::Tau));
             tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -1084,8 +1084,8 @@ impl WrappedUnmapToken {
                 ..tok.tok.st()
             };
 
-            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
-            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().mmu, mmu::rl1::Step::WriteNonpos, mmu_tok.lbl()));
+            assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
+            assert(mmu::rl1::next_step(tok.tok.st().mmu@, post.mmu@, tok.tok.consts().common, mmu::rl1::Step::WriteNonpos, mmu_tok.lbl()));
             old(tok)@.lemma_interps_match(root_pt);
             old(tok).lemma_regions_derived_from_view_after_write(r, idx, value, true);
             old(tok)@.write(idx, value, r, true).lemma_interps_match(root_pt);
@@ -1218,7 +1218,7 @@ impl WrappedUnmapToken {
                     mmu: mmu_tok.post(),
                     ..tok.tok.st()
                 };
-                assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().mmu, mmu_tok.lbl()));
+                assert(mmu::rl3::next(tok.tok.st().mmu, post.mmu, tok.tok.consts().common, mmu_tok.lbl()));
                 assert(os::step_Invlpg(tok.tok.consts(), tok.tok.st(), post, core, vaddr, RLbl::Tau));
                 assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Invlpg { core, vaddr }, RLbl::Tau));
                 tok.tok.register_internal_step_mmu(&mut mmu_tok, post);
@@ -1246,7 +1246,7 @@ impl WrappedUnmapToken {
                     os_ext: osext_tok.post(),
                     ..tok.tok.st()
                 };
-                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().common, osext_tok.lbl()));
                 assert(os::step_UnmapInitiateShootdown(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
                 assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapInitiateShootdown { core }, RLbl::Tau));
                 tok.tok.register_internal_step_osext(&mut osext_tok, post);
@@ -1273,7 +1273,7 @@ impl WrappedUnmapToken {
                     os_ext: osext_tok.post(),
                     ..tok.tok.st()
                 };
-                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().common, osext_tok.lbl()));
                 assert(!tok.tok.st().mmu@.writes.nonpos.contains(core));
                 assume(os::step_AckShootdownIPI(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
                 assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::AckShootdownIPI { core }, RLbl::Tau));
@@ -1298,7 +1298,7 @@ impl WrappedUnmapToken {
             proof {
                 osext_tok.prophesy_wait_shootdown();
                 let post = state7; // read-only step
-                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+                assert(os_ext::next(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().common, osext_tok.lbl()));
                 assert(os::step_UnmapWaitShootdown(tok.tok.consts(), tok.tok.st(), post, core, RLbl::Tau));
                 assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::UnmapWaitShootdown { core }, RLbl::Tau));
                 tok.tok.register_internal_step_osext(&mut osext_tok, post);
@@ -1357,7 +1357,7 @@ impl WrappedUnmapToken {
                 os_ext: osext_tok.post(),
                 ..tok.tok.st()
             };
-            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().os_ext(), osext_tok.lbl()));
+            assert(os_ext::step_ReleaseLock(tok.tok.st().os_ext, post.os_ext, tok.tok.consts().common, osext_tok.lbl()));
             let lbl = RLbl::UnmapEnd { thread_id: tok.tok.thread(), vaddr, result };
 
             assert(post.inv_impl()) by {
@@ -1456,7 +1456,7 @@ pub exec fn start_unmap_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghos
             os_ext: osext_tok.post(),
             ..tok.st()
         };
-        assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().os_ext(), osext_tok.lbl()));
+        assert(os_ext::step_AcquireLock(tok.st().os_ext, post.os_ext, tok.consts().common, osext_tok.lbl()));
         assert(os::step_UnmapOpStart(tok.consts(), tok.st(), post, core, RLbl::Tau));
         assert(os::next_step(tok.consts(), tok.st(), post, os::Step::UnmapOpStart { core }, RLbl::Tau));
         tok.register_internal_step_osext(&mut osext_tok, post);

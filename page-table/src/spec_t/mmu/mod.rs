@@ -9,7 +9,7 @@ use vstd::prelude::*;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     Flags, L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE, MemRegion, bitmask_inc,
-    align_to_usize, WORD_SIZE, PAGE_SIZE,
+    align_to_usize, WORD_SIZE, PAGE_SIZE, MAX_PHYADDR,
 };
 use crate::spec_t::mmu::defs::{ Core, PTE, MemOp };
 use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
@@ -96,6 +96,10 @@ impl Walk {
 pub struct Constants {
     pub node_count: nat,
     pub core_count: nat,
+    /// The range of memory used for the page table
+    pub range_ptmem: (nat, nat),
+    /// The range of memory used for the user memory
+    pub range_mem: (nat, nat),
     pub phys_mem_size: nat,
 }
 
@@ -106,6 +110,22 @@ impl Constants {
     pub open spec fn valid_core(self, core: Core) -> bool {
         &&& core.node_id < self.node_count
         &&& core.core_id < self.core_count
+    }
+
+    pub open spec fn in_ptmem_range(self, addr: nat, size: nat) -> bool {
+        &&& self.range_ptmem.0 <= addr
+        &&& addr + size <= self.range_ptmem.1
+    }
+
+    pub open spec fn in_mem_range(self, addr: nat, size: nat) -> bool {
+        &&& self.range_mem.0 <= addr
+        &&& addr + size <= self.range_mem.1
+    }
+
+    /// User memory is below PT memory
+    pub open spec fn memories_disjoint(self) -> bool {
+        &&& self.range_mem.0 < self.range_mem.1 < self.range_ptmem.0 < self.range_ptmem.1
+        &&& self.range_ptmem.1 <= MAX_PHYADDR
     }
 }
 

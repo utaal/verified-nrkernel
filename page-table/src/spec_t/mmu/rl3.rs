@@ -7,14 +7,10 @@ use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
 use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, update_range, MAX_PHYADDR };
+use crate::spec_t::mmu::defs::{ aligned, update_range };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
-
-// TODO: Should prove some basic liveness stuff, like: We can always make progress on an inflight
-// partial walk.
-// (forall walk in pre.walks. exists post. step_WalkStep(pre, post, walk, ..)
 
 // This file contains refinement layer 3 of the MMU. This is the most concrete MMU model, i.e. the
 // behavior we assume of the hardware.
@@ -387,6 +383,7 @@ pub closed spec fn step_Write(pre: State, post: State, c: Constants, lbl: Lbl) -
     &&& lbl matches Lbl::Write(core, addr, value)
 
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
 
     &&& post.phys_mem == pre.phys_mem
@@ -438,6 +435,7 @@ pub closed spec fn step_Read(pre: State, post: State, c: Constants, r: usize, lb
     &&& lbl matches Lbl::Read(core, addr, value)
 
     &&& c.valid_core(core)
+    &&& c.in_ptmem_range(addr as nat, 8)
     &&& aligned(addr as nat, 8)
     &&& value == pre.read_from_mem_tso(core, addr, r)
 
@@ -493,7 +491,6 @@ pub open spec fn next_step(pre: State, post: State, c: Constants, step: Step, lb
 }
 
 pub closed spec fn init(pre: State, c: Constants) -> bool {
-    // TODO: init conditions for the two memories. Can we require here that they are disjoint?
     //&&& pre.pt_mem == ..
     &&& pre.tlbs  === Map::new(|core| c.valid_core(core), |core| Map::empty())
     &&& pre.walks === Map::new(|core| c.valid_core(core), |core| set![])
@@ -509,9 +506,11 @@ pub closed spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.hist.polarity == Polarity::Mapping
 
     &&& c.valid_core(pre.hist.writes.core)
-    &&& forall|va| aligned(va as nat, 8) ==> #[trigger] pre.pt_mem.mem.contains_key(va)
+    &&& pre.pt_mem.mem.dom() === Set::new(|va| aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8))
     &&& aligned(pre.pt_mem.pml4 as nat, 4096)
-    &&& pre.pt_mem.pml4 + 4096 <= MAX_PHYADDR
+    &&& c.memories_disjoint()
+    &&& pre.phys_mem.len() == c.range_mem.1
+    &&& c.in_ptmem_range(pre.pt_mem.pml4 as nat, 4096)
 }
 
 pub open spec fn next(pre: State, post: State, c: Constants, lbl: Lbl) -> bool {
@@ -807,7 +806,9 @@ pub mod refinement {
             ensures
                 pre.inv(c),
                 pre.interp().inv(c),
-        {}
+        {
+            reveal(rl2::State::wf_ptmem_range);
+        }
 
         pub broadcast proof fn next_preserves_inv(pre: rl3::State, post: rl3::State, c: Constants, lbl: Lbl)
             requires
@@ -885,6 +886,8 @@ pub mod code {
         pub proof fn prophesy_read(tracked &mut self, addr: usize)
             requires
                 old(self).tstate() is Init,
+                old(self).consts().valid_core(old(self).core()),
+                old(self).consts().in_ptmem_range(addr as nat, 8),
                 aligned(addr as nat, 8),
             ensures
                 self.lbl() is Read,
@@ -898,6 +901,8 @@ pub mod code {
         pub proof fn prophesy_write(tracked &mut self, addr: usize, value: usize)
             requires
                 old(self).tstate() is Init,
+                old(self).consts().valid_core(old(self).core()),
+                old(self).consts().in_ptmem_range(addr as nat, 8),
                 aligned(addr as nat, 8),
             ensures
                 self.lbl() == mmu::Lbl::Write(self.core(), addr, value),
@@ -909,6 +914,7 @@ pub mod code {
         pub proof fn prophesy_barrier(tracked &mut self)
             requires
                 old(self).tstate() is Init,
+                old(self).consts().valid_core(old(self).core()),
             ensures
                 self.lbl() == mmu::Lbl::Barrier(self.core()),
                 old(self).prophesied_step(*self),
@@ -919,6 +925,7 @@ pub mod code {
         pub proof fn prophesy_invlpg(tracked &mut self, addr: usize)
             requires
                 old(self).tstate() is Init,
+                old(self).consts().valid_core(old(self).core()),
             ensures
                 self.lbl() == mmu::Lbl::Invlpg(self.core(), addr),
                 old(self).prophesied_step(*self),

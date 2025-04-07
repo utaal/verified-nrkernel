@@ -274,7 +274,7 @@ impl Token {
         ensures
             old(self).withdraw_token(*self),
             tok.pre() == old(self).st().mmu,
-            tok.consts() == old(self).consts().mmu,
+            tok.consts() == old(self).consts().common,
             tok.core() == old(self).core(),
             tok.tstate() is Init,
     { unimplemented!() }
@@ -348,7 +348,7 @@ impl Token {
             old(self).progress() is Ready,
         ensures
             old(self).withdraw_token(*self),
-            tok.consts() == old(self).consts().os_ext(),
+            tok.consts() == old(self).consts().common,
             tok.pre() == old(self).st().os_ext,
             tok.core() == old(self).core(),
             tok.tstate() is Init,

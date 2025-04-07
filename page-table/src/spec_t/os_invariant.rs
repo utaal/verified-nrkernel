@@ -36,8 +36,8 @@ pub proof fn init_implies_inv(c: os::Constants, s: os::State)
     requires os::init(c, s),
     ensures s.inv(c),
 {
-    to_rl1::init_implies_inv(s.mmu, c.mmu);
-    to_rl1::init_refines(s.mmu, c.mmu);
+    to_rl1::init_implies_inv(s.mmu, c.common);
+    to_rl1::init_refines(s.mmu, c.common);
     assert(s.inv_impl()) by {
         assert forall|wtok: wrapped_token::WrappedTokenView| ({
             &&& wtok.pt_mem == s.mmu@.pt_mem
@@ -141,7 +141,9 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
         };
     };
 
-    assert(s2.inv_basic(c));
+    assert(s2.inv_basic(c)) by {
+        assert(s2.mmu@.pt_mem.mem.dom() =~= s1.mmu@.pt_mem.mem.dom());
+    };
     next_step_preserves_inv_osext(c, s1, s2, step, lbl);
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_vmem_inv(c, s1, s2, step, lbl);
@@ -204,8 +206,8 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
         | os::Step::UnmapOpChange { core, paddr, value }
         | os::Step::UnmapOpStutter { core, paddr, value } => {
             let mlbl = mmu::Lbl::Write(core, paddr, value);
-            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
-            assert(rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, mmu_step, mlbl));
+            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.common, step, mlbl);
+            assert(rl1::next_step(s1.mmu@, s2.mmu@, c.common, mmu_step, mlbl));
             match mmu_step {
                 rl1::Step::WriteNonneg => {
                     assert forall |vbase| s2.mmu@.pt_mem@.contains_key(vbase) implies s1.mmu@.pt_mem@.contains_key(vbase)
@@ -226,8 +228,8 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
         },
         os::Step::MapOpChange { core, paddr, value } => {
             let mlbl = mmu::Lbl::Write(core, paddr, value);
-            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, step, mlbl);
-            assert(rl1::next_step(s1.mmu@, s2.mmu@, c.mmu, mmu_step, mlbl));
+            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.common, step, mlbl);
+            assert(rl1::next_step(s1.mmu@, s2.mmu@, c.common, mmu_step, mlbl));
             match mmu_step {
                 rl1::Step::WriteNonneg => {
                     let vaddr = s1.core_states[core]->MapExecuting_vaddr;
@@ -318,7 +320,7 @@ pub proof fn next_step_preserves_inv_osext(c: os::Constants, s1: os::State, s2: 
         s1.inv(c),
         os::next_step(c, s1, s2, step, lbl),
     ensures
-        s2.inv_osext(),
+        s2.inv_osext(c),
 {
     broadcast use
         to_rl1::next_preserves_inv,
@@ -346,7 +348,6 @@ pub proof fn next_step_preserves_inv_shootdown(c: os::Constants, s1: os::State, 
     ensures
         s2.inv_shootdown(c),
 {
-    reveal(crate::spec_t::os_ext::Constants::valid_core);
     reveal(mmu::Constants::valid_core);
     broadcast use
         to_rl1::next_preserves_inv,
@@ -387,7 +388,7 @@ pub proof fn init_implies_tlb_inv(c: os::Constants, s: os::State)
     requires os::init(c, s),
     ensures s.tlb_inv(c),
 {
-    to_rl1::init_refines(s.mmu, c.mmu);
+    to_rl1::init_refines(s.mmu, c.common);
     assert(s.os_ext.shootdown_vec.open_requests.is_empty());
     Set::lemma_len0_is_empty(s.os_ext.shootdown_vec.open_requests);
     assert(s.os_ext.shootdown_vec.open_requests === Set::empty());
