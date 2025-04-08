@@ -28,3 +28,5 @@ overflow-checks = false
 [profile.release]
 panic = "abort"
 overflow-checks = false
+opt-level = 3
+lto = true
