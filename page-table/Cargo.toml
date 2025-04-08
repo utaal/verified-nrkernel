@@ -18,6 +18,9 @@ noreclaim = []
 linuxmodule = []
 default = ["impl"]
 
+[build]
+target = "x86_64-unknown-none"  # for no_std
+
 [profile.dev]
 panic = "abort"
 overflow-checks = false
