@@ -1,4 +1,5 @@
 use vstd::prelude::*;
+use vstd::assert_by_contradiction;
 
 //use crate::spec_t::mmu::WalkResult;
 use crate::spec_t::os;
@@ -8,11 +9,12 @@ use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem, WORD_SIZE,
-    bitmask_inc
+    bitmask_inc, x86_arch_spec, x86_arch_spec_upper_bound,
 };
 use crate::spec_t::mmu::defs::{ MemRegionExec, MemRegion, PTE, MAX_PHYADDR };
 use crate::spec_t::mmu::translation::{
-    MASK_NEG_DIRTY_ACCESS, l0_bits, //l1_bits, l2_bits, l3_bits
+    MASK_NEG_DIRTY_ACCESS, l0_bits, l1_bits, // l2_bits, l3_bits,
+    //GPDE, PDE,
 };
 use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
@@ -133,55 +135,49 @@ impl WrappedTokenView {
 
         assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0) == root_dir);
 
-        assert(PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]) ==
-            {
-                let entry = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, 0 /* init.len() */);
-                PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![].push(entry))
-            });
+        //assert(PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]) ==
+        //    {
+        //        let entry = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, 0 /* init.len() */);
+        //        PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![].push(entry))
+        //    });
 
-        assert(root_dir.interp().dom() =~= self.pt_mem@.dom().map(|k| k as nat)) by {
-            assert forall|k: nat| ({
-                &&& root_dir.interp().dom().contains(k) == self.pt_mem@.dom().map(|k| k as nat).contains(k)
-                &&& root_dir.interp().contains_key(k) ==> k <= usize::MAX
+        assert(root_dir.interp().dom().subset_of(self.pt_mem@.dom().map(|k| k as nat))) by {
+            assert forall|vaddr: nat| ({
+                &&& root_dir.interp().dom().contains(vaddr) ==> self.pt_mem@.dom().map(|vaddr| vaddr as nat).contains(vaddr)
+                &&& root_dir.interp().contains_key(vaddr) ==> vaddr <= usize::MAX
             }) by {
 
-                assert(root_dir.interp().contains_key(k as nat) == root_dir.interp().dom().contains(k as nat));
+                if vaddr <= usize::MAX {
 
-                if k <= usize::MAX {
-
-                    crate::spec_t::mmu::translation::lemma_bit_indices_less_512(k as usize);
-                    // TODO(MB):
-                    // Take a look at this lemma, it should be quite useful to abstract away the
-                    // recursion in interp_aux
-                    // (There's also the slightly stronger impl_u::l2_impl::lemma_interp_at_aux_facts but I don't think you need that)
+                    crate::spec_t::mmu::translation::lemma_bit_indices_less_512(vaddr as usize);
                     crate::impl_u::l2_impl::PT::lemma_interp_at_facts(self, pt, 0, self.pt_mem.pml4, 0);
 
-                    let walk = self.pt_mem.pt_walk(k as usize);
+                    let walk = self.pt_mem.pt_walk(vaddr as usize);
                     assert(walk.complete);
-                    let mem = self.pt_mem;
-                    mmu::pt_mem::PTMem::lemma_pt_walk(mem, k as usize);
-                    mmu::rl2::lemma_pt_walk_result_vbase_equal(mem, k as usize);
-                    if mem@.contains_key(k as usize) {
+                    mmu::pt_mem::PTMem::lemma_pt_walk(self.pt_mem, vaddr as usize);
+                    mmu::rl2::lemma_pt_walk_result_vbase_equal(self.pt_mem, vaddr as usize);
+
+                    if self.pt_mem@.contains_key(vaddr as usize) {
                         assert(walk.path.last().1 is Page);
                         if walk.path.len() == 1 {
                             assert(false);
                         } else if walk.path.len() == 2 {
-                            let walk_path_0_addr = self.pt_mem.pt_walk(k as usize).path[0].0;
-                            let k_usize = k as usize;
-                            let l0_idx = l0_bits!(k_usize) as nat;
-                            assert(l0_idx < 512);
-                            assert(walk_path_0_addr == mem.pml4 + l0_idx * WORD_SIZE);
-                            // TODO(MB): Why is this named l1_pt_entry? Isn't this l0?
-                            let l1_pt_entry = PT::entry_at_spec(self, pt, 0, mem.pml4, l0_idx);
+                            let walk_path_0_addr = self.pt_mem.pt_walk(vaddr as usize).path[0].0;
+                            let vaddr_usize = vaddr as usize;
+                            let l0_bidx = l0_bits!(vaddr_usize);
+                            let l1_bidx = l1_bits!(vaddr_usize);
+                            assert(l0_bidx < 512);
+                            assert(walk_path_0_addr == self.pt_mem.pml4 + l0_bidx * WORD_SIZE);
+                            let l0_pt_entry = PT::entry_at_spec(self, pt, 0, self.pt_mem.pml4, l0_bidx as nat);
                             assert(
                                 walk.path[0].1 ==
                                 (mmu::translation::PDE {
-                                    entry: mem.read(walk_path_0_addr),
+                                    entry: self.pt_mem.read(walk_path_0_addr),
                                     layer: Ghost(0),
                                 }@)
                             );
 
-                            assert(pt.region.base == mem.pml4);
+                            assert(pt.region.base == self.pt_mem.pml4);
                             //assert(pt.region.base <= walk_path_0_addr < pt.region.base + PAGE_SIZE) by {
                             //    // TODO(MB): Probably needs some nonlinear and maybe bitvector
                             //    // (This assertion may not actually be necessary, unsure)
@@ -199,51 +195,66 @@ impl WrappedTokenView {
                             // ensures
                             //     self.pt_mem.read(add(pt.region, mul(idx, WORD_SIZE))) & MASK_NEG_DIRTY_ACCESS == self.read(idx, pt.region)
 
-                            // TODO(andrea) next
-                            assume(self.pt_mem.read(walk_path_0_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bits!(k_usize), pt.region));
-                            assert(l1_pt_entry ==
+                            assume(l0_bidx == x86_arch_spec.index_for_vaddr(0, 0, vaddr as nat));
+                            assert(self.pt_mem.read(walk_path_0_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bidx, pt.region));
+                            assert(l0_pt_entry ==
                                 (mmu::translation::PDE {
-                                    entry: self.read(l0_bits!(k_usize), pt.region),
+                                    entry: self.read(l0_bidx, pt.region),
                                     layer: Ghost(0),
                                 }));
-                            assert(walk.path[0].1 == l1_pt_entry@) by {
-                                //assert(self.read(l0_bits!(k_usize), pt.region) & MASK_NEG_DIRTY_ACCESS
-                                assert(forall|x: usize, b: usize| x & b & b == x & b) by (bit_vector);
-                                //assert(self.read(l0_bits!(k_usize), pt.region) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bits!(k_usize), pt.region));
+                            assert(forall|x: usize, b: usize| x & b & b == x & b) by (bit_vector);
+                            assert(walk.path[0].1 == l0_pt_entry@) by {
+                                //assert(self.read(l0_bidx, pt.region) & MASK_NEG_DIRTY_ACCESS
+                                //assert(self.read(l0_bidx, pt.region) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bidx, pt.region));
                                 // TODO(MB)
                                 // MB: This lemma here is useful to show that the views don't
                                 // depend on the dirty/accessed bits
-                                l1_pt_entry.lemma_view_unchanged_dirty_access(
+                                l0_pt_entry.lemma_view_unchanged_dirty_access(
                                     mmu::translation::PDE {
-                                        entry: mem.read(walk_path_0_addr),
+                                        entry: self.pt_mem.read(walk_path_0_addr),
                                         layer: Ghost(0),
                                     });
                             };
-                            assert(l1_pt_entry@ is Directory);
-                            let l1_pt = PT::interp_at_entry(self, pt, 0, mem.pml4, 0, l0_idx);
-                            assert(PT::inv_at(self, pt, 0, mem.pml4));
-                            assert(PT::directories_obey_invariant_at(self, pt, 0, mem.pml4));
-                            assume(mem.read(walk.path[1].0) == self.read(walk.path[1].0, pt.region));
-                            assert(l1_pt is Directory);
-                            assume((walk.path[0].0 as int) < mmu::defs::X86_NUM_ENTRIES);
-                            let l2_pt_entry = PT::entry_at_spec(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, mem.pml4, walk.path[1].0 as nat);
-                            assume(walk.path[1].1 == l2_pt_entry@);
-                            let l2_pt = PT::interp_at_entry(self, pt.entries[walk.path[0].0 as int].unwrap(), 1, mem.pml4, l1_pt_entry@->Directory_addr as nat, walk.path[1].0 as nat);
-                            assume(root_dir.interp().contains_key(k));
+                            assert(l0_pt_entry@ is Directory);
+                            let l0_pt_entry_interp = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, l0_bidx as nat);
+                            let l0e_pt = pt.entries[l0_bidx as int]->Some_0;
+                            let l0e_daddr = l0_pt_entry@->Directory_addr;
+                            let l0e_base = x86_arch_spec.entry_base(0, 0, l0_bidx as nat);
+                            assume(l1_bidx == x86_arch_spec.index_for_vaddr(1, l0e_base, vaddr as nat));
+                            assert(l0_pt_entry_interp is Directory);
+                            assert(PT::inv_at(self, pt, 0, self.pt_mem.pml4));
+                            assert(PT::directories_obey_invariant_at(self, pt, 0, self.pt_mem.pml4));
+                            assert(PT::inv_at(self, l0e_pt, 1, l0e_daddr));
+                            let walk_path_1_addr = self.pt_mem.pt_walk(vaddr as usize).path[1].0;
+                            assert(walk_path_1_addr == l0e_daddr + l1_bidx * WORD_SIZE);
+                            assert(l0e_pt.region.base == l0e_daddr);
+                            assert(self.pt_mem.read(walk_path_1_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l1_bidx, l0e_pt.region));
+                            //assume((walk.path[0].0 as int) < mmu::defs::X86_NUM_ENTRIES);
+                            let l1_pt_entry = PT::entry_at_spec(self, l0e_pt, 1, l0e_daddr, l1_bidx as nat);
+                            l1_pt_entry.lemma_view_unchanged_dirty_access(
+                                mmu::translation::PDE {
+                                    entry: self.pt_mem.read(walk_path_1_addr),
+                                    layer: Ghost(1),
+                                });
+                            assert(walk.path[1].1 == l1_pt_entry@);
+                            let l1_pt_entry_interp = PT::interp_at_entry(self, l0e_pt, 1, l0e_daddr, l0e_base, l1_bidx as nat);
+                            assume(l1_pt_entry_interp.interp(l0e_base).contains_key(vaddr));
+                            assume(root_dir.interp().contains_key(vaddr));
                         } else if walk.path.len() == 3 {
-                            assume(root_dir.interp().contains_key(k));
+                            assume(root_dir.interp().contains_key(vaddr));
                         } else if walk.path.len() == 4 {
-                            assume(root_dir.interp().contains_key(k));
+                            assume(root_dir.interp().contains_key(vaddr));
                         }
-                        assert(mem@.contains_key(k as usize) == root_dir.interp().contains_key(k));
+                        assert(self.pt_mem@.contains_key(vaddr as usize) == root_dir.interp().contains_key(vaddr));
                     } else {
-                        assume(!root_dir.interp().contains_key(k));
+                        assume(!root_dir.interp().contains_key(vaddr));
                     }
-
                 } else {
-
-                    assume(!root_dir.interp().contains_key(k));
-
+                    assert_by_contradiction!(!root_dir.interp().contains_key(vaddr), {
+                        broadcast use crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv;
+                        root_dir.lemma_interp_aux_between(0, vaddr, root_dir.interp()[vaddr]);
+                        x86_arch_spec_upper_bound();
+                    });
                 }
 
                 // WalkResult::Valid { vbase, pte } => {}
@@ -251,12 +262,12 @@ impl WrappedTokenView {
             }
         }
 
-        assert forall|k: nat| k <= usize::MAX && #[trigger] self.pt_mem@.contains_key(k as usize) implies root_dir.interp().contains_pair(k, self.pt_mem@[k as usize]) by {
+        assert forall|vaddr: nat| vaddr <= usize::MAX && #[trigger] self.pt_mem@.contains_key(vaddr as usize) implies root_dir.interp().contains_pair(vaddr, self.pt_mem@[vaddr as usize]) by {
             admit();
         }
 
         assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp() ==
-            Map::new(|k: nat| k <= usize::MAX && self.pt_mem@.contains_key(k as usize), |k: nat| self.pt_mem@[k as usize]));
+            Map::new(|vaddr: nat| vaddr <= usize::MAX && self.pt_mem@.contains_key(vaddr as usize), |vaddr: nat| self.pt_mem@[vaddr as usize]));
 
         assert(PT::interp(self, pt).interp() =~= crate::spec_t::mmu::defs::nat_keys(self.interp()));
     }
