@@ -882,11 +882,11 @@ proof fn step_MapOpChange_refines(c: os::Constants, s1: os::State, s2: os::State
                     assert(overlap(
                         MemRegion {
                             base: s2.core_states[core_of_key].vaddr(),
-                            size: s2.core_states[core_of_key].vmem_pte_size(s2.interp_pt_mem()),
+                            size: s2.core_states[core_of_key].pte_size(s2.interp_pt_mem()),
                         },
                         MemRegion {
                             base: s2.core_states[core].vaddr(),
-                            size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
+                            size: s2.core_states[core].pte_size(s2.interp_pt_mem()),
                         },
                     ));
                 }
@@ -1003,7 +1003,7 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
                 };
                 assert(s1.core_states[unmap_core] is UnmapWaiting);
                 assert(s1.interp_pt_mem().contains_key(vaddr));
-                assert(s1.core_states[unmap_core].vmem_pte_size(s1.interp_pt_mem()) == s1.interp_pt_mem()[vaddr].frame.size);
+                assert(s1.core_states[unmap_core].pte_size(s1.interp_pt_mem()) == s1.interp_pt_mem()[vaddr].frame.size);
                 assert(s1.interp_pt_mem()[vaddr].frame.size > 0);
                 assert(c.valid_core(core));
                 assert(c.valid_core(unmap_core));
@@ -1012,11 +1012,11 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
                 assert(overlap(
                     MemRegion {
                         base: s1.core_states[core].vaddr(),
-                        size: s1.core_states[core].vmem_pte_size(s1.interp_pt_mem()),
+                        size: s1.core_states[core].pte_size(s1.interp_pt_mem()),
                     },
                     MemRegion {
                         base: s1.core_states[unmap_core].vaddr(),
-                        size: s1.core_states[unmap_core].vmem_pte_size(s1.interp_pt_mem()),
+                        size: s1.core_states[unmap_core].pte_size(s1.interp_pt_mem()),
                     }));
                 assert(core != unmap_core);
                 // contradiction to inflight_map_no_overlap_inflight_vmem
@@ -1079,11 +1079,11 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
                         && !s1.core_states[unmap_core].is_idle() && overlap(
                         MemRegion {
                             base: s1.core_states[core].vaddr(),
-                            size: s1.core_states[core].vmem_pte_size(s1.interp_pt_mem()),
+                            size: s1.core_states[core].pte_size(s1.interp_pt_mem()),
                         },
                         MemRegion {
                             base: s1.core_states[unmap_core].vaddr(),
-                            size: s1.core_states[unmap_core].vmem_pte_size(
+                            size: s1.core_states[unmap_core].pte_size(
                                 s1.interp_pt_mem(),
                             ),
                         },
@@ -1194,11 +1194,11 @@ proof fn step_MapEnd_refines(c: os::Constants, s1: os::State, s2: os::State, cor
                 assert(overlap(
                     MemRegion {
                         base: s1.core_states[core].vaddr(),
-                        size: s1.core_states[core].vmem_pte_size(s1.interp_pt_mem()),
+                        size: s1.core_states[core].pte_size(s1.interp_pt_mem()),
                     },
                     MemRegion {
                         base: s1.core_states[os_overlap_core].vaddr(),
-                        size: s1.core_states[os_overlap_core].vmem_pte_size(s1.interp_pt_mem()),
+                        size: s1.core_states[os_overlap_core].pte_size(s1.interp_pt_mem()),
                     }));
                 assert(core != os_overlap_core);
                 // contradiction to inflight_map_no_overlap_inflight_vmem
@@ -1295,11 +1295,11 @@ proof fn step_UnmapStart_refines(c: os::Constants, s1: os::State, s2: os::State,
                                 MemRegion {
 
                                     base: s2.core_states[core].vaddr(),
-                                    size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
+                                    size: s2.core_states[core].pte_size(s2.interp_pt_mem()),
                                 },
                                 MemRegion {
                                     base: s2.core_states[overlap_core].vaddr(),
-                                    size: s2.core_states[overlap_core].vmem_pte_size(
+                                    size: s2.core_states[overlap_core].pte_size(
                                         s2.interp_pt_mem(),
                                     ),
                                 },
@@ -1576,11 +1576,11 @@ proof fn step_UnmapOpChange_refines(
                     assert(overlap(
                         MemRegion {
                             base: s2.core_states[core_of_key].vaddr(),
-                            size: s2.core_states[core_of_key].vmem_pte_size(s2.interp_pt_mem()),
+                            size: s2.core_states[core_of_key].pte_size(s2.interp_pt_mem()),
                         },
                         MemRegion {
                             base: s2.core_states[core].vaddr(),
-                            size: s2.core_states[core].vmem_pte_size(s2.interp_pt_mem()),
+                            size: s2.core_states[core].pte_size(s2.interp_pt_mem()),
                         },
                     ));
                 }

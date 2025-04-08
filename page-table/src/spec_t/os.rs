@@ -96,6 +96,15 @@ impl CoreState {
         }
     }
 
+    pub open spec fn is_map(self) -> bool {
+        match self {
+            CoreState::MapWaiting { .. }
+            | CoreState::MapExecuting { .. }
+            | CoreState::MapDone { .. } => true,
+            _ => false,
+        }
+    }
+
     #[verifier(inline)]
     pub open spec fn is_idle(self) -> bool {
         self is Idle
@@ -690,7 +699,7 @@ impl Constants {
 }
 
 impl CoreState {
-    pub open spec fn vmem_pte_size(self, pt: Map<nat, PTE>) -> nat
+    pub open spec fn pte_size(self, pt: Map<nat, PTE>) -> nat
         recommends !self.is_idle(),
     {
         match self {
@@ -724,6 +733,19 @@ impl CoreState {
             | CoreState::UnmapOpDone { vaddr, .. }
             | CoreState::UnmapShootdownWaiting { vaddr, .. } => { vaddr },
             CoreState::Idle => arbitrary(),
+        }
+    }
+
+    pub open spec fn paddr(self) -> nat
+        recommends self.is_map(),
+    {
+        match self {
+            CoreState::MapWaiting { pte, .. }
+            | CoreState::MapExecuting { pte, .. }
+            | CoreState::MapDone { pte, .. } => {
+                pte.frame.base
+            }
+            _ => arbitrary(),
         }
     }
 
@@ -1080,7 +1102,7 @@ impl State {
         &&& self.inv_shootdown(c)
         &&& self.inv_osext(c)
         //&&& self.tlb_inv(c)
-        &&& self.overlapping_vmem_inv(c)
+        &&& self.overlapping_mem_inv(c)
         &&& self.inv_pending_maps(c)
     }
 
@@ -1138,31 +1160,31 @@ impl State {
     //}
 
     pub open spec fn tlb_inv(self, c: Constants) -> bool {
-        &&& self.shootdown_cores_valid(c)
-        &&& self.successful_IPI(c)
+        //&&& self.shootdown_cores_valid(c)
+        //&&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about overlapping
     ///////////////////////////////////////////////////////////////////////////////////////////////
-    pub open spec fn inflight_map_no_overlap_inflight_vmem(self, c: Constants) -> bool {
+    pub open spec fn inv_inflight_map_no_overlap_inflight_vmem(self, c: Constants) -> bool {
         forall|core1: Core, core2: Core|
             (c.valid_core(core1) && c.valid_core(core2)
                 && !self.core_states[core1].is_idle() && !self.core_states[core2].is_idle()
                 && overlap(
                 MemRegion {
                     base: self.core_states[core1].vaddr(),
-                    size: self.core_states[core1].vmem_pte_size(self.interp_pt_mem()),
+                    size: self.core_states[core1].pte_size(self.interp_pt_mem()),
                 },
                 MemRegion {
                     base: self.core_states[core2].vaddr(),
-                    size: self.core_states[core2].vmem_pte_size(self.interp_pt_mem()),
+                    size: self.core_states[core2].pte_size(self.interp_pt_mem()),
                 },
             )) ==> core1 === core2
     }
 
-    pub open spec fn existing_map_no_overlap_existing_vmem(self, c: Constants) -> bool {
+    pub open spec fn inv_existing_map_no_overlap_existing_vmem(self, c: Constants) -> bool {
         forall|vaddr| #[trigger] self.interp_pt_mem().contains_key(vaddr)
                 ==> !candidate_mapping_overlaps_existing_vmem(
                         self.interp_pt_mem().remove(vaddr),
@@ -1171,10 +1193,51 @@ impl State {
             )
     }
 
-    pub open spec fn overlapping_vmem_inv(self, c: Constants) -> bool {
+    pub open spec fn inv_inflight_map_no_overlap_inflight_pmem(self, c: Constants) -> bool {
+        forall|core1: Core, core2: Core|
+            (c.valid_core(core1) && c.valid_core(core2)
+                //might also need unmaps
+                && self.core_states[core1].is_map() && self.core_states[core2].is_map()
+                && overlap(
+                MemRegion {
+                    base: self.core_states[core1].paddr(),
+                    size: self.core_states[core1].pte_size(self.interp_pt_mem()),
+                },
+                MemRegion {
+                    base: self.core_states[core2].paddr(),
+                    size: self.core_states[core2].pte_size(self.interp_pt_mem()),
+                },
+            )) ==> core1 === core2
+    }
+
+    /*
+    pub open spec fn inv_existing_map_no_overlap_existing_pmem(self, c: Constants) -> bool {
+        forall|vaddr| #[trigger] self.interp_pt_mem().contains_key(vaddr)
+                ==> !candidate_mapping_overlaps_existing_pmem(
+                        self.interp_pt_mem(),
+                        self.core_states[core2].,
+            )
+    }
+*/
+    
+    pub open spec fn inv_mapped_pmem_no_overlap(self, c: Constants) -> bool {
+        forall|vaddr1, vaddr2|
+            (self.interp_pt_mem().contains_key(vaddr1)
+                && self.interp_pt_mem().contains_key(vaddr2)
+                && overlap( 
+                    self.interp_pt_mem()[vaddr1].frame,
+                    self.interp_pt_mem()[vaddr2].frame)
+                ) ==> vaddr1 === vaddr2
+    }
+
+
+    pub open spec fn overlapping_mem_inv(self, c: Constants) -> bool {
         self.sound ==> {
-            &&& self.inflight_map_no_overlap_inflight_vmem(c)
-            &&& self.existing_map_no_overlap_existing_vmem(c)
+            &&& self.inv_inflight_map_no_overlap_inflight_vmem(c)
+            &&& self.inv_existing_map_no_overlap_existing_vmem(c)
+            &&& self.inv_inflight_map_no_overlap_inflight_pmem(c)
+            //&&& self.inv_existing_map_no_overlap_existing_pmem(c)
+            &&& self.inv_mapped_pmem_no_overlap(c)
         }
     }
 
