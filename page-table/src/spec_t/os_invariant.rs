@@ -610,7 +610,8 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                                 assert( core1 === core2);
                             }
                 }
-                assume(s2.inv_mapped_pmem_no_overlap(c));
+                assume(s2.inv_inflight_map_no_overlap_existing_pmem(c));
+                assert(s2.inv_mapped_pmem_no_overlap(c));
                 assert(s2.overlapping_mem_inv(c));
             },
             //Unmap steps
