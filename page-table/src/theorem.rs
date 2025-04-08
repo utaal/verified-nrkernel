@@ -1,3 +1,4 @@
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
 use vstd::prelude::*;
 use crate::spec_t::hlspec;
 use crate::spec_t::os;

@@ -1,3 +1,5 @@
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// trusted: VCs for implementation
 use vstd::prelude::*;
 
 use crate::spec_t::os;
@@ -9,31 +11,6 @@ use crate::theorem::RLbl;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
 
 verus! {
-
-//// TODO: This is from the verus test suite. Can we have it in vstd?
-//#[verifier::external_body]
-//#[verifier::reject_recursive_types_in_ground_variants(T)]
-//pub tracked struct Prophecy<T> { _t: core::marker::PhantomData<T> }
-//
-//impl<T> Prophecy<T> {
-//    #[verifier::prophetic]
-//    pub uninterp spec fn value(&self) -> T;
-//
-//    pub uninterp spec fn may_resolve(&self) -> bool;
-//
-//    #[verifier::external_body]
-//    pub proof fn new() -> (tracked s: Self)
-//        ensures s.may_resolve()
-//    { unimplemented!() }
-//
-//    #[verifier::external_body]
-//    pub proof fn resolve(tracked &mut self, value: T)
-//        requires old(self).may_resolve(),
-//        ensures !self.may_resolve(),
-//            self.value() == old(self).value(),
-//            self.value() == value,
-//    { unimplemented!() }
-//}
 
 pub enum Progress {
     Unready,

@@ -1,5 +1,5 @@
-#![cfg_attr(verus_keep_ghost, verus::trusted)]
-// trusted:
+//#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// not trusted:
 // describes how the whole system behaves
 
 use vstd::prelude::*;

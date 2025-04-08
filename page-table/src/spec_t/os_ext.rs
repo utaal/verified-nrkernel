@@ -1,3 +1,7 @@
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// not trusted:
+// describes how the rest of the OS behaves
+
 use vstd::prelude::*;
 use crate::spec_t::mmu::Constants;
 use crate::spec_t::mmu::defs::{ Core, MemRegion };
