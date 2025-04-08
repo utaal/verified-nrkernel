@@ -3139,7 +3139,7 @@ fn unmap_aux(
                     assert(tok@.regions.dom() =~= old(tok)@.regions.dom().difference(removed_regions));
                     assert(pt.used_regions =~= pt.used_regions.difference(removed_regions));
                 }
-                let unmapped_region = MemRegionExec { base: vaddr, size: x86_arch_exec.entry_size(layer) };
+                let unmapped_region = MemRegionExec { base: entry.address(), size: x86_arch_exec.entry_size(layer) };
                 Ok((unmapped_region, Ghost((pt, removed_regions))))
             } else {
                 proof {
