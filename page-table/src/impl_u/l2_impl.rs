@@ -901,6 +901,7 @@ proof fn lemma_directories_obey_invariant_at_framing(tok1: WrappedTokenView, pt1
     };
 }
 
+#[verifier(spinoff_prover)]
 pub broadcast proof fn lemma_inv_implies_interp_inv(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize, base: nat)
     requires
         inv_at(tok, pt, layer, ptr),
@@ -1287,6 +1288,7 @@ pub open spec fn accepted_mapping(vaddr: nat, pte: PTE, layer: nat, base: nat) -
     &&& pte.frame.base <= MAX_PHYADDR
 }
 
+#[verifier(spinoff_prover)]
 fn map_frame_aux(
     Tracked(tok): Tracked<&mut WrappedMapToken>,
     Ghost(pt): Ghost<PTDir>,
@@ -2662,6 +2664,7 @@ pub open spec fn accepted_unmap(vaddr: nat, layer: nat, base: nat) -> bool {
     &&& vaddr < x86_arch_spec.upper_vaddr(layer as nat, base as nat)
 }
 
+#[verifier(spinoff_prover)]
 fn unmap_aux(
     Tracked(tok): Tracked<&mut WrappedUnmapToken>,
     Ghost(pt): Ghost<PTDir>,
