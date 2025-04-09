@@ -716,6 +716,33 @@ impl Directory {
         self.lemma_interp_aux_contains_implies_interp_of_entry_contains(0);
     }
 
+    pub proof fn lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(self, vaddr: nat) by (nonlinear_arith)
+        requires
+            self.inv(),
+            self.interp().contains_key(vaddr),
+        ensures
+            self.interp_of_entry(self.index_for_vaddr(vaddr)).contains_key(vaddr),
+            self.interp_of_entry(self.index_for_vaddr(vaddr)).contains_pair(vaddr, self.interp()[vaddr])
+    {
+        let pte = self.interp()[vaddr];
+        self.lemma_interp_contains_implies_interp_of_entry_contains_at_index(vaddr, pte);
+    }
+
+    pub proof fn lemma_interp_contains_implies_interp_of_entry_contains_at_index(self, vaddr: nat, pte: PTE) by (nonlinear_arith)
+        requires
+            self.inv(),
+            self.interp().contains_pair(vaddr, pte),
+        ensures
+            self.interp_of_entry(self.index_for_vaddr(vaddr)).contains_pair(vaddr, pte)
+    {
+        self.lemma_interp_contains_implies_interp_of_entry_contains();
+        let i = choose|i: nat| #![auto] i < self.num_entries() && self.interp_of_entry(i).contains_pair(vaddr, pte);
+        self.lemma_interp_of_entry_between(i, vaddr, pte);
+        indexing::lemma_entry_base_from_index(self.base_vaddr, i, self.entry_size());
+        indexing::lemma_index_from_base_and_addr(self.base_vaddr, vaddr, self.entry_size(), self.num_entries());
+        assert(i == self.index_for_vaddr(vaddr));
+    }
+
     //#[verifier(spinoff_prover)]
     //proof fn lemma_no_mapping_in_interp_of_entry_implies_no_mapping_in_interp(self, vaddr: nat, i: nat)
     //    requires

@@ -920,6 +920,9 @@ pub broadcast proof fn lemma_inv_implies_interp_inv(tok: WrappedTokenView, pt: P
         let dir_pt = pt.entries[i as int]->Some_0;
         lemma_inv_implies_interp_inv(tok, dir_pt, layer + 1, dir_addr, dir_base);
     };
+    assert(interp.well_formed());
+    assert(interp.directories_are_in_next_layer());
+    assert(interp.directories_match_arch());
     assert(interp.directories_obey_invariant());
 }
 
@@ -1548,10 +1551,7 @@ fn map_frame_aux(
                     <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt_inner(dir_pt, set![])), vaddr as nat, pte@))
                 by {
                     let interp_now_inner = interp_at(tok@, dir_pt, layer as nat + 1, dir_addr, entry_base as nat);
-                    let interp_old_outer = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
                     let interp_now_outer = interp_at(tok@, pt, layer as nat, ptr, base as nat);
-                    let ghost next_entry_base = x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
-                    assert(interp_old_outer == interp_now_outer);
                     assert(interp_to_l0(tok@, rebuild_root_pt_inner(dir_pt, set![])) == interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])));
                     assert(candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)
                         <==> candidate_mapping_overlaps_existing_vmem(interp_to_l0(old(tok)@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
@@ -1565,27 +1565,10 @@ fn map_frame_aux(
                         };
                         let ppte = interp_now_outer.interp()[b];
                         assert(interp_now_outer.interp().contains_pair(b, ppte));
-                        assert(entry_base <= vaddr < next_entry_base);
-                        assert(pte@.frame.size <= x86_arch_spec.entry_size(layer as nat));
-                        assert(entry_base < vaddr + pte@.frame.size <= next_entry_base) by (nonlinear_arith)
-                            requires
-                                x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < next_entry_base,
-                                aligned(vaddr as nat, pte@.frame.size as nat),
-                                idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                                //aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
-                                //aligned(vaddr as nat, pte.frame.size as nat),
-                                x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
-                                //idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                        {
-                            // TODO:
-                            admit();
-                            assert(x86_arch_spec.entry_size(0) == crate::spec_t::mmu::defs::L0_ENTRY_SIZE);
-                            assert(x86_arch_spec.entry_size(1) == crate::spec_t::mmu::defs::L1_ENTRY_SIZE);
-                            assert(x86_arch_spec.entry_size(2) == crate::spec_t::mmu::defs::L2_ENTRY_SIZE);
-                            assert(x86_arch_spec.entry_size(3) == crate::spec_t::mmu::defs::L3_ENTRY_SIZE);
-                        }
-                        interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains();
-                        let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, ppte);
+                        interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains_at_index(b, ppte);
+                        let i = interp_now_outer.index_for_vaddr(b);
+                        interp_now_outer.lemma_interp_aux_between(0, b, ppte);
+                        indexing::lemma_index_from_base_and_addr(base as nat, b, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
                         interp_now_outer.lemma_interp_of_entry_between(i, b, ppte);
                         assert(i == idx) by (nonlinear_arith)
                             requires
@@ -1593,10 +1576,13 @@ fn map_frame_aux(
                                     MemRegion { base: vaddr as nat, size: pte@.frame.size },
                                     MemRegion { base: b, size: ppte.frame.size },
                                 ),
+                                idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                                i == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, b),
                                 x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= b < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
                                 x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) < b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
-                                x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
-                                x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) < vaddr + pte@.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                                aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
+                                aligned(vaddr as nat, pte.frame.size as nat),
+                                x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                         {};
 
                         assert(interp_now_inner.interp().contains_pair(b, ppte));
@@ -2167,6 +2153,7 @@ fn insert_empty_directory(
         inv_at(old(tok)@, pt, layer as nat, ptr),
         interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).inv(),
         accepted_mapping(vaddr as nat, pte@, layer as nat, base as nat),
+        aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
         idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
         //old(tok)@.alloc_available_pages() > 0,
         layer < 3,
@@ -2607,21 +2594,10 @@ fn insert_empty_directory(
                     indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
                 };
                 assert(pte@.frame.size <= x86_arch_spec.entry_size(layer as nat));
-                assert(entry_base < vaddr + pte@.frame.size <= next_entry_base) by (nonlinear_arith)
-                    requires
-                        x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < next_entry_base,
-                        aligned(vaddr as nat, pte@.frame.size as nat),
-                        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                        //aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
-                        //aligned(vaddr as nat, pte.frame.size as nat),
-                        //x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
-                        //idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                {
-                    // TODO:
-                    admit();
-                }
-                interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains();
-                let i = choose|i: nat| #![auto] i < interp_now_outer.num_entries() && interp_now_outer.interp_of_entry(i).contains_pair(b, ppte);
+                interp_now_outer.lemma_interp_contains_implies_interp_of_entry_contains_at_index(b, ppte);
+                let i = interp_now_outer.index_for_vaddr(b);
+                interp_now_outer.lemma_interp_aux_between(0, b, ppte);
+                indexing::lemma_index_from_base_and_addr(base as nat, b, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
                 interp_now_outer.lemma_interp_of_entry_between(i, b, ppte);
                 assert(i == idx) by (nonlinear_arith)
                     requires
@@ -2629,10 +2605,14 @@ fn insert_empty_directory(
                             MemRegion { base: vaddr as nat, size: pte@.frame.size },
                             MemRegion { base: b, size: ppte.frame.size },
                         ),
+                        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+                        i == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, b),
                         x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= b < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
                         x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) < b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
                         x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
-                        x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) < vaddr + pte@.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat),
+                        aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
+                        aligned(vaddr as nat, pte.frame.size as nat),
+                        x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
                 {};
 
                 assert(interp_now_inner.interp().contains_pair(b, ppte));
@@ -2872,13 +2852,7 @@ fn unmap_aux(
                 }
                 if interp_to_l0(tok@, rebuild_root_pt_inner(dir_pt, set![])).contains_key(vaddr as nat) {
                     assert(interp_outer.interp().contains_key(vaddr as nat));
-                    interp_outer.lemma_interp_contains_implies_interp_of_entry_contains();
-                    let i = choose|i: nat| #![auto] i < interp_outer.num_entries() && interp_outer.interp_of_entry(i).contains_key(vaddr as nat);
-                    interp_outer.lemma_interp_of_entry_key_between(i, vaddr as nat);
-                    assert(i == idx) by (nonlinear_arith)
-                        requires
-                            x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
-                            x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
+                    interp_outer.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
                     assert(interp_inner.interp().contains_key(vaddr as nat));
                 }
             };
@@ -3163,16 +3137,7 @@ fn unmap_aux(
                     let interp_old = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
                     assert(interp_old.interp_of_entry(idx as nat).dom() == set![entry_base as nat]);
                     assert_by_contradiction!(!interp_old.interp().contains_key(vaddr as nat), {
-                        interp_old.lemma_interp_contains_implies_interp_of_entry_contains();
-                        let i = choose|i: nat| #![auto] i < interp_old.num_entries() && interp_old.interp_of_entry(i).contains_key(vaddr as nat);
-                        interp_old.lemma_interp_of_entry_key_between(i, vaddr as nat);
-                        assert(i == idx) by (nonlinear_arith)
-                            requires
-                                idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                                x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= vaddr,
-                                vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
-                        {};
-                        assert(interp_old.interp().contains_key(vaddr as nat));
+                        interp_old.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
                     });
                 }
                 Err(())
@@ -3183,16 +3148,7 @@ fn unmap_aux(
             let interp_old = interp_at(old(tok)@, pt, layer as nat, ptr, base as nat);
             assert(interp_old.interp_of_entry(idx as nat).dom() === set![]);
             assert_by_contradiction!(!interp_old.interp().contains_key(vaddr as nat), {
-                interp_old.lemma_interp_contains_implies_interp_of_entry_contains();
-                let i = choose|i: nat| #![auto] i < interp_old.num_entries() && interp_old.interp_of_entry(i).contains_key(vaddr as nat);
-                interp_old.lemma_interp_of_entry_key_between(i, vaddr as nat);
-                assert(i == idx) by (nonlinear_arith)
-                    requires
-                        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-                        x86_arch_spec.entry_base(layer as nat, base as nat, i as nat) <= vaddr,
-                        vaddr < x86_arch_spec.next_entry_base(layer as nat, base as nat, i as nat),
-                {};
-                assert(interp_old.interp().contains_key(vaddr as nat));
+                interp_old.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
             });
         }
         Err(())
