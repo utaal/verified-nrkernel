@@ -153,42 +153,45 @@ pub open spec fn candidate_mapping_overlaps_inflight_pmem(
     }
 }
 
+pub open spec fn inflight_vmem_region(pt: Map<nat, PTE>, core_state: CoreState) -> MemRegion
+    recommends !(core_state is Idle)
+{
+    match core_state {
+        CoreState::Idle => arbitrary(),
+        CoreState::MapWaiting { vaddr, pte, .. }
+        | CoreState::MapExecuting { vaddr, pte, .. }
+        | CoreState::MapDone { vaddr, pte, .. } => {
+            MemRegion { base: vaddr, size: pte.frame.size }
+        }
+
+        CoreState::UnmapWaiting { vaddr, .. }
+        | CoreState::UnmapExecuting { vaddr, result: None, .. } => {
+            let size = if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 };
+            MemRegion { base: vaddr, size: size }
+        }
+
+        CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: Some(result) }
+        | CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result }
+        | CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result } => {
+            let size = if result is Ok { result.get_Ok_0().frame.size } else { 0 };
+            MemRegion { base: vaddr, size: size }
+        }
+    }
+}
+
 pub open spec fn candidate_mapping_overlaps_inflight_vmem(
     pt: Map<nat, PTE>,
     inflightargs: Set<CoreState>,
     base: nat,
     candidate_size: nat,
 ) -> bool {
-    exists|b: CoreState| #![auto] {
-        &&& inflightargs.contains(b)
-        &&& match b {
-            CoreState::MapWaiting { vaddr, pte, .. }
-            | CoreState::MapExecuting { vaddr, pte, .. }
-            | CoreState::MapDone { vaddr, pte, .. } => {
-                overlap(
-                    MemRegion { base: vaddr, size: pte.frame.size },
-                    MemRegion { base: base, size: candidate_size },
-                )
-            },
-            CoreState::UnmapWaiting { vaddr, .. }
-            | CoreState::UnmapExecuting { vaddr, result: None, .. } => {
-                let size = if pt.contains_key(vaddr) { pt[vaddr].frame.size } else { 0 };
-                overlap(
-                    MemRegion { base: vaddr, size: size },
-                    MemRegion { base: base, size: candidate_size },
-                )
-            },
-            CoreState::UnmapExecuting { vaddr, result: Some(result), .. }
-            | CoreState::UnmapOpDone { vaddr, result, .. }
-            | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
-                let size = if result is Ok { result.get_Ok_0().frame.size } else { 0 };
-                overlap(
-                    MemRegion { base: vaddr, size: size },
-                    MemRegion { base: base, size: candidate_size },
-                )
-            },
-            _ => false,
-        }
+    exists|core_state: CoreState| #![auto] {
+        &&& inflightargs.contains(core_state)
+        &&& !(core_state is Idle)
+        &&& overlap(
+                inflight_vmem_region(pt, core_state),
+                MemRegion { base: base, size: candidate_size },
+            )
     }
 }
 
@@ -1139,7 +1142,11 @@ impl State {
         //&&& self.tlb_inv(c)
         &&& self.overlapping_mem_inv(c)
         &&& self.inv_pending_maps(c)
+        //&&& self.inv_core_states_dont_overlap(c)
     }
+
+    //pub open spec fn inv_core_states_dont_overlap(self, c: Constants) -> bool {
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about the TLB
