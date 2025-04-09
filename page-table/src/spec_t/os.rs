@@ -1254,7 +1254,7 @@ impl State {
 
     
     pub open spec fn inv_inflight_map_no_overlap_existing_pmem(self, c: Constants) -> bool {
-        forall|core| #![auto](c.valid_core(core) && self.core_states[core].is_map())
+        forall|core| #![auto](c.valid_core(core) && self.core_states[core].is_map()) && !(self.core_states[core] is MapDone)
                 ==> !candidate_mapping_overlaps_existing_pmem(
                         self.interp_pt_mem(),
                         self.core_states[core].PTE(),

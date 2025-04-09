@@ -705,7 +705,32 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                                 assert( core1 === core2);
                             }
                 }
-                assume(s2.inv_inflight_map_no_overlap_existing_pmem(c));
+                assert forall|map_core| #![auto](c.valid_core(map_core) && s2.core_states[map_core].is_map()) && !(s2.core_states[map_core] is MapDone)
+                implies !mmu::defs::candidate_mapping_overlaps_existing_pmem(
+                        s2.interp_pt_mem(),
+                        s2.core_states[map_core].PTE()
+                ) by {
+                    if (map_core != core && mmu::defs::candidate_mapping_overlaps_existing_pmem(
+                        s2.interp_pt_mem(),
+                        s2.core_states[map_core].PTE(),
+                ) ) {
+                        assert(c.valid_core(map_core) && c.valid_core(core));
+                        assert(s1.core_states[map_core].is_map() && s1.core_states[core].is_map());
+                        assert(overlap(
+                            MemRegion {
+                                base: s1.core_states[core].paddr(),
+                                size: s1.core_states[core].pte_size(s1.interp_pt_mem()),
+                            },
+                            MemRegion {
+                                base: s1.core_states[map_core].paddr(),
+                                size: s1.core_states[map_core].pte_size(s1.interp_pt_mem()),
+                            },
+                        ));
+                        assert(!s1.inv_inflight_map_no_overlap_inflight_pmem(c));
+                        assert(false);
+                    }
+                }
+                assert(s2.inv_inflight_map_no_overlap_existing_pmem(c));
                 assert(s2.inv_mapped_pmem_no_overlap(c));
                 assert(s2.overlapping_mem_inv(c));
             },
