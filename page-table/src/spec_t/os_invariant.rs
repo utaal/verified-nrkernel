@@ -3,7 +3,8 @@ use vstd::prelude::*;
 //use crate::impl_u::spec_pt;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
-    candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core, X86_NUM_ENTRIES, new_seq
+    candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core, X86_NUM_ENTRIES,
+    new_seq, aligned
 };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
@@ -144,7 +145,7 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     assert(s2.inv_basic(c)) by {
         assert(s2.mmu@.pt_mem.mem.dom() =~= s1.mmu@.pt_mem.mem.dom());
     };
-    next_step_preserves_inv_osext(c, s1, s2, step, lbl);
+    next_step_preserves_inv_allocated_mem(c, s1, s2, step, lbl);
     //next_step_preserves_tlb_inv(c, s1, s2, step);
     next_step_preserves_overlap_mem_inv(c, s1, s2, step, lbl);
     next_step_preserves_inv_impl(c, s1, s2, step, lbl);
@@ -315,16 +316,84 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
     }
 }
 
-pub proof fn next_step_preserves_inv_osext(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+pub proof fn next_step_preserves_inv_allocated_mem(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
     requires
         s1.inv(c),
         os::next_step(c, s1, s2, step, lbl),
     ensures
-        s2.inv_osext(c),
+        s2.inv_allocated_mem(c),
 {
     broadcast use
         to_rl1::next_preserves_inv,
         to_rl1::next_refines;
+    match step {
+        os::Step::MapOpStart { core } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+        },
+        os::Step::Allocate { core, res } => {
+            assert forall|pa: usize|
+                aligned(pa as nat, 8)
+                && c.common.in_ptmem_range(pa as nat, 8)
+                && #[trigger] s2.mmu@.pt_mem.read(pa) != 0
+                    implies
+                exists|r| #[trigger] s2.os_ext.allocated.contains(r) && r.contains(pa as nat)
+            by {
+                assert(s1.mmu@.pt_mem.read(pa) != 0);
+                let r = choose|r| #[trigger] s1.os_ext.allocated.contains(r) && r.contains(pa as nat);
+                assert(s2.os_ext.allocated.contains(r));
+            };
+        },
+        os::Step::MapOpStutter { core, paddr, value } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+            assert(forall|pa| pa != paddr ==> s2.mmu@.pt_mem.read(pa) == s1.mmu@.pt_mem.read(pa));
+        },
+        os::Step::MapOpChange { core, paddr, value } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+            assert(forall|pa| pa != paddr ==> s2.mmu@.pt_mem.read(pa) == s1.mmu@.pt_mem.read(pa));
+        },
+        os::Step::MapEnd { core } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+        },
+        os::Step::UnmapOpStart { core } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+        },
+        os::Step::Deallocate { core, reg } => {
+            assert forall|pa: usize|
+                aligned(pa as nat, 8)
+                && c.common.in_ptmem_range(pa as nat, 8)
+                && #[trigger] s2.mmu@.pt_mem.read(pa) != 0
+                    implies
+                exists|r| #[trigger] s2.os_ext.allocated.contains(r) && r.contains(pa as nat)
+            by {
+                if s2.mmu@.pt_mem.read(pa) != 0 {
+                    assert(s1.mmu@.pt_mem.read(pa) != 0);
+                    assert(exists|r| #[trigger] s1.os_ext.allocated.contains(r) && r.contains(pa as nat));
+                    let r = choose|r| #[trigger] s1.os_ext.allocated.contains(r) && r.contains(pa as nat);
+                    if r != reg {
+                        assert(s2.os_ext.allocated.contains(r));
+                    }
+                }
+            };
+        },
+        os::Step::UnmapOpChange { core, paddr, value } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+            assert(forall|pa| pa != paddr ==> s2.mmu@.pt_mem.read(pa) == s1.mmu@.pt_mem.read(pa));
+        },
+        os::Step::UnmapOpStutter { core, paddr, value } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+            assert(forall|pa| pa != paddr ==> s2.mmu@.pt_mem.read(pa) == s1.mmu@.pt_mem.read(pa));
+        },
+        os::Step::UnmapInitiateShootdown { core } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+        },
+        os::Step::AckShootdownIPI { core } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+        },
+        os::Step::UnmapEnd { core } => {
+            assert(s2.os_ext.allocated == s1.os_ext.allocated);
+        },
+        _ => {},
+    }
 }
 
 pub proof fn next_step_preserves_inv_impl(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)

@@ -1,5 +1,5 @@
 use vstd::prelude::*;
-use vstd::assert_by_contradiction;
+use vstd::{ assert_by_contradiction, assert_seqs_equal };
 
 //use crate::spec_t::mmu::WalkResult;
 use crate::spec_t::os;
@@ -8,7 +8,7 @@ use crate::spec_t::mmu::{ self };
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
-    aligned, new_seq, bit, candidate_mapping_overlaps_existing_vmem, WORD_SIZE,
+    aligned, bit, candidate_mapping_overlaps_existing_vmem, WORD_SIZE,
     bitmask_inc, x86_arch_spec, x86_arch_spec_upper_bound,
 };
 use crate::spec_t::mmu::defs::{ MemRegionExec, MemRegion, PTE, MAX_PHYADDR };
@@ -584,7 +584,7 @@ impl WrappedMapToken {
             res.size == 4096,
             res.base + 4096 <= MAX_PHYADDR,
             !old(tok)@.regions.contains_key(res@),
-            tok@.regions === old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)),
+            tok@.regions === old(tok)@.regions.insert(res@, seq![0; 512]),
             tok@.pt_mem == old(tok)@.pt_mem,
             tok@.args == old(tok)@.args,
             tok@.orig_st == old(tok)@.orig_st,
@@ -614,10 +614,16 @@ impl WrappedMapToken {
             lemma_concurrent_trs(state2, state3, tok.tok.consts(), tok.tok.core(), pidx);
         }
         assert(!old(tok)@.regions.contains_key(res@));
-        // TODO: We may have to zero the page ourselves or alternatively allow spontaneous writes
-        // to unallocated memory regions. (Or require zeroed pages when deallocating.)
-        assume(tok@.regions[res@] === new_seq::<usize>(512nat, 0usize));
-        assert(tok@.regions =~= old(tok)@.regions.insert(res@, new_seq::<usize>(512nat, 0usize)));
+        proof {
+            assert_seqs_equal!(tok@.regions[res@] == seq![0; 512], i => {
+                let pa = (res@.base + i * 8) as usize;
+                assert(aligned(pa as nat, 8));
+                assert(tok.tok.consts().common.in_ptmem_range(pa as nat, 8));
+                // From unallocated_memory_zeroed
+                assert(tok@.pt_mem.read(pa) == 0);
+            });
+        }
+        assert(tok@.regions =~= old(tok)@.regions.insert(res@, seq![0; 512]));
         res
     }
 
@@ -1138,8 +1144,8 @@ impl WrappedUnmapToken {
 
     pub exec fn deallocate(Tracked(tok): Tracked<&mut Self>, layer: usize, region: MemRegionExec)
         requires
-            //old(tok)@.change_made,
             old(tok)@.regions.contains_key(region@),
+            old(tok)@.regions[region@] === seq![0; 512],
             old(tok).inv(),
         ensures
             tok@.regions === old(tok)@.regions.remove(region@),
@@ -1153,10 +1159,21 @@ impl WrappedUnmapToken {
         let ghost core = tok.tok.core();
         let tracked mut osext_tok = tok.tok.get_osext_token();
         proof {
+            assert forall|pa: usize|
+                aligned(pa as nat, 8) && region@.contains(pa as nat)
+                    implies
+                #[trigger] state1.mmu@.pt_mem.read(pa) == 0
+            by {
+                let i = (pa - region@.base) / 8;
+                assert(0 <= i < 512);
+                assert(old(tok)@.regions[region@][i as int] == state1.mmu@.pt_mem.read((region@.base + i * 8) as usize));
+            };
+
             osext_tok.prophesy_deallocate(region);
             let post = os::State { os_ext: osext_tok.post(), ..tok.tok.st() };
-            assert(os::step_Deallocate(tok.tok.consts(), tok.tok.st(), post, core, osext_tok.lbl()->Deallocate_reg, RLbl::Tau));
-            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Deallocate { core, reg: osext_tok.lbl()->Deallocate_reg }, RLbl::Tau));
+            assert(old(tok)@.pt_mem == tok.tok.st().mmu@.pt_mem);
+            assert(os::step_Deallocate(tok.tok.consts(), tok.tok.st(), post, core, region@, RLbl::Tau));
+            assert(os::next_step(tok.tok.consts(), tok.tok.st(), post, os::Step::Deallocate { core, reg: region@ }, RLbl::Tau));
             tok.tok.register_internal_step_osext(&mut osext_tok, post);
             os_invariant::next_preserves_inv(tok.tok.consts(), state1, tok.tok.st(), RLbl::Tau);
         }

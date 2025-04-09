@@ -324,6 +324,7 @@ pub open spec fn step_MapOpStutter(
     &&& c.valid_core(core)
     &&& s1.core_states[core] is MapExecuting
     &&& value & 1 == 1
+    &&& s1.os_ext.is_in_allocated_region(paddr as nat)
 
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
@@ -367,6 +368,7 @@ pub open spec fn step_MapOpChange(
     &&& s1.core_states[core] matches CoreState::MapExecuting { ult_id, vaddr, pte }
     &&& !candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte)
     &&& value & 1 == 1
+    &&& s1.os_ext.is_in_allocated_region(paddr as nat)
     &&& s2.interp_pt_mem() == s1.interp_pt_mem().insert(vaddr, pte)
 
     // mmu statemachine steps
@@ -465,6 +467,9 @@ pub open spec fn step_Deallocate(c: Constants, s1: State, s2: State, core: Core,
 
     &&& c.valid_core(core)
     &&& s1.core_states[core] is UnmapExecuting
+    &&& forall|pa: usize|
+            aligned(pa as nat, 8) && reg.contains(pa as nat)
+                ==> #[trigger] s1.mmu@.pt_mem.read(pa) == 0
 
     //mmu statemachine steps
     &&& s2.mmu == s1.mmu
@@ -491,6 +496,7 @@ pub open spec fn step_UnmapOpChange(
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
+    &&& s1.os_ext.is_in_allocated_region(paddr as nat)
     &&& s1.interp_pt_mem().contains_key(vaddr)
     &&& s2.interp_pt_mem() == s1.interp_pt_mem().remove(vaddr)
     &&& s2.core_states == s1.core_states.insert(
@@ -516,11 +522,12 @@ pub open spec fn step_UnmapOpStutter(
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(res) }
     &&& value & 1 == 0
+    &&& s1.os_ext.is_in_allocated_region(paddr as nat)
+    &&& s2.interp_pt_mem() == s1.interp_pt_mem()
     // mmu statemachine steps
     &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Write(core, paddr, value))
     &&& s2.mmu@.happy == s1.mmu@.happy
     &&& s2.os_ext == s1.os_ext
-    &&& s2.interp_pt_mem() == s1.interp_pt_mem()
     //new state
     &&& s2.core_states == s1.core_states
     &&& s2.sound == s1.sound
@@ -1052,13 +1059,28 @@ impl State {
         &&& c.common.range_ptmem.1 <= MAX_PHYADDR
     }
 
-    pub open spec fn inv_osext(self, c: Constants) -> bool {
+    pub open spec fn inv_allocated_mem(self, c: Constants) -> bool {
         &&& forall|r| #[trigger] self.os_ext.allocated.contains(r) ==> {
             &&& aligned(r.base, 4096)
             &&& c.common.in_ptmem_range(r.base, 4096)
             &&& r.size == 4096
         }
         &&& self.allocated_regions_disjoint()
+        &&& self.unallocated_memory_zeroed(c)
+    }
+
+    pub open spec fn unallocated_memory_zeroed(self, c: Constants) -> bool {
+        forall|pa: usize|
+            // aligned(pa as nat, 8) && c.common.in_ptmem_range(pa as nat, 8) &&
+            // (forall|r| #[trigger] self.os_ext.allocated.contains(r) ==> !r.contains(pa))
+            //     ==> #[trigger] self.mmu@.pt_mem.read(pa) == 0
+            //
+            // aligned(pa as nat, 8) && c.common.in_ptmem_range(pa as nat, 8) &&
+            // !(exists|r| #[trigger] self.os_ext.allocated.contains(r) && r.contains(pa))
+            //     ==> #[trigger] self.mmu@.pt_mem.read(pa) == 0
+            //
+            aligned(pa as nat, 8) && c.common.in_ptmem_range(pa as nat, 8) && #[trigger] self.mmu@.pt_mem.read(pa) != 0
+                ==> exists|r| #[trigger] self.os_ext.allocated.contains(r) && r.contains(pa as nat)
     }
 
     pub open spec fn allocated_regions_disjoint(self) -> bool {
@@ -1113,7 +1135,7 @@ impl State {
         &&& self.inv_impl()
         &&& self.inv_writes(c)
         &&& self.inv_shootdown(c)
-        &&& self.inv_osext(c)
+        &&& self.inv_allocated_mem(c)
         //&&& self.tlb_inv(c)
         &&& self.overlapping_mem_inv(c)
         &&& self.inv_pending_maps(c)

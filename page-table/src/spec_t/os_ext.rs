@@ -54,6 +54,10 @@ impl State {
     pub open spec fn disjoint_from_allocations(self, reg: MemRegion) -> bool {
         forall|reg2| #[trigger] self.allocated.contains(reg2) ==> !overlap(reg, reg2)
     }
+
+    pub open spec fn is_in_allocated_region(self, pa: nat) -> bool {
+        exists|r| #[trigger] self.allocated.contains(r) && r.base <= pa < r.base + r.size
+    }
 }
 
 pub enum Step {

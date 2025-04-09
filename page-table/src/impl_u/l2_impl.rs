@@ -672,8 +672,13 @@ pub open spec fn ghost_pt_matches_structure(tok: WrappedTokenView, pt: PTDir, la
     forall|i: nat| #![trigger pt.entries[i as int], entry_at_spec(tok, pt, layer, ptr, i)@]
     i < X86_NUM_ENTRIES ==> {
         let entry = entry_at_spec(tok, pt, layer, ptr, i)@;
-        entry is Directory == pt.entries[i as int].is_Some()
+        entry is Directory <==> pt.entries[i as int] is Some
     }
+}
+
+pub open spec fn invalid_entries_are_zeroed(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool {
+    forall|i: nat| i < X86_NUM_ENTRIES ==>
+        (#[trigger] entry_at_spec(tok, pt, layer, ptr, i))@ is Invalid ==> tok.regions[pt.region][i as int] == 0
 }
 
 pub open spec fn directories_obey_invariant_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool
@@ -710,14 +715,14 @@ pub open spec(checked) fn layer_in_range(layer: nat) -> bool {
 pub open spec(checked) fn inv_at(tok: WrappedTokenView, pt: PTDir, layer: nat, ptr: usize) -> bool
     decreases X86_NUM_LAYERS - layer
 {
-    &&& ptr % PAGE_SIZE == 0
-    //&&& mem.inv()
+    &&& aligned(ptr as nat, PAGE_SIZE as nat)
     &&& tok.regions.contains_key(pt.region)
     &&& pt.region.base == ptr
     &&& pt.region.size == PAGE_SIZE
     &&& tok.regions[pt.region].len() == pt.entries.len()
     &&& layer_in_range(layer)
     &&& pt.entries.len() == X86_NUM_ENTRIES
+    &&& invalid_entries_are_zeroed(tok, pt, layer, ptr)
     &&& directories_obey_invariant_at(tok, pt, layer, ptr)
     &&& directories_have_flags(tok, pt, layer, ptr)
     &&& ghost_pt_matches_structure(tok, pt, layer, ptr)
@@ -2987,9 +2992,17 @@ fn unmap_aux(
                             };
                         }
                         assert(tok@.regions.contains_key(pt.region));
+
+                        let unmap_reg = MemRegionExec { base: dir_addr, size: PAGE_SIZE };
+                        proof {
+                            assert_seqs_equal!(tok@.regions[unmap_reg@] == seq![0; 512], i => {
+                                assert(entry_at_spec(tok@, dir_pt_res, layer as nat + 1, dir_addr, i as nat)@ is Invalid);
+                            });
+                        }
+
                         WrappedUnmapToken::write_stutter(Tracked(tok), ptr, idx, 0usize, Ghost(pt.region), Ghost(root_pt_after_rec), Ghost(root_pt_after_write));
 
-                        WrappedUnmapToken::deallocate(Tracked(tok), layer, MemRegionExec { base: dir_addr, size: PAGE_SIZE });
+                        WrappedUnmapToken::deallocate(Tracked(tok), layer, unmap_reg);
 
                         let ghost tok_after_dealloc = tok@;
                         let ghost removed_regions_after_dealloc = removed_regions.insert(dir_pt_res.region);

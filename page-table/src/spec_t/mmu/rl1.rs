@@ -369,7 +369,7 @@ pub open spec fn init(pre: State, c: Constants) -> bool {
     &&& pre.polarity === Polarity::Mapping
 
     &&& c.valid_core(pre.writes.core)
-    &&& pre.pt_mem.mem.dom() === Set::new(|va| aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8))
+    &&& pre.pt_mem.mem === Map::new(|va| aligned(va as nat, 8) && c.in_ptmem_range(va as nat, 8), |va| 0)
     &&& aligned(pre.pt_mem.pml4 as nat, 4096)
     &&& c.memories_disjoint()
     &&& pre.phys_mem.len() == c.range_mem.1
