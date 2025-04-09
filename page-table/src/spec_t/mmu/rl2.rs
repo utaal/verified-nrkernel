@@ -564,7 +564,7 @@ impl State {
             #![trigger c.valid_core(core), self.writer_sbuf().contains_fst(addr)]
             c.valid_core(core) ==>
             (if self.core_mem(core).read(addr) & 1 == 0 {
-                &&& (self.writer_sbuf().contains_fst(addr) ==> core != self.writes.core)
+                &&& (self.writer_sbuf().contains_fst(addr) ==> core == self.writes.core)
                 &&& self.writer_mem().read(addr) == self.core_mem(core).read(addr)
             } else {
                 ||| self.writer_mem().read(addr) == self.core_mem(core).read(addr)
@@ -1467,16 +1467,14 @@ proof fn next_step_preserves_inv_unmapping__core_vs_writer_reads(pre: State, pos
                     ||| post.writer_mem().read(addr) & 1 == 0
                 })
             by {
-                if wrcore == core {
-                } else {
+                if wrcore != core {
                     assert(post.core_mem(core) == pre.core_mem(core));
                     if wraddr != addr {
                         lemma_mem_view_after_step_write(pre, post, c, lbl);
                     }
                 }
             };
-            // TODO: ???
-            assume(post.inv_unmapping__core_vs_writer_reads(c));
+            assert(post.inv_unmapping__core_vs_writer_reads(c));
         },
         Step::Writeback { core: wrcore } => {
             let wraddr = pre.writer_sbuf()[0].0;
@@ -1487,7 +1485,8 @@ proof fn next_step_preserves_inv_unmapping__core_vs_writer_reads(pre: State, pos
             lemma_step_Writeback_preserves_writer_mem(pre, post, c, wrcore, lbl);
             assert forall|core, addr| #[trigger] c.valid_core(core) implies
                 (if #[trigger] post.core_mem(core).read(addr) & 1 == 0 {
-                    post.writer_mem().read(addr) == post.core_mem(core).read(addr)
+                    &&& (post.writer_sbuf().contains_fst(addr) ==> core == post.writes.core)
+                    &&& post.writer_mem().read(addr) == post.core_mem(core).read(addr)
                 } else {
                     ||| post.writer_mem().read(addr) == post.core_mem(core).read(addr)
                     ||| post.writer_mem().read(addr) & 1 == 0
