@@ -1142,11 +1142,7 @@ impl State {
         //&&& self.tlb_inv(c)
         &&& self.overlapping_mem_inv(c)
         &&& self.inv_pending_maps(c)
-        //&&& self.inv_core_states_dont_overlap(c)
     }
-
-    //pub open spec fn inv_core_states_dont_overlap(self, c: Constants) -> bool {
-
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about the TLB

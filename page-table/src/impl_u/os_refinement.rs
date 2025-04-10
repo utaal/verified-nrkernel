@@ -325,7 +325,9 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
     next_step_preserves_inv(c, s1, s2, step, lbl);
     match step {
         os::Step::MemOp { core, .. } => {
-            step_MemOp_refines(c, s1, s2, core, lbl);
+            if s1.sound {
+                step_MemOp_refines(c, s1, s2, core, lbl);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         // Map steps
@@ -402,6 +404,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
         s1.inv(c),
         s2.inv(c),
         os::step_MemOp(c, s1, s2, core, lbl),
+        s1.sound,
     ensures
         ({
             let vaddr = lbl->MemOp_vaddr;
@@ -493,7 +496,24 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
                 _ => false,
             });
 
-            assume(thread == thread1);
+            assert(thread == thread1) by {
+                let core1 = c.ult2core[thread1];
+                let core2 = c.ult2core[thread];
+                assert(s1.inv_inflight_map_no_overlap_inflight_vmem(c));
+                let mr1 = MemRegion {
+                        base: s1.core_states[core1].vaddr(),
+                        size: s1.core_states[core1].pte_size(s1.interp_pt_mem()),
+                    };
+                let mr2 = MemRegion {
+                        base: s1.core_states[core2].vaddr(),
+                        size: s1.core_states[core2].pte_size(s1.interp_pt_mem()),
+                    };
+                assert(between(vaddr, mr1.base, mr1.base + mr1.size));
+                assert(between(vaddr, mr2.base, mr2.base + mr2.size));
+                assert(overlap(mr1, mr2));
+                assert(core1 == core2);
+                assert(thread1 == thread);
+            }
 
             assert(t1.vaddr_mapping_is_being_modified(d, vaddr));
             assert(t1.thread_state[thread] is Map);
