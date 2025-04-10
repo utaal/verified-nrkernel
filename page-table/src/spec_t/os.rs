@@ -765,7 +765,11 @@ impl CoreState {
         match self {
             CoreState::MapWaiting { pte, .. }
             | CoreState::MapExecuting { pte, .. }
-            | CoreState::MapDone { pte, .. } => {
+            | CoreState::MapDone { pte, .. }
+            | CoreState::UnmapExecuting { result: Some(Ok(pte)), .. }
+            | CoreState::UnmapOpDone { result: Ok(pte), .. }
+            | CoreState::UnmapShootdownWaiting { result: Ok(pte), .. }
+            => {
                 pte
             }
             _ => arbitrary(),
@@ -830,27 +834,27 @@ impl State {
         self.interp_pt_mem().remove_keys(self.inflight_vaddr())
     }
 
-    pub open spec fn has_base_and_pte_for_vaddr(effective_mappings: Map<nat, PTE>, vaddr: int) -> bool {
+    pub open spec fn has_base_and_pte_for_vaddr(applied_mappings: Map<nat, PTE>, vaddr: int) -> bool {
         exists|base: nat, pte: PTE| #![auto]
-            effective_mappings.contains_pair(base, pte)
+            applied_mappings.contains_pair(base, pte)
             && between(vaddr as nat, base, base + pte.frame.size)
     }
 
-    pub open spec fn base_and_pte_for_vaddr(effective_mappings: Map<nat, PTE>, vaddr: int) -> (nat, PTE) {
+    pub open spec fn base_and_pte_for_vaddr(applied_mappings: Map<nat, PTE>, vaddr: int) -> (nat, PTE) {
         choose|base: nat, pte: PTE| #![auto]
-            effective_mappings.contains_pair(base, pte)
+            applied_mappings.contains_pair(base, pte)
             && between(vaddr as nat, base, base + pte.frame.size)
     }
 
     pub open spec fn vmem_apply_mappings(
-        effective_mappings: Map<nat, PTE>,
+        applied_mappings: Map<nat, PTE>,
         phys_mem: Seq<u8>
     ) -> Seq<u8> {
         Seq::new(
             MAX_BASE,
             |vaddr: int| {
-                if Self::has_base_and_pte_for_vaddr(effective_mappings, vaddr) {
-                    let (base, pte) = Self::base_and_pte_for_vaddr(effective_mappings, vaddr);
+                if Self::has_base_and_pte_for_vaddr(applied_mappings, vaddr) {
+                    let (base, pte) = Self::base_and_pte_for_vaddr(applied_mappings, vaddr);
                     phys_mem[pte.frame.base + (vaddr - base)]
                 } else {
                     0
@@ -858,9 +862,104 @@ impl State {
         })
     }
 
-    pub open spec fn interp_vmem(self, c: Constants) -> Seq<u8> {
-        Self::vmem_apply_mappings(self.effective_mappings(), self.mmu@.phys_mem)
+    pub open spec fn applied_mappings(self) -> Map<nat, PTE> {
+        // Prefer interp_pt_mem because there might be a situation where we have
+        // something in the MapStart state which conflicts with something in interp_pt_mem.
+        // In that case the map will eventually end in an error;
+        // we want to use the mapping from interp_pt_mem instead.
+        self.extra_mappings()
+            .union_prefer_right(self.interp_pt_mem())
     }
+
+    pub open spec fn interp_vmem(self, c: Constants) -> Seq<u8> {
+        Self::vmem_apply_mappings(self.applied_mappings(), self.mmu@.phys_mem)
+    }
+
+    //returns set with the vaddr that is currently unmapped.
+
+    pub open spec fn is_unmap_vaddr_core(self, core: Core, vaddr: nat) -> bool {
+        self.core_states.contains_key(core) && match self.core_states[core] {
+            CoreState::UnmapOpDone { vaddr: vaddr1, result, .. }
+            | CoreState::UnmapShootdownWaiting { vaddr: vaddr1, result, .. } => {
+                (result is Ok) && (vaddr1 === vaddr)
+            },
+            _ => false,
+        }
+    }
+
+    pub open spec fn is_unmap_vaddr(self, vaddr: nat) -> bool {
+        exists |core: Core| self.is_unmap_vaddr_core(core, vaddr)
+    }
+
+    pub open spec fn unmap_vaddr_set(self) -> Set<nat> {
+        Set::new(|vaddr: nat| self.is_unmap_vaddr(vaddr))
+    }
+
+    //// "extra vaddrs"
+    //// This is for getting the PTEs that we want to be in the applied mappings,
+    //// but which aren't in the self.interp_pt_mem()
+    ////
+    //// The memory interpretation (interp_vmem) needs to include the memory for a given PTE
+    //// starting all the way at the beginning of the Map and ending at the end of the Unmap.
+    //// However, self.interp_pt_mem() only includes this memory from the
+    //// MapDone phase through the UnmapExecuting(result=None) phase.
+    ////
+    //// Therefore, anything before (MapWaiting, MapExecuting)
+    //// or after (UnmapExecuting(result=Some), UnmapOpDone)
+    //// needs to be included in the "extras".
+
+    pub open spec fn is_extra_vaddr_core(self, core: Core, vaddr: nat) -> bool {
+        self.core_states.contains_key(core) && match self.core_states[core] {
+            CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
+            | CoreState::MapExecuting { vaddr: vaddr1, pte, .. }
+            => {
+                vaddr1 === vaddr
+            }
+
+            CoreState::UnmapExecuting { vaddr: vaddr1, result: Some(result), .. }
+            | CoreState::UnmapOpDone { vaddr: vaddr1, result, .. }
+            | CoreState::UnmapShootdownWaiting { vaddr: vaddr1, result, .. } => {
+                (result is Ok) && (vaddr1 === vaddr)
+            },
+            _ => false,
+        }
+    }
+
+    pub open spec fn get_extra_vaddr_core(self, vaddr: nat) -> Core {
+        choose |core: Core| self.is_extra_vaddr_core(core, vaddr)
+    }
+
+    pub open spec fn is_extra_vaddr(self, vaddr: nat) -> bool {
+        exists |core: Core| self.is_extra_vaddr_core(core, vaddr)
+    }
+
+    pub open spec fn extra_mapping_for_vaddr(self, vaddr: nat) -> PTE {
+        //self.mmu@.tlbs[self.get_extra_vaddr_core(vaddr)][vaddr as usize]
+        self.core_states[self.get_extra_vaddr_core(vaddr)].PTE()
+    }
+
+    pub open spec fn candidate_vaddr_overlaps(self, vaddr: nat) -> bool {
+        match self.core_states[self.get_extra_vaddr_core(vaddr)] {
+            CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
+            | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } => 
+                candidate_mapping_overlaps_existing_vmem(
+                    self.effective_mappings(),
+                    vaddr,
+                    pte,
+                ),
+           _ => false,
+        }
+    }
+
+    #[verifier::opaque]
+    pub open spec fn extra_mappings(self) -> Map<nat, PTE> {
+        Map::new(
+            |vaddr: nat| self.is_extra_vaddr(vaddr) && !self.candidate_vaddr_overlaps(vaddr),
+            |vaddr: nat| self.extra_mapping_for_vaddr(vaddr),
+        )
+    }
+
+    //// Interp thread state
 
     pub open spec fn interp_thread_state(self, c: Constants) -> Map<nat, hlspec::ThreadState> {
         Map::new(
@@ -1165,20 +1264,6 @@ impl State {
             }
     }
 
-    //returns set with the vaddr that is currently unmapped.
-    pub open spec fn unmap_vaddr(self) -> Set<nat> {
-        Set::new(|v_address: nat| exists|core: Core|
-            self.core_states.contains_key(core) && match self.core_states[core] {
-                CoreState::UnmapOpDone { vaddr, result, .. }
-                | CoreState::UnmapShootdownWaiting { vaddr, result, .. } => {
-                    (result is Ok) && (vaddr === v_address)
-                },
-                _ => false,
-            }
-
-        )
-    }
-
     pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: Constants) -> bool {
         forall|core: Core| {
                 #[trigger] c.valid_core(core)
@@ -1186,7 +1271,7 @@ impl State {
                         // problems. If so, might have to switch the MMU models over to using nat
                         // instead of usize.
                     ==> self.mmu@.tlbs[core].dom().map(|v| v as nat).subset_of(
-                        self.interp_pt_mem().dom().union(self.unmap_vaddr())
+                        self.interp_pt_mem().dom().union(self.unmap_vaddr_set())
                 )
             }
     }
@@ -1278,7 +1363,6 @@ impl State {
             &&& self.inv_mapped_pmem_no_overlap(c)
         }
     }
-
 }
 
 impl Step {

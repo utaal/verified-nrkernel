@@ -129,14 +129,13 @@ impl Constants {
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Helper function to specify relation between 2 states
 ///////////////////////////////////////////////////////////////////////////////////////////////
-pub open spec fn state_unchanged_besides_thread_state(
+pub open spec fn state_unchanged_besides_thread_state_and_mem(
     s1: State,
     s2: State,
     thread_id: nat,
     thread_arguments: ThreadState,
 ) -> bool {
     &&& s2.thread_state === s1.thread_state.insert(thread_id, thread_arguments)
-    &&& s2.mem === s1.mem
     &&& s2.mappings === s1.mappings
     &&& s2.sound == s1.sound
 }
@@ -340,7 +339,12 @@ pub open spec fn step_MapStart(c: Constants, s1: State, s2: State, lbl: RLbl) ->
     &&& c.valid_thread(thread_id)
     &&& s1.thread_state[thread_id] === ThreadState::Idle
     &&& if step_Map_sound(s1.mappings, s1.thread_state.values(), vaddr, pte) {
-        state_unchanged_besides_thread_state(s1, s2, thread_id, ThreadState::Map { vaddr, pte })
+        state_unchanged_besides_thread_state_and_mem(s1, s2, thread_id, ThreadState::Map { vaddr, pte })
+        && (if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
+            s1.mem == s2.mem
+        } else {
+            forall|vaddr: nat|  #[trigger] is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr) ==> s2.mem[vaddr as int] === s1.mem[vaddr as int]
+        })
     } else {
         unsound_state(s1, s2)
     }
@@ -356,12 +360,11 @@ pub open spec fn step_MapEnd(c: Constants, s1: State, s2: State, lbl: RLbl) -> b
     &&& if candidate_mapping_overlaps_existing_vmem(s1.mappings, vaddr, pte) {
         &&& result is Err
         &&& s2.mappings === s1.mappings
-        &&& s2.mem === s1.mem
     } else {
         &&& result is Ok
         &&& s2.mappings === s1.mappings.insert(vaddr, pte)
-        &&& forall|vaddr: nat|  #[trigger] is_in_mapped_region(c.phys_mem_size, s1.mappings, vaddr) ==> s2.mem[vaddr as int] === s1.mem[vaddr as int]
     }
+    &&& s2.mem === s1.mem
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -396,7 +399,7 @@ pub open spec fn step_UnmapStart(c: Constants, s1: State, s2: State, lbl: RLbl) 
             &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Unmap { vaddr, pte })
             &&& s2.mappings == if pte is None { s1.mappings } else { s1.mappings.remove(vaddr) }
             &&& s2.sound == s1.sound
-            &&& forall|vaddr: nat|  #[trigger] is_in_mapped_region(c.phys_mem_size, s2.mappings, vaddr) ==> s2.mem[vaddr as int] === s1.mem[vaddr as int]
+            &&& s2.mem === s1.mem
         } else {
             unsound_state(s1, s2)
         }
@@ -414,7 +417,7 @@ pub open spec fn step_UnmapEnd(c: Constants, s1: State, s2: State, lbl: RLbl) ->
     &&& s2.thread_state === s1.thread_state.insert(thread_id, ThreadState::Idle)
     &&& s2.sound == s1.sound
     &&& s2.mappings === s1.mappings
-    &&& s2.mem === s1.mem
+    &&& forall|vaddr: nat|  #[trigger] is_in_mapped_region(c.phys_mem_size, s2.mappings, vaddr) ==> s2.mem[vaddr as int] === s1.mem[vaddr as int]
 }
 
 pub open spec fn step_Stutter(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
