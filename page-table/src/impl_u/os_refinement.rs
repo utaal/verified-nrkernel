@@ -768,7 +768,103 @@ proof fn extra_mappings_preserved_effective_mapping_inserted(
     ensures
         s1.extra_mappings() == s2.extra_mappings()
 {
-    assume(false);
+    let this_vaddr = s1.core_states[this_core]->MapDone_vaddr;
+    let this_pte = s1.core_states[this_core]->MapDone_pte;
+
+    assume(s1.inv(c)); assume(s1.sound);
+    assume(s2.inv(c)); assume(s2.sound);
+    vaddr_distinct(c, s1);
+    vaddr_distinct(c, s2);
+
+    reveal(os::State::extra_mappings);
+    assert_maps_equal!(s1.extra_mappings(), s2.extra_mappings(), vaddr => {
+        if vaddr == this_vaddr {
+            if s1.extra_mappings().dom().contains(vaddr) {
+                assert(s2.extra_mappings().dom().contains(vaddr));
+                assert(s1.extra_mappings()[vaddr] == s2.extra_mappings()[vaddr]);
+            }
+            if s2.extra_mappings().dom().contains(vaddr) {
+                assert(s1.extra_mappings().dom().contains(vaddr));
+            }
+        } else {
+            if s1.extra_mappings().dom().contains(vaddr) {
+                let core = choose |core: Core| s1.is_extra_vaddr_core(core, vaddr);
+                assert(s1.core_states[core].PTE() == s2.core_states[core].PTE());
+                assert(s1.get_extra_vaddr_core(vaddr) == core);
+                assert(s2.get_extra_vaddr_core(vaddr) == core);
+                assert(s2.is_extra_vaddr(vaddr));
+                assert(!s1.candidate_vaddr_overlaps(vaddr));
+
+                match s2.core_states[s2.get_extra_vaddr_core(vaddr)] {
+                    CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
+                    | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } => 
+                    {
+                        let mappings = s2.effective_mappings();
+                        assert(vaddr1 == vaddr);
+
+                        let core1 = this_core;
+                        let core2 = s2.get_extra_vaddr_core(vaddr);
+                        let mr1 = MemRegion {
+                            base: s1.core_states[core1].vaddr(),
+                            size: s1.core_states[core1].pte_size(s1.interp_pt_mem()),
+                        };
+                        let mr2 = MemRegion {
+                            base: s1.core_states[core2].vaddr(),
+                            size: s1.core_states[core2].pte_size(s1.interp_pt_mem()),
+                        };
+                        assert(!overlap(mr1, mr2));
+                        assert(!overlap(
+                            MemRegion { base: vaddr, size: pte.frame.size },
+                            MemRegion { base: this_vaddr, size: mappings[this_vaddr].frame.size },
+                        ));
+                    }
+                    _ => { }
+                }
+
+                assert(!s2.candidate_vaddr_overlaps(vaddr));
+                assert(s2.extra_mappings().dom().contains(vaddr));
+            }
+            if s2.extra_mappings().dom().contains(vaddr) {
+                let core = choose |core: Core| s2.is_extra_vaddr_core(core, vaddr);
+
+                assert(s1.core_states[core].PTE() == s2.core_states[core].PTE());
+                assert(s1.get_extra_vaddr_core(vaddr) == core);
+                assert(s2.get_extra_vaddr_core(vaddr) == core);
+                assert(s1.is_extra_vaddr(vaddr));
+                assert(!s2.candidate_vaddr_overlaps(vaddr));
+
+                match s1.core_states[s1.get_extra_vaddr_core(vaddr)] {
+                    CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
+                    | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } => 
+                    {
+                        monotonic_candidate_mapping_overlaps_existing_vmem(
+                            s1.effective_mappings(),
+                            s2.effective_mappings(),
+                            vaddr,
+                            pte);
+                    }
+                    _ => { }
+                }
+
+                assert(!s1.candidate_vaddr_overlaps(vaddr));
+                assert(s1.extra_mappings().dom().contains(vaddr));
+            }
+        }
+    });
+}
+
+proof fn monotonic_candidate_mapping_overlaps_existing_vmem(
+    mappings1: Map<nat, PTE>,
+    mappings2: Map<nat, PTE>,
+    base: nat,
+    pte: PTE,
+)
+    requires mappings1.submap_of(mappings2)
+    ensures
+        candidate_mapping_overlaps_existing_vmem(mappings1, base, pte)
+        ==> candidate_mapping_overlaps_existing_vmem(mappings2, base, pte)
+{
+    assert(forall |b| #[trigger] mappings1.contains_key(b) ==> mappings2.contains_key(b));
 }
 
 proof fn extra_mappings_preserved_effective_mapping_removed(
