@@ -5,7 +5,8 @@ use crate::spec_t::mmu::pt_mem::*;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, bit, WORD_SIZE, MAX_PHYADDR_WIDTH, axiom_max_phyaddr_width_facts, MemOp,
-    LoadResult, update_range };
+    LoadResult, update_range, MAX_BASE
+};
 use crate::spec_t::mmu::defs::{ Core, PTE };
 use crate::spec_t::mmu::rl3::{ Writes };
 use crate::spec_t::mmu::translation::{ MASK_NEG_DIRTY_ACCESS };
@@ -235,7 +236,7 @@ pub open spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core
 
     &&& c.valid_core(core)
     &&& aligned(vaddr as nat, 8)
-    //&&& arbitrary() // TODO: conditions on va? max vaddr?
+    &&& vaddr < MAX_BASE
 
     &&& post.happy == pre.happy
     &&& post.phys_mem == pre.phys_mem
@@ -576,6 +577,7 @@ impl State {
         forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
             let walk_na = finish_iter_walk(self.core_mem(core), walk);
             let walk_a  = self.core_mem(core).pt_walk(walk.vaddr);
+            &&& walk.vaddr < MAX_BASE
             &&& aligned(walk.vaddr as nat, 8)
             &&& walk.path.len() <= 3
             &&& !walk.complete
@@ -614,7 +616,7 @@ impl State {
     }
 
     pub open spec fn inv_unmapping__valid_walk(self, c: Constants) -> bool {
-        forall|va, core| #![auto] c.valid_core(core) && self.core_mem(core).pt_walk(va).result() is Valid ==> {
+        forall|va: usize, core| #![auto] c.valid_core(core) && va < MAX_BASE && self.core_mem(core).pt_walk(va).result() is Valid ==> {
             let core_walk = self.core_mem(core).pt_walk(va);
             let vbase = core_walk.result()->Valid_vbase;
             let pte = core_walk.result()->Valid_pte;
@@ -648,6 +650,7 @@ impl State {
 
     pub open spec fn inv_mapping__inflight_walks(self, c: Constants) -> bool {
         forall|core, walk| c.valid_core(core) && #[trigger] self.walks[core].contains(walk) ==> {
+            &&& walk.vaddr < MAX_BASE
             &&& aligned(walk.vaddr as nat, 8)
             &&& walk.path.len() <= 3
             &&& !walk.complete
@@ -672,7 +675,7 @@ impl State {
             #![trigger self.writer_mem().pt_walk(va), self.writer_sbuf().contains_fst(a)]
         {
             let walk = self.writer_mem().pt_walk(va);
-            walk.result() is Valid && !self.pending_map_for(va) && walk.path.contains_fst(a)
+            va < MAX_BASE && walk.result() is Valid && !self.pending_map_for(va) && walk.path.contains_fst(a)
                 ==> !self.writer_sbuf().contains_fst(a)
         }
     }
@@ -848,8 +851,8 @@ proof fn next_step_preserves_inv_unmapping__valid_walk(pre: State, post: State, 
                 if let Lbl::Write(core, addr, value) = lbl {
                     (core, addr, value)
                 } else { arbitrary() };
-            assert forall|va, core| #![auto]
-                c.valid_core(core) && post.core_mem(core).pt_walk(va).result() is Valid implies {
+            assert forall|va: usize, core| #![auto]
+                c.valid_core(core) && va < MAX_BASE && post.core_mem(core).pt_walk(va).result() is Valid implies {
                     let core_walk = post.core_mem(core).pt_walk(va);
                     let vbase = core_walk.result()->Valid_vbase;
                     let pte = core_walk.result()->Valid_pte;
@@ -1859,6 +1862,7 @@ proof fn lemma_step_writenonneg_new_walk_has_pending_map(pre: State, post: State
         pre.wf(c),
         pre.inv_sbuf_facts(c),
         step_WriteNonneg(pre, post, c, lbl),
+        va < MAX_BASE,
         pre.writer_mem().pt_walk(va).result() is Invalid,
         post.writer_mem().pt_walk(va).result() is Valid,
     ensures
@@ -1917,7 +1921,8 @@ proof fn next_step_preserves_inv_mapping__valid_not_pending_is_not_in_sbuf(pre: 
                     (core, addr, value)
                 } else { arbitrary() };
             assert forall|va:usize,addr|
-                    post.writer_mem().pt_walk(va).result() is Valid
+                       va < MAX_BASE
+                    && post.writer_mem().pt_walk(va).result() is Valid
                     && !post.pending_map_for(va)
                     && post.writer_mem().pt_walk(va).path.contains_fst(addr)
                 implies !post.writer_sbuf().contains_fst(addr)
@@ -2103,6 +2108,7 @@ proof fn lemma_valid_implies_equal_walks(state: State, c: Constants, core: Core,
 
 proof fn lemma_valid_not_pending_implies_equal(state: State, c: Constants, core: Core, va: usize)
     requires
+        va < MAX_BASE,
         state.wf(c),
         state.inv_sbuf_facts(c),
         state.inv_mapping__valid_not_pending_is_not_in_sbuf(c),
@@ -2327,6 +2333,7 @@ pub proof fn lemma_pt_walk_result_vbase_equal(mem: PTMem, vaddr: usize)
     ensures
         mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).path     == mem.pt_walk(vaddr).path,
         mem.pt_walk(mem.pt_walk(vaddr).result().vaddr()).result() == mem.pt_walk(vaddr).result(),
+        mem.pt_walk(vaddr).result().vaddr() <= vaddr,
 {
     broadcast use lemma_iter_walk_equals_pt_walk;
     lemma_iter_walk_result_vbase_equal(mem, mem.pt_walk(vaddr).result().vaddr());
@@ -2433,6 +2440,7 @@ pub mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl1;
     use crate::spec_t::mmu::rl2;
+    use crate::spec_t::mmu::defs::MAX_BASE;
 
     impl rl2::State {
         pub open spec fn interp(self) -> rl1::State {
@@ -2653,7 +2661,7 @@ pub mod refinement {
                     assert(rl1::step_MemOpNoTr(pre.interp(), post.interp(), c, lbl));
                 } else {
                     rl2::lemma_valid_implies_equal_walks(pre, c, core, walk.vaddr);
-                    assert forall|va| writer_mem.pt_walk(va).result() is Valid && !pre.pending_map_for(va)
+                    assert forall|va: usize| va < MAX_BASE && writer_mem.pt_walk(va).result() is Valid && !pre.pending_map_for(va)
                         implies #[trigger] core_mem.pt_walk(va).result() == writer_mem.pt_walk(va).result()
                     by { rl2::lemma_valid_not_pending_implies_equal(pre, c, core, va); };
                     assert(walk_a_same_core.result() == walk_a_writer_core.result());

@@ -5,7 +5,7 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
+use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE, MAX_BASE };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ aligned, update_range };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
@@ -271,16 +271,13 @@ pub closed spec fn step_CacheEvict(pre: State, post: State, c: Constants, core: 
 
 // ---- Non-atomic page table walks ----
 
-// FIXME: this should make sure the alignment of va fits with the PTE
 pub closed spec fn step_WalkInit(pre: State, post: State, c: Constants, core: Core, vaddr: usize, lbl: Lbl) -> bool {
     let walk = Walk { vaddr, path: seq![], complete: false };
     &&& lbl is Tau
 
     &&& c.valid_core(core)
     &&& aligned(vaddr as nat, 8)
-    // FIXME: What about bits in the virtual address above the indices? Do they need to be zero or
-    // can we just ignore them?
-    //&&& arbitrary() // TODO: conditions on va? max vaddr?
+    &&& vaddr < MAX_BASE
 
     &&& post == State {
         walks: pre.walks.insert(core, pre.walks[core].insert(walk)),

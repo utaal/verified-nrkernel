@@ -1,12 +1,11 @@
 use vstd::prelude::*;
 
 use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
-use crate::spec_t::mmu::defs::{ PTE, bitmask_inc, WORD_SIZE, bit };
+use crate::spec_t::mmu::defs::{ PTE, bitmask_inc, WORD_SIZE, bit, MAX_BASE };
 use crate::spec_t::mmu::{ Walk, WalkResult };
 
 verus! {
 
-// TODO: memory size
 pub struct PTMem {
     pub mem: Map<usize, usize>,
     pub pml4: usize,
@@ -222,6 +221,7 @@ impl PTMem {
     }
 
     pub open spec fn is_base_pt_walk(self, vaddr: usize) -> bool {
+        &&& vaddr < MAX_BASE
         &&& self.pt_walk(vaddr).result() matches WalkResult::Valid { vbase, pte }
         &&& vbase == vaddr
     }

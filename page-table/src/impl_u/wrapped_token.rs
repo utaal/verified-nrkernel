@@ -343,7 +343,6 @@ impl WrappedTokenView {
         by {
             assert(vaddr == vaddr as usize);
             let vaddr: usize = vaddr as usize;
-            assume(vaddr < MAX_BASE);
             let pte = self.pt_mem@[vaddr as usize];
             assert(self.pt_mem.pt_walk(vaddr).result() matches WalkResult::Valid { vbase, pte } && vbase == vaddr);
             PT::lemma_interp_at_facts(self, pt, 0, self.pt_mem.pml4, 0);
