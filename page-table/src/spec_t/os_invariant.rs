@@ -466,7 +466,8 @@ pub proof fn init_implies_tlb_inv(c: os::Constants, s: os::State)
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 }
 
-pub proof fn next_step_preserves_tlb_inv(
+pub proof fn next_step_preserves_tlb_inv
+(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -481,7 +482,138 @@ pub proof fn next_step_preserves_tlb_inv(
     ensures
         s2.tlb_inv(c),
 {
-    admit();
+    assume(s2.inv_tlb_wf(c));
+    match step {
+        os::Step::MMU => {
+            assume(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::MemOp { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::ReadPTMem {core, paddr, value } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+        },
+        os::Step::Barrier { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+        },
+        os::Step::Invlpg { core, vaddr} => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+        },
+       //Map steps
+        os::Step::MapStart { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assume(s1.unmap_vaddr_set() =~= s2.unmap_vaddr_set());
+            assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
+            assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()) =~= s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::MapOpStart { core }
+        | os::Step::Allocate { core, .. } 
+        | os::Step::MapNoOp { core }
+        | os::Step::MapEnd { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.unmap_vaddr_set() == Set::<nat>::empty());
+            assert(s1.unmap_vaddr_set() == Set::<nat>::empty());
+            assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+        },
+        os::Step::MapOpStutter { core, paddr, value } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.unmap_vaddr_set() == Set::<nat>::empty());
+            assert(s1.unmap_vaddr_set() == Set::<nat>::empty());
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::MapOpChange { core, paddr, value } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.unmap_vaddr_set() == Set::<nat>::empty());
+            assert(s1.unmap_vaddr_set() == Set::<nat>::empty());
+            assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()).subset_of(s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set())));
+            assume( forall|core: Core| {
+                #[trigger] c.valid_core(core)
+                    ==> (s1.mmu@.tlbs[core].dom().map(|v| v as nat) =~= s2.mmu@.tlbs[core].dom().map(|v| v as nat))
+            });
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+       //Unmap steps
+        os::Step::UnmapStart { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::UnmapOpStart { core }
+        | os::Step::Deallocate { core, .. }
+        | os::Step::UnmapOpFail { core }
+        | os::Step::UnmapWaitShootdown { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::UnmapOpChange { core, paddr, value } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+        },
+        os::Step::UnmapOpStutter { core, paddr, value } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+        },
+        os::Step::UnmapInitiateShootdown { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::AckShootdownIPI { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assume(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+        os::Step::UnmapEnd { core } => {
+            assert(s2.inv_tlb_wf(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(s2.successful_IPI(c));
+            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    
+        },
+    }
     
 }
 

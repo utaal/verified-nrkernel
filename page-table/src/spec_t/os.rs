@@ -1246,6 +1246,12 @@ impl State {
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about the TLB
     ///////////////////////////////////////////////////////////////////////////////////////////////
+    pub open spec fn inv_tlb_wf(self, c: Constants) -> bool {
+        forall|core: Core| {
+            #[trigger] c.valid_core(core) <==> self.mmu@.tlbs.contains_key(core)
+        }
+    }
+    
     pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {
         forall|core| #[trigger]
             self.os_ext.shootdown_vec.open_requests.contains(core) ==> c.valid_core(core)
@@ -1283,8 +1289,9 @@ impl State {
     //}
 
     pub open spec fn tlb_inv(self, c: Constants) -> bool {
-        //&&& self.shootdown_cores_valid(c)
-        //&&& self.successful_IPI(c)
+        &&& self.inv_tlb_wf(c)
+        &&& self.shootdown_cores_valid(c)
+        &&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
     }
 
