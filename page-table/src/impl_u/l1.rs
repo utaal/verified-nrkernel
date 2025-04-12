@@ -165,7 +165,7 @@ impl Directory {
         &&& self.directories_match_arch()
         &&& self.directories_obey_invariant()
         //&&& non_empty ==> self.directories_are_nonempty()
-        //&&& self.frames_aligned()
+        // &&& self.frames_aligned()
     }
 
     pub open spec(checked) fn interp(self) -> Map<nat, PTE> {

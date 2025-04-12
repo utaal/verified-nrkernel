@@ -854,6 +854,13 @@ pub mod code {
     use crate::spec_t::mmu::defs::{ aligned };
     use core::arch::asm;
 
+
+    // Note:
+    // We should look into consolidating all the prophesy_* functions into a single prophesy
+    // function that takes a label as an argument and then have a specific precond function that
+    // just maps each label to the necessary preconditions for that op.
+    // Or would that be more annoying to work with?
+
     #[verifier(external_body)]
     pub tracked struct Token {}
 
