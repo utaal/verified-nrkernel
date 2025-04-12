@@ -521,7 +521,18 @@ pub proof fn next_step_preserves_tlb_inv
             assert(s2.inv_tlb_wf(c));
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
-            assume(s1.unmap_vaddr_set() =~= s2.unmap_vaddr_set());
+            assert(s1.unmap_vaddr_set() =~= s2.unmap_vaddr_set()) by {
+                assert forall |vaddr| s1.is_unmap_vaddr(vaddr) implies
+                    s2.is_unmap_vaddr(vaddr) by {
+                        let unmap_core = choose|unmap_core| s1.is_unmap_vaddr_core(unmap_core, vaddr);
+                        assert(s2.is_unmap_vaddr_core(unmap_core, vaddr));
+                    }
+                assert forall |vaddr| s2.is_unmap_vaddr(vaddr) implies
+                    s1.is_unmap_vaddr(vaddr) by {
+                        let unmap_core = choose|unmap_core| s2.is_unmap_vaddr_core(unmap_core, vaddr);
+                        assert(s1.is_unmap_vaddr_core(unmap_core, vaddr));
+                    }
+            }
             assert(s1.interp_pt_mem() =~= s2.interp_pt_mem());
             assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()) =~= s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
@@ -567,7 +578,19 @@ pub proof fn next_step_preserves_tlb_inv
             assert(s2.inv_tlb_wf(c));
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(s1.unmap_vaddr_set() =~= s2.unmap_vaddr_set()) by {
+                assert forall |vaddr| s1.is_unmap_vaddr(vaddr) implies
+                    s2.is_unmap_vaddr(vaddr) by {
+                        let unmap_core = choose|unmap_core| s1.is_unmap_vaddr_core(unmap_core, vaddr);
+                        assert(s2.is_unmap_vaddr_core(unmap_core, vaddr));
+                    }
+                assert forall |vaddr| s2.is_unmap_vaddr(vaddr) implies
+                    s1.is_unmap_vaddr(vaddr) by {
+                        let unmap_core = choose|unmap_core| s2.is_unmap_vaddr_core(unmap_core, vaddr);
+                        assert(s1.is_unmap_vaddr_core(unmap_core, vaddr));
+                    }
+            }
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
     
         },
         os::Step::UnmapOpStart { core }
