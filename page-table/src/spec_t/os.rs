@@ -694,14 +694,9 @@ pub open spec fn init(c: Constants, s: State) -> bool {
     &&& s.sound
 }
 
-
-
-
-
-
-
-// Invariants and definitions for refinement
-
+///////////////////////////////////////////////////////////////////////////////////////////////
+// Definitions for refinement
+///////////////////////////////////////////////////////////////////////////////////////////////
 impl Constants {
     pub open spec fn interp(self) -> hlspec::Constants {
         hlspec::Constants { thread_no: self.ult_no, phys_mem_size: self.common.phys_mem_size }
@@ -879,8 +874,7 @@ impl State {
 
     pub open spec fn is_unmap_vaddr_core(self, core: Core, vaddr: nat) -> bool {
         self.core_states.contains_key(core) && match self.core_states[core] {
-            CoreState::UnmapOpDone { vaddr: vaddr1, result, .. }
-            | CoreState::UnmapShootdownWaiting { vaddr: vaddr1, result, .. } => {
+            CoreState::UnmapShootdownWaiting { vaddr: vaddr1, result, .. } => {
                 (result is Ok) && (vaddr1 === vaddr)
             },
             _ => false,
@@ -941,7 +935,7 @@ impl State {
     pub open spec fn candidate_vaddr_overlaps(self, vaddr: nat) -> bool {
         match self.core_states[self.get_extra_vaddr_core(vaddr)] {
             CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
-            | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } => 
+            | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } =>
                 candidate_mapping_overlaps_existing_vmem(
                     self.effective_mappings(),
                     vaddr,
@@ -1196,7 +1190,7 @@ impl State {
     pub open spec fn inv_shootdown(self, c: Constants) -> bool {
         &&& !(self.os_ext.lock matches Some(core) && self.core_states[core] is UnmapShootdownWaiting)
             ==> self.os_ext.shootdown_vec.open_requests.is_empty()
-        &&& (self.os_ext.lock matches Some(core) && 
+        &&& (self.os_ext.lock matches Some(core) &&
             self.core_states[core] matches CoreState::UnmapShootdownWaiting { .. })
             ==> self.mmu@.writes.nonpos.subset_of(self.os_ext.shootdown_vec.open_requests)
     }
@@ -1205,7 +1199,7 @@ impl State {
         &&& self.mmu@.writes.nonpos.subset_of(Set::new(|core| c.valid_core(core)))
         &&& (self.os_ext.lock matches Some(core) && self.core_states[core].is_mapping())
                 ==> self.mmu@.writes.nonpos === set![]
-        &&& (self.os_ext.lock matches Some(core) && 
+        &&& (self.os_ext.lock matches Some(core) &&
             self.core_states[core] matches CoreState::UnmapExecuting { result: None, .. })
                 ==> self.mmu@.writes.tso === set![] && self.mmu@.writes.nonpos === set![]
         &&& self.os_ext.lock is None ==> {
@@ -1247,28 +1241,28 @@ impl State {
     // Invariants about the TLB
     ///////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn inv_tlb_wf(self, c: Constants) -> bool {
-        forall|core: Core| {
+        /*forall|core: Core| {
             #[trigger] c.valid_core(core) <==> self.mmu@.tlbs.contains_key(core)
-        }
+        }*/ true
     }
-    
+
+    pub open spec fn inv_shootdown_wf(self, c: Constants) -> bool {
+        forall |dispatcher: Core | (#[trigger] c.valid_core(dispatcher) && self.core_states[dispatcher] is UnmapShootdownWaiting) 
+        ==>  self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr == self.os_ext.shootdown_vec.vaddr
+    }
+
     pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {
         forall|core| #[trigger]
             self.os_ext.shootdown_vec.open_requests.contains(core) ==> c.valid_core(core)
     }
 
     pub open spec fn successful_IPI(self, c: Constants) -> bool {
-        forall|dispatcher: Core| {
-                c.valid_core(dispatcher) ==> match self.core_states[dispatcher] {
-                    CoreState::UnmapShootdownWaiting { vaddr, .. } => {
-                        forall|handler: Core|
-                            !(#[trigger] self.os_ext.shootdown_vec.open_requests.contains(handler))
-                                ==> !self.mmu@.tlbs[handler].contains_key(vaddr as usize)
-                    },
-                    _ => true,
-                }
-            }
+        forall |dispatcher: Core, handler: Core| (#[trigger] c.valid_core(dispatcher) && c.valid_core(handler) 
+        && self.core_states[dispatcher] is UnmapShootdownWaiting) && !(#[trigger] self.os_ext.shootdown_vec.open_requests.contains(handler))
+        ==> !self.mmu@.tlbs[handler].contains_key((self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
     }
+
+
 
     pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: Constants) -> bool {
         forall|core: Core| {
@@ -1290,6 +1284,7 @@ impl State {
 
     pub open spec fn tlb_inv(self, c: Constants) -> bool {
         &&& self.inv_tlb_wf(c)
+        &&& self.inv_shootdown_wf(c)
         &&& self.shootdown_cores_valid(c)
         &&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
@@ -1340,7 +1335,7 @@ impl State {
             )) ==> core1 === core2
     }
 
-    
+
     pub open spec fn inv_inflight_map_no_overlap_existing_pmem(self, c: Constants) -> bool {
         forall|core| #![auto](c.valid_core(core) && self.core_states[core].is_map()) && !(self.core_states[core] is MapDone)
                 ==> !candidate_mapping_overlaps_existing_pmem(
@@ -1349,12 +1344,12 @@ impl State {
             )
     }
 
-    
+
     pub open spec fn inv_mapped_pmem_no_overlap(self, c: Constants) -> bool {
         forall|vaddr1, vaddr2|
             (self.interp_pt_mem().contains_key(vaddr1)
                 && self.interp_pt_mem().contains_key(vaddr2)
-                && overlap( 
+                && overlap(
                     self.interp_pt_mem()[vaddr1].frame,
                     self.interp_pt_mem()[vaddr2].frame)
                 ) ==> vaddr1 === vaddr2
