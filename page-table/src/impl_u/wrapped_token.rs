@@ -1,15 +1,14 @@
 use vstd::prelude::*;
 use vstd::{ assert_by_contradiction, assert_seqs_equal };
 
-//use crate::spec_t::mmu::WalkResult;
 use crate::spec_t::os;
 use crate::spec_t::os_invariant;
-use crate::spec_t::mmu::{ self, WalkResult, Walk };
+use crate::spec_t::mmu::{ self, WalkResult };
 use crate::spec_t::os_ext;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, bit, candidate_mapping_overlaps_existing_vmem, WORD_SIZE,
-    bitmask_inc, x86_arch_spec, x86_arch_spec_upper_bound, MAX_BASE, align_to_usize, Flags
+    bitmask_inc, x86_arch_spec, x86_arch_spec_upper_bound, MAX_BASE, align_to_usize
 };
 use crate::spec_t::mmu::defs::{
     MemRegionExec, MemRegion, PTE, MAX_PHYADDR, L0_ENTRY_SIZE, L1_ENTRY_SIZE, L2_ENTRY_SIZE,
@@ -26,9 +25,6 @@ use crate::spec_t::os_code_vc::Token;
 use crate::spec_t::os_code_vc::{ lemma_concurrent_trs, unchanged_state_during_concurrent_trs, lemma_concurrent_trs_no_lock };
 use crate::impl_u::wrapped_token;
 use crate::impl_u::l2_impl::{ PT, PTDir };
-
-use crate::impl_u::l1;
-//use super::l1::Directory;
 
 verus! {
 
@@ -77,269 +73,271 @@ impl WrappedTokenView {
         forall|r| self.regions.contains_key(r) ==> #[trigger] self.regions[r] == Seq::new(512, |i: int| self.pt_mem.mem[(r.base + i * 8) as usize])
     }
 
-    #[verifier(spinoff_prover)]
-    pub proof fn lemma_interps_match(self, pt: PTDir)
+    pub proof fn lemma_interps_match_aux1(self, pt: PTDir)
         requires
             PT::inv(self, pt),
             self.regions_derived_from_view(),
-        ensures PT::interp(self, pt).interp() == crate::spec_t::mmu::defs::nat_keys(self.interp())
+        ensures PT::interp(self, pt).interp().dom().subset_of(self.pt_mem@.dom().map(|k| k as nat))
     {
         reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
-
-        let root_dir = crate::impl_u::l1::Directory {
-            entries: PT::interp_at_aux(self, pt, 0, self.pt_mem.pml4, 0, seq![]),
-            layer: 0,
-            base_vaddr: 0,
-            arch: mmu::defs::x86_arch_spec,
-        };
-
-        assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0) == root_dir);
-
-        assert(root_dir.interp().dom().subset_of(self.pt_mem@.dom().map(|k| k as nat))) by {
-            assert forall|vaddr: nat|
-                root_dir.interp().contains_key(vaddr)
-                    implies {
-                &&& vaddr <= usize::MAX
-                &&& self.pt_mem.is_base_pt_walk(vaddr as usize)
-            } by {
-                assert_by_contradiction!(vaddr <= usize::MAX, {
-                    assert_by_contradiction!(!root_dir.interp().contains_key(vaddr), {
-                        broadcast use crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv;
-                        root_dir.lemma_interp_aux_between(0, vaddr, root_dir.interp()[vaddr]);
-                        x86_arch_spec_upper_bound();
-                    });
+        assert forall|vaddr: nat|
+            PT::interp(self, pt).interp().contains_key(vaddr)
+                implies {
+            &&& vaddr <= usize::MAX
+            &&& self.pt_mem.is_base_pt_walk(vaddr as usize)
+        } by {
+            x86_arch_spec_upper_bound();
+            assert_by_contradiction!(vaddr < MAX_BASE, {
+                assert_by_contradiction!(!PT::interp(self, pt).interp().contains_key(vaddr), {
+                    broadcast use crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv;
+                    PT::interp(self, pt).lemma_interp_aux_between(0, vaddr, PT::interp(self, pt).interp()[vaddr]);
                 });
-                assert(vaddr == vaddr as usize);
-                let vaddr: usize = vaddr as usize;
-                assume(vaddr < MAX_BASE);
-                PT::lemma_interp_at_facts(self, pt, 0, self.pt_mem.pml4, 0);
-                crate::spec_t::mmu::translation::lemma_bit_indices_less_512(vaddr as usize);
-                assert(forall|x: usize, b: usize| x & b & b == x & b) by (bit_vector);
+            });
+            assert(vaddr == vaddr as usize);
+            let vaddr: usize = vaddr as usize;
+            PT::lemma_interp_at_facts(self, pt, 0, self.pt_mem.pml4, 0);
+            crate::spec_t::mmu::translation::lemma_bit_indices_less_512(vaddr as usize);
+            assert(forall|x: usize, b: usize| x & b & b == x & b) by (bit_vector);
 
-                let l0_bidx = l0_bits!(vaddr);
-                let l1_bidx = l1_bits!(vaddr);
-                let l2_bidx = l2_bits!(vaddr);
-                let l3_bidx = l3_bits!(vaddr);
+            let l0_bidx = l0_bits!(vaddr);
+            let l1_bidx = l1_bits!(vaddr);
+            let l2_bidx = l2_bits!(vaddr);
+            let l3_bidx = l3_bits!(vaddr);
 
-                let l0_idx = mul(l0_bits!(vaddr), WORD_SIZE);
-                let l1_idx = mul(l1_bits!(vaddr), WORD_SIZE);
-                let l2_idx = mul(l2_bits!(vaddr), WORD_SIZE);
-                let l3_idx = mul(l3_bits!(vaddr), WORD_SIZE);
-                assert(forall|a:usize| (a & bitmask_inc!(0usize,8usize) == a) ==> a < 512) by (bit_vector);
-                assert(bitmask_inc!(39usize,47usize) == 0xFF80_0000_0000) by (compute);
-                assert(bitmask_inc!(30usize,38usize) == 0x007F_C000_0000) by (compute);
-                assert(bitmask_inc!(21usize,29usize) == 0x0000_3FE0_0000) by (compute);
-                assert(bitmask_inc!(12usize,20usize) == 0x0000_001F_F000) by (compute);
-                let interp_l0 = PT::interp(self, pt);
-                let interp_l0_entry = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, l0_bidx as nat);
-                crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, pt, 0, self.pt_mem.pml4, 0);
-                interp_l0.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
-                assert(l0_bidx == x86_arch_spec.index_for_vaddr(0, 0, vaddr as nat)) by {
-                    let l0_es: usize = mul(512, mul(512, mul(512, 4096)));
-                    // assert(mul(512nat, mul(512, mul(512, 4096))) == L0_ENTRY_SIZE) by (compute);
-                    assert((vaddr & 0xFF80_0000_0000) >> 39 == vaddr / l0_es) by (bit_vector)
+            let l0_idx = mul(l0_bits!(vaddr), WORD_SIZE);
+            let l1_idx = mul(l1_bits!(vaddr), WORD_SIZE);
+            let l2_idx = mul(l2_bits!(vaddr), WORD_SIZE);
+            let l3_idx = mul(l3_bits!(vaddr), WORD_SIZE);
+            assert(forall|a:usize| (a & bitmask_inc!(0usize,8usize) == a) ==> a < 512) by (bit_vector);
+            assert(bitmask_inc!(39usize,47usize) == 0xFF80_0000_0000) by (compute);
+            assert(bitmask_inc!(30usize,38usize) == 0x007F_C000_0000) by (compute);
+            assert(bitmask_inc!(21usize,29usize) == 0x0000_3FE0_0000) by (compute);
+            assert(bitmask_inc!(12usize,20usize) == 0x0000_001F_F000) by (compute);
+            let interp_l0 = PT::interp(self, pt);
+            let interp_l0_entry = PT::interp_at_entry(self, pt, 0, self.pt_mem.pml4, 0, l0_bidx as nat);
+            crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, pt, 0, self.pt_mem.pml4, 0);
+            interp_l0.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
+            assert(interp_l0.index_for_vaddr(vaddr as nat) == x86_arch_spec.index_for_vaddr(0, 0, vaddr as nat));
+            assert(interp_l0.interp_of_entry(interp_l0.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
+            let l0_addr = add(self.pt_mem.pml4, l0_idx);
+            let l0e = PDE { entry: self.pt_mem.read(l0_addr), layer: Ghost(0) };
+            let impl_l0e = PT::entry_at_spec(self, pt, 0, self.pt_mem.pml4, l0_bidx as nat);
+            assert(self.pt_mem.read(l0_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bidx as nat as usize, pt.region));
+            assert(l0e@ == impl_l0e@) by {
+                l0e.lemma_view_unchanged_dirty_access(impl_l0e);
+            };
+
+            let low_bits: usize = vaddr % (L0_ENTRY_SIZE as usize);
+            // This assert proves: ... == l0_bidx * L0_ENTRY_SIZE + low_bits
+            assert((l0_bidx << 39usize) | low_bits
+                   == add(mul(l0_bidx, mul(512, mul(512, mul(512, 4096)))),
+                          low_bits)) by (bit_vector)
+                requires
+                    low_bits == vaddr % mul(512, mul(512, mul(512, 4096)));
+            assert(vaddr == ((l0_bidx << 39usize) | low_bits)) by (bit_vector)
+                requires
+                    l0_bidx == (vaddr & 0xFF80_0000_0000) >> 39,
+                    vaddr < mul(512usize, mul(512, mul(512, mul(512, 4096)))),
+                    low_bits == vaddr % mul(512, mul(512, mul(512, 4096)));
+
+            match l0e@ {
+                GPDE::Directory { addr: l1_daddr, .. } => {
+                    assert(interp_l0_entry is Directory);
+                    let l1_addr = add(l1_daddr, l1_idx);
+                    let l1e = PDE { entry: self.pt_mem.read(l1_addr), layer: Ghost(1) };
+                    let l1_base = x86_arch_spec.entry_base(0, 0, l0_bidx as nat);
+                    let l1_ghost_pt = pt.entries[l0_bidx as int].get_Some_0();
+                    assert(PT::directories_obey_invariant_at(self, pt, 0, self.pt_mem.pml4));
+                    assert(PT::inv_at(self, l1_ghost_pt, 1, l1_daddr));
+                    PT::lemma_interp_at_facts(self, l1_ghost_pt, 1, l1_daddr, l1_base);
+                    let interp_l1 = PT::interp_at(self, l1_ghost_pt, 1, l1_daddr, l1_base);
+                    let interp_l1_entry = PT::interp_at_entry(self, l1_ghost_pt, 1, l1_daddr, l1_base, l1_bidx as nat);
+                    crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, l1_ghost_pt, 1, l1_daddr, l1_base);
+                    interp_l1.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
+                    assert(interp_l1.interp_of_entry(interp_l1.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
+
+                    let impl_l1e = PT::entry_at_spec(self, l1_ghost_pt, 1, l1_daddr, l1_bidx as nat);
+                    assert(l1e@ == impl_l1e@) by {
+                        assert(self.pt_mem.read(l1_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l1_bidx, l1_ghost_pt.region));
+                        l1e.lemma_view_unchanged_dirty_access(impl_l1e);
+                    };
+
+                    let low_bits = vaddr % L1_ENTRY_SIZE;
+                    // This assert proves: ... == l0_bidx * L0_ENTRY_SIZE + l1_bidx * L1_ENTRY_SIZE + low_bits
+                    assert((l0_bidx << 39usize) | (l1_bidx << 30usize) | low_bits
+                           == add(add(mul(l0_bidx, mul(512, mul(512, mul(512, 4096)))),
+                                      mul(l1_bidx, mul(512, mul(512, 4096)))),
+                                      low_bits)) by (bit_vector)
                         requires
-                            vaddr < mul(512usize, l0_es),
-                            l0_es == mul(512usize, mul(512, mul(512, 4096)));
-                };
-                assert(interp_l0.index_for_vaddr(vaddr as nat) == x86_arch_spec.index_for_vaddr(0, 0, vaddr as nat));
-                assert(interp_l0.interp_of_entry(interp_l0.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
-                assert(interp_l0_entry.interp(0).contains_key(vaddr as nat));
-                let l0_addr = add(self.pt_mem.pml4, l0_idx);
-                let l0e = PDE { entry: self.pt_mem.read(l0_addr), layer: Ghost(0) };
-                let impl_l0e = PT::entry_at_spec(self, pt, 0, self.pt_mem.pml4, l0_bidx as nat);
-                assert(self.pt_mem.read(l0_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l0_bidx as nat as usize, pt.region));
-                assert(l0e@ == impl_l0e@) by {
-                    l0e.lemma_view_unchanged_dirty_access(impl_l0e);
-                };
-                match l0e@ {
-                    GPDE::Directory { addr: l1_daddr, .. } => {
-                        assert(interp_l0_entry is Directory);
-                        let l1_addr = add(l1_daddr, l1_idx);
-                        let l1e = PDE { entry: self.pt_mem.read(l1_addr), layer: Ghost(1) };
-                        let l1_base = x86_arch_spec.entry_base(0, 0, l0_bidx as nat);
-                        let l1_ghost_pt = pt.entries[l0_bidx as int].get_Some_0();
-                        assert(PT::directories_obey_invariant_at(self, pt, 0, self.pt_mem.pml4));
-                        assert(PT::inv_at(self, l1_ghost_pt, 1, l1_daddr));
-                        PT::lemma_interp_at_facts(self, l1_ghost_pt, 1, l1_daddr, l1_base);
-                        let interp_l1 = PT::interp_at(self, l1_ghost_pt, 1, l1_daddr, l1_base);
-                        let interp_l1_entry = PT::interp_at_entry(self, l1_ghost_pt, 1, l1_daddr, l1_base, l1_bidx as nat);
-                        crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, l1_ghost_pt, 1, l1_daddr, l1_base);
-                        interp_l1.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
-                        assert(interp_l1.interp_of_entry(interp_l1.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
+                            l1_bidx == (vaddr & 0x007F_C000_0000) >> 30,
+                            low_bits == vaddr % mul(512, mul(512, 4096));
+                    assert(vaddr == ((l0_bidx << 39usize) | (l1_bidx << 30usize) | low_bits)) by (bit_vector)
+                        requires
+                            l0_bidx == (vaddr & 0xFF80_0000_0000) >> 39,
+                            l1_bidx == (vaddr & 0x007F_C000_0000) >> 30,
+                            vaddr < mul(512usize, mul(512, mul(512, mul(512, 4096)))),
+                            low_bits == vaddr % mul(512, mul(512, 4096));
 
-                        let impl_l1e = PT::entry_at_spec(self, l1_ghost_pt, 1, l1_daddr, l1_bidx as nat);
-                        assert(l1e@ == impl_l1e@) by {
-                            assert(self.pt_mem.read(l1_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l1_bidx, l1_ghost_pt.region));
-                            l1e.lemma_view_unchanged_dirty_access(impl_l1e);
-                        };
-                        // assume(l1_bidx == x86_arch_spec.index_for_vaddr(1, l1_base, vaddr as nat));
-                        assert(l1_bidx == x86_arch_spec.index_for_vaddr(1, l1_base, vaddr as nat)) by {
-                            assert(x86_arch_spec.index_for_vaddr(1, l1_base, vaddr as nat) < 512);
-                            assert(l1_base == x86_arch_spec.entry_base(0, 0, l0_bidx as nat));
-                            assert(l1_base == l0_bidx * L0_ENTRY_SIZE);
-                            let low_bits: usize = vaddr % (L0_ENTRY_SIZE);
-                            assert(forall|x: usize| x < 512 ==> x << 39 == x * L0_ENTRY_SIZE) by {
-                                assert(forall|x: usize| x < 512 ==> x << 39 == x * mul(512usize, mul(512, mul(512, 4096)))) by (bit_vector);
-                            }
-                            assert((l0_bidx << 39usize) | low_bits
-                                   == add(mul(l0_bidx, mul(512, mul(512, mul(512, 4096)))),
+                    match l1e@ {
+                        GPDE::Page { addr: page_addr, .. } => {
+                            let l2_base = x86_arch_spec.entry_base(1, l1_base, l1_bidx as nat);
+                            assert(aligned(l2_base, L1_ENTRY_SIZE as nat)) by {
+                                crate::impl_u::indexing::lemma_entry_base_from_index(l1_base, l1_bidx as nat, L1_ENTRY_SIZE as nat);
+                            };
+                            assert(interp_l1.interp_of_entry(l1_bidx as nat).dom() =~= set![l2_base as nat]);
+                            assert(self.pt_mem.is_base_pt_walk(vaddr));
+                        },
+                        GPDE::Directory { addr: l2_daddr, .. } => {
+                            assert(interp_l1_entry is Directory);
+                            let l2_addr = add(l2_daddr, l2_idx);
+                            let l2e = PDE { entry: self.pt_mem.read(l2_addr), layer: Ghost(2) };
+                            let l2_base = x86_arch_spec.entry_base(1, l1_base, l1_bidx as nat);
+                            let l2_ghost_pt = l1_ghost_pt.entries[l1_bidx as int].get_Some_0();
+                            assert(PT::directories_obey_invariant_at(self, l1_ghost_pt, 1, l1_daddr));
+                            assert(PT::inv_at(self, l2_ghost_pt, 2, l2_daddr));
+                            PT::lemma_interp_at_facts(self, l2_ghost_pt, 2, l2_daddr, l2_base);
+                            let interp_l2 = PT::interp_at(self, l2_ghost_pt, 2, l2_daddr, l2_base);
+                            let interp_l2_entry = PT::interp_at_entry(self, l2_ghost_pt, 2, l2_daddr, l2_base, l2_bidx as nat);
+                            crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, l2_ghost_pt, 2, l2_daddr, l2_base);
+                            interp_l2.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
+                            assert(interp_l2.interp_of_entry(interp_l2.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
+
+                            let impl_l2e = PT::entry_at_spec(self, l2_ghost_pt, 2, l2_daddr, l2_bidx as nat);
+                            assert(l2e@ == impl_l2e@) by {
+                                assert(self.pt_mem.read(l2_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l2_bidx, l2_ghost_pt.region));
+                                l2e.lemma_view_unchanged_dirty_access(impl_l2e);
+                            };
+
+                            let low_bits: usize = vaddr % (L2_ENTRY_SIZE as usize);
+                            // This assert proves: ... == l0_bidx * L0_ENTRY_SIZE + l1_bidx * L1_ENTRY_SIZE + l2_bidx * L2_ENTRY_SIZE + low_bits
+                            assert((l0_bidx << 39usize) | (l1_bidx << 30usize) | (l2_bidx << 21usize) | low_bits
+                                   == add(add(add(
+                                          mul(l0_bidx, mul(512, mul(512, mul(512, 4096)))),
+                                          mul(l1_bidx, mul(512, mul(512, 4096)))),
+                                          mul(l2_bidx, mul(512, 4096))),
                                           low_bits)) by (bit_vector)
                                 requires
-                                    low_bits == vaddr % mul(512, mul(512, mul(512, 4096)));
-                            assert(vaddr == ((l0_bidx << 39usize) | low_bits)) by (bit_vector)
+                                    l1_bidx == (vaddr & 0x007F_C000_0000) >> 30,
+                                    l2_bidx == (vaddr & 0x0000_3FE0_0000) >> 21,
+                                    low_bits == vaddr % mul(512, 4096);
+                            assert(vaddr == ((l0_bidx << 39usize) | (l1_bidx << 30usize) | (l2_bidx << 21usize) | low_bits)) by (bit_vector)
                                 requires
                                     l0_bidx == (vaddr & 0xFF80_0000_0000) >> 39,
+                                    l1_bidx == (vaddr & 0x007F_C000_0000) >> 30,
+                                    l2_bidx == (vaddr & 0x0000_3FE0_0000) >> 21,
                                     vaddr < mul(512usize, mul(512, mul(512, mul(512, 4096)))),
-                                    low_bits == vaddr % mul(512, mul(512, mul(512, 4096)));
-                            assert(L1_ENTRY_SIZE == mul(512usize, mul(512, 4096))) by (compute);
-                            assert(forall|x: usize| x >> 30 == x / mul(512usize, mul(512, 4096))) by (bit_vector);
-                            assume(vaddr <= 0x007F_C000_0000);
-                            admit();
-                            // assert(vaddr & 0x007F_C000_0000 == vaddr - (l0_bidx << 39)) by (bit_vector)
-                            //     requires
-                            //         l0_bidx < 512;
-                                    // vaddr % (mul(512usize, mul(512, 4096))) == 0;
-                            assert(vaddr & 0x007F_C000_0000 == vaddr - (l0_bidx * L0_ENTRY_SIZE));
-                            assert(vaddr & 0x007F_C000_0000 == vaddr - l1_base);
-                            assert((vaddr & 0x007F_C000_0000) >> 30 == (vaddr - l1_base) / L1_ENTRY_SIZE as int);
-                            assert((vaddr & 0x007F_C000_0000) >> 30 == x86_arch_spec.index_for_vaddr(1, l1_base, vaddr as nat));
-                            assert(l1_bidx == x86_arch_spec.index_for_vaddr(1, l1_base, vaddr as nat));
-                            // // broadcast use Directory::lemma_interp_of_entry_between;
-                            // let l1_es: usize = mul(512, mul(512, 4096));
-                            // // assert(mul(512nat, mul(512, mul(512, 4096))) == L0_ENTRY_SIZE) by (compute);
-                            // assert(512 * 512 * 512 * 4096 < 512 * 512 * 512 * 512 * 4096) by (compute);
-                            //
-                            // // crate::impl_u::indexing::lemma_index_from_base_and_addr(base as nat, vaddr as nat, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
-                            // assert(vaddr < mul(512usize, mul(512, l1_es)));
-                            // assert(512 * 512 * l1_es < usize::MAX);
-                            // assert(512 * l1_es < usize::MAX);
-                            // crate::definitions_u::overflow_bounds();
-                            // let l1_base_usize = l1_base as usize;
-                            // assert((vaddr & 0x007F_C000_0000) >> 30 == (vaddr >> 30) & 0x1FF) by (bit_vector);
-                            // // assert(vaddr >> 30 == vaddr / mul(512usize, mul(512, 4096))) by (bit_vector);
-                            // assert(forall|x: usize| x >> 30 == x / mul(512usize, mul(512, 4096))) by (bit_vector);
-                            // assert(512 * 512 * 512 * 4096 <= x86_arch_spec.entry_base(1, l1_base, 512)) by (compute);
-                            // assert(l1_base <= vaddr);
-                            // // assert(vaddr / l1_es < 512) by (nonlinear_arith)
-                            // //     requires
-                            // //         (vaddr - l1_base) / l1_es as int < 512,
-                            // //         l1_base <= vaddr;
-                            // // assert(vaddr < mul(512usize, l1_es));
-                            // assert((vaddr & 0x007F_C000_0000) == sub(vaddr, l1_base_usize)) by (bit_vector)
-                            //     requires
-                            //         vaddr <= 0x007F_C000_0000;
-                            // // assert(0x007F_C000_0000 == 1) by (compute);
-                            // // assert((vaddr & 0x007F_C000_0000) >> 30 == sub(vaddr, l1_base_usize) / l1_es) by (bit_vector)
-                            // //     requires
-                            // //         l1_base_usize <= vaddr,
-                            // //         sub(vaddr, l1_base_usize) / l1_es < 512,
-                            // //         // vaddr < mul(512usize, l1_es),
-                            // //         l1_es == mul(512usize, mul(512, 4096));
-                        };
-                        match l1e@ {
-                            GPDE::Page { addr: page_addr, .. } => {
-                                let l2_base = x86_arch_spec.entry_base(1, l1_base, l1_bidx as nat);
-                                assert(aligned(l2_base, L1_ENTRY_SIZE as nat)) by {
-                                    crate::impl_u::indexing::lemma_entry_base_from_index(l1_base, l1_bidx as nat, L1_ENTRY_SIZE as nat);
-                                };
-                                assert(interp_l1.interp_of_entry(l1_bidx as nat).dom() =~= set![l2_base as nat]);
-                                assert(self.pt_mem.is_base_pt_walk(vaddr));
-                            },
-                            GPDE::Directory { addr: l2_daddr, .. } => {
-                                assert(interp_l1_entry is Directory);
-                                let l2_addr = add(l2_daddr, l2_idx);
-                                let l2e = PDE { entry: self.pt_mem.read(l2_addr), layer: Ghost(2) };
-                                let l2_base = x86_arch_spec.entry_base(1, l1_base, l1_bidx as nat);
-                                let l2_ghost_pt = l1_ghost_pt.entries[l1_bidx as int].get_Some_0();
-                                assert(PT::directories_obey_invariant_at(self, l1_ghost_pt, 1, l1_daddr));
-                                assert(PT::inv_at(self, l2_ghost_pt, 2, l2_daddr));
-                                PT::lemma_interp_at_facts(self, l2_ghost_pt, 2, l2_daddr, l2_base);
-                                let interp_l2 = PT::interp_at(self, l2_ghost_pt, 2, l2_daddr, l2_base);
-                                let interp_l2_entry = PT::interp_at_entry(self, l2_ghost_pt, 2, l2_daddr, l2_base, l2_bidx as nat);
-                                assume(l2_bidx == x86_arch_spec.index_for_vaddr(2, l2_base, vaddr as nat));
-                                crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, l2_ghost_pt, 2, l2_daddr, l2_base);
-                                interp_l2.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
-                                assert(interp_l2.interp_of_entry(interp_l2.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
+                                    low_bits == vaddr % mul(512, 4096);
 
-                                let impl_l2e = PT::entry_at_spec(self, l2_ghost_pt, 2, l2_daddr, l2_bidx as nat);
-                                assert(l2e@ == impl_l2e@) by {
-                                    assert(self.pt_mem.read(l2_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l2_bidx, l2_ghost_pt.region));
-                                    l2e.lemma_view_unchanged_dirty_access(impl_l2e);
-                                };
-                                match l2e@ {
-                                    GPDE::Page { addr: page_addr, .. } => {
-                                        let l3_base = x86_arch_spec.entry_base(2, l2_base, l2_bidx as nat);
-                                        assert(aligned(l3_base, L2_ENTRY_SIZE as nat)) by {
-                                            crate::impl_u::indexing::lemma_entry_base_from_index(0, l0_bidx as nat, L0_ENTRY_SIZE as nat);
-                                            crate::impl_u::indexing::lemma_entry_base_from_index(l1_base, l1_bidx as nat, L1_ENTRY_SIZE as nat);
-                                            crate::impl_u::indexing::lemma_entry_base_from_index(l2_base, l2_bidx as nat, L2_ENTRY_SIZE as nat);
-                                        };
-                                        assert(interp_l2.interp_of_entry(l2_bidx as nat).dom() =~= set![l3_base as nat]);
-                                        assert(align_to_usize(vaddr, L2_ENTRY_SIZE) == vaddr);
-                                        assert(self.pt_mem.is_base_pt_walk(vaddr));
-                                    },
-                                    GPDE::Directory { addr: l3_daddr, .. } => {
-                                        assert(interp_l2_entry is Directory);
-                                        let l3_addr = add(l3_daddr, l3_idx);
-                                        let l3e = PDE { entry: self.pt_mem.read(l3_addr), layer: Ghost(3) };
-                                        let l3_base = x86_arch_spec.entry_base(2, l2_base, l2_bidx as nat);
-                                        let l3_ghost_pt = l2_ghost_pt.entries[l2_bidx as int].get_Some_0();
-                                        assert(PT::directories_obey_invariant_at(self, l2_ghost_pt, 2, l2_daddr));
-                                        assert(PT::inv_at(self, l3_ghost_pt, 3, l3_daddr));
-                                        PT::lemma_interp_at_facts(self, l3_ghost_pt, 3, l3_daddr, l3_base);
-                                        let interp_l3 = PT::interp_at(self, l3_ghost_pt, 3, l3_daddr, l3_base);
-                                        let interp_l3_entry = PT::interp_at_entry(self, l3_ghost_pt, 3, l3_daddr, l3_base, l3_bidx as nat);
-                                        assume(l3_bidx == x86_arch_spec.index_for_vaddr(3, l3_base, vaddr as nat));
-                                        crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, l3_ghost_pt, 3, l3_daddr, l3_base);
-                                        interp_l3.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
-                                        assert(interp_l3.interp_of_entry(interp_l3.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
+                            match l2e@ {
+                                GPDE::Page { addr: page_addr, .. } => {
+                                    let l3_base = x86_arch_spec.entry_base(2, l2_base, l2_bidx as nat);
+                                    assert(aligned(l3_base, L2_ENTRY_SIZE as nat)) by {
+                                        crate::impl_u::indexing::lemma_entry_base_from_index(0, l0_bidx as nat, L0_ENTRY_SIZE as nat);
+                                        crate::impl_u::indexing::lemma_entry_base_from_index(l1_base, l1_bidx as nat, L1_ENTRY_SIZE as nat);
+                                        crate::impl_u::indexing::lemma_entry_base_from_index(l2_base, l2_bidx as nat, L2_ENTRY_SIZE as nat);
+                                    };
+                                    assert(interp_l2.interp_of_entry(l2_bidx as nat).dom() =~= set![l3_base as nat]);
+                                    assert(align_to_usize(vaddr, L2_ENTRY_SIZE) == vaddr);
+                                    assert(self.pt_mem.is_base_pt_walk(vaddr));
+                                },
+                                GPDE::Directory { addr: l3_daddr, .. } => {
+                                    assert(interp_l2_entry is Directory);
+                                    let l3_addr = add(l3_daddr, l3_idx);
+                                    let l3e = PDE { entry: self.pt_mem.read(l3_addr), layer: Ghost(3) };
+                                    let l3_base = x86_arch_spec.entry_base(2, l2_base, l2_bidx as nat);
+                                    let l3_ghost_pt = l2_ghost_pt.entries[l2_bidx as int].get_Some_0();
+                                    assert(PT::directories_obey_invariant_at(self, l2_ghost_pt, 2, l2_daddr));
+                                    assert(PT::inv_at(self, l3_ghost_pt, 3, l3_daddr));
+                                    PT::lemma_interp_at_facts(self, l3_ghost_pt, 3, l3_daddr, l3_base);
+                                    let interp_l3 = PT::interp_at(self, l3_ghost_pt, 3, l3_daddr, l3_base);
+                                    let interp_l3_entry = PT::interp_at_entry(self, l3_ghost_pt, 3, l3_daddr, l3_base, l3_bidx as nat);
+                                    crate::impl_u::l2_impl::PT::lemma_inv_implies_interp_inv(self, l3_ghost_pt, 3, l3_daddr, l3_base);
+                                    interp_l3.lemma_interp_contains_key_implies_interp_of_entry_contains_key_at_index(vaddr as nat);
+                                    assert(interp_l3.interp_of_entry(interp_l3.index_for_vaddr(vaddr as nat)).contains_key(vaddr as nat));
 
-                                        let impl_l3e = PT::entry_at_spec(self, l3_ghost_pt, 3, l3_daddr, l3_bidx as nat);
-                                        assert(l3e@ == impl_l3e@) by {
-                                            assert(self.pt_mem.read(l3_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l3_bidx, l3_ghost_pt.region));
-                                            l3e.lemma_view_unchanged_dirty_access(impl_l3e);
-                                        };
-                                        match l3e@ {
-                                            GPDE::Page { addr: page_addr, .. } => {
-                                                let l4_base = x86_arch_spec.entry_base(3, l3_base, l3_bidx as nat);
-                                                assert(aligned(l4_base, L3_ENTRY_SIZE as nat)) by {
-                                                    crate::impl_u::indexing::lemma_entry_base_from_index(0, l0_bidx as nat, L0_ENTRY_SIZE as nat);
-                                                    crate::impl_u::indexing::lemma_entry_base_from_index(l1_base, l1_bidx as nat, L1_ENTRY_SIZE as nat);
-                                                    crate::impl_u::indexing::lemma_entry_base_from_index(l2_base, l2_bidx as nat, L2_ENTRY_SIZE as nat);
-                                                    crate::impl_u::indexing::lemma_entry_base_from_index(l3_base, l3_bidx as nat, L3_ENTRY_SIZE as nat);
-                                                };
-                                                assert(interp_l3.interp_of_entry(l3_bidx as nat).dom() =~= set![l4_base as nat]);
-                                                assert(align_to_usize(vaddr, L3_ENTRY_SIZE) == vaddr);
-                                                assert(self.pt_mem.is_base_pt_walk(vaddr));
-                                            },
-                                            GPDE::Directory { .. } => assert(false),
-                                            GPDE::Invalid => assert(false),
-                                        }
-                                    },
-                                    GPDE::Invalid => assert(false),
-                                }
-                            },
-                            GPDE::Invalid => assert(false),
-                        }
-                    },
-                    _ => assert(false),
-                };
-            }
-            assert forall|vaddr: nat|
-                root_dir.interp().contains_key(vaddr)
-                    implies {
-                &&& vaddr <= usize::MAX
-                &&& self.pt_mem@.contains_key(vaddr as usize)
-            } by {
-                assert(forall|vaddr: usize| #![auto] self.pt_mem.is_base_pt_walk(vaddr) ==> self.pt_mem@.contains_key(vaddr));
-            }
+                                    let impl_l3e = PT::entry_at_spec(self, l3_ghost_pt, 3, l3_daddr, l3_bidx as nat);
+                                    assert(l3e@ == impl_l3e@) by {
+                                        assert(self.pt_mem.read(l3_addr) & MASK_NEG_DIRTY_ACCESS == self.read(l3_bidx, l3_ghost_pt.region));
+                                        l3e.lemma_view_unchanged_dirty_access(impl_l3e);
+                                    };
+
+                                    let low_bits = vaddr % L3_ENTRY_SIZE;
+                                    // This assert proves: ... == l0_bidx * L0_ENTRY_SIZE + l1_bidx * L1_ENTRY_SIZE + l2_bidx * L2_ENTRY_SIZE + l3_bidx * L3_ENTRY_SIZE + low_bits
+                                    assert((l0_bidx << 39usize) | (l1_bidx << 30usize) | (l2_bidx << 21usize) | (l3_bidx << 12usize) | low_bits
+                                           == add(add(add(add(
+                                                  mul(l0_bidx, mul(512, mul(512, mul(512, 4096)))),
+                                                  mul(l1_bidx, mul(512, mul(512, 4096)))),
+                                                  mul(l2_bidx, mul(512, 4096))),
+                                                  mul(l3_bidx, 4096)),
+                                                  low_bits)) by (bit_vector)
+                                        requires
+                                            l1_bidx == (vaddr & 0x007F_C000_0000) >> 30,
+                                            l2_bidx == (vaddr & 0x0000_3FE0_0000) >> 21,
+                                            l3_bidx == (vaddr & 0x0000_001F_F000) >> 12,
+                                            low_bits == vaddr % 4096;
+                                    assert(vaddr == ((l0_bidx << 39usize) | (l1_bidx << 30usize) | (l2_bidx << 21usize) | (l3_bidx << 12usize) | low_bits)) by (bit_vector)
+                                        requires
+                                            l0_bidx == (vaddr & 0xFF80_0000_0000) >> 39,
+                                            l1_bidx == (vaddr & 0x007F_C000_0000) >> 30,
+                                            l2_bidx == (vaddr & 0x0000_3FE0_0000) >> 21,
+                                            l3_bidx == (vaddr & 0x0000_001F_F000) >> 12,
+                                            vaddr < mul(512usize, mul(512, mul(512, mul(512, 4096)))),
+                                            low_bits == vaddr % 4096;
+
+                                    match l3e@ {
+                                        GPDE::Page { addr: page_addr, .. } => {
+                                            let l4_base = x86_arch_spec.entry_base(3, l3_base, l3_bidx as nat);
+                                            assert(aligned(l4_base, L3_ENTRY_SIZE as nat)) by {
+                                                crate::impl_u::indexing::lemma_entry_base_from_index(0, l0_bidx as nat, L0_ENTRY_SIZE as nat);
+                                                crate::impl_u::indexing::lemma_entry_base_from_index(l1_base, l1_bidx as nat, L1_ENTRY_SIZE as nat);
+                                                crate::impl_u::indexing::lemma_entry_base_from_index(l2_base, l2_bidx as nat, L2_ENTRY_SIZE as nat);
+                                                crate::impl_u::indexing::lemma_entry_base_from_index(l3_base, l3_bidx as nat, L3_ENTRY_SIZE as nat);
+                                            };
+                                            assert(interp_l3.interp_of_entry(l3_bidx as nat).dom() =~= set![l4_base as nat]);
+                                            assert(align_to_usize(vaddr, L3_ENTRY_SIZE) == vaddr);
+                                            assert(self.pt_mem.is_base_pt_walk(vaddr));
+                                        },
+                                        GPDE::Directory { .. } => assert(false),
+                                        GPDE::Invalid => assert(false),
+                                    }
+                                },
+                                GPDE::Invalid => assert(false),
+                            }
+                        },
+                        GPDE::Invalid => assert(false),
+                    }
+                },
+                GPDE::Page { .. } => assert(false),
+                GPDE::Invalid => {
+                    assert(!interp_l0.interp().contains_key(vaddr as nat));
+                },
+            };
         }
+        assert forall|vaddr: nat|
+            PT::interp(self, pt).interp().contains_key(vaddr)
+                implies {
+            &&& vaddr <= usize::MAX
+            &&& self.pt_mem@.contains_key(vaddr as usize)
+        } by {
+            assert(forall|vaddr: usize| #![auto] self.pt_mem.is_base_pt_walk(vaddr) ==> self.pt_mem@.contains_key(vaddr));
+        }
+    }
 
+    #[verifier(spinoff_prover)]
+    pub proof fn lemma_interps_match_aux2(self, pt: PTDir)
+        requires
+            PT::inv(self, pt),
+            self.regions_derived_from_view(),
+        ensures
+            forall|vaddr: nat|
+                vaddr <= usize::MAX && #[trigger] self.pt_mem@.contains_key(vaddr as usize)
+                    ==> PT::interp(self, pt).interp().contains_pair(vaddr, self.pt_mem@[vaddr as usize])
+    {
+        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
         assert forall|vaddr: nat|
             vaddr <= usize::MAX && #[trigger] self.pt_mem@.contains_key(vaddr as usize)
                 implies
-            root_dir.interp().contains_pair(vaddr, self.pt_mem@[vaddr as usize])
+            PT::interp(self, pt).interp().contains_pair(vaddr, self.pt_mem@[vaddr as usize])
         by {
             assert(vaddr == vaddr as usize);
             let vaddr: usize = vaddr as usize;
@@ -515,6 +513,19 @@ impl WrappedTokenView {
                 _ => assert(false),
             };
         }
+    }
+
+    #[verifier(spinoff_prover)]
+    pub proof fn lemma_interps_match(self, pt: PTDir)
+        requires
+            PT::inv(self, pt),
+            self.regions_derived_from_view(),
+        ensures PT::interp(self, pt).interp() == crate::spec_t::mmu::defs::nat_keys(self.interp())
+    {
+        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+
+        self.lemma_interps_match_aux1(pt);
+        self.lemma_interps_match_aux2(pt);
 
         assert(PT::interp_at(self, pt, 0, self.pt_mem.pml4, 0).interp() ==
             Map::new(|vaddr: nat| vaddr <= usize::MAX && self.pt_mem@.contains_key(vaddr as usize), |vaddr: nat| self.pt_mem@[vaddr as usize]));
