@@ -105,6 +105,28 @@ impl CoreState {
         }
     }
 
+    pub open spec fn is_unmapping(self) -> bool {
+        match self {
+            CoreState::UnmapWaiting { .. }
+            | CoreState::UnmapExecuting { .. }
+            | CoreState::UnmapOpDone { .. }
+            | CoreState::UnmapShootdownWaiting { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub open spec fn unmap_vaddr(self) -> nat
+        recommends self.is_unmapping()
+    {
+        match self {
+            CoreState::UnmapWaiting { vaddr, .. }
+            | CoreState::UnmapExecuting { vaddr, .. }
+            | CoreState::UnmapOpDone { vaddr, .. }
+            | CoreState::UnmapShootdownWaiting { vaddr, .. } => vaddr,
+            _ => arbitrary(),
+        }
+    }
+
     #[verifier(inline)]
     pub open spec fn is_idle(self) -> bool {
         self is Idle
@@ -870,11 +892,13 @@ impl State {
         Self::vmem_apply_mappings(self.applied_mappings(), self.mmu@.phys_mem)
     }
 
-    //returns set with the vaddr that is currently unmapped.
-
+    // returns set with the vaddr that is currently being unmapped
     pub open spec fn is_unmap_vaddr_core(self, core: Core, vaddr: nat) -> bool {
         self.core_states.contains_key(core) && match self.core_states[core] {
             CoreState::UnmapExecuting { vaddr: vaddr1, result: Some(result), .. } => {
+                (result is Ok) && (vaddr1 === vaddr)
+            },
+            CoreState::UnmapOpDone { vaddr: vaddr1, result, .. } => {
                 (result is Ok) && (vaddr1 === vaddr)
             },
             CoreState::UnmapShootdownWaiting { vaddr: vaddr1, result, .. } => {
@@ -1235,7 +1259,7 @@ impl State {
         &&& self.inv_writes(c)
         &&& self.inv_shootdown(c)
         &&& self.inv_allocated_mem(c)
-        //&&& self.tlb_inv(c)
+        &&& self.tlb_inv(c)
         &&& self.overlapping_mem_inv(c)
         &&& self.inv_pending_maps(c)
     }
@@ -1244,14 +1268,14 @@ impl State {
     // Invariants about the TLB
     ///////////////////////////////////////////////////////////////////////////////////////////////
     pub open spec fn inv_tlb_wf(self, c: Constants) -> bool {
-        /*forall|core: Core| {
-            #[trigger] c.valid_core(core) <==> self.mmu@.tlbs.contains_key(core)
-        }*/ true
+        forall|core| #![auto] c.valid_core(core) && self.core_states[core].is_unmapping()
+            ==> self.core_states[core].unmap_vaddr() < MAX_BASE
     }
 
     pub open spec fn inv_shootdown_wf(self, c: Constants) -> bool {
-        forall |dispatcher: Core | (#[trigger] c.valid_core(dispatcher) && self.core_states[dispatcher] is UnmapShootdownWaiting) 
-        ==> self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr == self.os_ext.shootdown_vec.vaddr
+        forall|dispatcher: Core | (#[trigger] c.valid_core(dispatcher) && self.core_states[dispatcher] is UnmapShootdownWaiting) 
+        ==> self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr
+                == self.os_ext.shootdown_vec.vaddr
     }
 
     pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {
@@ -1265,7 +1289,11 @@ impl State {
             && c.valid_core(handler) 
             && self.core_states[dispatcher] is UnmapShootdownWaiting
             && !(#[trigger] self.os_ext.shootdown_vec.open_requests.contains(handler))
-                ==> !self.mmu@.tlbs[handler].contains_key((self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
+                ==> {
+                    &&& !self.mmu@.tlbs[handler].contains_key(
+                        (self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
+                    &&& !self.mmu@.writes.nonpos.contains(handler)
+                }
     }
 
 
@@ -1288,7 +1316,14 @@ impl State {
         &&& self.shootdown_cores_valid(c)
         &&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
+        &&& self.pending_unmap_is_unmap_vaddr(c)
     }
+
+    pub open spec fn pending_unmap_is_unmap_vaddr(self, c: Constants) -> bool {
+        forall|va| #[trigger] self.mmu@.pending_unmaps.contains_key(va)
+                ==> self.is_unmap_vaddr(va as nat)
+    }
+
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about overlapping
