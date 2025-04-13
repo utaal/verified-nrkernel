@@ -2438,6 +2438,8 @@ broadcast group group_ambient {
 }
 
 pub mod refinement {
+    use vstd::assert_by_contradiction;
+
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl1;
     use crate::spec_t::mmu::rl2;
@@ -2485,7 +2487,7 @@ pub mod refinement {
                     let walk_na_res = rl2::walk_next(pre.core_mem(core), walk).result();
                     let vaddr = walk_na_res->Valid_vbase;
                     //let pte = walk_na_res->Valid_pte;
-                    if pre.hist.pending_unmaps.contains_key(vaddr) {
+                    if pre.hist.pending_unmaps.contains_key(vaddr) && pre.writes.nonpos.contains(core) {
                         rl1::Step::TLBFillNA { core, vaddr }
                     } else {
                         rl1::Step::TLBFill { core, vaddr }
@@ -2543,9 +2545,21 @@ pub mod refinement {
                     }
                     assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, vbase, lbl));
                 } else {
-                    if pre.hist.pending_unmaps.contains_key(vbase) {
+                    if pre.hist.pending_unmaps.contains_key(vbase) && pre.writes.nonpos.contains(core) {
                         assert(rl1::step_TLBFillNA(pre.interp(), post.interp(), c, core, vbase, lbl));
                     } else {
+                        assert_by_contradiction!(walk_a == walk_na, {
+                            broadcast use
+                                rl2::lemma_finish_iter_walk_prefix_matches_iter_walk,
+                                rl2::lemma_iter_walk_equals_pt_walk,
+                                rl2::lemma_writes_tso_empty_implies_sbuf_empty;
+                            reveal(rl2::State::inv_unmapping__notin_nonpos);
+                            assert(rl2::is_iter_walk_prefix(pre.core_mem(core), walk));
+                            assert(walk_na == rl2::finish_iter_walk(pre.core_mem(core), walk));
+                            assert(pre.writes.tso === set![]);
+                            assert(pre.sbuf[pre.writes.core] === seq![]);
+                            assert(pre.writer_mem() == pre.core_mem(core));
+                        });
                         assert(rl1::step_TLBFill(pre.interp(), post.interp(), c, core, vbase, lbl));
                     }
                 }

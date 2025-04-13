@@ -1251,7 +1251,7 @@ impl State {
 
     pub open spec fn inv_shootdown_wf(self, c: Constants) -> bool {
         forall |dispatcher: Core | (#[trigger] c.valid_core(dispatcher) && self.core_states[dispatcher] is UnmapShootdownWaiting) 
-        ==>  self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr == self.os_ext.shootdown_vec.vaddr
+        ==> self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr == self.os_ext.shootdown_vec.vaddr
     }
 
     pub open spec fn shootdown_cores_valid(self, c: Constants) -> bool {

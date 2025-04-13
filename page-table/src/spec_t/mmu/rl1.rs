@@ -223,6 +223,7 @@ pub open spec fn step_TLBFillNA(pre: State, post: State, c: Constants, core: Cor
     &&& pre.polarity is Unmapping
 
     &&& c.valid_core(core)
+    &&& pre.writes.nonpos.contains(core)
     &&& pre.pending_unmaps.contains_key(vaddr)
 
     &&& post == State {
