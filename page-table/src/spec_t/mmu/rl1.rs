@@ -93,6 +93,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
 
     &&& pre.happy
     &&& c.valid_core(core)
+    &&& !pre.tlbs[core].contains_key(va)
 
     &&& post == State {
         writes: Writes {

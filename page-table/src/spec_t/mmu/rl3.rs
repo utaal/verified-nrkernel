@@ -131,8 +131,10 @@ pub closed spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) 
     // "INVLPG also invalidates all entries in all paging-structure caches associated with the
     // current PCID, regardless of the linear addresses to which they correspond."
     &&& pre.cache[core].is_empty()
-    // .. and waits for inflight walks to complete.
+    // .. and waits for inflight walks to complete
     &&& pre.walks[core].is_empty()
+    // .. and evicts the corresponding TLB entry
+    &&& !pre.tlbs[core].contains_key(va)
 
     &&& post == State {
         hist: History {

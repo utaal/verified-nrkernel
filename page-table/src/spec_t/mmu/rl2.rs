@@ -131,6 +131,7 @@ pub open spec fn step_Invlpg(pre: State, post: State, c: Constants, lbl: Lbl) ->
     &&& c.valid_core(core)
     // Invlpg is a serializing instruction
     &&& pre.sbuf[core].len() == 0
+    &&& !pre.tlbs[core].contains_key(va)
 
     &&& post == State {
         walks: pre.walks.insert(core, set![]),
@@ -1523,7 +1524,7 @@ proof fn next_step_preserves_wf(pre: State, post: State, c: Constants, step: Ste
     assert(post.pt_mem.mem.dom() =~= pre.pt_mem.mem.dom());
 }
 
-// unstable?
+#[verifier::rlimit(100)] #[verifier(spinoff_prover)]
 proof fn next_step_preserves_inv_mapping__inflight_walks(pre: State, post: State, c: Constants, step: Step, lbl: Lbl)
     requires
         pre.wf(c),
