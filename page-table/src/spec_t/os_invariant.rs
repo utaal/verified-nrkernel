@@ -466,8 +466,7 @@ pub proof fn init_implies_tlb_inv(c: os::Constants, s: os::State)
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 }
 
-pub proof fn next_step_preserves_tlb_inv
-(
+pub proof fn next_step_preserves_tlb_inv(
     c: os::Constants,
     s1: os::State,
     s2: os::State,
@@ -482,38 +481,51 @@ pub proof fn next_step_preserves_tlb_inv
     ensures
         s2.tlb_inv(c),
 {
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
     //Todo, if this is needed then this will probably be needed to be proved in almost every step
     //assume(s2.inv_tlb_wf(c));
     match step {
         os::Step::MMU => {
             assert(s2.inv_tlb_wf(c));
             assert(s2.shootdown_cores_valid(c));
-            assume(s2.successful_IPI(c));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-            },
-        os::Step::MemOp { core } => {
-            assert(s2.inv_tlb_wf(c));
-            assert(s2.shootdown_cores_valid(c));
-            assume(s2.successful_IPI(c));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-            },
-        os::Step::ReadPTMem {core, paddr, value } => {
-            assert(s2.inv_tlb_wf(c));
-            assert(s2.shootdown_cores_valid(c));
-            assume(s2.successful_IPI(c));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(rl1::next(s1.mmu@, s2.mmu@, c.common, mmu::Lbl::Tau));
+            let mmu_step = choose|step| rl1::next_step(s1.mmu@, s2.mmu@, c.common, step, mmu::Lbl::Tau);
+            match mmu_step {
+                rl1::Step::TLBFill { core, vaddr } => { admit(); }
+                rl1::Step::TLBFillNA { core, vaddr } => { admit(); }
+                _ => {
+                    assert(forall|core| #![auto] s2.mmu@.tlbs[core].submap_of(s1.mmu@.tlbs[core]));
+                    assert(s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set())
+                        =~= s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()));
+                    // assert forall|tlb_core: Core, vaddr: nat| #![auto]
+                    //     c.valid_core(tlb_core)
+                    //     && s2.mmu@.tlbs[tlb_core].dom().map(|v| v as nat).contains(vaddr)
+                    //         implies
+                    //     s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()).contains(vaddr)
+                    // by {
+                    //     assert(s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()) =~= s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()));
+                    //     // assert(s2.interp_pt_mem() =~= s1.interp_pt_mem().remove(unmapped_vaddr));
+                    //     // assert(s2.unmap_vaddr_set().contains(unmapped_vaddr));
+                    // };
+                },
+            }
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
-        os::Step::Barrier { core } => {
+        os::Step::MemOp { core }
+        | os::Step::ReadPTMem { core, .. }
+        | os::Step::Barrier { core }
+        | os::Step::Invlpg { core, .. } => {
             assert(s2.inv_tlb_wf(c));
             assert(s2.shootdown_cores_valid(c));
-            assume(s2.successful_IPI(c));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-        },
-        os::Step::Invlpg { core, vaddr} => {
-            assert(s2.inv_tlb_wf(c));
-            assert(s2.shootdown_cores_valid(c));
-            assume(s2.successful_IPI(c));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(s2.successful_IPI(c));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
         os::Step::MapStart { core }
         | os::Step::UnmapStart { core }
@@ -535,82 +547,87 @@ pub proof fn next_step_preserves_tlb_inv
             assert(s2.tlb_inv(c));
         },
         os::Step::MapOpStart { core }
-        | os::Step::Allocate { core, .. } 
+        | os::Step::Allocate { core, .. }
         | os::Step::MapNoOp { core }
         | os::Step::MapEnd { core }
         | os::Step::UnmapOpStart { core }
-        | os::Step::Deallocate { core, .. }
-        | os::Step::UnmapOpFail { core }
-        | os::Step::UnmapWaitShootdown { core }
-        | os::Step::UnmapInitiateShootdown { core } => {
+        | os::Step::UnmapWaitShootdown { core } => {
             assert(s2.inv_tlb_wf(c));
             assert(s2.tlb_inv(c));
         },
-        //Map steps
-        os::Step::MapOpStutter { core, paddr, value } => {
+        os::Step::Deallocate { core, .. }
+        | os::Step::UnmapOpFail { core }
+        | os::Step::UnmapInitiateShootdown { core }
+        | os::Step::MapOpStutter { core, .. }
+        | os::Step::MapOpChange { core, .. } => {
             assert(s2.inv_tlb_wf(c));
-            assert(s2.unmap_vaddr_set() == Set::<nat>::empty());
-            assert(s1.unmap_vaddr_set() == Set::<nat>::empty());
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
-            assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()) =~= s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-    
-        },
-        os::Step::MapOpChange { core, paddr, value } => {
-            assert(s2.inv_tlb_wf(c));
-            assert(s2.unmap_vaddr_set() == Set::<nat>::empty());
-            assert(s1.unmap_vaddr_set() == Set::<nat>::empty());
-            assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()).subset_of(s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set())));
-            assume( forall|core: Core| {
-                #[trigger] c.valid_core(core)
-                    ==> (s1.mmu@.tlbs[core].dom().map(|v| v as nat) =~= s2.mmu@.tlbs[core].dom().map(|v| v as nat))
-            });
-            assert(s2.shootdown_cores_valid(c));
-            assert(s2.successful_IPI(c));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-    
         },
         //unmap steps
         os::Step::UnmapOpChange { core, paddr, value } => {
             assert(s2.inv_tlb_wf(c));
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
+            // assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+            //     <==> s1.is_unmap_vaddr_core(core, vaddr));
+            let unmapped_vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
             //assume(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()) =~= s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(s2.is_unmap_vaddr_core(core, unmapped_vaddr));
+            assert(s2.interp_pt_mem() =~= s1.interp_pt_mem().remove(unmapped_vaddr));
+            // assert forall|tlb_core: Core, vaddr: nat| #![auto]
+            //     c.valid_core(tlb_core)
+            //     && s2.mmu@.tlbs[tlb_core].dom().map(|v| v as nat).contains(vaddr)
+            //         implies
+            //     s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()).contains(vaddr)
+            // by {
+            //     assert(s2.interp_pt_mem() =~= s1.interp_pt_mem().remove(unmapped_vaddr));
+            //     assert(s2.unmap_vaddr_set().contains(unmapped_vaddr));
+            // };
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
         os::Step::UnmapOpStutter { core, paddr, value } => {
             assert(s2.inv_tlb_wf(c));
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
-            assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()) =~= s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()));
-            assume(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            // assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()) =~= s2.interp_pt_mem().dom().union(s2.unmap_vaddr_set()));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
         os::Step::UnmapEnd { core } => {
             assert(s2.inv_tlb_wf(c));
+            // assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+            //     ==> s1.is_unmap_vaddr_core(core, vaddr));
             let vaddr = if s1.core_states[core] is UnmapOpDone {
                 s1.core_states[core]->UnmapOpDone_vaddr
             } else {
                 s1.core_states[core]->UnmapShootdownWaiting_vaddr
             };
-            assert forall |tlb_core: Core| #[trigger] c.valid_core(tlb_core) implies !s1.mmu@.tlbs[tlb_core].dom().contains(vaddr as usize)
+            assert forall|tlb_core: Core|
+                #[trigger] c.valid_core(tlb_core)
+                implies
+                !s1.mmu@.tlbs[tlb_core].dom().contains(vaddr as usize)
             by {
-                if (s1.core_states[core] is UnmapOpDone) {
+                if s1.core_states[core] is UnmapOpDone {
                     let tlb_set = s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set());
                     assert(!tlb_set.contains(vaddr));
                     assert(s1.mmu@.tlbs[tlb_core].dom().map(|v| v as nat).subset_of(tlb_set));
                     assert(!s1.mmu@.tlbs[tlb_core].dom().map(|v| v as nat).contains(vaddr));
+                    assume(vaddr <= usize::MAX);
                     //todo conversion
-                    assume(!s1.mmu@.tlbs[tlb_core].dom().contains(vaddr as usize));
+                    assert(!s1.mmu@.tlbs[tlb_core].dom().contains(vaddr as usize));
                 } else {
-                    assert(!s1.os_ext.shootdown_vec.open_requests.contains(tlb_core));   
+                    assert(!s1.os_ext.shootdown_vec.open_requests.contains(tlb_core));
                     assert(!s1.mmu@.tlbs[tlb_core].dom().contains(vaddr as usize));
                 }
-            } 
+            }
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
     }
-    
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -674,8 +691,8 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                             assert(s1.core_states.values().contains(s2.core_states[other]));
                             assert(os::candidate_mapping_overlaps_inflight_pmem(s1.interp_pt_mem(), s1.core_states.values(), pte));
                             assert(false);
-                        }  
-                    } 
+                        }
+                    }
                 }
                 assert(s2.inv_inflight_map_no_overlap_inflight_pmem(c));
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
@@ -799,7 +816,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                     assert(!s1.interp_pt_mem().remove(x).dom().contains(y) || !overlap(
                         MemRegion { base: x, size: s1.interp_pt_mem()[x].frame.size },
                         MemRegion { base: y, size:  s1.interp_pt_mem().remove(x)[y].frame.size }));
-                } 
+                }
                 }
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
                 assert (s2.inv_inflight_map_no_overlap_inflight_pmem(c)) by {
@@ -896,18 +913,18 @@ pub proof fn next_step_preserves_overlap_mem_inv(
             os::Step::UnmapOpChange { core, .. } => {
                 let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
                 let ult_id = s1.core_states[core]->UnmapExecuting_ult_id;
-                
+
                 let pt = s1.interp_pt_mem();
                 //proofgoal (1/2):  assert(s2.inv_inflight_map_no_overlap_inflight_vmem(c));
                 assert( s2.interp_pt_mem().submap_of(s1.interp_pt_mem()));
                 assert( s1.core_states[core].pte_size(s1.interp_pt_mem()) >= s2.core_states[core].pte_size(s2.interp_pt_mem()));
                 lemma_insert_preserves_no_overlap(c, s1.core_states, s1.interp_pt_mem(), core, s2.core_states[core]);
-                assert forall|state1, state2| 
+                assert forall|state1, state2|
                     s2.core_states.values().contains(state1) && s2.core_states.values().contains(state2)
                     && !state1.is_idle() && !state2.is_idle() && overlap(
                         MemRegion { base: state1.vaddr(), size: state1.pte_size(pt) },
                         MemRegion { base: state2.vaddr(), size: state2.pte_size(pt) },
-                    ) implies state1 == state2 
+                    ) implies state1 == state2
                 by {
                     if (state1 === s2.core_states[core] || state2 == s2.core_states[core]) {
                         let other_state = if state1 === s2.core_states[core] {state2} else {state1};
@@ -1395,7 +1412,7 @@ pub proof fn lemma_candidate_mapping_inflight_vmem_overlap_os_implies_hl(
                 },
                 _ => {},
             };
-        } 
+        }
     };
 }
 
@@ -1663,7 +1680,7 @@ pub proof fn lemma_candidate_mapping_inflight_pmem_overlap_os_implies_hl(
                 },
                 _ => {},
             };
-        } 
+        }
     };
 }
 

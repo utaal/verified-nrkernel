@@ -874,6 +874,9 @@ impl State {
 
     pub open spec fn is_unmap_vaddr_core(self, core: Core, vaddr: nat) -> bool {
         self.core_states.contains_key(core) && match self.core_states[core] {
+            CoreState::UnmapExecuting { vaddr: vaddr1, result: Some(result), .. } => {
+                (result is Ok) && (vaddr1 === vaddr)
+            },
             CoreState::UnmapShootdownWaiting { vaddr: vaddr1, result, .. } => {
                 (result is Ok) && (vaddr1 === vaddr)
             },
@@ -882,7 +885,7 @@ impl State {
     }
 
     pub open spec fn is_unmap_vaddr(self, vaddr: nat) -> bool {
-        exists |core: Core| self.is_unmap_vaddr_core(core, vaddr)
+        exists|core: Core| self.is_unmap_vaddr_core(core, vaddr)
     }
 
     pub open spec fn unmap_vaddr_set(self) -> Set<nat> {
@@ -1257,23 +1260,20 @@ impl State {
     }
 
     pub open spec fn successful_IPI(self, c: Constants) -> bool {
-        forall |dispatcher: Core, handler: Core| (#[trigger] c.valid_core(dispatcher) && c.valid_core(handler) 
-        && self.core_states[dispatcher] is UnmapShootdownWaiting) && !(#[trigger] self.os_ext.shootdown_vec.open_requests.contains(handler))
-        ==> !self.mmu@.tlbs[handler].contains_key((self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
+        forall|dispatcher: Core, handler: Core|
+            #[trigger] c.valid_core(dispatcher)
+            && c.valid_core(handler) 
+            && self.core_states[dispatcher] is UnmapShootdownWaiting
+            && !(#[trigger] self.os_ext.shootdown_vec.open_requests.contains(handler))
+                ==> !self.mmu@.tlbs[handler].contains_key((self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
     }
 
 
 
     pub open spec fn TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(self, c: Constants) -> bool {
-        forall|core: Core| {
-                #[trigger] c.valid_core(core)
-                        // FIXME(MB): I added the map here. Not yet sure if this will cause
-                        // problems. If so, might have to switch the MMU models over to using nat
-                        // instead of usize.
-                    ==> self.mmu@.tlbs[core].dom().map(|v| v as nat).subset_of(
-                        self.interp_pt_mem().dom().union(self.unmap_vaddr_set())
-                )
-            }
+        forall|core: Core| #[trigger] c.valid_core(core)
+            ==> self.mmu@.tlbs[core].dom().map(|v| v as nat).subset_of(
+                self.interp_pt_mem().dom().union(self.unmap_vaddr_set()))
     }
 
     //pub open spec fn shootdown_exists(self, c: Constants) -> bool {
