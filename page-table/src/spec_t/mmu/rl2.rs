@@ -2443,6 +2443,7 @@ pub mod refinement {
     use crate::spec_t::mmu::*;
     use crate::spec_t::mmu::rl1;
     use crate::spec_t::mmu::rl2;
+    #[cfg(verus_keep_ghost)]
     use crate::spec_t::mmu::defs::MAX_BASE;
 
     impl rl2::State {

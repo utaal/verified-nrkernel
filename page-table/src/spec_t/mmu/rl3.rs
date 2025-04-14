@@ -5,9 +5,9 @@
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
 use crate::spec_t::mmu::pt_mem::*;
-use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE, MAX_BASE };
+use crate::spec_t::mmu::defs::{ bit, Core, bitmask_inc, MemOp, LoadResult, PTE };
 #[cfg(verus_keep_ghost)]
-use crate::spec_t::mmu::defs::{ aligned, update_range };
+use crate::spec_t::mmu::defs::{ aligned, update_range, MAX_BASE };
 use crate::spec_t::mmu::translation::{ l0_bits, l1_bits, l2_bits, l3_bits, MASK_DIRTY_ACCESS };
 
 verus! {
