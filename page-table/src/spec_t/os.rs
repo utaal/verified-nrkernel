@@ -771,7 +771,8 @@ impl CoreState {
             | CoreState::MapDone { pte, .. } => {
                 true
             }
-            CoreState::UnmapWaiting { vaddr, .. }  => pt.contains_key(vaddr),
+            CoreState::UnmapWaiting { vaddr, .. }  
+            | CoreState::UnmapExecuting { vaddr, result: None, .. } => pt.contains_key(vaddr),
             CoreState::UnmapExecuting { result: Some(Ok(_)), .. }
             | CoreState::UnmapOpDone { result: Ok(_), .. }
             | CoreState::UnmapShootdownWaiting { result: Ok(_), .. } => true,
@@ -788,7 +789,8 @@ impl CoreState {
             | CoreState::MapDone { pte, .. } => {
                 pte.frame.base
             }
-            CoreState::UnmapWaiting { vaddr, .. }  => pt[vaddr].frame.base,
+            CoreState::UnmapWaiting { vaddr, .. }  
+            | CoreState::UnmapExecuting { vaddr, result: None, .. } => pt[vaddr].frame.base,
             | CoreState::UnmapExecuting { result: Some(Ok(pte)), .. }
             | CoreState::UnmapOpDone { result: Ok(pte), .. }
             | CoreState::UnmapShootdownWaiting { result: Ok(pte), .. } => {
