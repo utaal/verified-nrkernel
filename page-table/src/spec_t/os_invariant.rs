@@ -467,6 +467,7 @@ pub proof fn init_implies_tlb_inv(c: os::Constants, s: os::State)
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
 }
 
+#[verifier::spinoff_prover]
 pub proof fn next_step_preserves_tlb_inv(
     c: os::Constants,
     s1: os::State,
@@ -548,8 +549,12 @@ pub proof fn next_step_preserves_tlb_inv(
                     };
                     assert(s2.successful_IPI(c));
                     assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-                    assume(s2.TLB_interp_pt_mem_agree(c));
-                    assume(s2.TLB_unmap_agree(c));
+                    assert(s2.TLB_interp_pt_mem_agree(c)) by {
+                        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+                    }
+                    assert(s2.TLB_unmap_agree(c)) by {
+                        reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
+                    }
                 }
                 rl1::Step::TLBFillNA { core, vaddr } => {
                     assert(s2.successful_IPI(c));
