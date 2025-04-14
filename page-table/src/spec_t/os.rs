@@ -1304,6 +1304,22 @@ impl State {
                 self.interp_pt_mem().dom().union(self.unmap_vaddr_set()))
     }
 
+    pub open spec fn TLB_interp_pt_mem_agree(self, c: Constants) -> bool {
+        forall|core: Core, v: usize|
+            #[trigger] c.valid_core(core)
+            && #[trigger] self.mmu@.tlbs[core].dom().contains(v)
+            && self.interp_pt_mem().dom().contains(v as nat)
+            ==> self.mmu@.tlbs[core][v] == self.interp_pt_mem()[v as nat]
+    }
+
+    pub open spec fn TLB_unmap_agree(self, c: Constants) -> bool {
+        forall|core: Core, core2: Core, v: usize|
+            #[trigger] c.valid_core(core)
+            && #[trigger] self.mmu@.tlbs[core].dom().contains(v)
+            && #[trigger] self.is_unmap_vaddr_core(core2, v as nat)
+            ==> self.mmu@.tlbs[core][v] == self.core_states[core2].PTE()
+    }
+
     //pub open spec fn shootdown_exists(self, c: Constants) -> bool {
     //    !(self.shootdown_vec.open_requests === Set::<Core>::empty())
     //        ==> exists|core| c.valid_core(core)

@@ -1137,6 +1137,7 @@ proof fn vaddr_mapping_is_being_modified_from_vaddr_unmap(
     core: Core,
     tlb_va: usize,
     vaddr: nat,
+    //thread_id: nat,
 )
     requires
         s.inv(c),
@@ -1145,13 +1146,166 @@ proof fn vaddr_mapping_is_being_modified_from_vaddr_unmap(
            || s.inflight_vaddr().contains(tlb_va as nat),
         c.valid_core(core),
         s.mmu@.tlbs[core].dom().contains(tlb_va),
-        between(vaddr, tlb_va as nat, tlb_va as nat + s.mmu@.tlbs[core][tlb_va].frame.size)
+        between(vaddr, tlb_va as nat, tlb_va as nat + s.mmu@.tlbs[core][tlb_va].frame.size),
+        //c.valid_ult(thread_id),
+        //core == c.ult2core[thread_id],
     ensures
         s.interp(c).vaddr_mapping_is_being_modified(c.interp(), vaddr),
         s.interp(c).vaddr_mapping_is_being_modified_choose(c.interp(), vaddr)
             == Some((tlb_va as nat, s.mmu@.tlbs[core][tlb_va]))
 {
-    assume(false);
+    assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+    assume(s.TLB_interp_pt_mem_agree(c));
+    assume(s.TLB_unmap_agree(c));
+
+    reveal(os::State::extra_mappings);
+    vaddr_distinct(c, s);
+
+    if s.unmap_vaddr_set().contains(tlb_va as nat) {
+        let core1 = choose|core1: Core|
+            #[trigger] s.core_states.contains_key(core1) &&
+            !s.core_states[core1].is_idle() &&
+            s.core_states[core1].vaddr() == tlb_va;
+        assert(s.core_states.contains_key(core1));
+        assert(!s.core_states[core1].is_idle());
+        assert(s.core_states[core1].vaddr() == tlb_va);
+        assert(c.valid_core(core1));
+
+        assert(s.core_states[core1].PTE() == s.mmu@.tlbs[core][tlb_va]);
+
+        let thread1 = s.core_states[core1].ult_id();
+        assert(c.interp().valid_thread(thread1));
+
+        /*match s.interp(c).thread_state[thread1] {
+            ThreadState::Map { vaddr: vaddr1, pte } => {
+                assert(vaddr1 == tlb_va);
+                assert(pte.frame.size == s.mmu@.tlbs[core][tlb_va].frame.size);
+                assert(between(vaddr, vaddr1, vaddr1 + pte.frame.size));
+            }
+            ThreadState::Unmap { vaddr: vaddr1, pte: Some(pte) } => {
+                assume(vaddr1 == tlb_va);
+                assume(pte.frame.size == s.mmu@.tlbs[core][tlb_va].frame.size);
+                assert(between(vaddr, vaddr1, vaddr1 + pte.frame.size));
+            }
+            _ => {
+                assert(false);
+            }
+        }*/
+
+        assert(s.interp(c).vaddr_mapping_is_being_modified(c.interp(), vaddr));
+
+        let t = s.interp(c);
+        let d = c.interp();
+        let thread = t.vaddr_mapping_is_being_modified_choose_thread(d, vaddr);
+        assert(thread == thread1) by {
+            let core1 = c.ult2core[thread1];
+            let core2 = c.ult2core[thread];
+            assert(s.inv_inflight_map_no_overlap_inflight_vmem(c));
+            let mr1 = MemRegion {
+                    base: s.core_states[core1].vaddr(),
+                    size: s.core_states[core1].pte_size(s.interp_pt_mem()),
+                };
+            let mr2 = MemRegion {
+                    base: s.core_states[core2].vaddr(),
+                    size: s.core_states[core2].pte_size(s.interp_pt_mem()),
+                };
+            assert(between(vaddr, mr1.base, mr1.base + mr1.size));
+            assert(between(vaddr, mr2.base, mr2.base + mr2.size));
+            assert(overlap(mr1, mr2));
+            assert(core1 == core2);
+            assert(thread1 == thread);
+        }
+
+        assert(s.interp(c).vaddr_mapping_is_being_modified_choose(c.interp(), vaddr)
+            == Some((tlb_va as nat, s.mmu@.tlbs[core][tlb_va])));
+    } else {
+        assert(s.mmu@.tlbs[core].dom().map(|v| v as nat).contains(tlb_va as nat));
+        assert(s.interp_pt_mem().dom().contains(tlb_va as nat));
+
+        let core1 = choose|core1: Core|
+            #[trigger] s.core_states.contains_key(core1) &&
+            !s.core_states[core1].is_idle() &&
+            s.core_states[core1].vaddr() == tlb_va;
+        assert(s.core_states.contains_key(core1));
+        assert(!s.core_states[core1].is_idle());
+        assert(s.core_states[core1].vaddr() == tlb_va);
+        assert(c.valid_core(core1));
+
+        let thread1 = s.core_states[core1].ult_id();
+        assert(c.interp().valid_thread(thread1));
+        
+        match s.core_states[core1] {
+            CoreState::Idle => { }
+            CoreState::MapWaiting { pte, .. }
+            | CoreState::MapExecuting { pte, .. } => {
+                // extra_mappings case
+
+                // this should be impossible because then tlb_va wouldn't be in the interp_pt_mem
+                // yet
+                
+                // from definition of extra_mappings:
+                assert(!candidate_mapping_overlaps_existing_vmem(
+                    s.effective_mappings(),
+                    tlb_va as nat,
+                    pte,
+                ));
+                // this is impossible since tlb_va would be a trivial point of overlap
+
+                // trigger wuantifier in definition of candidate_mapping_overlaps_existing_vmem:
+                assert(s.effective_mappings().contains_key(tlb_va as nat));
+                assert(false);
+            }
+            CoreState::MapDone { .. } => {
+                // inflight_vaddr case
+                assert(s.core_states[core1].PTE() == s.interp_pt_mem()[tlb_va as nat]);
+            }
+
+            CoreState::UnmapWaiting { ult_id: ult_id2, vaddr }
+            | CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: None } => {
+                // thread state interp uses PTE from the interp_pt_mem
+            }
+
+            CoreState::UnmapExecuting { ult_id: ult_id2, vaddr, result: Some(result) }
+            | CoreState::UnmapOpDone { ult_id: ult_id2, vaddr, result }
+            | CoreState::UnmapShootdownWaiting { ult_id: ult_id2, vaddr, result } => {
+                assert(false); // case handled earlier
+                //assert(s.core_states[core1].PTE() == s.interp_pt_mem()[tlb_va as nat]);
+            }
+        }
+
+        assert(s.interp_pt_mem()[tlb_va as nat] == s.mmu@.tlbs[core][tlb_va]);
+
+        assert(s.interp(c).vaddr_mapping_is_being_modified(c.interp(), vaddr));
+
+        let t = s.interp(c);
+        let d = c.interp();
+        let thread = t.vaddr_mapping_is_being_modified_choose_thread(d, vaddr);
+        assert(thread == thread1) by {
+            let core1 = c.ult2core[thread1];
+            let core2 = c.ult2core[thread];
+            assert(s.inv_inflight_map_no_overlap_inflight_vmem(c));
+            let mr1 = MemRegion {
+                    base: s.core_states[core1].vaddr(),
+                    size: s.core_states[core1].pte_size(s.interp_pt_mem()),
+                };
+            let mr2 = MemRegion {
+                    base: s.core_states[core2].vaddr(),
+                    size: s.core_states[core2].pte_size(s.interp_pt_mem()),
+                };
+            assert(between(vaddr, mr1.base, mr1.base + mr1.size));
+            assert(between(vaddr, mr2.base, mr2.base + mr2.size));
+            assert(overlap(mr1, mr2));
+            assert(core1 == core2);
+            assert(thread1 == thread);
+        }
+
+        assume(match s.core_states[core1] {
+            CoreState::MapDone { .. } => false,
+            _ => true,
+        });
+        assert(s.interp(c).vaddr_mapping_is_being_modified_choose(c.interp(), vaddr)
+            == Some((tlb_va as nat, s.mmu@.tlbs[core][tlb_va])));
+    }
 }
 
 spec fn no_overlaps(m: Map<nat, PTE>) -> bool {
