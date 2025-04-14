@@ -337,13 +337,17 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
         },
         // Map steps
         os::Step::MapStart { core } => {
-            step_MapStart_refines(c, s1, s2, core, lbl);
+            if s1.sound {
+                step_MapStart_refines(c, s1, s2, core, lbl);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::MapOpStart { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            extra_mappings_preserved(c, s1, s2);
+            if s1.sound {
+                extra_mappings_preserved(c, s1, s2);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::MapOpChange { core, paddr, value } => {
@@ -377,7 +381,9 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
         os::Step::UnmapOpStart { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            extra_mappings_preserved(c, s1, s2);
+            if s1.sound {
+                extra_mappings_preserved(c, s1, s2);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapOpChange { core, paddr, value } => {
@@ -389,13 +395,17 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
         os::Step::UnmapOpFail { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            extra_mappings_preserved(c, s1, s2);
+            if s1.sound {
+                extra_mappings_preserved(c, s1, s2);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapInitiateShootdown { core } => {
             assert(s1.interp(c).thread_state =~= s2.interp(c).thread_state);
             lemma_effective_mappings_unaffected_if_thread_state_constant(c, s1, s2);
-            extra_mappings_preserved(c, s1, s2);
+            if s1.sound {
+                extra_mappings_preserved(c, s1, s2);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         os::Step::UnmapEnd { core } => {
@@ -403,7 +413,9 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },
         _ => {
-            extra_mappings_preserved(c, s1, s2);
+            if s1.sound {
+                extra_mappings_preserved(c, s1, s2);
+            }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         }
     }
@@ -557,7 +569,6 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(hlspec::step_MemOpNA(c.interp(), s1.interp(c), s2.interp(c), lbl));
         },
         rl1::Step::MemOpTLB { tlb_va } => {
-            assume(s1.tlb_inv(c));
             assert(s1.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
             assert(c.valid_core(core));
 
@@ -689,6 +700,8 @@ proof fn extra_mappings_preserved(
     s2: os::State,
 )
     requires
+        s1.inv(c), s1.sound,
+        s2.inv(c), s2.sound,
         forall |core: Core, vaddr: nat|
             s1.is_extra_vaddr_core(core, vaddr) ==> s2.is_extra_vaddr_core(core, vaddr),
         forall |core: Core, vaddr: nat|
@@ -711,8 +724,6 @@ proof fn extra_mappings_preserved(
 {
     hide(candidate_mapping_overlaps_existing_vmem);
 
-    assume(s1.inv(c)); assume(s1.sound);
-    assume(s2.inv(c)); assume(s2.sound);
     vaddr_distinct(c, s1);
     vaddr_distinct(c, s2);
 
@@ -741,6 +752,8 @@ proof fn extra_mappings_preserved_effective_mapping_inserted(
     this_core: Core,
 )
     requires
+        s1.inv(c), s1.sound,
+        s2.inv(c), s2.sound,
         forall |core: Core, vaddr: nat|
             s1.is_extra_vaddr_core(core, vaddr) ==> s2.is_extra_vaddr_core(core, vaddr),
         forall |core: Core, vaddr: nat|
@@ -771,8 +784,6 @@ proof fn extra_mappings_preserved_effective_mapping_inserted(
     let this_vaddr = s1.core_states[this_core]->MapDone_vaddr;
     let this_pte = s1.core_states[this_core]->MapDone_pte;
 
-    assume(s1.inv(c)); assume(s1.sound);
-    assume(s2.inv(c)); assume(s2.sound);
     vaddr_distinct(c, s1);
     vaddr_distinct(c, s2);
 
@@ -874,6 +885,8 @@ proof fn extra_mappings_preserved_effective_mapping_removed(
     this_core: Core,
 )
     requires
+        s1.inv(c), s1.sound,
+        s2.inv(c), s2.sound,
         forall |core: Core, vaddr: nat|
             s1.is_extra_vaddr_core(core, vaddr) ==> s2.is_extra_vaddr_core(core, vaddr),
         forall |core: Core, vaddr: nat|
@@ -905,8 +918,6 @@ proof fn extra_mappings_preserved_effective_mapping_removed(
 {
     let this_vaddr = s2.core_states[this_core]->UnmapWaiting_vaddr;
 
-    assume(s1.inv(c)); assume(s1.sound);
-    assume(s2.inv(c)); assume(s2.sound);
     vaddr_distinct(c, s1);
     vaddr_distinct(c, s2);
 
@@ -1004,6 +1015,8 @@ proof fn extra_mappings_preserved_for_overlap_map(
     this_core: Core,
 )
     requires
+        s1.inv(c), s1.sound,
+        s2.inv(c), s2.sound,
         forall |core: Core, vaddr: nat|
             core != this_core ==>
             s1.is_extra_vaddr_core(core, vaddr) ==> s2.is_extra_vaddr_core(core, vaddr),
@@ -1045,8 +1058,6 @@ proof fn extra_mappings_preserved_for_overlap_map(
         _ => arbitrary(),
     };
 
-    assume(s1.inv(c)); assume(s1.sound);
-    assume(s2.inv(c)); assume(s2.sound);
     vaddr_distinct(c, s1);
     vaddr_distinct(c, s2);
 
@@ -1183,8 +1194,8 @@ proof fn vaddr_mapping_is_being_modified_from_vaddr_unmap(
                 assert(between(vaddr, vaddr1, vaddr1 + pte.frame.size));
             }
             ThreadState::Unmap { vaddr: vaddr1, pte: Some(pte) } => {
-                assume(vaddr1 == tlb_va);
-                assume(pte.frame.size == s.mmu@.tlbs[core][tlb_va].frame.size);
+                assert(vaddr1 == tlb_va);
+                assert(pte.frame.size == s.mmu@.tlbs[core][tlb_va].frame.size);
                 assert(between(vaddr, vaddr1, vaddr1 + pte.frame.size));
             }
             _ => {
@@ -1468,8 +1479,9 @@ proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte
 
 proof fn step_MapStart_refines(c: os::Constants, s1: os::State, s2: os::State, core: Core, lbl: RLbl)
     requires
-        s1.inv_basic(c),
-        s2.inv_basic(c),
+        s1.sound,
+        s1.inv(c),
+        s2.inv(c),
         os::step_MapStart(c, s1, s2, core, lbl),
     ensures
         hlspec::step_MapStart(c.interp(), s1.interp(c), s2.interp(c), lbl),
