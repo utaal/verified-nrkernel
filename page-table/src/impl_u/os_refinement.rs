@@ -994,6 +994,9 @@ proof fn extra_mappings_preserved_effective_mapping_removed(
     });
 }
 
+// can go either direction:
+// either starting a Map operation that is destined to fail because of overlap
+// (thus moving Idle -> MapWaiting) or ending such an operation (MapExecution -> MapDone Err case)
 proof fn extra_mappings_preserved_for_overlap_map(
     c: os::Constants,
     s1: os::State,
@@ -1025,12 +1028,107 @@ proof fn extra_mappings_preserved_for_overlap_map(
                 _ => false,
             })
         ),
+        s2.core_states.dom().contains(this_core),
+        match s2.core_states[this_core] {
+            CoreState::Idle | CoreState::MapDone { result: Err(_), .. } => true,
+            _ => false,
+        },
             
         s1.effective_mappings() == s2.effective_mappings(),
+        s1.interp_pt_mem() =~= s2.interp_pt_mem(),
     ensures
         s1.extra_mappings() == s2.extra_mappings()
 {
-    assume(false); 
+    let (this_vaddr, this_pte) = match s1.core_states[this_core] {
+        CoreState::MapWaiting { ult_id, vaddr, pte }
+        | CoreState::MapExecuting { ult_id, vaddr, pte } => (vaddr, pte),
+        _ => arbitrary(),
+    };
+
+    assume(s1.inv(c)); assume(s1.sound);
+    assume(s2.inv(c)); assume(s2.sound);
+    vaddr_distinct(c, s1);
+    vaddr_distinct(c, s2);
+
+    reveal(os::State::extra_mappings);
+    assert_maps_equal!(s1.extra_mappings(), s2.extra_mappings(), vaddr => {
+        if vaddr == this_vaddr {
+            let pte = this_pte;
+            if s1.extra_mappings().dom().contains(vaddr) {
+                assert(candidate_mapping_overlaps_existing_vmem(s1.interp_pt_mem(), vaddr, pte));
+                assert(!s1.inflight_vaddr().contains(vaddr));
+
+
+                if !candidate_mapping_overlaps_existing_vmem(s1.effective_mappings(), vaddr, pte) {
+                    // need to show candidate can't overlap anything in
+                    // interp_pt_mem() - effective_mappings()
+                    // i.e., need to show candidate can't overlap anything in inflight_vaddr
+                    let ov_vaddr = choose |b: nat|
+                        #[trigger] s1.interp_pt_mem().contains_key(b)
+                        && overlap(
+                            MemRegion { base: vaddr, size: pte.frame.size },
+                            MemRegion { base: b, size: s1.interp_pt_mem()[b].frame.size },
+                        );
+                    assert(s1.interp_pt_mem().contains_key(ov_vaddr));
+                    assert(overlap(
+                        MemRegion { base: vaddr, size: pte.frame.size },
+                        MemRegion { base: ov_vaddr, size: s1.interp_pt_mem()[ov_vaddr].frame.size },
+                    ));
+                    assert(!s1.effective_mappings().contains_key(ov_vaddr));
+                    assert(s1.inflight_vaddr().contains(ov_vaddr));
+
+                    let ov_core = choose|ov_core: Core|
+                        #[trigger] s1.core_states.contains_key(ov_core) &&
+                        !s1.core_states[ov_core].is_idle() &&
+                        s1.core_states[ov_core].vaddr() == ov_vaddr;
+                    assert(s1.core_states.contains_key(ov_core));
+                    assert(s1.core_states[ov_core].vaddr() == ov_vaddr);
+
+                    // contradiction through inv_inflight_map_no_overlap_inflight_vmem
+
+                    let mr1 = MemRegion {
+                        base: s1.core_states[this_core].vaddr(),
+                        size: s1.core_states[this_core].pte_size(s1.interp_pt_mem()),
+                    };
+                    let mr2 = MemRegion {
+                        base: s1.core_states[ov_core].vaddr(),
+                        size: s1.core_states[ov_core].pte_size(s1.interp_pt_mem()),
+                    };
+                    //assert(mr1 == MemRegion { base: vaddr, size: pte.frame.size });
+                    //assert(s1.core_states[ov_core].vaddr() == ov_vaddr);
+                    //assert(s1.core_states[ov_core].pte_size(s1.interp_pt_mem()) == s1.interp_pt_mem()[ov_vaddr].frame.size);
+                    //assert(mr2 == MemRegion { base: ov_vaddr, size: s1.interp_pt_mem()[ov_vaddr].frame.size });
+                    assert(overlap(mr1, mr2));
+                    //assert(c.valid_core(this_core));
+                    //assert(c.valid_core(ov_core));
+                    //assert(!s1.core_states[ov_core].is_idle());
+                    //assert(!s2.core_states[this_core].is_idle());
+                    //assert(ov_core == this_core);
+
+                    //assert(s1.inflight_vaddr().contains(this_vaddr));
+
+                    assert(false);
+                }
+
+                assert(candidate_mapping_overlaps_existing_vmem(s1.effective_mappings(), vaddr, pte));
+                assert(s1.candidate_vaddr_overlaps(vaddr));
+                //assert(s2.extra_mappings().dom().contains(vaddr));
+                //assert(s1.extra_mappings()[vaddr] == s2.extra_mappings()[vaddr]);
+                assert(false);
+            }
+            if s2.extra_mappings().dom().contains(vaddr) {
+                assert(false);
+            }
+        } else {
+            if s1.extra_mappings().dom().contains(vaddr) {
+                assert(s2.extra_mappings().dom().contains(vaddr));
+                assert(s1.extra_mappings()[vaddr] == s2.extra_mappings()[vaddr]);
+            }
+            if s2.extra_mappings().dom().contains(vaddr) {
+                assert(s1.extra_mappings().dom().contains(vaddr));
+            }
+        }
+    });
 }
 
 proof fn vaddr_mapping_is_being_modified_from_vaddr_unmap(
