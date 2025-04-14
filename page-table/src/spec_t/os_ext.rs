@@ -361,7 +361,10 @@ pub mod code {
     }
 
     #[cfg(not(feature="linuxmodule"))]
-    use std::sync::atomic::{AtomicBool, Ordering::{Acquire, Release}};
+    use std::sync::atomic::{AtomicBool, Ordering::{Acquire, Release, Relaxed}};
+
+    #[cfg(feature="linuxmodule")]
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     /// global variable representing the page table lock
     #[cfg(not(feature="linuxmodule"))]
@@ -389,7 +392,7 @@ pub mod code {
 
 
     /// acquires the page table lock
-    /// 
+    ///
     /// TODO: ideally this takes the lock pointer
     #[verifier(external_body)]
     pub exec fn acquire_lock(Tracked(tok): Tracked<&mut Token>)
@@ -403,7 +406,7 @@ pub mod code {
     }
 
     /// releases the page table lock
-    /// 
+    ///
     /// TODO: ideally this takes the lock pointer
     #[verifier(external_body)]
     pub exec fn release_lock(Tracked(tok): Tracked<&mut Token>)
@@ -427,7 +430,7 @@ pub mod code {
     }
 
     /// initiates a shootdown for a given virtual page of a given size
-    /// 
+    ///
     /// this only covers tlb invalidations of a single page at `vaddr` with a page size of `size`
     /// `size` is a hint, as it doesn't appear in the corresponding `InitShootdown` transition
     #[verifier(external_body)]
@@ -473,8 +476,8 @@ pub mod code {
             tok.tstate() is Spent,
     {
         // #[cfg(feature="linuxmodule")]
-        // implementation of the shootdown acknowledgement in Linux is not necessary, as `flush_tlb_page` is blocking. 
-        
+        // implementation of the shootdown acknowledgement in Linux is not necessary, as `flush_tlb_page` is blocking.
+
         // #[cfg(not(feature="linuxmodule"))]
         // implementation for the standalone module is not neccessary as this runs in user space.
     }
@@ -510,8 +513,8 @@ pub mod code {
     }
 
     /// Allocates memory for a page table node
-    /// 
-    /// the `layer` is used here to give a *hint* to the allocator which level of the page table we're allocating for. 
+    ///
+    /// the `layer` is used here to give a *hint* to the allocator which level of the page table we're allocating for.
     /// (Note: this is mainly here due to the way Linux allocates memory for page tables)
     #[verifier(external_body)]
     pub exec fn allocate(Tracked(tok): Tracked<&mut Token>, layer: usize) -> (res: MemRegionExec)
@@ -527,8 +530,8 @@ pub mod code {
     }
 
     /// Frees memory of a page table node at a given layer.
-    /// 
-    /// the `layer` is used here as a *hint* to the allocator which level of the page table this memory was used for. 
+    ///
+    /// the `layer` is used here as a *hint* to the allocator which level of the page table this memory was used for.
     /// (Note: this is mainly here due to the way Linux allocates memory for page tables)
     #[verifier(external_body)]
     pub exec fn deallocate(Tracked(tok): Tracked<&mut Token>, reg: MemRegionExec, layer: usize)
