@@ -367,6 +367,10 @@ pub mod code {
     #[cfg(not(feature="linuxmodule"))]
     exec static PGTABLE_LOCK: AtomicBool = AtomicBool::new(false);
 
+    /// global variable representing the current TLB shootduw
+    #[cfg(feature="linuxmodule")]
+    exec static SHOOTDOWN_VADDR: AtomicUsize = AtomicUsize::new(0);
+
     /// acquires the page table spinlock
     #[cfg(not(feature="linuxmodule"))]
     #[verifier(external_body)]
@@ -434,9 +438,9 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
-        // on linux this is a blocking call to flush the TLB for the given page. 
+        // on linux this is a blocking call to flush the TLB for the given page.
         #[cfg(feature="linuxmodule")]
-        unsafe { flush_tlb_page(vaddr as u64, size as u64); }
+        SHOOTDOWN_VADDR.store(vaddr, Ordering::Relaxed);
 
         // #[cfg(not(feature="linuxmodule"))]
         // implementation of the shootdown is not necessary if we run this as an standalone module
@@ -451,6 +455,12 @@ pub mod code {
         ensures
             tok.tstate() is Spent,
     {
+        // on linux this is a blocking call to flush the TLB for the given page.
+        #[cfg(feature="linuxmodule")]
+        unsafe { flush_tlb_page(SHOOTDOWN_VADDR.load(Ordering::Relaxed) as u64, 4096); }
+
+        // #[cfg(not(feature="linuxmodule"))]
+        // implementation of the shootdown is not necessary if we run this as an standalone module
     }
 
     /// handles processing of the TLB shootdown on a core, acknowledging that the local invalidation has been completed
