@@ -1,4 +1,5 @@
 use vstd::prelude::*;
+use vstd::assert_by_contradiction;
 
 //use crate::impl_u::spec_pt;
 #[cfg(verus_keep_ghost)]
@@ -627,15 +628,41 @@ pub proof fn next_step_preserves_tlb_inv(
         | os::Step::UnmapWaitShootdown { core }
         | os::Step::Deallocate { core, .. }
         | os::Step::UnmapOpFail { core }
-        | os::Step::MapOpStutter { core, .. }
-        | os::Step::MapOpChange { core, .. } => {
+        | os::Step::MapOpStutter { core, .. } => {
             assert(s2.shootdown_cores_valid(c));
             assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
                 <==> s1.is_unmap_vaddr_core(core, vaddr));
             assert(s2.successful_invlpg(c));
             assert(s2.successful_IPI(c));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-            assume(s2.TLB_interp_pt_mem_agree(c));
+            assert(s2.TLB_interp_pt_mem_agree(c));
+
+            assert(s2.TLB_unmap_agree(c));
+        },
+        os::Step::MapOpChange { core, .. } => {
+            assert(s2.shootdown_cores_valid(c));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(s2.successful_invlpg(c));
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(s2.TLB_interp_pt_mem_agree(c)) by {
+                assert forall|tlb_core: Core, v: usize|
+                    #[trigger] c.valid_core(tlb_core)
+                    && #[trigger] s2.mmu@.tlbs[tlb_core].dom().contains(v)
+                    && s2.interp_pt_mem().dom().contains(v as nat)
+                        implies
+                    s2.mmu@.tlbs[tlb_core][v] == s2.interp_pt_mem()[v as nat]
+                by {
+                    assert(s1.mmu@.tlbs[tlb_core].dom().contains(v));
+                    assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()).contains(v as nat));
+                    assert_by_contradiction!(!s1.unmap_vaddr_set().contains(v as nat), {
+                        let unmap_core = choose|core: Core| s1.is_unmap_vaddr_core(core, v as nat);
+                    });
+                };
+            };
+
+
             assert(s2.TLB_unmap_agree(c));
         },
         //unmap steps
