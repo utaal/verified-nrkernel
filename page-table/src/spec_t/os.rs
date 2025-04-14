@@ -1316,7 +1316,8 @@ impl State {
         forall|core: Core, core2: Core, v: usize|
             #[trigger] c.valid_core(core)
             && #[trigger] self.mmu@.tlbs[core].dom().contains(v)
-            && #[trigger] self.is_unmap_vaddr_core(core2, v as nat)
+            && #[trigger] c.valid_core(core2)
+            && self.is_unmap_vaddr_core(core2, v as nat)
             ==> self.mmu@.tlbs[core][v] == self.core_states[core2].PTE()
     }
 
@@ -1332,6 +1333,8 @@ impl State {
         &&& self.shootdown_cores_valid(c)
         &&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
+        &&& self.TLB_interp_pt_mem_agree(c)
+        &&& self.TLB_unmap_agree(c)
         &&& self.pending_unmap_is_unmap_vaddr(c)
     }
 

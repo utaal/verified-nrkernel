@@ -576,7 +576,23 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(s1.interp_pt_mem().dom().union(s1.unmap_vaddr_set()).contains(tlb_va as nat));
             unmap_vaddr_set_le_extra_mappings_dom(c, s1);
             assert(s1.applied_mappings().dom().contains(tlb_va as nat));
-            assume(s1.applied_mappings()[tlb_va as nat] == s1.mmu@.tlbs[core][tlb_va]); // needs invariant
+            assert(s1.applied_mappings()[tlb_va as nat] == s1.mmu@.tlbs[core][tlb_va]) by {
+                reveal(os::State::extra_mappings);
+                if s1.interp_pt_mem().dom().contains(tlb_va as nat) {
+                    assert(s1.interp_pt_mem()[tlb_va as nat] == s1.mmu@.tlbs[core][tlb_va]);
+                    assert(s1.applied_mappings()[tlb_va as nat] == s1.mmu@.tlbs[core][tlb_va]);
+                } else {
+                    assert(s1.unmap_vaddr_set().contains(tlb_va as nat));
+                    let core1 = choose|core: Core| s1.is_unmap_vaddr_core(core, tlb_va as nat);
+                    assert(c.valid_core(core1));
+                    assert(s1.is_unmap_vaddr_core(core1, tlb_va as nat));
+                    assert(s1.core_states[core1].PTE() == s1.mmu@.tlbs[core][tlb_va]);
+                    vaddr_distinct(c, s1);
+                    assert(s1.core_states[core1].PTE() == s1.extra_mapping_for_vaddr(tlb_va as nat));
+                    assert(s1.extra_mapping_for_vaddr(tlb_va as nat) == s1.extra_mappings()[tlb_va as nat]);
+                    assert(s1.applied_mappings()[tlb_va as nat] == s1.mmu@.tlbs[core][tlb_va]);
+                }
+            }
 
             let hl_pte = Some((tlb_va as nat, s1.applied_mappings()[tlb_va as nat]));
 
@@ -1166,8 +1182,6 @@ proof fn vaddr_mapping_is_being_modified_from_vaddr_unmap(
             == Some((tlb_va as nat, s.mmu@.tlbs[core][tlb_va]))
 {
     assert(s.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
-    assume(s.TLB_interp_pt_mem_agree(c));
-    assume(s.TLB_unmap_agree(c));
 
     reveal(os::State::extra_mappings);
     vaddr_distinct(c, s);
