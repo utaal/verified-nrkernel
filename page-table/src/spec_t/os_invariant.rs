@@ -798,7 +798,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                         }
                     }
                 }
-                assert(s2.inv_inflight_map_no_overlap_inflight_pmem(c));
+                assert(s2.inv_inflight_pmem_no_overlap_inflight_pmem(c));
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
                 assert(s2.overlapping_mem_inv(c));
             },
@@ -816,7 +816,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                 );
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
-                assert (s2.inv_inflight_map_no_overlap_inflight_pmem(c)) by {
+                assert (s2.inv_inflight_pmem_no_overlap_inflight_pmem(c)) by {
                     assert forall |core1: Core, core2: Core| #![auto]
                             (c.valid_core(core1) && c.valid_core(core2)
                                 //might also need unmaps
@@ -922,7 +922,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                 }
                 }
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
-                assert (s2.inv_inflight_map_no_overlap_inflight_pmem(c)) by {
+                assert (s2.inv_inflight_pmem_no_overlap_inflight_pmem(c)) by {
                     assert forall |core1: Core, core2: Core| #![auto]
                             (c.valid_core(core1) && c.valid_core(core2)
                                 && s2.core_states[core1].has_pte(s2.interp_pt_mem()) && s2.core_states[core2].has_pte(s2.interp_pt_mem())
@@ -997,11 +997,11 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                                 size: s1.core_states[map_core].pte_size(s1.interp_pt_mem()),
                             },
                         ));
-                        assert(!s1.inv_inflight_map_no_overlap_inflight_pmem(c));
+                        assert(!s1.inv_inflight_pmem_no_overlap_inflight_pmem(c));
                         assert(false);
                     }
                 }
-                assert(s2.inv_inflight_map_no_overlap_existing_pmem(c));
+                assert(s2.inv_inflight_pmem_no_overlap_existing_pmem(c));
                 assert(s2.inv_mapped_pmem_no_overlap(c));
                 assert(s2.overlapping_mem_inv(c));
             },
@@ -1046,18 +1046,6 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                             assert(s2.core_states[other] == s1.core_states[other]);
                             assert(s1.core_states.dom().contains(other));
                             assert(s1.core_states.values().contains(s2.core_states[other]));
-                            if (s2.core_states[other].is_map()) {
-                                if (s2.core_states[other] is MapDone) { 
-                                    //assert(s1.core_states[other].vaddr() == vaddr);
-                                    admit();
-                                }
-                            } else {
-                                if !(s1.core_states[other].vaddr() == vaddr) {
-                                    //assert
-                                    admit();
-                                }
-                            }
-                            //assert(os::candidate_mapping_overlaps_inflight_vmem(s1.interp_pt_mem(), s1.core_states.values(), vaddr, pte_size));
                             assert(false);
                         }
                     }
@@ -1078,7 +1066,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                 );
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
-                assert (s2.inv_inflight_map_no_overlap_inflight_pmem(c)) by {
+                assert (s2.inv_inflight_pmem_no_overlap_inflight_pmem(c)) by {
                     assert forall |core1: Core, core2: Core| #![auto]
                             (c.valid_core(core1) && c.valid_core(core2)
                                 //might also need unmaps
@@ -1161,7 +1149,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                     }
                 }
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
-                assert (s2.inv_inflight_map_no_overlap_inflight_pmem(c)) by {
+                assert (s2.inv_inflight_pmem_no_overlap_inflight_pmem(c)) by {
                         assert forall |core1: Core, core2: Core|
                                 (c.valid_core(core1) && c.valid_core(core2)
                                     && s2.core_states[core1].has_pte(s2.interp_pt_mem()) && s2.core_states[core2].has_pte(s2.interp_pt_mem())
@@ -1202,7 +1190,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                     corestate,
                 );
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
-                assert(s2.inv_inflight_map_no_overlap_inflight_pmem(c));
+                assert(s2.inv_inflight_pmem_no_overlap_inflight_pmem(c));
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
             },
             os::Step::UnmapInitiateShootdown { core } => {
@@ -1212,7 +1200,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                 let corestate = os::CoreState::UnmapShootdownWaiting { ult_id, vaddr, result: result->Some_0 };
                 lemma_insert_preserves_no_overlap(c, s1.core_states, s1.interp_pt_mem(), core, corestate);
                 lemma_unique_and_overlap_values_implies_overlap_vmem(c, s2);
-                assert (s2.inv_inflight_map_no_overlap_inflight_pmem(c)) by {
+                assert (s2.inv_inflight_pmem_no_overlap_inflight_pmem(c)) by {
                     assert forall |core1: Core, core2: Core|
                             (c.valid_core(core1) && c.valid_core(core2)
                                 && s2.core_states[core1].has_pte(s2.interp_pt_mem()) && s2.core_states[core2].has_pte(s2.interp_pt_mem())
