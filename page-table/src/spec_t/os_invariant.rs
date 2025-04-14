@@ -178,7 +178,7 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
         os::Step::Barrier { core } => {
             assert(s2.inv_pending_maps(c));
         }
-        os::Step::Invlpg { core, vaddr } => {
+        os::Step::Invlpg { core } => {
             assert(s2.inv_pending_maps(c));
         }
 
@@ -435,7 +435,7 @@ pub proof fn next_step_preserves_inv_writes(c: os::Constants, s1: os::State, s2:
         to_rl1::next_preserves_inv,
         to_rl1::next_refines;
     match step {
-        os::Step::Invlpg { core, vaddr } => {
+        os::Step::Invlpg { core } => {
             assert((s2.os_ext.lock matches Some(core) && s2.core_states[core].is_mapping())
                 ==> s2.mmu@.writes.nonpos === set![]);
             assert(s2.os_ext.lock is None ==> {
@@ -507,10 +507,11 @@ pub proof fn next_step_preserves_tlb_inv(
                         #[trigger] c.valid_core(dispatcher)
                         && c.valid_core(handler) 
                         && s2.core_states[dispatcher] is UnmapShootdownWaiting
-                        && !(#[trigger] s2.os_ext.shootdown_vec.open_requests.contains(handler))
+                        && !(#[trigger] s2.mmu@.writes.nonpos.contains(handler))
                             implies
                         !s2.mmu@.tlbs[handler].contains_key((s2.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
                     by {
+                        // assert(!s2.os_ext.shootdown_vec.open_requests.contains(handler));
                         let shootdown_vaddr = s2.core_states[dispatcher]->UnmapShootdownWaiting_vaddr;
                         if handler == core {
                             assert(s2.core_states[dispatcher] == s1.core_states[dispatcher]);
@@ -530,6 +531,8 @@ pub proof fn next_step_preserves_tlb_inv(
                             }
                         }
                     };
+                    assert(s2.successful_invlpg(c));
+                    assert(s2.successful_IPI(c));
                     assert forall|tlb_core: Core, tlb_va: nat| #![auto]
                         c.valid_core(tlb_core)
                         && s2.mmu@.tlbs[tlb_core].dom().map(|v| v as nat).contains(tlb_va)
@@ -547,7 +550,6 @@ pub proof fn next_step_preserves_tlb_inv(
                             }
                         }
                     };
-                    assert(s2.successful_IPI(c));
                     assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
                     assert(s2.TLB_interp_pt_mem_agree(c)) by {
                         reveal(crate::spec_t::mmu::pt_mem::PTMem::view);
@@ -592,10 +594,31 @@ pub proof fn next_step_preserves_tlb_inv(
                 <==> s1.is_unmap_vaddr_core(core, vaddr));
             assert(s2.tlb_inv(c));
         },
+        os::Step::UnmapInitiateShootdown { core } => {
+            assert(s2.shootdown_cores_valid(c));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(s1.mmu@.writes.nonpos == Set::new(|core| c.valid_core(core)));
+            assert(s2.successful_invlpg(c));
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(s2.TLB_interp_pt_mem_agree(c));
+            assert(s2.TLB_unmap_agree(c));
+        },
+        os::Step::Invlpg { core, .. } => {
+            assert(s2.all_cores_nonpos_before_shootdown(c));
+            assert(s2.shootdown_cores_valid(c));
+            assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
+                <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(s2.successful_invlpg(c));
+            assert(s2.successful_IPI(c));
+            assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
+            assert(s2.TLB_interp_pt_mem_agree(c));
+            assert(s2.TLB_unmap_agree(c));
+        }
         os::Step::MemOp { core }
         | os::Step::ReadPTMem { core, .. }
         | os::Step::Barrier { core }
-        | os::Step::Invlpg { core, .. }
         | os::Step::MapOpStart { core }
         | os::Step::Allocate { core, .. }
         | os::Step::MapNoOp { core }
@@ -604,19 +627,22 @@ pub proof fn next_step_preserves_tlb_inv(
         | os::Step::UnmapWaitShootdown { core }
         | os::Step::Deallocate { core, .. }
         | os::Step::UnmapOpFail { core }
-        | os::Step::UnmapInitiateShootdown { core }
         | os::Step::MapOpStutter { core, .. }
         | os::Step::MapOpChange { core, .. } => {
             assert(s2.shootdown_cores_valid(c));
-            assert(s2.successful_IPI(c));
             assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)
                 <==> s1.is_unmap_vaddr_core(core, vaddr));
+            assert(s2.successful_invlpg(c));
+            assert(s2.successful_IPI(c));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
             assume(s2.TLB_interp_pt_mem_agree(c));
             assume(s2.TLB_unmap_agree(c));
         },
         //unmap steps
         os::Step::UnmapOpChange { core, paddr, value } => {
+            assert(s2.all_cores_nonpos_before_shootdown(c)) by {
+                assert(s2.mmu@.writes.nonpos =~= Set::new(|core| c.valid_core(core)));
+            };
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
             let unmapped_vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
@@ -637,6 +663,9 @@ pub proof fn next_step_preserves_tlb_inv(
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
         },
         os::Step::UnmapOpStutter { core, paddr, value } => {
+            assert(s2.all_cores_nonpos_before_shootdown(c)) by {
+                assert(s2.mmu@.writes.nonpos =~= s1.mmu@.writes.nonpos);
+            };
             assert(s2.shootdown_cores_valid(c));
             assert(s2.successful_IPI(c));
             assert(forall|core, vaddr: nat| s2.is_unmap_vaddr_core(core, vaddr)

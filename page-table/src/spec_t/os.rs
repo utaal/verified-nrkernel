@@ -56,7 +56,7 @@ pub enum Step {
     MemOp { core: Core },
     ReadPTMem { core: Core, paddr: usize, value: usize },
     Barrier { core: Core },
-    Invlpg { core: Core, vaddr: usize },
+    Invlpg { core: Core },
     // Map
     MapStart { core: Core },
     MapOpStart { core: Core },
@@ -266,11 +266,11 @@ pub open spec fn step_Barrier(c: Constants, s1: State, s2: State, core: Core, lb
     &&& s2.sound == s1.sound
 }
 
-/// Cores can execute an invlpg at any point. This transition has to be used after an unmap.
-pub open spec fn step_Invlpg(c: Constants, s1: State, s2: State, core: Core, vaddr: usize, lbl: RLbl) -> bool {
+pub open spec fn step_Invlpg(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
     &&& lbl is Tau
+    &&& s1.os_ext.shootdown_vec.open_requests.contains(core)
     //mmu statemachine steps
-    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Invlpg(core, vaddr))
+    &&& rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::Invlpg(core, s1.os_ext.shootdown_vec.vaddr as usize))
     &&& s2.os_ext == s1.os_ext
     //new state
     &&& s2.core_states == s1.core_states
@@ -670,7 +670,7 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: 
         Step::MemOp { core }                        => step_MemOp(c, s1, s2, core, lbl),
         Step::ReadPTMem { core, paddr, value }      => step_ReadPTMem(c, s1, s2, core, paddr, value, lbl),
         Step::Barrier { core }                      => step_Barrier(c, s1, s2, core, lbl),
-        Step::Invlpg { core, vaddr }                => step_Invlpg(c, s1, s2, core, vaddr, lbl),
+        Step::Invlpg { core }                       => step_Invlpg(c, s1, s2, core, lbl),
         //Map steps
         Step::MapStart { core }                     => step_MapStart(c, s1, s2, core, lbl),
         Step::MapOpStart { core }                   => step_MapOpStart(c, s1, s2, core, lbl),
@@ -1283,6 +1283,22 @@ impl State {
             self.os_ext.shootdown_vec.open_requests.contains(core) ==> c.valid_core(core)
     }
 
+    pub open spec fn all_cores_nonpos_before_shootdown(self, c: Constants) -> bool {
+        (self.os_ext.lock is Some
+            && self.core_states[self.os_ext.lock->Some_0] matches CoreState::UnmapExecuting { result: Some(_), .. })
+        ==> self.mmu@.writes.nonpos == Set::new(|core| c.valid_core(core))
+    }
+
+    pub open spec fn successful_invlpg(self, c: Constants) -> bool {
+        forall|dispatcher: Core, handler: Core|
+            #[trigger] c.valid_core(dispatcher)
+            && c.valid_core(handler) 
+            && self.core_states[dispatcher] is UnmapShootdownWaiting
+            && !(#[trigger] self.mmu@.writes.nonpos.contains(handler))
+                ==> !self.mmu@.tlbs[handler].contains_key(
+                        (self.core_states[dispatcher]->UnmapShootdownWaiting_vaddr) as usize)
+    }
+
     pub open spec fn successful_IPI(self, c: Constants) -> bool {
         forall|dispatcher: Core, handler: Core|
             #[trigger] c.valid_core(dispatcher)
@@ -1321,21 +1337,26 @@ impl State {
             ==> self.mmu@.tlbs[core][v] == self.core_states[core2].PTE()
     }
 
-    //pub open spec fn shootdown_exists(self, c: Constants) -> bool {
-    //    !(self.shootdown_vec.open_requests === Set::<Core>::empty())
-    //        ==> exists|core| c.valid_core(core)
-    //            && self.core_states[core] matches (CoreState::UnmapShootdownWaiting { vaddr, .. })
-    //}
+    pub open spec fn shootdown_exists(self, c: Constants) -> bool {
+       self.os_ext.shootdown_vec.open_requests !== set![]
+           ==> {
+               &&& self.os_ext.lock matches Some(core)
+               &&& self.core_states[core] is UnmapShootdownWaiting
+           }
+    }
 
     pub open spec fn tlb_inv(self, c: Constants) -> bool {
         &&& self.inv_tlb_wf(c)
         &&& self.inv_shootdown_wf(c)
+        &&& self.shootdown_exists(c)
         &&& self.shootdown_cores_valid(c)
+        &&& self.successful_invlpg(c)
         &&& self.successful_IPI(c)
         &&& self.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c)
         &&& self.TLB_interp_pt_mem_agree(c)
         &&& self.TLB_unmap_agree(c)
         &&& self.pending_unmap_is_unmap_vaddr(c)
+        &&& self.all_cores_nonpos_before_shootdown(c)
     }
 
     pub open spec fn pending_unmap_is_unmap_vaddr(self, c: Constants) -> bool {

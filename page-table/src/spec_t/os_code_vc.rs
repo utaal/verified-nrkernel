@@ -148,13 +148,13 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
         pre.os_ext.lock == Some(core),
         //c.valid_core(core),
     ensures
-        unchanged_state_during_concurrent_trs(pre, post),
+        unchanged_state_during_concurrent_trs(pre, post, core),
         post.core_states[core] == pre.core_states[core],
         post.inv(c),
 {
     let pred = |pre: os::State, post: os::State|
         pre.inv(c) && pre.os_ext.lock == Some(core) ==> {
-            &&& unchanged_state_during_concurrent_trs(pre, post)
+            &&& unchanged_state_during_concurrent_trs(pre, post, core)
             &&& post.core_states[core] == pre.core_states[core]
             &&& post.os_ext.lock == pre.os_ext.lock
             &&& post.inv(c)
@@ -170,7 +170,7 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
         if pre.inv(c) && pre.os_ext.lock == Some(core) {
             os_invariant::next_preserves_inv(c, mid, post, lbl);
             broadcast use to_rl1::next_refines;
-            assert(unchanged_state_during_concurrent_trs(pre, mid));
+            assert(unchanged_state_during_concurrent_trs(pre, mid, core));
             //match step {
             //    //os::Step::MMU                                          => admit(),
             //    //os::Step::MemOp { core }                               => admit(),
@@ -484,7 +484,7 @@ pub trait CodeVC {
     ;
 }
 
-pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os::State) -> bool {
+pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os::State, core: Core) -> bool {
     &&& post.mmu@.happy          == pre.mmu@.happy
     &&& post.mmu@.pt_mem         == pre.mmu@.pt_mem
     &&& post.os_ext.allocated    == pre.os_ext.allocated
@@ -493,6 +493,9 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
     &&& post.mmu@.pending_maps.submap_of(pre.mmu@.pending_maps)
     &&& post.mmu@.pending_unmaps.submap_of(pre.mmu@.pending_unmaps)
     &&& post.os_ext.shootdown_vec.open_requests.subset_of(pre.os_ext.shootdown_vec.open_requests)
+    &&& pre.os_ext.shootdown_vec.open_requests.contains(core)
+        ==> post.os_ext.shootdown_vec.open_requests.contains(core)
+    // &&& forall|core| c.valid_core(core) && !pre.mmu@.writes.nonpos.contains(core)
 }
 
 } // verus!
