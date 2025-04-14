@@ -777,7 +777,7 @@ impl CoreState {
     }
 
     pub open spec fn PTE(self) -> PTE
-    recommends self.is_map(),
+        recommends self.is_map(),
     {
         match self {
             CoreState::MapWaiting { pte, .. }
@@ -1361,7 +1361,10 @@ impl State {
 
     pub open spec fn pending_unmap_is_unmap_vaddr(self, c: Constants) -> bool {
         forall|va| #[trigger] self.mmu@.pending_unmaps.contains_key(va)
-                ==> self.is_unmap_vaddr(va as nat)
+                ==> {
+                    &&& self.is_unmap_vaddr_core(self.os_ext.lock->Some_0, va as nat)
+                    &&& self.mmu@.pending_unmaps[va] == self.core_states[self.os_ext.lock->Some_0].PTE()
+                }
     }
 
 

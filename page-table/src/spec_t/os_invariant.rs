@@ -562,7 +562,7 @@ pub proof fn next_step_preserves_tlb_inv(
                     assert(s2.successful_IPI(c));
                     assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
                     assert(s2.TLB_interp_pt_mem_agree(c));
-                    assume(s2.TLB_unmap_agree(c));
+                    assert(s2.TLB_unmap_agree(c));
                 }
                 _ => {
                     assert(forall|core| #![auto] s2.mmu@.tlbs[core].submap_of(s1.mmu@.tlbs[core]));
@@ -636,7 +636,7 @@ pub proof fn next_step_preserves_tlb_inv(
             assert(s2.successful_IPI(c));
             assert(s2.TLB_dom_subset_of_pt_and_inflight_unmap_vaddr(c));
             assume(s2.TLB_interp_pt_mem_agree(c));
-            assume(s2.TLB_unmap_agree(c));
+            assert(s2.TLB_unmap_agree(c));
         },
         //unmap steps
         os::Step::UnmapOpChange { core, paddr, value } => {
