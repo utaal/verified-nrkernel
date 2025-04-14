@@ -179,7 +179,6 @@ pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::Stat
             assert(s2.inv_pending_maps(c));
         }
         os::Step::Invlpg { core, vaddr } => {
-            admit();
             assert(s2.inv_pending_maps(c));
         }
 
