@@ -763,14 +763,36 @@ impl CoreState {
         }
     }
 
-    pub open spec fn paddr(self) -> nat
-        recommends self.is_map(),
+    pub open spec fn has_pte(self, pt: Map<nat, PTE>) -> bool
+    {
+        match self {
+            CoreState::MapWaiting { pte, .. }
+            | CoreState::MapExecuting { pte, .. }
+            | CoreState::MapDone { pte, .. } => {
+                true
+            }
+            CoreState::UnmapWaiting { vaddr, .. }  => pt.contains_key(vaddr),
+            CoreState::UnmapExecuting { result: Some(Ok(_)), .. }
+            | CoreState::UnmapOpDone { result: Ok(_), .. }
+            | CoreState::UnmapShootdownWaiting { result: Ok(_), .. } => true,
+            _ => false,
+        }
+    }
+
+    pub open spec fn paddr(self, pt: Map<nat, PTE>) -> nat
+        recommends self.has_pte(pt),
     {
         match self {
             CoreState::MapWaiting { pte, .. }
             | CoreState::MapExecuting { pte, .. }
             | CoreState::MapDone { pte, .. } => {
                 pte.frame.base
+            }
+            CoreState::UnmapWaiting { vaddr, .. }  => pt[vaddr].frame.base,
+            | CoreState::UnmapExecuting { result: Some(Ok(pte)), .. }
+            | CoreState::UnmapOpDone { result: Ok(pte), .. }
+            | CoreState::UnmapShootdownWaiting { result: Ok(pte), .. } => {
+               pte.frame.base
             }
             _ => arbitrary(),
         }
@@ -1371,6 +1393,12 @@ impl State {
     ///////////////////////////////////////////////////////////////////////////////////////////////
     // Invariants about overlapping
     ///////////////////////////////////////////////////////////////////////////////////////////////
+    /*
+    the overlap invariants need to be strengthened.
+    
+    - In particular, pmem invariants need to be extended to include unmap (as many of the code comments suggest). 
+    
+    */
     pub open spec fn inv_inflight_map_no_overlap_inflight_vmem(self, c: Constants) -> bool {
         forall|core1: Core, core2: Core|
             (c.valid_core(core1) && c.valid_core(core2)
@@ -1400,14 +1428,14 @@ impl State {
         forall|core1: Core, core2: Core|
             (c.valid_core(core1) && c.valid_core(core2)
                 //might also need unmaps
-                && self.core_states[core1].is_map() && self.core_states[core2].is_map()
+                && self.core_states[core1].has_pte(self.interp_pt_mem()) && self.core_states[core2].has_pte(self.interp_pt_mem())
                 && overlap(
                 MemRegion {
-                    base: self.core_states[core1].paddr(),
+                    base: self.core_states[core1].paddr(self.interp_pt_mem()),
                     size: self.core_states[core1].pte_size(self.interp_pt_mem()),
                 },
                 MemRegion {
-                    base: self.core_states[core2].paddr(),
+                    base: self.core_states[core2].paddr(self.interp_pt_mem()),
                     size: self.core_states[core2].pte_size(self.interp_pt_mem()),
                 },
             )) ==> core1 === core2
