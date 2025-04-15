@@ -12,6 +12,7 @@ use crate::spec_t::mmu::defs::{
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     aligned, between, candidate_mapping_in_bounds, candidate_mapping_overlaps_existing_pmem,
+    candidate_mapping_in_bounds_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap, x86_arch_spec, MAX_BASE
 };
 use crate::theorem::RLbl;
@@ -1087,11 +1088,30 @@ impl State {
                     CoreState::MapWaiting { vaddr, pte, .. }
                     | CoreState::MapExecuting { vaddr, pte, .. }
                     | CoreState::MapDone { vaddr, pte, .. }
+                    | CoreState::UnmapExecuting { vaddr, result: Some(Ok(pte)), .. }
+                    | CoreState::UnmapOpDone { vaddr, result: Ok(pte), .. }
+                    | CoreState::UnmapShootdownWaiting { vaddr, result: Ok(pte), .. }
                         => candidate_mapping_in_bounds(vaddr, pte),
                     _ => true,
                 }
         &&& forall|vaddr, pte| #![auto] self.interp_pt_mem().contains_pair(vaddr, pte) ==> candidate_mapping_in_bounds(vaddr, pte)
     }
+
+    pub open spec fn inv_mappings_in_bound_pmem(self, c: Constants) -> bool {
+        &&& forall|core: Core| #![auto] c.valid_core(core) ==>
+                match self.core_states[core] {
+                    CoreState::MapWaiting { vaddr, pte, .. }
+                    | CoreState::MapExecuting { vaddr, pte, .. }
+                    | CoreState::MapDone { vaddr, pte, .. }
+                    | CoreState::UnmapExecuting { vaddr, result: Some(Ok(pte)), .. }
+                    | CoreState::UnmapOpDone { vaddr, result: Ok(pte), .. }
+                    | CoreState::UnmapShootdownWaiting { vaddr, result: Ok(pte), .. }
+                        => candidate_mapping_in_bounds_pmem(pte),
+                    _ => true,
+                }
+        &&& forall|vaddr, pte| #![auto] self.interp_pt_mem().contains_pair(vaddr, pte) ==> candidate_mapping_in_bounds_pmem(pte)
+    }
+
 
     pub open spec fn inv_inflight_pte_above_zero_pte_result_consistent(self, c: Constants) -> bool {
         forall|core: Core| c.valid_core(core) ==>
@@ -1174,6 +1194,7 @@ impl State {
         &&& self.inv_mmu(c)
         &&& self.inv_mapped_ptes_above_zero()
         &&& self.inv_mappings_in_bound(c)
+        &&& self.inv_mappings_in_bound_pmem(c)
         &&& self.inv_inflight_pte_above_zero_pte_result_consistent(c)
         &&& self.inv_successful_unmaps(c)
         &&& self.inv_unsuccessful_maps(c)

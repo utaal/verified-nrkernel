@@ -94,6 +94,10 @@ pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PTE) -> bool {
     base + pte.frame.size < x86_arch_spec.upper_vaddr(0, 0)
 }
 
+pub open spec fn candidate_mapping_in_bounds_pmem(pte: PTE) -> bool {
+    pte.frame.base + pte.frame.size <= MAX_PHYADDR
+}
+
 // TODO: maybe we can deduplicate these two definitions somehow
 pub open spec fn candidate_mapping_overlaps_existing_vmem_usize(
     mappings: Map<usize, PTE>,
