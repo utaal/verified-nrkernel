@@ -9,6 +9,7 @@ use crate::spec_t::mmu::defs::{
     candidate_mapping_in_bounds,
     candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap,
+    candidate_mapping_in_bounds_pmem,
     MAX_BASE, MemRegion, PTE, Core
 };
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
@@ -623,10 +624,13 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
 
             no_overlaps_applied_mappings(c, s1);
             no_overlaps_pmem_applied_mappings(c, s1);
+            bounds_applied_mappings(c, s1);
 
             assume(vaddr as int + op.op_size() as int <= base + pte.frame.size);
-            assume(base + pte.frame.size <= s1.interp_vmem(c).len());
-            assume(pte.frame.base + pte.frame.size <= s1.mmu@.phys_mem.len());
+            assert(candidate_mapping_in_bounds(base, pte));
+            x86_arch_spec_upper_bound();
+            assert(base + pte.frame.size <= s1.interp_vmem(c).len());
+            assert(pte.frame.base + pte.frame.size <= s1.mmu@.phys_mem.len());
 
             match op {
                 MemOp::Store { new_value, result } => {
@@ -1347,6 +1351,19 @@ spec fn no_overlaps_pmem(m: Map<nat, PTE>) -> bool {
           ==> !overlap(m[i].frame, m[j].frame)
 }
 
+spec fn bounds(c: os::Constants, m: Map<nat, PTE>) -> bool {
+    forall |i|
+        #[trigger] m.dom().contains(i)
+          ==> candidate_mapping_in_bounds(i, m[i])
+           && candidate_mapping_in_bounds_pmem(c.common, m[i])
+}
+
+proof fn bounds_applied_mappings(c: os::Constants, s: os::State)
+    requires s.inv(c), s.sound,
+    ensures bounds(c, s.applied_mappings()),
+{
+}
+
 proof fn no_overlaps_pmem_applied_mappings(c: os::Constants, s: os::State)
     requires s.inv(c), s.sound,
     ensures no_overlaps_pmem(s.applied_mappings()),
@@ -1548,6 +1565,7 @@ proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte
     requires
         no_overlaps(s.applied_mappings()),
         no_overlaps_pmem(s.applied_mappings()),
+        bounds(c, s.applied_mappings()),
         s.applied_mappings().dom().contains(base),
         s.applied_mappings()[base] == pte,
         base <= vaddr,
@@ -1592,7 +1610,7 @@ proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte
                 let p_idx = pte0.frame.base + idx - base0;
                 assert(!(vaddr <= idx < vaddr + new.len()));
 
-                assume(pte0.frame.base + pte0.frame.size <= s.mmu@.phys_mem.len());
+                assert(pte0.frame.base + pte0.frame.size <= s.mmu@.phys_mem.len());
 
                 assert(base0 <= idx < base0 + pte0.frame.size);
                 assert(pte0.frame.base <= p_idx < pte0.frame.base + pte0.frame.size);
