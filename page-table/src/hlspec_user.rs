@@ -949,7 +949,76 @@ mod program_two {
             ));
             v
         };
+
     }
+}
+
+mod program_three {
+    use super::*;
+    
+    proof fn program_map_unmap_fault() {
+        lemma_max_phyaddr_at_least();
+        x86_arch_spec_upper_bound();
+    
+        let c = Constants { thread_no: 2, phys_mem_size: 8_192_000 };
+    
+        let s1 = State {
+            mem: seq![arbitrary(); crate::spec_t::mmu::defs::MAX_BASE],
+            thread_state: map![0 => ThreadState::Idle,],
+            mappings: Map::empty(),
+            sound: true,
+        };
+    
+        assert(wf(c, s1));
+        assert(init(c, s1));
+
+        let pte1_memregion = get_frame(0, 4096);
+        let pte1 = PTE { frame: pte1_memregion, flags: Flags { is_writable: true, is_supervisor: false, disable_execute: true }, };
+
+        let pte1_vaddr = 549_755_813_888;
+        let s2 = State { thread_state: s1.thread_state.insert(0, ThreadState::Map { vaddr: pte1_vaddr, pte: pte1 },), ..s1 };
+
+        let s1s2rlbl = RLbl::MapStart { thread_id: 0, vaddr: pte1_vaddr, pte: pte1 };
+        assert(next_step(c, s1, s2, Step::MapStart, s1s2rlbl));
+
+        let s3 = State {
+            thread_state: s2.thread_state.insert(0, ThreadState::Idle),
+            mappings: s2.mappings.insert(pte1_vaddr, pte1),
+            ..s2
+        };
+
+        let s2s3rlbl = RLbl::MapEnd { thread_id: 0, vaddr: pte1_vaddr, result: Ok(()) };
+        assert(next_step(c, s1, s2, Step::MapEnd, s2s3rlbl));
+
+        let s4 = State {
+            thread_state: s3.thread_state.insert(1, ThreadState::Unmap { vaddr: pte1_vaddr, pte: Some(pte1) }, ),
+            mappings: s3.mappings.remove(pte1_vaddr),
+            ..s3
+        };
+
+        assert(next_step(c, s3, s4, Step::UnmapStart, RLbl::UnmapStart { thread_id: 1, vaddr: pte1_vaddr }));
+
+        let s5 = State {
+            thread_state: s3.thread_state.insert(1, ThreadState::Idle, ),
+            ..s4
+        };
+
+        assert(next_step(c, s4, s5, Step::UnmapEnd, RLbl::UnmapEnd { thread_id: 1, vaddr: pte1_vaddr, result: Ok(()) }));
+        
+        let s6 = s5;
+
+        assert(next_step(c, s4, s5, Step::UnmapEnd, RLbl::UnmapEnd { thread_id: 1, vaddr: pte1_vaddr, result: Ok(()) }));
+        let s3s4op = MemOp::Store { new_value: seq![10, 0, 0, 0], result: StoreResult::Pagefault };
+        assert(s3s4op.op_size() == 4);
+
+        assert(next_step(c, s5, s6, Step::MemOp { pte: Some((pte1_vaddr, pte1)) },
+            RLbl::MemOp {
+                thread_id: 1,
+                vaddr: pte1_vaddr,
+                op: s3s4op,
+            },
+        ));
+    } 
 }
 
 } // verus!
