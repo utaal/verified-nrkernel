@@ -1166,7 +1166,6 @@ impl State {
 
     pub open spec fn inv_basic(self, c: Constants) -> bool {
         &&& self.wf(c)
-        &&& self.inv_mmu(c)
         &&& self.inv_inflight_pte_wf(c)
         &&& self.inv_mapped_pte_wf(c)
         &&& self.inv_successful_unmaps(c)
@@ -1284,6 +1283,7 @@ impl State {
 
     pub open spec fn inv(self, c: Constants) -> bool {
         &&& self.inv_basic(c)
+        &&& self.inv_mmu(c)
         &&& self.inv_impl()
         &&& self.inv_writes(c)
         &&& self.inv_shootdown(c)

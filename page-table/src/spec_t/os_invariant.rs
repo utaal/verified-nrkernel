@@ -5,7 +5,8 @@ use vstd::assert_by_contradiction;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core, X86_NUM_ENTRIES,
-    new_seq, aligned, MAX_BASE, x86_arch_spec_upper_bound
+    new_seq, aligned, MAX_BASE, x86_arch_spec_upper_bound, candidate_mapping_in_bounds_pmem,
+    L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE
 };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
@@ -81,6 +82,7 @@ pub proof fn next_preserves_inv(c: os::Constants, s1: os::State, s2: os::State, 
     next_step_preserves_inv(c, s1, s2, step, lbl);
 }
 
+#[verifier::rlimit(100)] #[verifier(spinoff_prover)]
 pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
     requires
         s1.inv(c),
@@ -105,19 +107,8 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     };
     */
 
-    assert(s2.inv_basic(c)) by {
-        x86_arch_spec_upper_bound();
-        assert(s2.mmu@.phys_mem.len() == s1.mmu@.phys_mem.len()) by {
-            match step {
-                os::Step::MemOp { core } => {
-                    assume(s2.mmu@.phys_mem.len() == s1.mmu@.phys_mem.len());
-                },
-                _ => {},
-            }
-        };
-        // TODO: this is incredibly slow and I'm not sure why
-        assert(s2.mmu@.pt_mem.mem.dom() =~= s1.mmu@.pt_mem.mem.dom());
-    };
+    assert(s2.inv_basic(c));
+    next_step_preserves_inv_mmu(c, s1, s2, step, lbl);
     next_step_preserves_inv_allocated_mem(c, s1, s2, step, lbl);
     next_step_preserves_overlap_mem_inv(c, s1, s2, step, lbl);
     next_step_preserves_inv_impl(c, s1, s2, step, lbl);
@@ -125,6 +116,60 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     next_step_preserves_inv_shootdown(c, s1, s2, step, lbl);
     next_step_preserves_inv_pending_maps(c, s1, s2, step, lbl);
     next_step_preserves_tlb_inv(c, s1, s2, step, lbl);
+}
+
+pub proof fn next_step_preserves_inv_mmu(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
+    requires
+        s1.inv(c),
+        s2.inv_basic(c),
+        os::next_step(c, s1, s2, step, lbl),
+    ensures
+        s2.inv_mmu(c),
+{
+    x86_arch_spec_upper_bound();
+    broadcast use
+        to_rl1::next_preserves_inv,
+        to_rl1::next_refines;
+    assert(s2.mmu@.pt_mem.mem.dom() =~= s1.mmu@.pt_mem.mem.dom());
+    assert(s1.mmu@.phys_mem.len() == c.common.range_mem.1);
+    match step {
+        os::Step::MemOp { core } => {
+            let vaddr = lbl->MemOp_vaddr;
+            let op = lbl->MemOp_op;
+            assert(mmu::rl3::next(s1.mmu, s2.mmu, c.common, mmu::Lbl::MemOp(core, vaddr as usize, op)));
+            let mmu_step = choose|step| #[trigger] mmu::rl1::next_step(s1.mmu@, s2.mmu@, c.common, step, mmu::Lbl::MemOp(core, vaddr as usize, op));
+            assert(mmu::rl1::next_step(s1.mmu@, s2.mmu@, c.common, mmu_step, mmu::Lbl::MemOp(core, vaddr as usize, op)));
+            if mmu_step is MemOpTLB {
+                let tlb_va = mmu_step->MemOpTLB_tlb_va;
+                let pte = s1.mmu@.tlbs[core][tlb_va];
+                let paddr = pte.frame.base + (vaddr - tlb_va);
+                assert(s2.inv_mapped_pte_wf(c));
+                assert(s1.mmu@.tlbs[core].dom().map(|v| v as nat).contains(tlb_va as nat));
+                assert(c.valid_core(core));
+                assert(candidate_mapping_in_bounds_pmem(c.common, pte));
+                assert(pte.frame.size == L1_ENTRY_SIZE
+                        || pte.frame.size == L2_ENTRY_SIZE
+                        || pte.frame.size == L3_ENTRY_SIZE);
+                assert(aligned(tlb_va as nat, pte.frame.size));
+                assert(vaddr as int + op.op_size() as int <= tlb_va + pte.frame.size) by {
+                    assert(pte.frame.size == L1_ENTRY_SIZE
+                        || pte.frame.size == L2_ENTRY_SIZE
+                        || pte.frame.size == L3_ENTRY_SIZE);
+                    assert(aligned(vaddr, op.op_size()));
+                    assert(vaddr + op.op_size() <= tlb_va + pte.frame.size) by (nonlinear_arith)
+                        requires vaddr < tlb_va + pte.frame.size,
+                          pte.frame.size == 4096 || pte.frame.size == 512 * 4096
+                              || pte.frame.size == 512 * (512 * 4096),
+                          op.op_size() == 1 || op.op_size() == 2 || op.op_size() == 4 || op.op_size() == 8,
+                          vaddr % op.op_size() == 0,
+                          aligned(tlb_va as nat, pte.frame.size);
+                }
+            }
+            assert(s2.mmu@.phys_mem.len() == s1.mmu@.phys_mem.len());
+            assert(s2.inv_mmu(c));
+        }
+        _ => {},
+    }
 }
 
 pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
@@ -719,6 +764,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
     requires
         s1.inv(c),
         s2.inv_basic(c),
+        s2.inv_mmu(c),
         os::next_step(c, s1, s2, step, lbl),
     ensures
         s2.overlapping_mem_inv(c),
