@@ -7,9 +7,9 @@ use vstd::map::*;
 use crate::spec_t::mmu::defs::{
     x86_arch_spec_upper_bound,
     candidate_mapping_in_bounds,
+    candidate_mapping_in_bounds_pmem,
     candidate_mapping_overlaps_existing_pmem,
     candidate_mapping_overlaps_existing_vmem, overlap,
-    candidate_mapping_in_bounds_pmem,
     MAX_BASE, MemRegion, PTE, Core,
     L1_ENTRY_SIZE, L2_ENTRY_SIZE, L3_ENTRY_SIZE,
 };
@@ -628,7 +628,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             bounds_applied_mappings(c, s1);
 
             assert(vaddr as int + op.op_size() as int <= base + pte.frame.size) by {
-                assume(pte.frame.size == L1_ENTRY_SIZE
+                assert(pte.frame.size == L1_ENTRY_SIZE
                     || pte.frame.size == L2_ENTRY_SIZE
                     || pte.frame.size == L3_ENTRY_SIZE);
                 assume(aligned(base, pte.frame.size));

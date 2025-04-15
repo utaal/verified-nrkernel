@@ -5,7 +5,7 @@ use vstd::assert_by_contradiction;
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{
     candidate_mapping_overlaps_existing_vmem, overlap, MemRegion, PTE, Core, X86_NUM_ENTRIES,
-    new_seq, aligned, MAX_BASE, x86_arch_spec_upper_bound, candidate_mapping_in_bounds_pmem
+    new_seq, aligned, MAX_BASE, x86_arch_spec_upper_bound
 };
 #[cfg(verus_keep_ghost)]
 use crate::definitions_u::{ lemma_new_seq };
@@ -105,7 +105,6 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     };
     */
 
-    next_step_preserves_inv_mappings_in_bound(c, s1, s2, step, lbl);
     assert(s2.inv_basic(c)) by {
         x86_arch_spec_upper_bound();
         assert(s2.mmu@.phys_mem.len() == s1.mmu@.phys_mem.len()) by {
@@ -126,48 +125,6 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     next_step_preserves_inv_shootdown(c, s1, s2, step, lbl);
     next_step_preserves_inv_pending_maps(c, s1, s2, step, lbl);
     next_step_preserves_tlb_inv(c, s1, s2, step, lbl);
-}
-
-pub proof fn next_step_preserves_inv_mappings_in_bound(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
-    requires
-        s1.inv(c),
-        os::next_step(c, s1, s2, step, lbl),
-    ensures
-        s2.inv_mappings_in_bound(c),
-        s2.inv_mappings_in_bound_pmem(c),
-{
-    x86_arch_spec_upper_bound();
-    broadcast use
-        to_rl1::next_preserves_inv,
-        to_rl1::next_refines;
-    match step {
-        os::Step::MemOp { core }
-        | os::Step::ReadPTMem { core, .. }
-        | os::Step::MapStart { core } => {
-            assert(s2.interp_pt_mem() == s1.interp_pt_mem());
-            assert(s2.inv_mappings_in_bound_pmem(c));
-        },
-        os::Step::UnmapOpChange { core, paddr, value } => {
-            let vaddr = s1.core_states[core]->UnmapExecuting_vaddr;
-            let pte = s1.interp_pt_mem()[vaddr];
-            assert(s1.interp_pt_mem().contains_pair(vaddr, pte));
-            assert(candidate_mapping_in_bounds_pmem(c.common, pte));
-            assert(s2.core_states[core]->UnmapExecuting_result === Some(Ok(pte)));
-            assert(forall|vaddr, pte| #![auto] s2.interp_pt_mem().contains_pair(vaddr, pte)
-                ==> s1.interp_pt_mem().contains_pair(vaddr, pte));
-            assert(s2.inv_mappings_in_bound_pmem(c));
-        },
-        os::Step::MapOpChange { core, paddr, value } => {
-            let vaddr = s1.core_states[core]->MapExecuting_vaddr;
-            let pte = s1.core_states[core]->MapExecuting_pte;
-            assert(candidate_mapping_in_bounds_pmem(c.common, pte));
-            assert(s2.interp_pt_mem().contains_pair(vaddr, pte));
-            assert(forall|vaddr2, pte2| #![auto] s2.interp_pt_mem().contains_pair(vaddr2, pte2)
-                ==> s1.interp_pt_mem().contains_pair(vaddr2, pte2) || vaddr2 == vaddr && pte2 == pte);
-            assert(s2.inv_mappings_in_bound_pmem(c));
-        },
-        _ => {},
-    }
 }
 
 pub proof fn next_step_preserves_inv_pending_maps(c: os::Constants, s1: os::State, s2: os::State, step: os::Step, lbl: RLbl)
