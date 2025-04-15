@@ -105,45 +105,6 @@ pub proof fn next_step_preserves_inv(c: os::Constants, s1: os::State, s2: os::St
     };
     */
 
-    assert(s2.inv_inflight_pte_above_zero_pte_result_consistent(c)) by {
-        assert forall|core: Core| c.valid_core(core) implies
-            match s2.core_states[core] {
-                os::CoreState::MapWaiting { vaddr, pte, .. }
-                | os::CoreState::MapExecuting { vaddr, pte, .. }
-                | os::CoreState::MapDone { vaddr, pte, .. }
-                    => pte.frame.size > 0,
-                os::CoreState::UnmapWaiting { vaddr, .. }
-                | os::CoreState::UnmapExecuting { vaddr, result: None, .. }
-                    => s2.interp_pt_mem().contains_key(vaddr)
-                        ==> s2.interp_pt_mem()[vaddr].frame.size > 0,
-                os::CoreState::UnmapExecuting { result: Some(result), .. }
-                | os::CoreState::UnmapOpDone { result, .. }
-                | os::CoreState::UnmapShootdownWaiting { result, .. }
-                    => result is Ok ==> result.get_Ok_0().frame.size > 0,
-                os::CoreState::Idle => true,
-        } by {
-            match s2.core_states[core] {
-                os::CoreState::MapWaiting { vaddr, pte, .. }
-                | os::CoreState::MapExecuting { vaddr, pte, .. }
-                | os::CoreState::MapDone { vaddr, pte, .. } => {
-                    assert(pte.frame.size > 0);
-                },
-                os::CoreState::UnmapWaiting { vaddr, .. }
-                | os::CoreState::UnmapExecuting { vaddr, result: None, .. } => {
-                    if s2.interp_pt_mem().contains_key(vaddr) {
-                        assert(s2.interp_pt_mem()[vaddr].frame.size > 0);
-                    }
-                },
-                os::CoreState::UnmapExecuting { result: Some(result), .. }
-                | os::CoreState::UnmapOpDone { result, .. }
-                | os::CoreState::UnmapShootdownWaiting { result, .. } => {
-                    assert(result is Ok ==> result.get_Ok_0().frame.size > 0);
-                },
-                os::CoreState::Idle => {},
-            }
-        };
-    };
-
     next_step_preserves_inv_mappings_in_bound(c, s1, s2, step, lbl);
     assert(s2.inv_basic(c)) by {
         x86_arch_spec_upper_bound();

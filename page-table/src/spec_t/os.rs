@@ -1112,24 +1112,24 @@ impl State {
         &&& forall|vaddr, pte| #![auto] self.interp_pt_mem().contains_pair(vaddr, pte) ==> candidate_mapping_in_bounds_pmem(c.common, pte)
     }
 
+    pub open spec fn inv_inflight_pte_wf(self, c: Constants) -> bool {
+        forall|core: Core| #![auto] c.valid_core(core) && self.core_states[core].has_pte(self.interp_pt_mem()) 
+        && !(self.core_states[core] matches CoreState::UnmapExecuting {result: None, ..})
+        && !(self.core_states[core] is UnmapWaiting)==> {
+            let pte = self.core_states[core].PTE();
+            pte.frame.size == L1_ENTRY_SIZE
+            || pte.frame.size == L2_ENTRY_SIZE
+            || pte.frame.size == L3_ENTRY_SIZE
+        }
+    }
 
-    pub open spec fn inv_inflight_pte_above_zero_pte_result_consistent(self, c: Constants) -> bool {
-        forall|core: Core| c.valid_core(core) ==>
-            match self.core_states[core] {
-                CoreState::MapWaiting { vaddr, pte, .. }
-                | CoreState::MapExecuting { vaddr, pte, .. }
-                | CoreState::MapDone { vaddr, pte, .. }
-                    => pte.frame.size > 0,
-                CoreState::UnmapWaiting { vaddr, .. }
-                | CoreState::UnmapExecuting { vaddr, result: None, .. }
-                    => self.interp_pt_mem().contains_key(vaddr)
-                        ==> self.interp_pt_mem()[vaddr].frame.size > 0,
-                CoreState::UnmapExecuting { result: Some(result), .. }
-                | CoreState::UnmapOpDone { result, .. }
-                | CoreState::UnmapShootdownWaiting { result, .. }
-                    => result is Ok ==> result.get_Ok_0().frame.size > 0,
-                CoreState::Idle => true,
-            }
+    pub open spec fn inv_mapped_pte_wf(self) -> bool {
+        forall|vaddr| self.interp_pt_mem().contains_key(vaddr) ==> {
+            let pte = self.interp_pt_mem()[vaddr];
+            pte.frame.size == L1_ENTRY_SIZE
+            || pte.frame.size == L2_ENTRY_SIZE
+            || pte.frame.size == L3_ENTRY_SIZE
+        }
     }
 
     pub open spec fn inv_successful_maps(self, c: Constants) -> bool {
@@ -1193,9 +1193,10 @@ impl State {
         &&& self.wf(c)
         &&& self.inv_mmu(c)
         &&& self.inv_mapped_ptes_above_zero()
+        &&& self.inv_inflight_pte_wf(c)
+        &&& self.inv_mapped_pte_wf()
         &&& self.inv_mappings_in_bound(c)
         &&& self.inv_mappings_in_bound_pmem(c)
-        &&& self.inv_inflight_pte_above_zero_pte_result_consistent(c)
         &&& self.inv_successful_unmaps(c)
         &&& self.inv_unsuccessful_maps(c)
         &&& self.inv_successful_maps(c)
