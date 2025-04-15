@@ -622,6 +622,7 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(between(vaddr, base, base + pte.frame.size));
 
             no_overlaps_applied_mappings(c, s1);
+            no_overlaps_pmem_applied_mappings(c, s1);
 
             assume(vaddr as int + op.op_size() as int <= base + pte.frame.size);
             assume(base + pte.frame.size <= s1.interp_vmem(c).len());
@@ -1340,6 +1341,54 @@ spec fn no_overlaps(m: Map<nat, PTE>) -> bool {
            || j + m[j].frame.size <= i
 }
 
+spec fn no_overlaps_pmem(m: Map<nat, PTE>) -> bool {
+    forall |i, j|
+        #[trigger] m.dom().contains(i) && #[trigger] m.dom().contains(j) && i != j
+          ==> !overlap(m[i].frame, m[j].frame)
+}
+
+proof fn no_overlaps_pmem_applied_mappings(c: os::Constants, s: os::State)
+    requires s.inv(c), s.sound,
+    ensures no_overlaps_pmem(s.applied_mappings()),
+{
+    reveal(os::State::extra_mappings);
+    vaddr_distinct(c, s);
+    let m = s.applied_mappings();
+
+    assert forall |i, j|
+        #[trigger] m.dom().contains(i) && #[trigger] m.dom().contains(j) && i != j
+          && overlap(m[i].frame, m[j].frame)
+          implies false
+    by {
+        if s.interp_pt_mem().dom().contains(i) {
+            if s.interp_pt_mem().dom().contains(j) {
+                assert(false);
+            } else {
+                assert(false);
+            }
+        } else {
+            if s.interp_pt_mem().dom().contains(j) {
+                assert(false);
+            } else {
+                let core1 = s.get_extra_vaddr_core(i);
+                let core2 = s.get_extra_vaddr_core(j);
+                let mr1 = MemRegion {
+                    base: s.core_states[core1].paddr(s.interp_pt_mem()),
+                    size: s.core_states[core1].pte_size(s.interp_pt_mem()),
+                };
+                let mr2 = MemRegion {
+                    base: s.core_states[core2].paddr(s.interp_pt_mem()),
+                    size: s.core_states[core2].pte_size(s.interp_pt_mem()),
+                };
+                assert(c.valid_core(core1));
+                assert(c.valid_core(core2));
+                assert(!overlap(mr1, mr2));
+                assert(false);
+            }
+        }
+    }
+}
+
 proof fn no_overlaps_applied_mappings(c: os::Constants, s: os::State)
     requires s.inv(c), s.sound,
     ensures no_overlaps(s.applied_mappings()),
@@ -1498,6 +1547,7 @@ proof fn interp_vmem_subrange(c: os::Constants, s: os::State, base: nat, pte: PT
 proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte: PTE, vaddr: int, size: int, new: Seq<u8>,)
     requires
         no_overlaps(s.applied_mappings()),
+        no_overlaps_pmem(s.applied_mappings()),
         s.applied_mappings().dom().contains(base),
         s.applied_mappings()[base] == pte,
         base <= vaddr,
@@ -1553,7 +1603,7 @@ proof fn interp_vmem_update_range(c: os::Constants, s: os::State, base: nat, pte
                 assert(pte.frame.base <= paddr <= paddr + new.len() <= pte.frame.base + pte.frame.size);
 
                 // need physical ranges of the mappings don't overlap
-                assume(!(paddr <= p_idx < paddr + new.len()));
+                assert(!(paddr <= p_idx < paddr + new.len()));
 
                 assert(paddr + new.len() <= s.mmu@.phys_mem.len());
                 assert(0 <= p_idx < s.mmu@.phys_mem.len());
