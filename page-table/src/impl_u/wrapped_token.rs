@@ -1017,7 +1017,7 @@ impl WrappedMapToken {
 
 pub exec fn start_map_and_acquire_lock(Tracked(tok): Tracked<&mut Token>, Ghost(vaddr): Ghost<nat>, Ghost(pte): Ghost<PTE>)
     requires
-        os::step_Map_enabled(vaddr, pte),
+        os::step_Map_enabled(old(tok).consts(), vaddr, pte),
         old(tok).consts().valid_ult(old(tok).thread()),
         old(tok).consts().valid_core(old(tok).core()), // TODO: ??
         old(tok).st().core_states[old(tok).core()] is Idle,

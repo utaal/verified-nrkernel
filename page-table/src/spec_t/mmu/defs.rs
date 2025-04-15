@@ -6,6 +6,8 @@
 
 use vstd::prelude::*;
 
+use crate::spec_t::mmu;
+
 verus! {
 
 macro_rules! bitmask_inc {
@@ -94,8 +96,8 @@ pub open spec fn candidate_mapping_in_bounds(base: nat, pte: PTE) -> bool {
     base + pte.frame.size < x86_arch_spec.upper_vaddr(0, 0)
 }
 
-pub open spec fn candidate_mapping_in_bounds_pmem(pte: PTE) -> bool {
-    pte.frame.base + pte.frame.size <= MAX_PHYADDR
+pub open spec fn candidate_mapping_in_bounds_pmem(c: mmu::Constants, pte: PTE) -> bool {
+    pte.frame.base + pte.frame.size <= c.range_mem.1
 }
 
 // TODO: maybe we can deduplicate these two definitions somehow

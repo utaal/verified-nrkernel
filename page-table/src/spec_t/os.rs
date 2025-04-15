@@ -292,11 +292,11 @@ pub open spec fn step_Map_sound(
     &&& !candidate_mapping_overlaps_inflight_vmem(pt, inflightargs, vaddr, pte.frame.size)
 }
 
-pub open spec fn step_Map_enabled(vaddr: nat, pte: PTE) -> bool {
+pub open spec fn step_Map_enabled(c: Constants, vaddr: nat, pte: PTE) -> bool {
     &&& aligned(vaddr, pte.frame.size)
     &&& aligned(pte.frame.base, pte.frame.size)
-    &&& pte.frame.base <= MAX_PHYADDR
     &&& candidate_mapping_in_bounds(vaddr, pte)
+    &&& candidate_mapping_in_bounds_pmem(c.common, pte)
     &&& {  // The size of the frame must be the entry_size of a layer that supports page mappings
         ||| pte.frame.size == L3_ENTRY_SIZE
         ||| pte.frame.size == L2_ENTRY_SIZE
@@ -311,7 +311,7 @@ pub open spec fn step_MapStart(c: Constants, s1: State, s2: State, core: Core, l
     //enabling conditions
     &&& c.valid_ult(thread_id)
     &&& s1.core_states[core] is Idle
-    &&& step_Map_enabled(vaddr, pte)
+    &&& step_Map_enabled(c, vaddr, pte)
 
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
@@ -1106,10 +1106,10 @@ impl State {
                     | CoreState::UnmapExecuting { vaddr, result: Some(Ok(pte)), .. }
                     | CoreState::UnmapOpDone { vaddr, result: Ok(pte), .. }
                     | CoreState::UnmapShootdownWaiting { vaddr, result: Ok(pte), .. }
-                        => candidate_mapping_in_bounds_pmem(pte),
+                        => candidate_mapping_in_bounds_pmem(c.common, pte),
                     _ => true,
                 }
-        &&& forall|vaddr, pte| #![auto] self.interp_pt_mem().contains_pair(vaddr, pte) ==> candidate_mapping_in_bounds_pmem(pte)
+        &&& forall|vaddr, pte| #![auto] self.interp_pt_mem().contains_pair(vaddr, pte) ==> candidate_mapping_in_bounds_pmem(c.common, pte)
     }
 
 
@@ -1235,6 +1235,7 @@ impl State {
         &&& c.common.in_ptmem_range(self.mmu@.pt_mem.pml4 as nat, 4096)
         &&& c.common.range_mem.0 < c.common.range_mem.1 < c.common.range_ptmem.0 < c.common.range_ptmem.1
         &&& c.common.range_ptmem.1 <= MAX_PHYADDR
+        &&& self.mmu@.phys_mem.len() == c.common.range_mem.1
     }
 
     pub open spec fn inv_allocated_mem(self, c: Constants) -> bool {

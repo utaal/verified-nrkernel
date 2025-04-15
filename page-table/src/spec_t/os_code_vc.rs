@@ -437,7 +437,7 @@ pub trait CodeVC {
     ) -> (res: (Result<(),()>, Tracked<Token>))
         requires
             // State machine VC preconditions
-            os::step_Map_enabled(vaddr as nat, pte@),
+            os::step_Map_enabled(tok.consts(), vaddr as nat, pte@),
             tok.st().inv(tok.consts()),
             tok.consts().valid_ult(tok.thread()),
             tok.st().core_states[tok.core()] is Idle,
