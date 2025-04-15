@@ -1347,6 +1347,53 @@ proof fn no_overlaps_applied_mappings(c: os::Constants, s: os::State)
     reveal(os::State::extra_mappings);
     vaddr_distinct(c, s);
     let m = s.applied_mappings();
+
+    assert forall |i, j|
+        #[trigger] m.dom().contains(i) && #[trigger] m.dom().contains(j) && i != j
+          && !(i + m[i].frame.size <= j || j + m[j].frame.size <= i)
+          && !s.interp_pt_mem().dom().contains(i)
+          && s.interp_pt_mem().dom().contains(j)
+          implies false
+    by {
+        if s.inflight_vaddr().contains(j) {
+            let core1 = s.get_extra_vaddr_core(i);
+            let core2 = choose|core2: Core|
+                #[trigger] s.core_states.contains_key(core2) &&
+                !s.core_states[core2].is_idle() &&
+                s.core_states[core2].vaddr() == j;
+            let mr1 = MemRegion {
+                base: s.core_states[core1].vaddr(),
+                size: s.core_states[core1].pte_size(s.interp_pt_mem()),
+            };
+            let mr2 = MemRegion {
+                base: s.core_states[core2].vaddr(),
+                size: s.core_states[core2].pte_size(s.interp_pt_mem()),
+            };
+            assert(c.valid_core(core1));
+            assert(c.valid_core(core2));
+            assert(!overlap(mr1, mr2));
+            //assert(mr1.base == i);
+            //assert(mr2.base == j);
+            //assert(mr1.size == m[i].frame.size);
+            //assert(mr2.size == m[j].frame.size);
+            assert(false);
+        } else {
+            assert(s.extra_mappings().dom().contains(i));
+            match s.core_states[s.get_extra_vaddr_core(i)] {
+                CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
+                | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } => {
+                    assert(!candidate_mapping_overlaps_existing_vmem(
+                        s.effective_mappings(), i, pte));
+                    assert(s.effective_mappings().contains_key(j));
+                    assert(false);
+               }
+               _ => {
+                  assert(false);
+               }
+            }
+        }
+    }
+
     assert forall |i, j|
         #[trigger] m.dom().contains(i) && #[trigger] m.dom().contains(j) && i != j
           && !(i + m[i].frame.size <= j || j + m[j].frame.size <= i) implies false
@@ -1356,47 +1403,11 @@ proof fn no_overlaps_applied_mappings(c: os::Constants, s: os::State)
                 no_overlaps_interp_pt_mem(c, s);
                 assert(false);
             } else {
-                assume(false); // mirror of other case
+                // handled above (symmetric)
             }
         } else {
             if s.interp_pt_mem().dom().contains(j) {
-                if s.inflight_vaddr().contains(j) {
-                    let core1 = s.get_extra_vaddr_core(i);
-                    let core2 = choose|core2: Core|
-                        #[trigger] s.core_states.contains_key(core2) &&
-                        !s.core_states[core2].is_idle() &&
-                        s.core_states[core2].vaddr() == j;
-                    let mr1 = MemRegion {
-                        base: s.core_states[core1].vaddr(),
-                        size: s.core_states[core1].pte_size(s.interp_pt_mem()),
-                    };
-                    let mr2 = MemRegion {
-                        base: s.core_states[core2].vaddr(),
-                        size: s.core_states[core2].pte_size(s.interp_pt_mem()),
-                    };
-                    assert(c.valid_core(core1));
-                    assert(c.valid_core(core2));
-                    assert(!overlap(mr1, mr2));
-                    //assert(mr1.base == i);
-                    //assert(mr2.base == j);
-                    //assert(mr1.size == m[i].frame.size);
-                    //assert(mr2.size == m[j].frame.size);
-                    assert(false);
-                } else {
-                    assert(s.extra_mappings().dom().contains(i));
-                    match s.core_states[s.get_extra_vaddr_core(i)] {
-                        CoreState::MapWaiting { vaddr: vaddr1, pte, .. }
-                        | CoreState::MapExecuting { vaddr: vaddr1, pte, .. } => {
-                            assert(!candidate_mapping_overlaps_existing_vmem(
-                                s.effective_mappings(), i, pte));
-                            assert(s.effective_mappings().contains_key(j));
-                            assert(false);
-                       }
-                       _ => {
-                          assume(false); // needs invariant? UnmapExecution, UnmapOpDone, UnmapShootdownWaiting don't overlap existing
-                       }
-                    }
-                }
+                // handled above
             } else {
                 let core1 = s.get_extra_vaddr_core(i);
                 let core2 = s.get_extra_vaddr_core(j);
