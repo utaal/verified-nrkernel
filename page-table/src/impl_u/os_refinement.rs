@@ -333,7 +333,6 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
         os::Step::MemOp { core, .. } => {
             if s1.sound {
                 step_MemOp_refines(c, s1, s2, core, lbl);
-                assume(false); // step_MemOp_refines ensures doesn't match Step::interp
             }
             assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
         },

@@ -1510,9 +1510,13 @@ impl Step {
                     rl1::Step::MemOpNoTr => hlspec::Step::MemOp { pte: None },
                     rl1::Step::MemOpNoTrNA { .. } => hlspec::Step::MemOpNA,
                     rl1::Step::MemOpTLB { tlb_va } =>
-                        hlspec::Step::MemOp {
-                            pte: Some((tlb_va as nat, pre.effective_mappings()[tlb_va as nat]))
-                        },
+                        if pre.effective_mappings().dom().contains(tlb_va as nat) {
+                            hlspec::Step::MemOp {
+                                pte: Some((tlb_va as nat, pre.effective_mappings()[tlb_va as nat]))
+                            }
+                        } else {
+                            hlspec::Step::MemOpNA
+                        }
                     _ => arbitrary(),
                 }
             },
