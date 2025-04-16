@@ -1,11 +1,16 @@
 use vstd::prelude::*;
 
+use crate::theorem::RLbl;
 use crate::spec_t::mmu::defs::{ PageTableEntryExec, MemRegionExec };
 #[cfg(verus_keep_ghost)]
 use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BASE, x86_arch_spec, x86_arch_spec_upper_bound };
-use crate::spec_t::os_code_vc::{ Token, CodeVC };
+use crate::spec_t::os_ext;
+use crate::spec_t::mmu;
+use crate::spec_t::mmu::rl3::refinement::to_rl1;
+use crate::spec_t::os_code_vc::{ Token, CodeVC, HandlerVC, lemma_concurrent_trs_during_shootdown };
 use crate::impl_u::wrapped_token::{ self, WrappedMapToken, WrappedUnmapToken, WrappedTokenView, DoShootdown };
 use crate::impl_u::l2_impl::PT::{ self, map_frame, unmap };
+use crate::spec_t::os;
 
 verus! {
 
@@ -130,6 +135,87 @@ impl CodeVC for PTImpl {
         (res, tok)
     }
 }
+
+impl HandlerVC for PTImpl {
+    exec fn handle_shootdown_ipi(Tracked(tok): Tracked<Token>, vaddr: usize) -> (res: Tracked<Token>) {
+        let tracked mut tok = tok;
+        let ghost core = tok.core();
+        let ghost state1 = tok.st();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            let pidx = tok.do_concurrent_trs();
+            lemma_concurrent_trs_during_shootdown(state1, tok.st(), tok.consts(), tok.core(), pidx);
+        }
+
+        let ghost state2 = tok.st();
+
+        let tracked mut mmu_tok = tok.get_mmu_token();
+        proof {
+            mmu_tok.prophesy_invlpg(vaddr);
+            let post = os::State {
+                mmu: mmu_tok.post(),
+                ..tok.st()
+            };
+            assert(mmu::rl3::next(tok.st().mmu, post.mmu, tok.consts().common, mmu_tok.lbl()));
+            assert(tok.st().os_ext.shootdown_vec.open_requests.contains(core));
+            assert(os::step_Invlpg(tok.consts(), tok.st(), post, core, RLbl::Tau));
+            assert(os::next_step(tok.consts(), tok.st(), post, os::Step::Invlpg { core }, RLbl::Tau));
+            tok.register_internal_step_mmu(&mut mmu_tok, post);
+            crate::spec_t::os_invariant::next_preserves_inv(tok.consts(), state2, tok.st(), RLbl::Tau);
+        }
+        // Execute invlpg to evict from local TLB
+        mmu::rl3::code::invlpg(Tracked(&mut mmu_tok), vaddr);
+        let ghost state3 = tok.st();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            tok.return_mmu_token(mmu_tok);
+            let pidx = tok.do_concurrent_trs();
+            lemma_concurrent_trs_during_shootdown(state3, tok.st(), tok.consts(), tok.core(), pidx);
+        }
+        let ghost state4 = tok.st();
+
+        let tracked mut osext_tok = tok.get_osext_token();
+        proof {
+            osext_tok.prophesy_ack_shootdown();
+            let post = os::State {
+                os_ext: osext_tok.post(),
+                ..tok.st()
+            };
+            assert(os_ext::next(tok.st().os_ext, post.os_ext, tok.consts().common, osext_tok.lbl()));
+            assert(state2.core_states[state2.os_ext.lock->Some_0] is UnmapShootdownWaiting);
+            assert((state2.os_ext.lock matches Some(core) &&
+                state2.core_states[core] matches os::CoreState::UnmapShootdownWaiting { .. }));
+            assert(state2.mmu@.writes.tso === set![]);
+            assert(state3.mmu@.writes.nonpos === state2.mmu@.writes.nonpos.remove(core));
+            assert(!state3.mmu@.writes.nonpos.contains(core));
+            assert(!tok.st().mmu@.writes.nonpos.contains(core));
+            assert(!state3.mmu@.tlbs[core].contains_key(vaddr));
+            assert(tok.consts().valid_core(state2.os_ext.lock->Some_0));
+            assert(tok.consts().valid_core(core) );
+            assert(tok.st().core_states[state2.os_ext.lock->Some_0] is UnmapShootdownWaiting);
+            assert(!tok.st().mmu@.tlbs[core].contains_key(vaddr));
+            let lbl = RLbl::AckShootdownIPI { core };
+            assert(os::step_AckShootdownIPI(tok.consts(), tok.st(), post, core, lbl));
+            assert(os::next_step(tok.consts(), tok.st(), post, os::Step::AckShootdownIPI { core }, lbl));
+            tok.register_external_step_osext(&mut osext_tok, post, lbl);
+            crate::spec_t::os_invariant::next_preserves_inv(tok.consts(), state4, tok.st(), lbl);
+        }
+
+        os_ext::code::ack_shootdown(Tracked(&mut osext_tok));
+        let ghost state5 = tok.st();
+
+        proof {
+            broadcast use to_rl1::next_refines;
+            tok.return_osext_token(osext_tok);
+            assert(tok.steps() === seq![]);
+        }
+
+        Tracked(tok)
+    }
+}
+
 
 
 } // verus!

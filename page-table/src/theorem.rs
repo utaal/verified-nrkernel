@@ -2,7 +2,7 @@
 use vstd::prelude::*;
 use crate::spec_t::hlspec;
 use crate::spec_t::os;
-use crate::spec_t::mmu::defs::{ MemOp, PTE };
+use crate::spec_t::mmu::defs::{ MemOp, PTE, Core };
 
 verus!{
 
@@ -22,6 +22,7 @@ pub enum RLbl {
     MapEnd     { thread_id: nat, vaddr: nat, result: Result<(), ()> },
     UnmapStart { thread_id: nat, vaddr: nat },
     UnmapEnd   { thread_id: nat, vaddr: nat, result: Result<(), ()> },
+    AckShootdownIPI { core: Core },
 }
 
 impl RLbl {
@@ -35,6 +36,17 @@ impl RLbl {
                 => thread_id == t2 && vaddr == v2,
             _ => other == self,
         }
+    }
+
+    /// To specify the VC for the shootdown handler, we need a label for the AckShootdownIPI
+    /// transition. However, the transition is still internal and not visible in the high-level
+    /// spec, so during refinement it gets refined to `RLbl::Tau`.
+    pub open spec fn is_internal(self) -> bool {
+        self is Tau || self is AckShootdownIPI
+    }
+
+    pub open spec fn interp(self) -> RLbl {
+        if self.is_internal() { RLbl::Tau } else { self }
     }
 }
 

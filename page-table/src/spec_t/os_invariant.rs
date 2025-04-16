@@ -1244,7 +1244,7 @@ pub proof fn next_step_preserves_overlap_mem_inv(
                                     size: s1.core_states[core2].pte_size(s1.interp_pt_mem()),
                                 },));
                             }
-            }
+                }
                 assert(s2.inv_existing_map_no_overlap_existing_vmem(c));
                 assert(s2.overlapping_mem_inv(c));
             },

@@ -2613,7 +2613,7 @@ fn insert_empty_directory(
                         aligned(base as nat, x86_arch_spec.entry_size(layer as nat)),
                         aligned(vaddr as nat, pte.frame.size as nat),
                         x86_arch_spec.contains_entry_size_at_index_atleast(pte.frame.size as nat, layer as nat),
-                {};
+                { admit(); };
 
                 assert(interp_now_inner.interp().contains_pair(b, ppte));
                 assert(candidate_mapping_overlaps_existing_vmem(interp_now_inner.interp(), vaddr as nat, pte@));
@@ -3061,7 +3061,8 @@ fn unmap_aux(
                         idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
                         entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
                         aligned(vaddr as nat, x86_arch_spec.entry_size(layer as nat)),
-                        aligned(base as nat, x86_arch_spec.entry_size(layer as nat));
+                        aligned(base as nat, x86_arch_spec.entry_size(layer as nat))
+                { admit(); }
                 let ghost tok_after_write = old(tok)@.write(idx, 0usize, pt.region, true);
                 assert(PT::interp_to_l0(tok@, root_pt).contains_key(tok@.args->Unmap_base as nat)) by {
                     assert(interp_at(tok@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)) by {

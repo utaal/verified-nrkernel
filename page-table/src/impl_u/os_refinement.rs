@@ -314,7 +314,7 @@ proof fn os_next_refines_hl_next(c: os::Constants, s1: os::State, s2: os::State,
         os::next(c, s1, s2, lbl),
         s1.inv(c),
     ensures
-        hlspec::next(c.interp(), s1.interp(c), s2.interp(c), lbl),
+        hlspec::next(c.interp(), s1.interp(c), s2.interp(c), lbl.interp()),
 {
     let step = choose|step: os::Step| os::next_step(c, s1, s2, step, lbl);
     next_step_refines_hl_next_step(c, s1, s2, step, lbl);
@@ -325,7 +325,7 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
         os::next_step(c, s1, s2, step, lbl),
         s1.inv(c),
     ensures
-        hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl),
+        hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl.interp()),
 {
     broadcast use to_rl1::next_refines;
     next_step_preserves_inv(c, s1, s2, step, lbl);
@@ -419,7 +419,7 @@ proof fn next_step_refines_hl_next_step(c: os::Constants, s1: os::State, s2: os:
             if s1.sound {
                 extra_mappings_preserved(c, s1, s2);
             }
-            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl));
+            assert(hlspec::next_step(c.interp(), s1.interp(c), s2.interp(c), step.interp(s1, s2, c, lbl), lbl.interp()));
         }
     }
 }

@@ -107,6 +107,7 @@ proof fn lemma_concurrent_trs_induct(pre: os::State, post: os::State, c: os::Con
 
 /// "What do we know about how concurrent transitions can change the state if we're *not* holding
 /// the lock?"
+#[verifier::rlimit(100)] #[verifier(spinoff_prover)]
 pub proof fn lemma_concurrent_trs_no_lock(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat)
     requires
         concurrent_trs(pre, post, c, core, pidx),
@@ -132,6 +133,59 @@ pub proof fn lemma_concurrent_trs_no_lock(pre: os::State, post: os::State, c: os
         implies pred(pre, post)
     by {
         if pre.inv(c) {
+            os_invariant::next_preserves_inv(c, mid, post, lbl);
+            broadcast use to_rl1::next_refines;
+        }
+    };
+    lemma_concurrent_trs_induct(pre, post, c, core, pidx, pred);
+}
+
+/// Someone else is holding the lock and we're on a core that still has to acknowledge the
+/// shootdown.
+#[verifier::rlimit(100)] #[verifier(spinoff_prover)]
+pub proof fn lemma_concurrent_trs_during_shootdown(pre: os::State, post: os::State, c: os::Constants, core: Core, pidx: nat)
+    requires
+        concurrent_trs(pre, post, c, core, pidx),
+        pre.inv(c),
+        pre.os_ext.lock is Some,
+        pre.os_ext.shootdown_vec.open_requests.contains(core),
+    ensures
+        post.mmu@.pt_mem.pml4 == pre.mmu@.pt_mem.pml4,
+        post.core_states[core] == pre.core_states[core],
+        post.core_states[pre.os_ext.lock->Some_0] == pre.core_states[pre.os_ext.lock->Some_0],
+        post.os_ext.shootdown_vec.open_requests.contains(core),
+        post.os_ext.shootdown_vec.vaddr == pre.os_ext.shootdown_vec.vaddr,
+        // post.mmu@.writes.tso.subset_of(pre.mmu@.writes.tso),
+        post.mmu@.writes.nonpos.subset_of(pre.mmu@.writes.nonpos),
+        post.inv(c),
+{
+    assert(pre.core_states[pre.os_ext.lock->Some_0] is UnmapShootdownWaiting);
+    let pred = |pre: os::State, post: os::State|
+        pre.inv(c)
+        && pre.core_states[pre.os_ext.lock->Some_0] is UnmapShootdownWaiting
+        && pre.os_ext.shootdown_vec.open_requests.contains(core)
+        ==> {
+            &&& post.mmu@.pt_mem.pml4 == pre.mmu@.pt_mem.pml4
+            &&& post.core_states[core] == pre.core_states[core]
+            &&& post.core_states[pre.os_ext.lock->Some_0] == pre.core_states[pre.os_ext.lock->Some_0]
+            &&& post.os_ext.shootdown_vec.open_requests.contains(core)
+            &&& post.os_ext.shootdown_vec.vaddr == pre.os_ext.shootdown_vec.vaddr
+            // &&& post.mmu@.writes.tso.subset_of(pre.mmu@.writes.tso)
+            &&& post.mmu@.writes.nonpos.subset_of(pre.mmu@.writes.nonpos)
+            &&& post.inv(c)
+        };
+    assert forall|s| #[trigger] pred(s, s) by {};
+    assert forall|pre, mid, pidx, step, lbl, post|
+        pred(pre, mid)
+        && concurrent_trs(pre, mid, c, core, pidx)
+        && os::next_step(c, mid, post, step, lbl)
+        && !step.is_actor_step(core)
+        implies pred(pre, post)
+    by {
+        if pre.inv(c)
+            && pre.core_states[pre.os_ext.lock->Some_0] is UnmapShootdownWaiting
+            && pre.os_ext.shootdown_vec.open_requests.contains(core)
+        {
             os_invariant::next_preserves_inv(c, mid, post, lbl);
             broadcast use to_rl1::next_refines;
         }
@@ -334,11 +388,13 @@ impl Token {
     pub proof fn register_internal_step_osext(
         tracked &mut self,
         tracked tok: &mut os_ext::code::Token,
-        post: os::State
+        post: os::State,
+        lbl: RLbl,
     )
         requires
             old(tok).tstate() is ProphecyMade,
-            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            lbl.is_internal(),
+            os::next(old(self).consts(), old(self).st(), post, lbl),
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
         ensures
@@ -481,6 +537,33 @@ pub trait CodeVC {
             res.0 is Ok <==> res.1@.steps_taken().last()->UnmapEnd_result is Ok,
             res.1@.steps() === seq![],
             res.1@.progress() is Unready,
+    ;
+}
+
+/// VCs for the shootdown handler
+pub trait HandlerVC {
+    exec fn handle_shootdown_ipi(
+        Tracked(tok): Tracked<Token>,
+        vaddr: usize,
+    ) -> (res: Tracked<Token>)
+        requires
+            // State machine VC preconditions
+            tok.st().os_ext.shootdown_vec.open_requests.contains(tok.core()),
+            tok.consts().valid_core(tok.core()),
+            tok.st().inv(tok.consts()),
+            tok.st().core_states[tok.core()] is Idle
+             || tok.st().core_states[tok.core()] is UnmapWaiting
+             || tok.st().core_states[tok.core()] is MapWaiting,
+            tok.steps() === seq![RLbl::AckShootdownIPI { core: tok.core() }],
+            tok.steps_taken() === seq![],
+            // no start transition so we can immediately take internal transitions
+            !tok.on_first_step(),
+            tok.progress() is Unready,
+            // Caller preconditions
+            vaddr == tok.st().os_ext.shootdown_vec.vaddr,
+        ensures
+            res@.steps() === seq![],
+            res@.progress() is Unready,
     ;
 }
 

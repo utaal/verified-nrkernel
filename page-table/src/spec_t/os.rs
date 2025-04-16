@@ -587,6 +587,7 @@ pub open spec fn step_UnmapInitiateShootdown(
     //enabling conditions
     &&& c.valid_core(core)
     &&& s1.core_states[core] matches CoreState::UnmapExecuting { ult_id, vaddr, result: Some(Ok(pte)) }
+    &&& s1.mmu@.writes.tso === set![]
     // mmu statemachine steps
     &&& s2.mmu == s1.mmu
     &&& os_ext::next(s1.os_ext, s2.os_ext, c.common, os_ext::Lbl::InitShootdown { core, vaddr })
@@ -601,7 +602,7 @@ pub open spec fn step_UnmapInitiateShootdown(
 // Acknowledge TLB eviction to other core (in response to shootdown IPI)
 // check if tlb shootdown/unmap has happend and send ACK
 pub open spec fn step_AckShootdownIPI(c: Constants, s1: State, s2: State, core: Core, lbl: RLbl) -> bool {
-    &&& lbl is Tau
+    &&& lbl matches RLbl::AckShootdownIPI { core: score } && score == core
     //enabling conditions
     &&& c.valid_core(core)
     &&& !s1.mmu@.writes.nonpos.contains(core)
@@ -1153,8 +1154,8 @@ impl State {
     }
 
     pub open spec fn inv_lock(self, c: Constants) -> bool {
-        forall|core: Core| #[trigger] c.valid_core(core) ==>
-            (self.os_ext.lock === Some(core) <==> self.core_states[core].is_in_crit_sect())
+        forall|core: Core|
+            (self.os_ext.lock === Some(core) <==> #[trigger] c.valid_core(core) && self.core_states[core].is_in_crit_sect())
     }
 
     pub open spec fn wf(self, c: Constants) -> bool {
@@ -1247,7 +1248,10 @@ impl State {
             ==> self.os_ext.shootdown_vec.open_requests.is_empty()
         &&& (self.os_ext.lock matches Some(core) &&
             self.core_states[core] matches CoreState::UnmapShootdownWaiting { .. })
-            ==> self.mmu@.writes.nonpos.subset_of(self.os_ext.shootdown_vec.open_requests)
+            ==> {
+                &&& self.mmu@.writes.tso === set![]
+                &&& self.mmu@.writes.nonpos.subset_of(self.os_ext.shootdown_vec.open_requests)
+            }
     }
 
     pub open spec fn inv_writes(self, c: Constants) -> bool {
