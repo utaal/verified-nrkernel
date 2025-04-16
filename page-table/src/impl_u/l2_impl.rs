@@ -23,6 +23,42 @@ use crate::impl_u::wrapped_token::{ WrappedMapToken, WrappedUnmapToken, WrappedT
 
 verus! {
 
+mod aux {
+
+use super::*;
+pub proof fn nonlinear_query1(entry_base: nat, vaddr: nat, layer: nat, base: nat, idx: nat) by (nonlinear_arith)
+    requires
+        layer < 4,
+        base <= vaddr,
+        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
+        entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
+        aligned(vaddr as nat, x86_arch_spec.entry_size(layer as nat)),
+        aligned(base as nat, x86_arch_spec.entry_size(layer as nat))
+    ensures
+          entry_base == vaddr as nat
+{}
+
+pub proof fn nonlinear_query2(i: nat, idx: nat, vaddr: nat, pte_size: nat, ppte_size: nat, layer: nat, base: nat, b: nat) by (nonlinear_arith)
+    requires
+        overlap(
+            MemRegion { base: vaddr, size: pte_size },
+            MemRegion { base: b, size: ppte_size },
+        ),
+        idx == x86_arch_spec.index_for_vaddr(layer, base, vaddr),
+        i == x86_arch_spec.index_for_vaddr(layer, base, b),
+        x86_arch_spec.entry_base(layer, base, i) <= b < x86_arch_spec.next_entry_base(layer, base, i),
+        x86_arch_spec.entry_base(layer, base, i) < b + ppte_size <= x86_arch_spec.next_entry_base(layer, base, i),
+        x86_arch_spec.entry_base(layer, base, idx) <= vaddr < x86_arch_spec.next_entry_base(layer, base, idx),
+        aligned(base, x86_arch_spec.entry_size(layer)),
+        aligned(vaddr, pte_size),
+        x86_arch_spec.contains_entry_size_at_index_atleast(pte_size, layer),
+    ensures
+        i == idx
+{}
+
+}
+
+
 broadcast proof fn lemma_union_empty<A>(s: Set<A>)
     ensures #[trigger] s.union(set![]) == s,
 {
@@ -2599,7 +2635,7 @@ fn insert_empty_directory(
                 interp_now_outer.lemma_interp_aux_between(0, b, ppte);
                 indexing::lemma_index_from_base_and_addr(base as nat, b, x86_arch_spec.entry_size(layer as nat), X86_NUM_ENTRIES as nat);
                 interp_now_outer.lemma_interp_of_entry_between(i, b, ppte);
-                nonlinear_query2(i, idx as nat, vaddr as nat, pte.frame.size as nat, ppte.frame.size as nat, layer as nat, base as nat, b as nat);
+                super::aux::nonlinear_query2(i, idx as nat, vaddr as nat, pte.frame.size as nat, ppte.frame.size as nat, layer as nat, base as nat, b as nat);
                 // assert(i == idx) by (nonlinear_arith)
                 //     requires
                 //         overlap(
@@ -2625,23 +2661,6 @@ fn insert_empty_directory(
     (Ghost(pt_with_empty), new_dir_region, new_dir_entry, Ghost(rebuild_root_pt_inner))
 }
 
-proof fn nonlinear_query2(i: nat, idx: nat, vaddr: nat, pte_size: nat, ppte_size: nat, layer: nat, base: nat, b: nat) by (nonlinear_arith)
-    requires
-        overlap(
-            MemRegion { base: vaddr, size: pte_size },
-            MemRegion { base: b, size: ppte_size },
-        ),
-        idx == x86_arch_spec.index_for_vaddr(layer, base, vaddr),
-        i == x86_arch_spec.index_for_vaddr(layer, base, b),
-        x86_arch_spec.entry_base(layer, base, i) <= b < x86_arch_spec.next_entry_base(layer, base, i),
-        x86_arch_spec.entry_base(layer, base, i) < b + ppte_size <= x86_arch_spec.next_entry_base(layer, base, i),
-        x86_arch_spec.entry_base(layer, base, idx) <= vaddr < x86_arch_spec.next_entry_base(layer, base, idx),
-        aligned(base, x86_arch_spec.entry_size(layer)),
-        aligned(vaddr, pte_size),
-        x86_arch_spec.contains_entry_size_at_index_atleast(pte_size, layer),
-    ensures
-        i == idx
-{}
 
 
 spec fn unmap_builder_pre(tok_old: WrappedTokenView, pt_old: PTDir, tok_new: WrappedTokenView, pt_new: PTDir, layer: nat, ptr: usize, removed_regions: Set<MemRegion>) -> bool {
@@ -3082,7 +3101,7 @@ fn unmap_aux(
                 //         aligned(vaddr as nat, x86_arch_spec.entry_size(layer as nat)),
                 //         aligned(base as nat, x86_arch_spec.entry_size(layer as nat))
                 // {}
-                proof { nonlinear_query1(entry_base as nat, vaddr as nat, layer as nat, base as nat, idx as nat); }
+                proof { super::aux::nonlinear_query1(entry_base as nat, vaddr as nat, layer as nat, base as nat, idx as nat); }
                 let ghost tok_after_write = old(tok)@.write(idx, 0usize, pt.region, true);
                 assert(PT::interp_to_l0(tok@, root_pt).contains_key(tok@.args->Unmap_base as nat)) by {
                     assert(interp_at(tok@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)) by {
@@ -3175,18 +3194,6 @@ fn unmap_aux(
         Err(())
     }
 }
-
-proof fn nonlinear_query1(entry_base: nat, vaddr: nat, layer: nat, base: nat, idx: nat) by (nonlinear_arith)
-    requires
-        layer < 4,
-        base <= vaddr,
-        idx == x86_arch_spec.index_for_vaddr(layer as nat, base as nat, vaddr as nat),
-        entry_base == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
-        aligned(vaddr as nat, x86_arch_spec.entry_size(layer as nat)),
-        aligned(base as nat, x86_arch_spec.entry_size(layer as nat))
-    ensures
-          entry_base == vaddr as nat
-{}
 
 pub fn unmap(Tracked(tok): Tracked<&mut WrappedUnmapToken>, pt: &mut Ghost<PTDir>, pml4: usize, vaddr: usize) -> (res: Result<MemRegionExec,()>)
     requires
