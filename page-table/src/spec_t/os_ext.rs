@@ -1,6 +1,7 @@
 #![cfg_attr(verus_keep_ghost, verus::trusted)]
-// not trusted:
+// trusted:
 // describes how the rest of the OS behaves
+// $line_count$Trusted${$
 
 use vstd::prelude::*;
 use crate::spec_t::mmu::Constants;
@@ -11,7 +12,7 @@ use crate::spec_t::mmu::defs::{ overlap, aligned };
 
 verus! {
 
-// This is the extra/external part of the OS. It specifies the kernel lock, (de-)allocation, and
+// This is the "rest of the OS". It specifies the kernel lock, (de-)allocation, and
 // shootdown coordination
 
 pub enum Lbl {
@@ -261,8 +262,6 @@ pub mod code {
             &&& os_ext::next(new.pre(), new.post(), new.consts(), new.lbl())
         }
 
-        // FIXME: Allowing multiple calls to prophesy functions is unsound because they can give
-        // potentially conflicting information about the pre state, which remains unchanged on each call.
         pub proof fn prophesy_acquire_lock(tracked &mut self)
             requires
                 //old(self).consts().valid_core(old(self).core()), TODO: ??
@@ -274,19 +273,11 @@ pub mod code {
             admit(); // axiom
         }
 
-        // TODO: Requiring that we hold the lock here is a bit weird because in the
-        // transitions we don't really distinguish which preconditions are ones that the
-        // user has to satisfy and which ones are consequences of executing the function.
-        // But it's probably fine? The function just has to be specified in a way that
-        // makes sense.
-        //
         // We have enabling conditions that need to be ensured by the caller and "technical"
         // enabling conditions, which are guaranteed by executing the function. In the first case,
         // the user must show that after an arbitrary sequence of concurrent transitions the
         // condition holds. In the second case, this is a guarantee obtained from the function that
         // must not conflict with what we can derive ourselves from the concurrent transitions.
-        //
-        // TODO: is it still fine if it's on the prophesy call?
         pub proof fn prophesy_release_lock(tracked &mut self)
             requires
                 old(self).tstate() is Init,
@@ -544,5 +535,7 @@ pub mod code {
         unsafe { pt_memory_free(reg.base.try_into().unwrap(), reg.size, layer.try_into().unwrap()) };
     }
 }
+
+// $line_count$}$
 
 } // verus!

@@ -1,3 +1,6 @@
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// trusted: definitions for the trusted low-level hardware model
+
 pub mod rl1;
 pub mod rl2;
 pub mod rl3;
@@ -16,6 +19,9 @@ use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_
 
 verus! {
 
+// Only used in the simplified hardware models.
+// $line_count$Trusted${$
+
 pub enum Polarity {
     Mapping,
     Unmapping
@@ -26,6 +32,8 @@ impl Polarity {
         if self is Mapping { Polarity::Unmapping } else { Polarity::Mapping }
     }
 }
+
+// $line_count$}$
 
 pub struct Walk {
     pub vaddr: usize,
@@ -148,6 +156,8 @@ pub enum Lbl {
     Barrier(Core),
 }
 
+// Only used in the simplified hardware models.
+// $line_count$Trusted${$
 
 pub trait SeqTupExt: Sized {
     type A;
@@ -161,5 +171,7 @@ impl<A,B> SeqTupExt for Seq<(A, B)> {
         exists|i| 0 <= i < self.len() && #[trigger] self[i] == (fst, self[i].1)
     }
 }
+
+// $line_count$}$
 
 } // verus!

@@ -1,6 +1,7 @@
 #![cfg_attr(verus_keep_ghost, verus::trusted)]
 // Trusted: This file defines the assumed semantics of the memory translation hardware as a state
 // machine.
+// $line_count$Trusted${$
 
 use vstd::prelude::*;
 use crate::spec_t::mmu::*;
@@ -1034,6 +1035,7 @@ pub mod code {
 
 }
 
+// $line_count$}$
 
 
 } // verus!

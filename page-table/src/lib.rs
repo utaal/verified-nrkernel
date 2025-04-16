@@ -21,9 +21,12 @@ verus!{
 
 global size_of usize == 8;
 
+// Ignore in line count because this is only for the Linux integration.
+// $line_count$${$
 
 #[cfg(feature="linuxmodule")]
 use core::panic::PanicInfo;
+
 
 /// This function is called on panic.
 #[panic_handler]
@@ -90,6 +93,9 @@ pub extern "C" fn veros_unmap_frame(
     }
     //0 // return 0 to indicate success
 }
+
+
+// $line_count$}$
 
 
 } // verus!

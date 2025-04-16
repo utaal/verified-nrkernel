@@ -10,17 +10,20 @@ verus!{
 
 // Lemma 1: The OS+HW state machine refines the userspace specification.
 
+// $line_count$Trusted${$
 proof fn lemma1_init(c: os::Constants, pre: os::State)
     requires
         os::init(c, pre),
     ensures
         hlspec::init(c.interp(), pre.interp(c)),
         pre.inv(c),
+// $line_count$}$
 {
     crate::impl_u::os_refinement::os_init_refines_hl_init(c, pre);
     crate::spec_t::os_invariant::init_implies_inv(c, pre);
 }
 
+// $line_count$Trusted${$
 proof fn lemma1_next(c: os::Constants, pre: os::State, post: os::State, lbl: RLbl)
     requires
         os::next(c, pre, post, lbl),
@@ -28,6 +31,7 @@ proof fn lemma1_next(c: os::Constants, pre: os::State, post: os::State, lbl: RLb
     ensures
         hlspec::next(c.interp(), pre.interp(c), post.interp(c), lbl.interp()),
         post.inv(c),
+// $line_count$}$
 {
     crate::impl_u::os_refinement::os_next_refines_hl_next(c, pre, post, lbl);
     crate::spec_t::os_invariant::next_preserves_inv(c, pre, post, lbl);
@@ -39,10 +43,12 @@ spec fn ensure_codevc<X: CodeVC>(x: X) -> bool { true }
 
 spec fn ensure_handlervc<X: HandlerVC>(x: X) -> bool { true }
 
+// $line_count$Trusted${$
 proof fn lemma2(p: PTImpl) {
     ensure_codevc(p);
     ensure_handlervc(p);
 }
+// $line_count$}$
 
 
 

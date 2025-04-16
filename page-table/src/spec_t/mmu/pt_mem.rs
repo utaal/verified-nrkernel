@@ -1,3 +1,6 @@
+#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// trusted: Definitions used in other trusted parts of the code
+
 use vstd::prelude::*;
 
 use crate::spec_t::mmu::translation::{ PDE, GPDE, l0_bits, l1_bits, l2_bits, l3_bits };
@@ -25,6 +28,8 @@ impl PTMem {
         self.mem[addr]
     }
 
+    // Only used in the simplified hardware models.
+    // $line_count$Trusted${$
     /// Sequentially apply a sequence of writes. (Used to apply a whole store buffer.)
     pub open spec fn write_seq(self, writes: Seq<(usize, usize)>) -> Self {
         writes.fold_left(self, |acc: PTMem, wr: (_, _)| acc.write(wr.0, wr.1))
@@ -105,6 +110,7 @@ impl PTMem {
             },
         }
     }
+    // $line_count$}$
 
     //pub open spec fn pt_walk(self, vaddr: usize) -> Walk {
     //    let l0_idx = mul(l0_bits!(vaddr), WORD_SIZE);

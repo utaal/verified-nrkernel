@@ -225,29 +225,6 @@ pub proof fn lemma_concurrent_trs(pre: os::State, post: os::State, c: os::Consta
             os_invariant::next_preserves_inv(c, mid, post, lbl);
             broadcast use to_rl1::next_refines;
             assert(unchanged_state_during_concurrent_trs(pre, mid, core));
-            //match step {
-            //    //os::Step::MMU                                          => admit(),
-            //    //os::Step::MemOp { core }                               => admit(),
-            //    //os::Step::ReadPTMem { core, paddr, value }             => admit(),
-            //    //os::Step::Barrier { core }                             => {},
-            //    //os::Step::Invlpg { core, vaddr }                       => {},
-            //    //os::Step::MapStart { core }                            => admit(),
-            //    //os::Step::MapOpStart { core }                          => admit(),
-            //    //os::Step::Allocate { core, res }                       => admit(),
-            //    //os::Step::MapOpStutter { core, paddr, value }          => admit(),
-            //    //os::Step::MapOpEnd { core, paddr, value, result }      => admit(),
-            //    //os::Step::MapEnd { core }                              => admit(),
-            //    //os::Step::UnmapStart { core }                          => admit(),
-            //    //os::Step::UnmapOpStart { core }                        => admit(),
-            //    //os::Step::Deallocate { core, reg }                     => admit(),
-            //    //os::Step::UnmapOpChange { core, paddr, value, result } => admit(),
-            //    //os::Step::UnmapOpStutter { core, paddr, value }        => admit(),
-            //    //os::Step::UnmapOpFail { core }                          => admit(),
-            //    //os::Step::UnmapInitiateShootdown { core }              => admit(),
-            //    //os::Step::AckShootdownIPI { core }                     => admit(),
-            //    //os::Step::UnmapEnd { core }                            => admit(),
-            //    _ => {},
-            //}
         }
     };
     lemma_concurrent_trs_induct(pre, post, c, core, pidx, pred);
@@ -575,6 +552,8 @@ pub trait HandlerVC {
     ;
 }
 
+// Not trusted. Part of lemma_concurrent_trs.
+// $line_count$Spec${$
 pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os::State, core: Core) -> bool {
     &&& post.mmu@.happy          == pre.mmu@.happy
     &&& post.mmu@.pt_mem         == pre.mmu@.pt_mem
@@ -588,5 +567,6 @@ pub open spec fn unchanged_state_during_concurrent_trs(pre: os::State, post: os:
         ==> post.os_ext.shootdown_vec.open_requests.contains(core)
     // &&& forall|core| c.valid_core(core) && !pre.mmu@.writes.nonpos.contains(core)
 }
+// $line_count$}$
 
 } // verus!

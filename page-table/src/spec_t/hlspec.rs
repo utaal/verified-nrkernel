@@ -1,6 +1,8 @@
-#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// #![cfg_attr(verus_keep_ghost, verus::trusted)]
 // trusted:
 // this is the process-level specification of the kernel's behaviour
+// TODO: because we have the invariant defined and proved here as well we manually apply the
+// trusted label to the relevant parts
 
 use vstd::prelude::*;
 use crate::spec_t::mmu::defs::{
@@ -20,6 +22,9 @@ use crate::spec_t::hlproof::{
 };
 
 verus! {
+
+
+// $line_count$Trusted${$
 
 pub struct Constants {
     pub thread_no: nat,
@@ -449,6 +454,10 @@ pub open spec fn next_step(c: Constants, s1: State, s2: State, step: Step, lbl: 
 pub open spec fn next(c: Constants, s1: State, s2: State, lbl: RLbl) -> bool {
     exists|step: Step| next_step(c, s1, s2, step, lbl)
 }
+
+// $line_count$}$
+// everything below here is invariant definition and/or proof, not trusted
+
 
 pub open spec fn pmem_no_overlap(mappings: Map<nat, PTE>) -> bool {
     forall|bs1: nat, bs2: nat|
