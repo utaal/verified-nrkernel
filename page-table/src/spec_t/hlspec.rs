@@ -82,13 +82,14 @@ impl State {
         }
     }
 
+    // TODO this always returns Some, so it doesn't need to return Option
     pub open spec fn vaddr_mapping_is_being_modified_choose(self, c: Constants, va: nat) -> Option<(nat, PTE)>
         recommends self.vaddr_mapping_is_being_modified(c, va)
     {
         let thread = self.vaddr_mapping_is_being_modified_choose_thread(c, va);
         match self.thread_state[thread] {
             // Non-atomic pagefault
-            ThreadState::Map { vaddr, pte }              => None,
+            ThreadState::Map { vaddr, pte }              => Some((vaddr, pte)),
             // Non-atomic successful translation
             ThreadState::Unmap { vaddr, pte: Some(pte) } => Some((vaddr, pte)),
             _                                            => arbitrary(),
@@ -266,28 +267,31 @@ pub open spec fn step_MemOpNA(c: Constants, s1: State, s2: State, lbl: RLbl) -> 
     let pte = s1.vaddr_mapping_is_being_modified_choose(c, vaddr);
     &&& match pte {
         Some((base, pte)) => {
-            let paddr = pte.frame.base + (vaddr - base);
-            // the result depends on the flags
-            &&& match op {
-                MemOp::Store { new_value, result } => {
-                    if paddr < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
-                        &&& result is Ok
-                        &&& s2.mem === update_range(s1.mem, vaddr as int, new_value)
-                    } else {
-                        &&& result is Pagefault
+            ||| (s2.mem === s1.mem && op.is_pagefault())
+            ||| ({
+                let paddr = pte.frame.base + (vaddr - base);
+                // the result depends on the flags
+                &&& match op {
+                    MemOp::Store { new_value, result } => {
+                        if paddr < c.phys_mem_size && !pte.flags.is_supervisor && pte.flags.is_writable {
+                            &&& result is Ok
+                            &&& s2.mem === update_range(s1.mem, vaddr as int, new_value)
+                        } else {
+                            &&& result is Pagefault
+                            &&& s2.mem === s1.mem
+                        }
+                    },
+                    MemOp::Load { is_exec, result, .. } => {
                         &&& s2.mem === s1.mem
-                    }
-                },
-                MemOp::Load { is_exec, result, .. } => {
-                    &&& s2.mem === s1.mem
-                    &&& if paddr < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
-                        &&& result is Value
-                        &&& result->0 == s1.mem.subrange(vaddr as int, vaddr + op.op_size() as int)
-                    } else {
-                        &&& result is Pagefault
-                    }
-                },
-            }
+                        &&& if paddr < c.phys_mem_size && !pte.flags.is_supervisor && (is_exec ==> !pte.flags.disable_execute) {
+                            &&& result is Value
+                            &&& result->0 == s1.mem.subrange(vaddr as int, vaddr + op.op_size() as int)
+                        } else {
+                            &&& result is Pagefault
+                        }
+                    },
+                }
+            })
         },
         None => {
             &&& s2.mem === s1.mem

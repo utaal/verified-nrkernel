@@ -559,8 +559,6 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
             assert(t1.vaddr_mapping_is_being_modified(d, vaddr));
             assert(t1.thread_state[thread] is Map);
 
-            assert(pte.is_none());
-
             assert(aligned(vaddr, 8));
             assert(d.valid_thread(thread_id));
             assert(t1.thread_state[thread_id] is Idle);
@@ -1563,10 +1561,6 @@ proof fn vaddr_mapping_is_being_modified_from_vaddr_unmap(
             assert(thread1 == thread);
         }
 
-        assume(match s.core_states[core1] {
-            CoreState::MapDone { .. } => false,
-            _ => true,
-        });
         assert(s.interp(c).vaddr_mapping_is_being_modified_choose(c.interp(), vaddr)
             == Some((tlb_va as nat, s.mmu@.tlbs[core][tlb_va])));
     }
