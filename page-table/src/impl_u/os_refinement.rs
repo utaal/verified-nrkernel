@@ -630,7 +630,6 @@ proof fn step_MemOp_refines(c: os::Constants, s1: os::State, s2: os::State, core
                 assert(pte.frame.size == L1_ENTRY_SIZE
                     || pte.frame.size == L2_ENTRY_SIZE
                     || pte.frame.size == L3_ENTRY_SIZE);
-                assume(aligned(base, pte.frame.size));
                 assert(op.op_size() == 1
                     || op.op_size() == 2
                     || op.op_size() == 4
