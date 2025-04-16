@@ -160,8 +160,9 @@ impl HandlerVC for PTImpl {
             assert(mmu::rl3::next(tok.st().mmu, post.mmu, tok.consts().common, mmu_tok.lbl()));
             assert(tok.st().os_ext.shootdown_vec.open_requests.contains(core));
             assert(os::step_Invlpg(tok.consts(), tok.st(), post, core, RLbl::Tau));
-            assert(os::next_step(tok.consts(), tok.st(), post, os::Step::Invlpg { core }, RLbl::Tau));
-            tok.register_internal_step_mmu(&mut mmu_tok, post);
+            let step = os::Step::Invlpg { core };
+            assert(os::next_step(tok.consts(), tok.st(), post, step, RLbl::Tau));
+            tok.register_internal_step_mmu(&mut mmu_tok, post, step);
             crate::spec_t::os_invariant::next_preserves_inv(tok.consts(), state2, tok.st(), RLbl::Tau);
         }
         // Execute invlpg to evict from local TLB
@@ -198,8 +199,9 @@ impl HandlerVC for PTImpl {
             assert(!tok.st().mmu@.tlbs[core].contains_key(vaddr));
             let lbl = RLbl::AckShootdownIPI { core };
             assert(os::step_AckShootdownIPI(tok.consts(), tok.st(), post, core, lbl));
-            assert(os::next_step(tok.consts(), tok.st(), post, os::Step::AckShootdownIPI { core }, lbl));
-            tok.register_external_step_osext(&mut osext_tok, post, lbl);
+            let step = os::Step::AckShootdownIPI { core };
+            assert(os::next_step(tok.consts(), tok.st(), post, step, lbl));
+            tok.register_external_step_osext(&mut osext_tok, post, step, lbl);
             crate::spec_t::os_invariant::next_preserves_inv(tok.consts(), state4, tok.st(), lbl);
         }
 

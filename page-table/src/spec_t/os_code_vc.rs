@@ -313,11 +313,13 @@ impl Token {
     pub proof fn register_internal_step_mmu(
         tracked &mut self,
         tracked tok: &mut mmu::rl3::code::Token,
-        post: os::State
+        post: os::State,
+        step: os::Step,
     )
         requires
             old(tok).tstate() is ProphecyMade,
-            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            os::next_step(old(self).consts(), old(self).st(), post, step, RLbl::Tau),
+            step.is_actor_step(old(tok).core()),
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(tok).post(),
         ensures
@@ -389,12 +391,14 @@ impl Token {
         tracked &mut self,
         tracked tok: &mut os_ext::code::Token,
         post: os::State,
+        step: os::Step,
         lbl: RLbl,
     )
         requires
             old(tok).tstate() is ProphecyMade,
+            os::next_step(old(self).consts(), old(self).st(), post, step, lbl),
+            step.is_actor_step(old(tok).core()),
             lbl.is_internal(),
-            os::next(old(self).consts(), old(self).st(), post, lbl),
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
         ensures
@@ -412,12 +416,14 @@ impl Token {
         tracked &mut self,
         tracked tok: &mut os_ext::code::Token,
         post: os::State,
+        step: os::Step,
         lbl: RLbl,
     )
         requires
             old(tok).tstate() is ProphecyMade,
+            os::next_step(old(self).consts(), old(self).st(), post, step, lbl),
+            step.is_actor_step(old(tok).core()),
             lbl.compatible_with(old(self).steps().first()),
-            os::next(old(self).consts(), old(self).st(), post, lbl),
             post.mmu == old(self).st().mmu,
             post.os_ext == old(tok).post(),
         ensures
@@ -445,10 +451,11 @@ impl Token {
 
 
     /// Register a step that corresponds to stutter in both mmu and os_ext.
-    pub proof fn register_internal_step(tracked &mut self, post: os::State)
+    pub proof fn register_internal_step(tracked &mut self, post: os::State, step: os::Step)
         requires
             old(self).progress() is Ready,
-            os::next(old(self).consts(), old(self).st(), post, RLbl::Tau),
+            os::next_step(old(self).consts(), old(self).st(), post, step, RLbl::Tau),
+            step.is_actor_step(old(self).core()),
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(self).st().mmu,
         ensures
@@ -462,11 +469,12 @@ impl Token {
     { admit(); } // axiom
 
     /// Register a step that corresponds to stutter in both mmu and os_ext.
-    pub proof fn register_external_step(tracked &mut self, post: os::State, lbl: RLbl)
+    pub proof fn register_external_step(tracked &mut self, post: os::State, step: os::Step, lbl: RLbl)
         requires
             old(self).progress() is Ready,
+            os::next_step(old(self).consts(), old(self).st(), post, step, lbl),
+            step.is_actor_step(old(self).core()),
             lbl.compatible_with(old(self).steps().first()),
-            os::next(old(self).consts(), old(self).st(), post, lbl),
             post.os_ext == old(self).st().os_ext,
             post.mmu == old(self).st().mmu,
         ensures
