@@ -1,6 +1,9 @@
-#![cfg_attr(verus_keep_ghost, verus::trusted)]
+// #![cfg_attr(verus_keep_ghost, verus::trusted)]
 // Trusted: This file defines the assumed semantics of the memory translation hardware as a state
 // machine.
+// TODO: manually applying ranges here because the refinement proofs should be counted normally as
+// spec and proof, not trusted
+
 // $line_count$Trusted${$
 
 use vstd::prelude::*;
@@ -594,6 +597,7 @@ pub proof fn next_preserves_inv(pre: State, post: State, c: Constants, lbl: Lbl)
     }
 }
 
+// $line_count$}$
 
 
 
@@ -845,6 +849,8 @@ pub mod refinement {
 
 /// The axiomatized interface to execute the actions specified in this state machine.
 pub mod code {
+    // This interface is trusted.
+    // $line_count$Trusted${$
     use vstd::prelude::*;
     use crate::spec_t::mmu::rl3;
     #[cfg(verus_keep_ghost)]
@@ -1033,9 +1039,9 @@ pub mod code {
     //    unimplemented!()
     //}
 
+    // $line_count$}$
 }
 
-// $line_count$}$
 
 
 } // verus!
