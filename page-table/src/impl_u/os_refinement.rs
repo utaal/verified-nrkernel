@@ -287,7 +287,7 @@ proof fn lemma_unmap_soundness_equality(
 ///////////////////////////////////////////////////////////////////////////////////////////////
 // Refinement proof
 ///////////////////////////////////////////////////////////////////////////////////////////////
-proof fn os_init_refines_hl_init(c: os::Constants, s: os::State)
+pub proof fn os_init_refines_hl_init(c: os::Constants, s: os::State)
     requires
         os::init(c, s),
     ensures
@@ -309,7 +309,7 @@ proof fn os_init_refines_hl_init(c: os::Constants, s: os::State)
     };
 }
 
-proof fn os_next_refines_hl_next(c: os::Constants, s1: os::State, s2: os::State, lbl: RLbl)
+pub proof fn os_next_refines_hl_next(c: os::Constants, s1: os::State, s2: os::State, lbl: RLbl)
     requires
         os::next(c, s1, s2, lbl),
         s1.inv(c),

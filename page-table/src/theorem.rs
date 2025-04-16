@@ -3,10 +3,52 @@ use vstd::prelude::*;
 use crate::spec_t::hlspec;
 use crate::spec_t::os;
 use crate::spec_t::mmu::defs::{ MemOp, PTE, Core };
+use crate::spec_t::os_code_vc::{ CodeVC, HandlerVC };
+use crate::impl_u::verified_impl::PTImpl;
 
 verus!{
 
-// Lemma 1: OS state machine with the atomic MMU refines the high-level spec
+// Lemma 1: The OS+HW state machine refines the userspace specification.
+
+proof fn lemma1_init(c: os::Constants, pre: os::State)
+    requires
+        os::init(c, pre),
+    ensures
+        hlspec::init(c.interp(), pre.interp(c)),
+        pre.inv(c),
+{
+    crate::impl_u::os_refinement::os_init_refines_hl_init(c, pre);
+    crate::spec_t::os_invariant::init_implies_inv(c, pre);
+}
+
+proof fn lemma1_next(c: os::Constants, pre: os::State, post: os::State, lbl: RLbl)
+    requires
+        os::next(c, pre, post, lbl),
+        pre.inv(c),
+    ensures
+        hlspec::next(c.interp(), pre.interp(c), post.interp(c), lbl.interp()),
+        post.inv(c),
+{
+    crate::impl_u::os_refinement::os_next_refines_hl_next(c, pre, post, lbl);
+    crate::spec_t::os_invariant::next_preserves_inv(c, pre, post, lbl);
+}
+
+// Lemma 2: The implemented functions realize their specification in the OS+HW state machine.
+
+spec fn ensure_codevc<X: CodeVC>(x: X) -> bool { true }
+
+spec fn ensure_handlervc<X: HandlerVC>(x: X) -> bool { true }
+
+proof fn lemma2(p: PTImpl) {
+    ensure_codevc(p);
+    ensure_handlervc(p);
+}
+
+
+
+
+
+
 
 pub enum TokState {
     Init,
@@ -50,49 +92,5 @@ impl RLbl {
     }
 }
 
-proof fn lemma1_init(c: os::Constants, pre: os::State)
-    requires os::init(c, pre)
-    ensures hlspec::init(c.interp(), pre.interp(c))
-{
-    admit();
-}
-
-proof fn lemma1_next(
-    c: os::Constants,
-    pre: os::State,
-    post: os::State,
-    lbl: RLbl,
-)
-    requires os::next(c, pre, post, lbl)
-    ensures hlspec::next(c.interp(), pre.interp(c), post.interp(c), lbl)
-{
-    admit();
-}
-
-// Lemma 2: Concrete MMU refines the atomic MMU
-// TODO: interp function that skips directly to rl1
-
-//proof fn lemma2_init(c: mmu::Constants, pre: mmu::rl4::State)
-//    requires pre.init()
-//    ensures pre.interp().interp().interp().init()
-//{
-//    admit();
-//}
-
-//proof fn lemma2_next(
-//    c: mmu::Constants,
-//    pre: mmu::rl4::State,
-//    post: mmu::rl4::State,
-//    lbl: mmu::Lbl,
-//)
-//    requires mmu::rl4::next(pre, post, c, lbl)
-//    ensures mmu::rl1::next(pre.interp().interp().interp(), post.interp().interp().interp(), c, lbl)
-//{
-//    admit();
-//}
-
-// Lemma 3: The implementation refines the implementation behavior specified in the OS state machine
-//
-// TODO:
 
 }
