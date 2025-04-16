@@ -7,7 +7,9 @@ use crate::spec_t::mmu::defs::{ candidate_mapping_overlaps_existing_vmem, MAX_BA
 use crate::spec_t::os_ext;
 use crate::spec_t::mmu;
 use crate::spec_t::mmu::rl3::refinement::to_rl1;
-use crate::spec_t::os_code_vc::{ Token, CodeVC, HandlerVC, lemma_concurrent_trs_during_shootdown };
+use crate::spec_t::os_code_vc::{ Token, CodeVC, HandlerVC };
+#[cfg(verus_keep_ghost)]
+use crate::spec_t::os_code_vc::{ lemma_concurrent_trs_during_shootdown };
 use crate::impl_u::wrapped_token::{ self, WrappedMapToken, WrappedUnmapToken, WrappedTokenView, DoShootdown };
 use crate::impl_u::l2_impl::PT::{ self, map_frame, unmap };
 use crate::spec_t::os;
