@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 builtin_macros = { path = "../.verus/source/builtin_macros" }
 builtin = { path = "../.verus/source/builtin" }
+state_machines_macros = { path = "../.verus/source/state_machines_macros" }
 vstd = { path = "../.verus/source/vstd", features = [], default-features = false }
 
 [lib]

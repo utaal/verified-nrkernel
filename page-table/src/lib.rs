@@ -1,8 +1,15 @@
 // #![feature(nonnull_slice_from_raw_parts)]
 //#![no_std]
+#![feature(custom_inner_attributes)]
 #![cfg_attr(feature="linuxmodule", no_std)]
 #[cfg(not(feature="linuxmodule"))]
 extern crate alloc;
+
+extern crate builtin;
+extern crate builtin_macros;
+extern crate state_machines_macros;
+extern crate vstd;
+
 
 pub mod impl_u;
 pub mod definitions_u;
