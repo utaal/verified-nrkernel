@@ -1447,13 +1447,7 @@ fn map_frame_aux(
                     assert(overlap(
                             MemRegion { base: b, size: ppte.frame.size },
                             MemRegion { base: vaddr as nat, size: pte@.frame.size },
-                        )) by (nonlinear_arith)
-                        requires
-                            x86_arch_spec.contains_entry_size_at_index_atleast(ppte.frame.size, layer as nat),
-                            pte@.frame.size == x86_arch_spec.entry_size(layer as nat),
-                            vaddr == x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat),
-                            x86_arch_spec.entry_base(layer as nat, base as nat, idx as nat) <= b,
-                            b + ppte.frame.size <= x86_arch_spec.next_entry_base(layer as nat, base as nat, idx as nat);
+                        ));
                 };
                 assert(candidate_mapping_overlaps_existing_vmem(interp_to_l0(tok@, rebuild_root_pt(pt, set![])), vaddr as nat, pte@));
                 Err(())
