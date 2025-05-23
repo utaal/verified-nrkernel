@@ -1393,7 +1393,7 @@ fn map_frame_aux(
                 &&& candidate_mapping_overlaps_existing_vmem(interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp(), vaddr as nat, pte@)
             },
         },
-    // decreases X86_NUM_LAYERS - layer
+    decreases X86_NUM_LAYERS - layer
 {
     proof {
         broadcast use
@@ -2157,6 +2157,7 @@ fn is_directory_empty(Tracked(tok): Tracked<&mut WrappedUnmapToken>, Ghost(pt): 
             inv_at(tok@, pt, layer as nat, ptr),
             tok.inv(),
             forall|i: nat| #![auto] i < idx ==> entry_at_spec(tok@, pt, layer as nat, ptr, i)@ is Invalid,
+        decreases num_entries - idx
     {
         let entry = entry_at_unmap(Tracked(tok), Ghost(pt), layer, ptr, idx);
         if entry.is_present() {
@@ -2747,7 +2748,7 @@ fn unmap_aux(
                 &&& !interp_at(old(tok)@, pt, layer as nat, ptr, base as nat).interp().contains_key(vaddr as nat)
             },
         },
-    // decreases X86_NUM_LAYERS - layer
+    decreases X86_NUM_LAYERS - layer
 {
     proof {
         broadcast use
