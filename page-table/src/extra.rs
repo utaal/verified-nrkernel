@@ -166,7 +166,8 @@ pub proof fn mult_leq_mono_both(a: nat, b: nat, c: nat, d: nat)
     ensures
         // Including `0 <=` here because it's used in a place where this is part of an overflow VC
         // and non-nonlinear z3 can't even deal with that.
-        0 <= a * b <= c * d;
+        0 <= a * b <= c * d
+{ }
 
 #[verifier(nonlinear)]
 pub proof fn mult_less_mono_both1(a: nat, b: nat, c: nat, d: nat)
@@ -176,7 +177,8 @@ pub proof fn mult_less_mono_both1(a: nat, b: nat, c: nat, d: nat)
         0 < c,
         0 < d,
     ensures
-        a * b < c * d;
+        a * b < c * d
+{ }
 
 #[verifier(nonlinear)]
 pub proof fn mult_less_mono_both2(a: nat, b: nat, c: nat, d: nat)
@@ -186,7 +188,8 @@ pub proof fn mult_less_mono_both2(a: nat, b: nat, c: nat, d: nat)
         0 < c,
         0 < d,
     ensures
-        a * b < c * d;
+        a * b < c * d
+{ }
 
 
 pub proof fn assert_maps_equal_contains_pair<K,V>(m1: Map<K,V>, m2: Map<K,V>)

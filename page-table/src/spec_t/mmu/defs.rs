@@ -34,8 +34,7 @@ pub const X86_NUM_ENTRIES: usize = 512;
 #[verifier(external_body)]
 pub const MAX_PHYADDR_WIDTH: usize = 52;
 
-#[verifier(external_body)]
-pub proof fn axiom_max_phyaddr_width_facts()
+pub axiom fn axiom_max_phyaddr_width_facts()
     ensures
         32 <= MAX_PHYADDR_WIDTH <= 52,
 ;
